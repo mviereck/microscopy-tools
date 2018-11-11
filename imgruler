@@ -31,7 +31,7 @@ imgruler() {
     case "${1:-}" in
       --help)
         echo "Draw a ruler into an image.
-Usage: ruler [OPTIONS] [IMAGENAME]
+Usage: imgruler [OPTIONS] [IMAGENAME]
 
 Does not overwrite source file IMAGENAME.
 Multiple IMAGENAMEs or wildcards * ? can be given. (E.g. pic*.jpg)
