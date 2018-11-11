@@ -1,0 +1,1472 @@
+#! /bin/bash
+
+#############################################################################
+## arduterm
+# Arduino Terminal: Skript, um PC und Arduino kommunizieren zu lassen.
+#                   Fragt Kommandos von der Tastatur und vom Arduino ab und kann darauf reagieren.
+#                   Kann Signale an den Arduino senden und vom Arduino empfangen.
+#                   Auch andere Geräte/Devices sind grundsätzlich ansteuerbar.
+#                   Signalbasis: Zeichenfolgen, abgeschlossen mit NL/Newline/0xA/Enter.
+#                   arduterm kann einfache Skripte mit arduterm-Kommandos ausführen.
+#                   Steuerung durch andere Skripte ist durch Eintrag von Kommandos
+#                   in die Datei /tmp/arduterm/arduterm.commands.execute möglich.
+# Primäres Ziel:    Fotostacking automatisieren mit einem an einen Arduino angeschlossenen 
+#                   Schrittmotor/Stackingschlitten und einer per USB angeschlossenen Kamera.
+#                   Dabei Aufnahme von Bildern und Videos mit gphoto2
+#                   Live-Vorschau von bildern und Videos mit geeqie und ffmpeg
+#
+# Integration von gphoto2:
+#  - Videoaufnahme aus Preview-Bildern
+#  - Fotoaufnahme, speichern in Kamera oder auf Festplatte
+#  - Preview-Fotoaufnahme ohne Bewegung von Shutter oder Spiegel
+#  - Kamera konfigurieren
+# Integration von ffmpeg und geeqie
+#  - Videovorschau mit ffmpeg und ffplay
+#  - Video mit ffmpeg in Einzelbilder zerlegen
+#  - Fotovorschau mit Bildbetrachter geeqie
+#
+# Benötigt gphoto2 in Version 2.5.9 oder höher, um fehlerfrei die Kamera anzusteuern
+# Benötigt die Pakete gphoto2, ffmpeg, geeqie und dialog
+# Getestet mit Canon EOS 1000D
+#
+# Steuerung durch externe Programme möglich durch Eintrag von Kommandos
+# in die Datei /tmp/arduterm/arduterm.command.execute
+#############################################################################
+
+VERSION="v0.4.0"
+
+########################################
+#### Programmspezifische Funktionen ####
+
+comment() {
+  ## Funktion: Allgemeine Meldungen ausgeben
+  echo -e "${GELB}$*${WEISS}" >&2
+}
+fehler() {
+  ## Funktion: Fehlermeldungen ausgeben
+  echo -e "${ROT}$*${WEISS}" >&2
+}
+mykill() {
+  # Funktion: Prozeß $1 beenden
+  local Pid=
+  Pid="${1:-}"
+  ps -p $Pid >/dev/null 2>&1 && {
+    kill $Pid
+    wait $Pid 2>/dev/null
+  } || return 1
+}
+window_placement() {
+  ## Funktion: Fenster von Imageviewer und Videospieler nebeneinander oder maximiert anordnen.
+  ## Zweiten Monitor bevorzugen. Guake Terminal oben halten.
+  
+  local Targetmonitor Screenpos ScreenX ScreenW
+  
+  # Versuche, zweiten Monitor zu finden.
+  Targetmonitor=$(xrandr | grep " connected" | grep -v "+0+0" | cut -d' ' -f1 | head -n1)
+  [ "$Targetmonitor" ] || Targetmonitor=$(xrandr | grep " connected" | cut -d' ' -f1 | head -n1)
+  
+  Screenpos=$(xrandr | grep $Targetmonitor | sed 's/primary//' | awk '{print $3}')
+  ScreenX=$(cut -d+ -f2 <<< "$Screenpos")
+  ScreenW=$(cut -dx -f1 <<< "$Screenpos")
+  
+  case $Windowmode in
+    split)
+      wmctrl -r sxiv -e 0,$ScreenX,0,$(bc <<< "$ScreenW / 2"),-1
+      wmctrl -r arduterm-Video -e 0,$(bc <<< "$ScreenX + $ScreenW / 2"),0,$(bc <<< "$ScreenW / 2"),-1
+      wmctrl -r sxiv -b add,maximized_vert
+      wmctrl -r arduterm-Video -b add,maximized_vert
+      wmctrl -a Guake
+    ;;
+    fullimage)
+      wmctrl -r sxiv -e 0,$ScreenX,0,$ScreenW,-1
+      wmctrl -r sxiv -b add,maximized_vert
+      wmctrl -a sxiv
+      wmctrl -a Guake
+    ;;
+    fullpreview)
+      wmctrl -r arduterm-Video -e 0,$ScreenX,0,$ScreenW,-1
+      wmctrl -r arduterm-Video -b add,maximized_vert
+      wmctrl -a arduterm-Video
+      wmctrl -a Guake
+    ;;
+  esac
+}
+window_wait() {
+  for ((i=1 ; i<=50 ; i++)); do
+    xdotool search --name "${1:-}" >/dev/null && break
+    #sleep 0.01
+  done
+}
+
+###########################
+#### Dateioperationen  ####
+
+get_latest_file() {
+  ## Funktion: Neueste erstellte Datei ermitteln
+  # $1 kann Suche auf Dateien DATEI* begrenzen
+  ls -p -t $1* 2> /dev/null | grep -v "/" | head -n 1
+}
+get_last_file() {
+  ## Funktion: Die alphabetisch/numerisch letzte Datei, die mit $1 beginnt, ermitteln und Name ausgeben
+  basename -a $(find -maxdepth 1) | grep "$1" | sort | tail -n1
+}
+get_free_filenumber(){
+  ## Funktion: Zu Dateiname $1 nächste freie Nummer ausgeben
+  # $1  Dateiname ohne Nummer und _ohne_ suffix, nach dem Prinzip
+  #     DATEINAME_000x.jpg nur DATEINAME übergeben. 
+  #     DATEINAME darf keine Unterstriche _ oder Zahlen 0..9 oder Punkte enthalten
+  local Nummer
+  Nummer=$(get_last_file $1 | cut -d_ -f2 | cut -d. -f1)  
+  printf "%04d" $(bc <<<"${Nummer:-0} + 1")
+}
+
+###########################################
+#### Kommunikation mit Device/Arduino  ####
+
+device_init() {
+  ## Funktion: Device initialisieren und Überwachung starten
+
+  # Falls eine Instanz von watch_device() läuft, beenden
+  ps -p "$Watchdevicepid" >/dev/null 2>&1 && {
+    comment "Überwachung von $Deviceadresse wird beendet ..."
+    kill $Watchdevicepid
+    wait $Watchdevicepid 2>/dev/null
+    exec 6<>-
+  }
+
+  # Device auf Gültigkeit prüfen
+  Deviceadresse="${1:-$Deviceadresse}"
+  [ -e "$Deviceadresse" ] || {
+    fehler "Fehler: Geräteadresse nicht gefunden: $Deviceadresse"
+    Deviceadresse="/dev/null"
+    fehler "Setze Geräteadresse auf $Deviceadresse"
+  }
+  
+  # Daten von Device auf fifo umleiten
+  comment "Beginne Überwachung von $Deviceadresse"
+  exec 6<>$Deviceadresse
+  cat <&6 >>$Devicemessagefifo & Watchdevicepid=$!
+    
+  # Seriellen Port initialisieren
+  stty -F $Deviceadresse raw ispeed 9600 ospeed 9600 cs8 -hupcl -ignpar -cstopb -echo || {
+    fehler "Fehler bei Initialisierung von Device $Deviceadresse"
+  }
+}
+device_send() {
+  ## Funktion: Daten an Arduino senden  
+  # Alle übergebenen Optionen werden an $Deviceadresse gesendet
+  echo "$*" >&6
+}
+device_wait() {
+  ## Funktion: Auf ein beliebiges Signal vom Arduino warten
+  local Antwort=
+  
+  read -t ${1:-$Devicetimeout} -r Antwort <&7
+  
+  [ "$Antwort" ] || {
+    fehler "Device: TIMEOUT"
+    echo "TIMEOUT"
+    return 1
+  }
+  
+  comment "Arduino meldet: $Antwort"
+  echo "$Antwort"
+  return 0
+}
+device_check() {
+  # Prüfen, ob Arduino auf Kontrollsignal "c" antwortet
+  device_send c
+  [ "$(device_wait)" = "TIMEOUT" ] && return 1 || return 0
+}
+setpos0() {
+  ## Funktion: Positionszähler von Arduino auf 0 setzen.
+  local Antwort
+  device_send z
+  Antwort="$(device_wait)"
+}
+
+####################################
+#### Video- und Bildfunktionen  ####
+
+videoaufnahme() {
+  ## Funktion: Videoaufnahme starten oder stoppen, mit Speichern auf Festplatte oder ohne
+  # $1  Aufnahmemodus
+  local Videodauer GPHOTO2 FFMPEG FFPLAY
+  
+  # Videoaufnahme pauschal stoppen
+  mykill $Ffplaypid
+  Ffplaypid=
+  
+  Videodauer="3600s"
+  Videomode=$1
+  
+  GPHOTO2="mygphoto2 --capture-movie=$Videodauer --stdout"
+  FFMPEG="ffmpeg -loglevel error -i -  -c:v copy -f mpjpeg  - "
+  FFPLAY="ffplay -loglevel error -sync ext -window_title arduterm-Video - "
+
+  case $1 in
+    preview)
+      $GPHOTO2 | $FFPLAY & Ffplaypid=$!
+    ;;
+    capture-movie)
+      # Dateiname für neues Video
+      Latestvideo="$(pwd)/movie_$(get_free_filenumber) movie).mjpg"
+      $GPHOTO2 > $Latestvideo & Ffplaypid=$!
+    ;;
+    capture-movie-and-preview)
+      # Dateiname für neues Video
+      Latestvideo="$(pwd)/movie_$(get_free_filenumber) movie).mjpg"
+      $GPHOTO2 | $FFMPEG | tee $Latestvideo | $FFPLAY & Ffplaypid=$!
+    ;;
+    stop-movie)
+      # Videowiedergabe/aufnahme stoppen. 
+      # Da das bereits am Anfang dieser Funktion geschieht, 
+      # muß weiter nichts getan werden
+      Videomode=""
+    ;;
+  esac
+  
+  # Fenster arrangieren
+  ps -p $Ffplaypid >/dev/null 2>&1 && {
+    [ "$Windowmode" = "fullimage" ]   && Windowmode="split"
+    [ "$Imageviewerpid" ]             || Windowmode="fullpreview"
+    window_wait arduterm-Video
+    window_placement
+  } &
+}
+showimage() {
+  ## Funktion: Imageviewer starten
+  # $1 = Bildname
+  
+  mykill $Imageviewerpid
+  sxiv -sf $1 2>/dev/null & Imageviewerpid=$!
+  
+  # Fenster arrangieren
+  {  
+    [ "$Windowmode" = "fullpreview" ] && Windowmode="split"
+    [ "$Ffplaypid" ]                  || Windowmode="fullimage"
+    window_wait sxiv
+    window_placement
+  } &
+}
+
+########################################
+#### gphoto2-spezifische Funktionen ####
+
+mygphoto2() {
+  comment "Aufruf von: gphoto2 $@"
+  gphoto2 "$@"
+  return $?
+}
+ardu_gphoto2 () {
+  ## Funktion: Sammlung und Koordination der gphoto2-Aufrufe
+  #
+  local Command Return=0
+ 
+  Command=$1
+  shift
+  case $Command in
+    set-config)                               # Konfigurationsdialog
+      ardu_gphoto2_set_config_dialog $@
+      Return=$?
+      ;; 
+    get-config)                               # Kameraeinstellung lesen
+      gphoto2_get_config $@
+      Return=$? 
+      ;;
+    set-config-value|scv)                     # Kameraeinstellung setzen (Wert)
+      mygphoto2 --set-config-value $@
+      Return=$? 
+      ;;
+    set-config-index|sci)                     # Kameraeinstellung setzen (Indexnummer)
+      mygphoto2 --set-config-index $@
+      Return=$? 
+      ;;
+    switch-config)                            # Kameraeinstellung: Im Index eines weiter (+) oder zurück (-)
+      gphoto2_switch_config $@
+      Return=$? 
+      ;;
+    capture-image)                            # Bild aufnehmen und auf Kamera speichern
+      mygphoto2 --capture-image
+      Return=$? 
+      ;;
+    capture-image-and-download)               # Bild aufnehmen und herunterladen
+      # %C als Suffix läßt gphoto2 Dateiende selbst richtig einsetzen (jpg oder cr2 oder ...)
+      Latestimage="$(pwd)/capture_$(get_free_filenumber capture).%C"
+      mygphoto2 --capture-image-and-download --filename $Latestimage
+      Return=$?
+      # Dateiname mit tatsächlichem Suffix ermitteln. 
+      Latestimage="$(pwd)/$(get_latest_file capture)"
+      ;;
+    capture-preview)                         # Einzelnes Videobild aufnehmen, ohne daß der Spiegel zuklappt
+      ## Funktioniert ab gphoto2 Version >= 2.5.9 ##
+      mygphoto2 --set-config-value viewfinder="1"
+      mygphoto2 --capture-preview
+      Return=$?
+      [ "$Return" = "0" ] && {
+        Latestimage="$(pwd)/preview_$(get_free_filenumber preview).jpg"
+        mv capture_preview.jpg $Latestimage
+      } 
+      ;;
+    mirrorup)                                 # Viewfinder einschalten = Spiegel hoch
+      mygphoto2 --set-config-value viewfinder="1"
+      Return=$? 
+      ;;
+    zoom)                                     # Viewfinder-Zoom setzen. Zulässige Werte sind 1, 5, und 10
+      mygphoto2 --set-config-value eoszoom=$1
+      Return=$? 
+      ;;
+    move-zoom)                                # Position von Viewfinder-Zoom ändern
+      case $1 in
+        x) ZOOM_XPOS="$[$ZOOM_XPOS+$2]" ;;
+        y) ZOOM_YPOS="$[$ZOOM_YPOS+$2]" ;;
+      esac
+      [ "$ZOOM_XPOS" -lt "0" ] && ZOOM_XPOS="0" 
+      [ "$ZOOM_YPOS" -lt "0" ] && ZOOM_YPOS="0" 
+      mygphoto2 --set-config-value eoszoomposition="$ZOOM_XPOS,$ZOOM_YPOS"
+      Return=$? 
+      ;;
+    gphoto2) # gphoto2 direkt aufrufen
+      mygphoto2 $@
+      return=$?
+      ;;
+    *)
+      fehler "ardu_gphoto2() mit ungültigen Parametern aufgerufen: $Command $@"
+      Return=1
+      ;;
+  esac
+  return $Return
+}
+gphoto2_switch_config() {
+  ## Funktion=Konfiguration vom Typ RADIO umschalten mit + oder -
+  # $1  Zu verändernder Konfigurationswert, Name im Config-Baum
+  # $2  + oder - für nächsten oder vorherigen Wert.
+  #     +n oder -n für n-weiten Schritt im config-Index
+  #     keine Angabe = +1
+  #     n ohne '+' oder '-' => +n
+  # Bei Überschreiten/Unterschreiten des Index wird auf Anfang/Ende vom Index gesetzt 
+
+  local Choicecount Configlabel Configtype Configcurrent 
+  local Dumpline Dumplineleft Dumplineright
+  
+  # Derzeitige Konfiguration auslesen und speichern
+  mygphoto2 --get-config $1 > $Kameradumpfile || {
+    fehler "Fehler: Konfiguration der Kamera für $1 konnte nicht gelesen werden"
+    return 1
+  }
+  
+  # Konfiguration parsen
+  while read Dumpline ; do
+    Dumplineleft="$(cut -d: -f1 <<< $Dumpline)"
+    Dumplineright="$(cut -d' ' -f2- <<< $Dumpline)"
+    case $Dumplineleft in
+      Label)   Configlabel="$Dumplineright" ;;
+      Type)    Configtype="$Dumplineright" ;;
+      Current) Configcurrent="$Dumplineright" ;;
+      Readonly) ;;
+      END) ;;
+      Choice) 
+        [ "$(cut -d' ' -f2 <<<"$Dumplineright")" = "$Configcurrent" ] && Configcurrentindex="$(cut -d' ' -f1 <<<"$Dumplineright")" 
+        Choicecount=$((Choicecount + 1))
+      ;;
+      "") ;;
+    esac
+  done <$Kameradumpfile
+  
+  case $Configtype in
+    RADIO) ;;
+    TEXT|DATE|TOGGLE)
+      fehler "Fehler: Werte vom Typ $TYPE können nicht mit Kommando 'switch' geändert werden."
+      fehler "        Bitte Kommando 'set-config-value $1=WERT' oder 'set-config $1' verwenden."
+      return 1
+    ;;
+  esac
+  
+  # Indexänderung berechnen
+  case $2 in
+    "+"|"") Change="+1" ;;
+    "-")    Change="-1" ;;
+    *)
+      case $(cut -c1 <<< $2) in
+        "+"|"-") Change="$2" ;;
+        *)       Change="+$2" ;;
+      esac
+    ;;
+  esac
+  Newindex=$(($Configcurrentindex $Change))
+  # wrap index out of range
+  [ "$Newindex" -ge "$Choicecount" ] && Newindex=0
+  [ "$Newindex" -lt "0" ] && Newindex=$((Choicecount -1))
+  
+  # Neuen Wert ermitteln
+  while read Dumpline; do
+    [ "$(cut -d' ' -f2 <<<"$Dumpline")" = "$Newindex" ] && Newcurrent="$(cut -d' ' -f3- <<<"$Dumpline")" && break
+  done < <(grep Choice <$Kameradumpfile)
+ 
+  # Neuen Index setzen
+  mygphoto2 --set-config-index $1=$Newindex || {
+    fehler "Fehler: $1: $Configlabel $Configcurrent konnte nicht geändert werden"
+    echo $Configcurrent
+    return 1
+  }
+  echo "$Newcurrent"
+  return 0
+}
+gphoto2_get_config() {
+  ## Funktion: Kameraeinstellungen anzeigen
+  # Usage: [-a | all] [ENTRY]
+  # ohne Optionen      Tabelle aller RADIO/MENU Einstellungen ausgeben
+  # ENTRY              Einstellung von ENTRY ausgeben
+  # -a, all            Tabelle aller Einstellungen ausgeben
+  #                    Mit ENTRY: Dump des ENTRY Eintrags ausgeben
+  
+  local Tabelle Configentry Configlabel Configtype Configcurrent Dumpline Showall
+  
+  case "${1:-}" in
+    "-a"|"all") Showall="yes" && shift ;;
+    *)          Showall="no" ;;
+  esac
+
+  case $1 in
+    "") # Keine einzelne Einstellung angegeben: Alle RADIO und MENU Einstellungen anzeigen
+      mygphoto2 --list-all-config > $Kameradumpfile || {
+        fehler "Konnte Kamera nicht auslesen"
+        return 1
+      }
+      
+      while read Dumpline ; do
+      
+        Dumplineleft="$(cut -d: -f1 <<< "$Dumpline")"
+        case $Dumplineleft in
+          Label|Type|Current) Dumplineright="$(cut -d' ' -f2- <<< "$Dumpline")" ;;
+        esac
+        
+        case $Dumplineleft in
+          Label)    Configlabel="$Dumplineright" ;;
+          Type)     Configtype="$Dumplineright" ;;
+          Current)  Configcurrent="$Dumplineright" ;;
+          Readonly) ;;
+          Choice)   ;;
+          END)
+            echo -n "." >&2    # ...
+            case $Configtype in
+              RADIO|MENU)
+                Tabelle="$Tabelle
+${Configentry}§${Configlabel}§${Configcurrent}"
+                ;;
+              *|TOGGLE|TEXT|DATE)
+                [ "$Showall" = "yes" ] && Tabelle="$Tabelle
+${Configentry}§${Configlabel}§${Configcurrent}"
+                ;;
+            esac
+            ;;
+          *) [ "$(cut -c1 <<< "$Dumpline")" = "/" ] && Configentry="$(basename "$Dumpline")" ;;
+        esac
+        
+      done <$Kameradumpfile
+      echo ""
+  
+      # Ergebnis in eine übersichtliche Tabelle verwandeln
+      Tabelle="$(sort <<< "$Tabelle")"
+      column -t -s"§" <<< "$Tabelle"
+      ;;
+    
+    *) # einzelnes Config als Option angegeben
+      mygphoto2 --get-config $1 > $Kameradumpfile && {
+        case $Showall in
+          yes) cat $Kameradumpfile ;;
+          no)  grep "Current" <$Kameradumpfile | cut -d' ' -f2- ;;
+        esac
+      } || fehler "Fehler: Konfiguration der Kamera konnte nicht gelesen werden"
+      ;;
+  esac
+}
+ardu_gphoto2_set_config_dialog() {
+  ## Funktion: Dialogboxen zur Konfiguration der Kamera erzeugen
+  # $1   ENTRY, der zu konfigurieren ist. Wenn leer, alle Configentrys zur Auswahl anbieten
+  local Configentry= Count= Dialogoptions= Line=
+
+  Configentry=$1
+  
+  # Auswahl aus allen Konfiguartionsmöglichkeiten anbieten
+  [ -z "$Configentry" ] && {
+    mygphoto2 --list-all-config > $Kameradumpfile || {
+      fehler "Konnte Kamerakonfiguration nicht lesen."
+      return 1
+    }
+    
+    declare -i Count="0"
+    while read -r Line ; do
+      Configentry[$Count]="$(basename $Line)"
+      Count=$Count+1
+    done < <(look "/" $Kameradumpfile)
+
+    declare -i Count="0"
+    while read -r Line ; do
+      LABEL[$Count]="$(cut -d ' ' -f2- <<<"$Line")"
+      Count=$Count+1
+    done < <(look "Label:" $Kameradumpfile)
+  
+    declare -i Count="0"
+    while read -r Line ; do
+      TYPE[$Count]="$(cut -d ' ' -f2- <<<"$Line")"
+      Count=$Count+1
+    done < <(look "Type:" $Kameradumpfile)
+    
+    declare -i Count="0"
+    while read -r Line ; do
+      CURRENT[$Count]="$(cut -d ' ' -f2- <<< "$Line")"
+      Count=$Count+1
+    done < <(look "Current:" $Kameradumpfile)
+      
+    # Optionen sortieren, Type RADIO zuerst
+    :> $Kameradumpfile
+    while [ "$Count" -ge "1" ] ; do
+      Count=$Count-1
+      case ${TYPE[$Count]} in
+        RADIO|MENU) echo -n "AAAA " >> $Kameradumpfile ;;
+        TOGGLE) echo -n "BBBB " >> $Kameradumpfile ;;
+        TEXT) echo -n "DDDD " >> $Kameradumpfile ;;
+        DATE) echo -n "EEEE " >> $Kameradumpfile ;;
+        *) echo -n "CCCC " >> $Kameradumpfile ;;
+      esac
+      echo "'${Configentry[$Count]}' '${LABEL[$Count]}§${TYPE[$Count]}§${CURRENT[$Count]}'" >> $Kameradumpfile
+    done
+    while read -r Line ; do
+      Dialogoptions="$Dialogoptions $(echo $Line | cut -d ' ' -f2-)"
+    done < <(sort -V $Kameradumpfile)
+      
+    Configentry=$(eval dialog --column-separator '§' --menu '"Kamera Konfiguration auswählen"' 40 120 30 $Dialogoptions 3>&1 1>&2 2>&3 3>&-)
+  }
+
+  # Einzelne Konfiguration ändern
+  [ -n "$Configentry" ] && {
+    comment "Lese Konfiguration von $Configentry von der Kamera, bitte warten ..."
+    mygphoto2 --get-config $Configentry > $Kameradumpfile || {
+      fehler "Fehler: Konfiguration der Kamera konnte nicht gelesen werden"
+      return 1
+    }
+
+      INDEX="0"
+      Dialogoptions=""
+      LABEL=`look "Label:" $Kameradumpfile | cut -d ' ' -f2-`
+      TYPE=`look "Type:" $Kameradumpfile | cut -d ' ' -f2-`
+      CURRENT=`look "Current:" $Kameradumpfile | cut -d ' ' -f2-`
+      while read -r Line ; do
+        CHOICE[$INDEX]=`echo -n $Line | cut -d ' ' -f3-`
+        Dialogoptions="$Dialogoptions $INDEX '${CHOICE[$INDEX]}'"
+        if [ "${CHOICE[$INDEX]}" = "$CURRENT" ] ; then Dialogoptions="$Dialogoptions on"
+        else Dialogoptions="$Dialogoptions off" ; fi
+        INDEX=$[$INDEX+1]
+      done < <(look "Choice:" $Kameradumpfile)
+
+      case $TYPE in
+      RADIO|MENU)
+        INDEX=$(eval dialog --radiolist '"Auswahl für $Configentry: $LABEL \nDerzeit: $CURRENT"' 40 120 30 $Dialogoptions 3>&1 1>&2 2>&3 3>&-)
+        if test "$INDEX" ; then 
+          comment "Setze $Configentry=$INDEX => $LABEL ${CHOICE[$INDEX]}"
+          mygphoto2 --set-config-index $Configentry=$INDEX
+        fi
+        ;;
+      TEXT)
+        CHOICE=$(eval dialog --inputbox '"Neuer Wert für $Configentry: $LABEL \nDerzeit: $CURRENT"' 12 78 '"$CURRENT"' 3>&1 1>&2 2>&3 3>&-)
+        if test "$CHOICE" ; then
+          comment "Ändere $Configentry: $LABEL von $CURRENT auf $CHOICE"
+          mygphoto2 --set-config-value "$Configentry=$CHOICE"
+        fi
+        ;;
+      TOGGLE)
+        Dialogoptions="1 Ein off 0 Aus off"
+        #eval echo  --radiolist '"Schalter: $Configentry: $LABEL' 15 70 2 $Dialogoptions
+        CHOICE=$(eval dialog --radiolist '"Schalter: $Configentry: $LABEL"' 15 70 2 $Dialogoptions 3>&1 1>&2 2>&3 3>&-)
+        if test "$CHOICE" ; then 
+          comment "Stelle Schalter $Configentry auf $CHOICE"
+          mygphoto2 --set-config-value $Configentry=$CHOICE 
+        fi
+        ;;
+      *)
+        DIALOGTEXT="Unbekannter Konfigurationstyp $TYPE. Ausgabe von get-config $Configentry:\n"
+        while read -r LINE ; do
+          DIALOGTEXT=$DIALOGTEXT$LINE"\n"
+        done < $Kameradumpfile
+        CHOICE=$(eval dialog --inputbox '"$DIALOGTEXT"' 12 78 '"$CURRENT"' 3>&1 1>&2 2>&3 3>&-)
+        if test -n "$CHOICE" ; then 
+          comment "Setze $Configentry auf $CHOICE"
+          mygphoto2 --set-config-value $Configentry=$CHOICE
+        fi
+        ;;
+      esac
+  }
+}
+
+#########################
+#### Stackfunktionen ####
+
+steplauf() {
+  # Zu Position $1 gehen
+  # $1   Zielposition (gewolltes $Poscurrent)
+  local Richtug= diff= Warten=
+  
+  diff="$(bc <<< "$1 - $Poscurrent")"
+  [ "$diff" -eq "0" ] && return 1
+  [ "$diff" -gt "0" ] && {
+    Richtung="i"
+  } || { 
+    Richtung="o"
+    diff="$(bc <<< "-1 * $diff")"
+  }
+  
+  device_check || return 1
+
+  [ "$diff" = "$Schrittweite" ] || {
+    device_send "w,$diff"
+    [ "$(device_wait)" = "TIMEOUT" ] && return 1
+  }
+
+  Warten="$(bc <<< "18 * $diff /10000 + $Devicetimeout")"
+
+  device_send "$Richtung"
+  Antwort="$(device_wait $Warten)"
+  [ "$Antwort" = "TIMEOUT" ] && return 1
+  
+  case $Richtung in
+    i)  Poscurrent="$(bc <<< "$Poscurrent + $diff")" ;;
+    o)  Poscurrent="$(bc <<< "$Poscurrent - $diff")" ;;
+  esac
+  
+  [ "$diff" = "$Schrittweite" ] || {
+    device_send "w,$Schrittweite"
+    device_wait >/dev/null
+  }
+  savepos
+}
+stackshot() {
+  ## Funktion: Fotoserie schießen, dabei Motor weiterdrehen. Geht von $Pos1 zu $Pos2.
+  # -p   Default: Serie aus Preview-Bildern.
+  # -c   Serie aus richtigen Fotos / Captures.
+  
+  local Posmem=
+  local Warten= Anzahl= Count=
+  local Fotomodus= Ordnername=
+  
+  [ "$1" = "-c" ] && Fotomodus="capture" && shift
+  [ "$1" = "-p" ] && Fotomodus="preview" && shift
+  Fotomodus="${Fotomodus:-preview}"
+  
+  Warten="0.4"
+  Windowmode=fullimage
+  
+  # Markierung für loop, daß es weiterlaufen soll
+  echo "stack $Pos1 to $Pos2" >$Stackshotfile
+  
+  # ggf. Positionen für stepin korrigieren
+  readpos
+  [ "$Pos1" -gt "$Pos2" ] && {
+    comment "Switching Pos1:$Pos1 and Pos2:$Pos2"
+    Posmem=$Pos1
+    Pos1=$Pos2
+    Pos2=$Posmem
+    savepos
+  }
+  
+  Anzahl="$(bc <<< "($Pos2 - $Pos1) / $Schrittweite" | cut -d. -f1)"
+  comment "Anzahl Stackbilder: $Anzahl"
+  
+  # An Startposition gehen
+  cmd -w go1
+  #sleep $(bc <<< "($Pos2 - $Pos1) * 0.02")
+  readpos
+  [ "$Poscurrent" = "$Pos1" ] || { fehler "Fehler: Position $Pos1 verfehlt: $Poscurrent." ; return 1 ; }
+  set -x
+  # Unterordner anlegen
+  cd "$Arduhome/$Projektname"
+  Lateststack="$Arduhome/$Projektname/${Stackshotname}_$(get_free_filenumber "$Stackshotname")"
+  mkdir -p "$Lateststack"
+  cmd -w cd "$Lateststack"
+  cd "$Lateststack"
+  echo "$Lateststack" >"$Lateststackfile"
+  set +x
+  # Stackshot
+  comment "Stackshot $Lateststack wird gestartet"
+  sleep 1
+
+  while [ "$Poscurrent" -lt "$Pos2" ] ; do
+    case $Fotomodus in
+      capture) cmd -w "capture-image-and-download" ;;
+      preview) cmd -w "capture-preview" ;;
+    esac
+
+    cmd -w stepin
+    sleep $Warten
+    readpos
+    
+    [ -s $Stackshotfile ] || { comment "Stacking unterbrochen" ; break ; }
+    
+    # Fortschrittsanzeige %
+    Count=$((Count + 1))
+    for ((i=1 ; i<=100 ; i++)); do
+      Prozent="$((100 * $Count / $Anzahl))"
+      [ "$Prozent" -lt "$i" ] && echo -n "." || echo -n "X" 
+    done
+    echo " $Prozent%"
+  done
+  
+  comment "Stackshot $Stackshotname mit $Count Bildern ist fertig."
+  comment "Speicherort: $Lateststack"
+  :> $Stackshotfile
+  cmd -w cd ..
+}
+fuse() {
+  local Fusedir= Bildliste= Stackbildname= Lateststack=
+  
+  Lateststack=$(cat $Lateststackfile 2>/dev/null)
+  Fusedir="${1:-$Lateststack}"
+  [ "$Fusedir" ] || {
+    fehler "Bitte Verzeichnis mit Stackshotfotos angeben, oder erst einen Stackshot machen."
+    return 1
+  }
+  Fusedir="$(realpath "$Fusedir")"
+  [ -d "$Fusedir" ] || {
+    Bildliste=$(basename "$Fusedir")
+    Fusedir=$(dirname "$Fusedir")
+  }
+
+  
+  cd $Fusedir
+  
+  [ "$Bildliste" ] || Bildliste="preview*.jpg capture*.JPG"
+  Bildliste="$(ls $Bildliste 2>/dev/null)"
+  
+  Exposureweight=0.3
+  Saturationweight=0.3
+  Contrastweight=1
+  
+  
+##  Laplacian Edge Detection
+# Enfuse provides a Laplacian-based algorithm that can help in situations where weighting based on the standard deviation fails. 
+# It is activated with a positive value for SCALE in --contrast-edge-scale=SCALE. 
+# The Laplacian will detect two-dimensional curvature on the scale of SCALE. 
+# Here and in the following we simply speak of curvature where we mean magnitude of curvature. 
+# That is, we shall not distinguish between convex and concave edges. Enfuse always use the magnitude of curvature for weighting.
+#
+# Typically, SCALE ranges between 0.1 pixels and 0.5 pixels, where 0.3 pixels are a reasonable starting point. 
+# To find the best value for SCALE though, usually some experimentation will be necessary. 
+# Use --save-masks to get all soft-mask (default: softmask-%n.tif) and hard-mask files (default: hardmask-%n.tif). Check how different scales affect the artifacts. 
+#
+## Local Contrast Enhancement
+# Sometimes Enfuse misses smoother edges with --contrast-edge-scale and a little local contrast enhancement (LCE) helps. 
+# Set --contrast-edge-scale=SCALE:LCE-SCALE:LCE-FACTOR, 
+# where LCE-SCALE and LCE-FACTOR work like the unsharp mask filters in various image manipulation programs. 
+# Start with LCE-SCALE ten times the value of SCALE and a LCE-FACTOR of 2-5.
+#
+# LCE-SCALE can be specified as a percentage of SCALE. LCE-FACTOR also can be specified as a percentage. 
+# Examples:
+#    --contrast-edge-scale=0.3:3.0:3
+#    --contrast-edge-scale=0.3:1000%:3.0
+#    --contrast-edge-scale=0.3:3:300%
+#    --contrast-edge-scale=0.3:1000%:300% 
+Contrastedgescale="0.3:3:3"
+
+# --exposure-weight-function=gaussian
+# one of the built-in exposure WEIGHT-FUNCTIONs: "gaussian", "lorentzian", "half-sine", "full-sine", or "bi-square"; default: "gaussian"
+Exposureweightfunction=gaussian
+
+# --exposure-optimum=0.5
+# optimum  exposure  value, usually the maximum of the weighting function (0 <= OPTIMUM <= 1); default: 0.5
+#Exposureoptimum=0.5
+#    --exposure-optimum=$Exposureoptimum \
+
+# --contrast-window-size=SIZE
+#   set window SIZE for local-contrast analysis (SIZE >= 3); default: 5
+#   Does not take effect if --contrast-edge-scale is in use.
+#Contrastwindowsize=5
+#    --contrast-window-size=$Contrastwindowsize \
+
+  Stackbildname=$Fusedir.fuse_edg${Contrastedgescale}.tif
+
+  Enfusecommand="enfuse \
+      --exposure-weight=$Exposureweight \
+      --saturation-weight=$Saturationweight \
+      --contrast-weight=$Contrastweight \
+      --hard-mask \
+      \
+      --contrast-edge-scale=$Contrastedgescale \
+      --exposure-weight-function=$Exposureweightfunction \
+      \
+      --output=$Stackbildname \
+      --verbose \
+      $Bildliste"
+  Enfusecommand="$(echo $Enfusecommand)"
+  {
+    xterm -hold -title "$Stackbildname" -e "$Enfusecommand"
+
+
+#      --gray-projector=l-star \
+#    --contrast-window-size=$Contrastsize \
+
+    
+  comment "enfuse is ready: $Stackbildname"
+  cd ..
+  cmd image "$Stackbildname"
+  } &
+}
+
+#########################
+# unsortiert            #
+
+savepos() {
+  ## Funktion: Derzeitige Positionen merken
+  # Dient der Synchronisation der Positionsdaten über Parallelprozesse hinweg
+  echo "${Poscurrent:-0} ${Pos1:-0} ${Pos2:-0}" ${Schrittweite:-1} >$Positionfile
+#  comment "save: $(cat $Positionfile)"
+}
+readpos() {
+  ## Funktion: Derzeitige Positionen auslesen
+  # Dient der Synchronisation der Positionsdaten über Parallelprozesse hinweg
+  read Poscurrent Pos1 Pos2 Schrittweite <$Positionfile
+#  comment "read: $Poscurrent $Pos1 $Pos2 $Schrittweite"
+}
+hubloop_stepin() {
+  ## Funktion: Permanent stepin Kommandos senden, wenn $Hubloop_stepinfile nicht leer ist
+  # Wird durch L-SHIFT in keypress_watch() gesteuert
+  while :; do
+    [ -s $Hubloop_stepinfile ]  && cmd -w stepin  || sleep 0.1
+  done
+}
+hubloop_stepout() {
+  ## Funktion: Permanent stepout Kommandos senden, wenn $Hubloop_stepinfile nicht leer ist
+  # Wird durch L-CTRL in keypress_watch() gesteuert
+  while :; do
+    [ -s $Hubloop_stepoutfile ] && cmd -w stepout || sleep 0.1
+  done
+}
+
+keypress_watch_sendkey() {
+  # Taste(n) $1 mit xdotool "tippen"
+  local Capslock=
+  Capslock=$(xset -q | grep Caps | awk '{print $4}')
+  [ "$Capslock" = "on" ] && keypress_unlock
+  xdotool key ${1:-}
+  [ "$Capslock" = "on" ] && keypress_lock
+}
+
+###########################
+#### Tastatursteuerung ####
+
+keypress_lock() {
+  # Tastatur blockieren
+  sleep 0.1
+  xtrlock & echo $! >$Xtrlockpidfile
+}
+keypress_unlock() {
+  # Tasturblockade aufheben
+  mykill $(cat $Xtrlockpidfile)
+  sleep 0.2
+}
+keypress_watch() {
+  # Einfangen aller Tastatureingaben und auf Tastendruck Befehle senden.
+  # Aktivieren/Deaktivieren mit CAPSLOCK.
+  # Nutzt xtrlock zum Sperren von Tastatur und Maus.
+  # Einzelne Tastatureingaben werden weitergereicht, dafür wird xtrlock beendet und wieder gestartet.
+  
+  while read Line <&8 ; do
+    Keyhub=$(awk '{print $2}' <<< $Line)
+    Keycode=$(awk '{print $3}' <<< $Line)
+    Capslock=$(xset -q | grep Caps | awk '{print $4}')
+    case $Capslock in
+      on)  [ "$Keywatch" = "off" ] && keypress_lock && Keywatch="on" ;;
+      off) [ "$Keywatch" = "on" ]  && keypress_unlock && Keywatch="off" ;;
+    esac
+    [ "$Keywatch" = "on" ] && case $Keyhub in
+      press)
+        case $Keycode in
+        
+          # ALT-Taste freigeben (um ALT+Tab zu erlauben)
+          64)  keypress_unlock ;;                     # L-Alt
+          
+          # Durchgehender Lauf von Stepin/Stepout
+          50) echo "stepin"  >$Hubloop_stepinfile ;;  # L-Shift
+          37) echo "stepout" >$Hubloop_stepoutfile ;; # L-Ctrl
+          
+          # Guake toggle
+          96)  guake -t ;;                            # F12
+          
+          # Toggle window mode
+          23)  cmd "win" ;;                           # TAB
+          
+          # Schrittweite
+          10)  cmd "w 1" ;;                           # 1
+          11)  cmd "w 2" ;;                           # 2
+          12)  cmd "w 5" ;;                           # 3
+          13)  cmd "w 10" ;;                          # 4
+          14)  cmd "w 25" ;;                          # 5
+          15)  cmd "w 50" ;;                          # 6
+          16)  cmd "w 100" ;;                         # 7
+          17)  cmd "w 200" ;;                         # 8
+          18)  cmd "w 400" ;;                         # 9
+          
+          # stepin / stepout
+          31)  cmd "i" ;;                             # i
+          32)  cmd "o" ;;                             # o
+          
+          # Positionen speichern oder anlaufen
+          87)  cmd "pos1" ;;                          # Num-1
+          89)  cmd "pos2" ;;                          # Num-3
+          79)  cmd "go1" ;;                           # Num-7
+          81)  cmd "go2" ;;                           # Num-9
+          
+          # Positionen auf 0
+          19)  cmd "zero" ;;                          # 0
+          
+          # Stackshot
+          9)   :> $Stackshotfile ;;                   # ESC
+          117) cmd "stack -p" ;;                      # Bild-hoch
+          112) cmd "stack -c" ;;                      # Bild-runter
+          
+          # Programmende
+          24)  cmd "exit" ;;                          # q
+          
+          # ISO Lichtempfindlichkeit
+          25)  cmd "iso 100" ;;                       # w
+          26)  cmd "iso 200" ;;                       # e
+          27)  cmd "iso 400" ;;                       # r
+          28)  cmd "iso 800" ;;                       # t
+          29)  cmd "iso 1600" ;;                      # z
+          
+          # Video Vorschau/Preview
+          30)  cmd "zoom toggle" ;;                   # u
+          33)  cmd "preview" ;;                       # p
+          34)  cmd "stop-movie" ;;                    # ü
+          
+          # Shutter Verschlußzeit
+          38)  cmd "shutterspeed 1/10" ;;             # a
+          39)  cmd "shutterspeed 1/20" ;;             # s
+          40)  cmd "shutterspeed 1/40" ;;             # d
+          41)  cmd "shutterspeed 1/80" ;;             # f
+          42)  cmd "shutterspeed 1/125" ;;            # g
+          43)  cmd "shutterspeed 1/200" ;;            # h
+          44)  cmd "shutterspeed 1/320" ;;            # j
+          45)  cmd "shutterspeed 1/400" ;;            # k
+          46)  cmd "shutterspeed 1/800" ;;            # l
+          
+          # Foto
+          65)  cmd "capture-image-and-download" ;;    # Space
+          55)  cmd "capture-preview" ;;               # v
+          
+          # Videovorschau mit Zoom: Sichtfenster bewegen
+          62)  Shift_r="1" ;;                         # R-Shift
+          80)  [ "$Shift_r" ] && cmd "move-zoom y -640" || cmd "move-zoom y -64" ;;  # Num-8
+          88)  [ "$Shift_r" ] && cmd "move-zoom y +640" || cmd "move-zoom y +64" ;;  # Num-2
+          83)  [ "$Shift_r" ] && cmd "move-zoom x -640" || cmd "move-zoom x -64" ;;  # Num-4
+          85)  [ "$Shift_r" ] && cmd "move-zoom x +640" || cmd "move-zoom x +64" ;;  # Num-6
+          
+        esac
+      ;;
+      release)
+        case $Keycode in
+          50) :> $Hubloop_stepinfile ;;               # L-Shift
+          37) :> $Hubloop_stepoutfile ;;              # L-Ctrl
+          62)  Shift_r="" ;;                          # R-Shift
+          64)  keypress_lock ;;                       # L-Alt
+        esac
+      ;;
+    esac
+  done
+}
+readline_watch() {
+  # Terminaleingaben lesen und weiterreichen
+  local Commandline=
+  while : ; do
+    cd $(cat $Workdirfile)
+    history -n $Historyfile
+    read -r -e Commandline
+    echo "$Commandline" >> $Commandfifo
+  done
+}
+
+##########################
+#### Kommandozentrale ####
+
+cmd() {
+  ## Funktion: Kommando auf Kommandostapel legen
+  #  -w   Auf Ende der Ausführung des Kommandos warten
+  
+  local Warten=
+  [ "$1" = "-w" ] && Warten="yes" && shift
+  
+  # Kommandosperre setzen
+  echo "$*" > $Pleasewaitfile
+  
+  ## Funktion: Kommando senden
+  echo "$*" >> $Commandfifo
+  
+  # Warte auf Ende der Kommandosperre
+  [ "$Warten" = "yes" ] && {
+    while :; do
+      [ -s "$Pleasewaitfile" ] || break
+      sleep 0.001
+    done
+  }
+}
+cmd_loop() {
+  ## Funktion: Kommandostapel teilenweise an Parser weiterreichen
+  local Commandline
+  while :; do
+    ps -p $Imageviewerpid >/dev/null 2>&1 || Imageviewerpid=""
+    ps -p $Ffplaypid      >/dev/null 2>&1 || Ffplaypid=""
+  
+    read -r Commandline <&4
+    echo  "$Commandline" >> $Historyfile       # Eintrag für history von readline
+    echo  "$Commandline" > "$Pleasewaitfile"   # Kommandosperre setzen
+
+    cmd_parser $Commandline
+    
+    [ -s "$Ardutermrunfile" ] || break
+    
+    # Prompt anzeigen
+    Currentdir=$(pwd)
+    echo -e "${WEISS} $Poscurrent  ${BLAU}Pos1:${GELB}$Pos1 ${BLAU}Pos2:${GELB}$Pos2 \
+${BLAU}w:${WEISS}$Schrittweite(=$(awk 'BEGIN {print 0.048 * '$Schrittweite'}')µm) \
+${BLAU}iso:${WEISS}${Iso:-N/A} ${BLAU}shutter:${WEISS}${Shutterspeed:-N/A} \
+${BLAU}dir:${Currentdir#$Arduhome}> $WEISS"
+    # Kommandosperre aufheben
+    :> "$Pleasewaitfile"
+  done
+}
+cmd_parser() {
+  ## Funktion: Kommandozentrale von arduterm
+  
+  local Command
+  local Videomode_restore= Ordnername=
+  
+  Command="${1:-}"
+  shift
+  
+  case "$Command" in       # Laufende Videoaufnahme bei gphoto2 Aufruf unterbrechen, ggf. nach Kommando wieder starten
+    "get-config"|"gc"|"set-config"|"setconfig"|"sc"|\
+    "set-config-value"|"scv"|"set-config-index"|"sci"|\
+    "switch"|"switch-config"|"iso"|"shutter"|"shutterspeed"|\
+    "capture-image"|"cap"|"capture-image-and-download"|"capd"|"capture-preview"|"capp"|\
+    "zoom"|"u"|"move-zoom"|"mirrorup"|"m"|\
+    "gphoto2"|"stack")
+       Videomode_restore=$Videomode
+       videoaufnahme stop-movie
+    ;;
+  esac
+  
+  case "$Command" in
+    #### Allgemeine Optionen ####
+    "hilfe"|"help") # Hilfe anzeigen
+       comment "
+### Allgemeine Kommandos ###
+hilfe                               Diese Hilfe
+exit|q                              Arduterm beenden
+home
+project
+name
+
+### Gerätespezifische Kommandos ###
+device ADRESSE                      Device initialisieren. Ein Arduino hat oft die Adresse /dev/ttyACM0
+send [SIGNAL]                       SIGNAL an Device/Arduino senden
+
+### Dateioperationen ###
+cd [ORDNER]                         In Verzeichnis ORDNER wechseln
+ls                                  Verzeichnisinhalt anzeigen.
+image [BILD | OPTION]               BILD anzeigen mit Bildbetrachter 'geeqie'
+                                    Ohne Optionen: alle Bilder in einer Liste zur Auswahl anbieten
+                                    -rh zeigt verfügbare Optionen OPTION von geeqie
+video [VIDEO]                       VIDEO abspielen. Ohne Option: Letztes aufgenommenes Video zeigen
+mkdir ORDNERNAME                    Verzeichnis ORDNERNAME anlegen
+mkdir-time [ORDNERNAME]             Verzeichnis ORDNERNAME mit Datum und Uhrzeit im Namen anlegen und hineingehen
+### gphoto2-Aufrufe ###
+gphoto2  [OPTIONEN]                 gphoto2 mit OPTIONEN direkt aufrufen
+set-config | s [ENTRY]              Kamera interaktiv konfigurieren (Dialog)
+get-config | g [ENTRY]              Konfiguration der Kamera anzeigen. ENTRY z.B. 'iso' oder 'shutterspeed'
+                                    Ohne ENTRY: Alle Einstellungen vom TYP RADIO/MENU anzeigen
+set-config-value | scv ENTRY=VALUE  Aufruf von:   gphoto2 --set-config-value ENTRY=VALUE
+set-config-index | sci ENTRY=INDEX  Aufruf von:   gphoto2 --set-config-index ENTRY=INDEX
+switch-config ENTRY [ + | - ][n]    Kameraeinstellung ENTRY auf nächste (+) oder vorherige (-) Stufe einstellen
+                                    +n oder -n : n Stufen weiterstellen
+mirrorup | m                        Spiegel hochklappen
+zoom 1|5|10                         Liveview/Video-Zoom 1x, 5x oder 10x
+move-zoom x|y PIXEL                 Position des Zoom-Focus relativ in X oder Y Richtung um PIXEL ändern. 
+                                    Bei 'zoom 5' oder 'zoom 10' bewegt dies die Position des sichtbaren Bildes
+capture-image | cap                 Foto aufnehmen und auf Kamera speichern
+capture-image-and-download | capd   Foto aufnehmen und herunterladen
+capture-preview | capp              Preview-Bild aufnehmen und herunterladen
+preview | p                         Video: Preview anzeigen
+capture-movie | start               Video: Preview anzeigen und speichern
+capture-movie-no-preview            Video: Aufnehmen ohne Preview.
+                                    Option: DAUER Frames oder DAUERs Sekunden 
+stop-movie | stop                   Videoaufnahme stoppen
+"
+       ;;
+    "#") comment "$*" ;;     # Kommentar anzeigen.
+    "exit"|"q") :> $Ardutermrunfile ;; # Programm beenden. 
+    "win")
+      case $Windowmode in
+        fullimage) Windowmode=fullpreview ;;
+        fullpreview) Windowmode=split ;;
+        split) Windowmode=fullimage ;;
+      esac
+      window_placement
+      ;;
+       
+    #### Kommunikation mit Device/Arduino
+    "device") # Geräteadresse setzen
+       device_init $1
+       comment "Beginne Überwachung von $Deviceadresse"
+       ;;
+    "send") # Signal an Arduino senden. Syntax: send SIGNAL1 SIGNAL2 SIGNAL3 ...
+       comment "Sende an $Deviceadresse: $*"
+       device_send "$*"
+       device_wait
+       ;;
+    "0"|"zero") 
+       comment "Setze alle Positionsmarker auf 0."
+       Poscurrent="0" ; Pos1="0" ; Pos2="0"
+       setpos0
+       savepos
+       ;;
+    "pos0") 
+       comment "Nullpunkt definiert"
+       Poscurrent=0
+       setpos0
+       savepos
+       ;;
+    "pos1")
+       comment "Setze Pos1 auf: $Poscurrent"
+       Pos1=$Poscurrent
+       savepos
+       ;;
+    "pos2") 
+       comment "Setze Pos2 auf: $Poscurrent"
+       Pos2=$Poscurrent
+       savepos
+       ;;
+    "go1")  
+       comment "Gehe zu Pos1: $Pos1"
+       steplauf "$Pos1" 
+       ;;
+    "go2")
+       comment "Gehe zu Pos2: $Pos2"
+       steplauf "$Pos2" 
+       ;;
+    "go0")  
+       comment "Gehe zu Nullpunkt Pos0: 0"
+       steplauf "0" 
+       ;;
+    "i"|"stepin")  
+       steplauf "$(bc <<< "$Poscurrent + $Schrittweite")" 
+       ;;
+    "o"|"stepout") 
+       steplauf "$(bc <<< "$Poscurrent - $Schrittweite")" 
+       ;;
+    "w")
+       Schrittweite="$1"
+       device_send "w,$Schrittweite"
+       device_wait >/dev/null
+       savepos
+       ;;
+       
+    #### Dateioperationen ####
+    "home") # Basisverzeichnis für arduterm Bilder+Videos festlegen
+       [ "${1:-}" ] && Arduhome="$1"
+       cmd cd $Arduhome
+       ;;
+    "projekt"|"project") # Projektname festlegen, Ordner erzeugen und hineingehen
+       Projektname="${1:-unknown}.$(date +%Y-%m-%d)"
+       mkdir -p "$Arduhome/$Projektname"
+       cd "$Arduhome/$Projektname"
+       cmd cd "$Arduhome/$Projektname"
+       ;;
+    "name")
+       Stackshotname="$1"
+       ;;
+    "cd") # Verzeichnis wechseln
+       cd ${1:-$Arduhome/$Projektname}
+       pwd >$Workdirfile
+       sleep 0.1
+       xdotool key Return
+       ;;
+    "mkdir") # Verzeichnis anlegen
+       comment "Erzeuge Ordner $1"
+       mkdir "$1"
+       ;;
+    "ls") # Verzeichnisinhalt anzeigen
+       ls "$@"
+       ;;
+    "image") # Bild $1 anzeigen.
+       showimage "$@"
+       ;;
+    "video") # Video $1 oder $Latestvideo abspielen
+       ffplay -loglevel error "${1:-$Latestvideo}"
+       ;;
+       
+    #### gphoto2 Aufrufe ####
+    "get-config"|"gc")
+       ardu_gphoto2 get-config $@
+       ;;
+    "set-config"|"setconfig"|"sc") # Kamera mit Hilfe von gphoto2 konfigurieren
+       comment "Konfiguration der Kamera mittels Dialog"
+       # Tastaturabfrage anhalten, um sie für Dialog freizuhalten
+       kill -s STOP $Watchreadlinepid
+       ardu_gphoto2 set-config "$@"
+       kill -s CONT $Watchreadlinepid
+       clear
+       ;;
+    "set-config-value"|"scv") # Kameraeinstellung setzen
+       ardu_gphoto2 $Command $*
+       ;;
+    "set-config-index"|"sci") # Kameraeinstellung setzen
+       ardu_gphoto2 $Command $*
+       ;;
+    "switch"|"switch-config")
+       ardu_gphoto2 switch-config $@
+       ;;
+    "iso")
+      case $1 in
+        "")   ardu_gphoto2 get-config -a iso ;;
+        "-")  Iso=$(ardu_gphoto2 switch-config iso -) ;;
+        "+")  Iso=$(ardu_gphoto2 switch-config iso +) ;;
+        *)    ardu_gphoto2 set-config-value iso=$1 && Iso=$1 ;;
+      esac
+      ;;
+    "shutter"|"shutterspeed")
+      case $1 in
+        "") ardu_gphoto2 get-config -a shutterspeed ;;
+        +)  Shutterspeed=$(ardu_gphoto2 switch-config shutterspeed +) ;;
+        -)  Shutterspeed=$(ardu_gphoto2 switch-config shutterspeed -) ;;
+        *)  ardu_gphoto2 set-config-value shutterspeed=$1 && Shutterspeed=$1 ;;
+      esac
+      ;;
+       
+    "capture-image"|"cap") 
+       comment "Fotoaufnahme in Kameraspeicher"
+       ardu_gphoto2 capture-image
+       ;;
+    "capture-image-and-download"|"capd")
+       comment "Fotoaufnahme auf Festplatte"
+       ardu_gphoto2 capture-image-and-download
+       showimage "$Latestimage"
+       comment "Bild gespeichert als $Latestimage"
+       ;;
+    "capture-preview"|"capp")
+       comment "Nehme einzelnes Video-Preview-Bild auf"
+       ardu_gphoto2 capture-preview
+       showimage "$Latestimage"
+       comment "Bild gespeichert als $Latestimage"
+       ;;
+        
+    "zoom"|"u") # eoszoom 1x, 5x, 10x
+       case $1 in
+         1|5|10) Previewzoom=$1 ;;
+         toggle|"") 
+           case $Previewzoom in
+             1|5) Previewzoom=10 ;;
+             10)  Previewzoom=1 ;;
+           esac
+         ;;
+       esac
+       ardu_gphoto2 zoom $Previewzoom
+       ;;
+    "move-zoom")
+       ardu_gphoto2 move-zoom $1
+       ;;
+    "mirrorup"|"m")
+       ardu_gphoto2 mirrorup $1
+       ;;
+         
+    "gphoto2") # gphoto2 (mit Optionen) direkt aufrufen. Syntax: Normaler gphoto2-Aufruf
+       ardu_gphoto2 gphoto2 $*
+       ;;
+         
+    #### Video ####
+    "preview"|"p")
+       videoaufnahme preview
+       ;;
+    "capture-movie-no-preview")
+       comment "Videoaufnahme wird gespeichert, aber nicht angezeigt."
+       videoaufnahme capture-movie
+       comment "Video wird gespeichert als $Latestvideo"
+       ;;
+    "capture-movie"|"start")
+       comment "Videoaufnahme wird gespeichert und angezeigt."
+       videoaufnahme capture-movie-and-preview
+       comment "Video wird gespeichert als $Latestvideo"
+       ;;
+    "stop-movie"|"stop")
+       comment "Videoaufnahme wird gestoppt"
+       videoaufnahme stop-movie
+       ;;
+       
+    #### Stacking ####
+    "stack")
+       Videomode_restore=""
+       stackshot $1 & 
+       ;;
+    "fuse")
+       fuse $1
+       ;;
+       
+    "") ;;
+    *) fehler "Fehler: unbekanntes Kommando: $Command" ;;
+  esac
+  # ggf. Video wieder starten
+  [ "$Videomode_restore" ] && videoaufnahme $Videomode_restore
+}
+
+#######################
+#### Hauptprogramm ####
+
+declare_variables() {
+  Configfile="$HOME/.config/arduterm.init"
+  
+  # Farben für späteren Gebrauch definieren
+  ROT="\e[31m"
+  GELB="\e[33m"
+  WEISS="\e[37m"
+  BLAU="\e[1;34m"
+  
+  ZOOM_XPOS=1600
+  ZOOM_YPOS=960
+  
+  Arduhome="$HOME/Bilder/arduterm"
+  Latestvideo=
+  
+  
+  Deviceadresse="/dev/null"
+  Devicetimeout=2
+  
+  Targetmonitor=
+  Windowmode=split       # split|fullimage|fullpreview
+  
+  Schrittweite=1
+  Poscurrent=0
+  Pos0=0
+  Pos1=0
+  Pos2=1
+  
+  Previewzoom=1
+  Shutterspeed=
+  Iso=
+  
+  Keyboardid=$(xinput | grep "AT Translated" | cut -d= -f2 | awk '{print $1}')
+  Xinputpid=
+  Watchkeypresspid=
+  Watchdevicepid=
+  Watchreadlinepid=
+  
+  Keywatch="off"
+}
+create_cachefiles() {
+  Cachefolder=/tmp/arduterm
+  mkdir -p $Cachefolder
+  rm $Cachefolder/* 2>/dev/null
+  
+  Kameradumpfile=$Cachefolder/gphoto2.dump
+  :> $Kameradumpfile
+  
+  Devicemessagefifo=$Cachefolder/device.message.fifo
+  mkfifo $Devicemessagefifo
+  exec 7<> $Devicemessagefifo
+
+  Commandfifo=$Cachefolder/command.fifo
+  mkfifo $Commandfifo
+  exec 4<> $Commandfifo
+
+  Keywatchfifo=$Cachefolder/keywatch.fifo
+  mkfifo $Keywatchfifo
+  exec 8<>$Keywatchfifo
+  
+  Workdirfile=$Cachefolder/workdir
+  pwd >$Workdirfile
+  
+  Historyfile=$Cachefolder/history
+  :> $Historyfile
+  
+  Pleasewaitfile=$Cachefolder/parser.action
+  :> $Pleasewaitfile
+  
+  Stackshotfile=$Cachefolder/stackshot.action
+  :> $Stackshotfile
+  
+  Lateststackfile=$Cachefolder/stack.latest
+  :> $Lateststackfile
+  
+  Xtrlockpidfile=$Cachefolder/xtrlock.pid
+  :> $Xtrlockpidfile
+  
+  Ardutermrunfile=$Cachefolder/arduterm.action
+  echo "action" >$Ardutermrunfile
+  
+  Hubloop_stepinfile=$Cachefolder/loop.stepin.action
+  Hubloop_stepoutfile=$Cachefolder/loop.stepout.action
+  :> $Hubloop_stepinfile
+  :> $Hubloop_stepoutfile
+  
+  Positionfile=$Cachefolder/position
+  savepos
+}
+arduterm_init() {
+  local Line= Completeline=
+  
+  # Bei Abbruch des Programmes (z.B. STRG+C) Funktion arduterm_ende aufrufen
+  trap arduterm_ende EXIT
+  
+  declare_variables
+  create_cachefiles
+
+  # Abhängigkeiten prüfen
+  command -v gphoto2 >/dev/null || fehler "Warnung: gphoto2 nicht gefunden. Wird benötigt für Kamerasteuerung."
+  command -v sxiv >/dev/null    || fehler "Warnung: sxiv nicht gefunden. Wird benötigt für Bildanzeige."
+  command -v ffmpeg >/dev/null  || fehler "Warnung: ffmpeg nicht gefunden. Wird benötigt für Videovorschau."
+  command -v dialog >/dev/null  || fehler "Warnung: dialog nicht gefunden. Wird benötigt für interaktive Kamerakonfiguration."
+  command -v xtrlock >/dev/null || fehler "Warnung: xtrlock nicht gefunden. Wird benötigt für Tastatursteuerung mit CAPSLOCK."
+  command -v xinput >/dev/null  || fehler "Warnung: xinput nicht gefunden. Wird benötigt für Tastatursteuerung mit CAPSLOCK."
+  command -v xdotool >/dev/null || fehler "Warnung: xdotool nicht gefunden. Wird benötigt für Fensterkontrolle."
+  command -v wmctrl >/dev/null  || fehler "Warnung: wmctrl nicht gefunden. Wird benötigt für Fensterkontrolle."
+  
+  # Gruppe dialout prüfen
+  id | grep -q dialout          || fehler "Warnung: Benutzer $(id -un) ist nicht in Gruppe dialout. Wird benötigt, um Arduino anzusteuern."
+  
+  # Auf Guake Terminal prüfen
+  ps -p $(ps -o ppid -p $PPID | tail -n1) | grep -q guake || fehler "Warnung: arduterm ist für Terminal Emulator Guake ausgelegt."
+  
+  # Configfile auswerten
+  [ -s "$Configfile" ] && cat $Configfile >> $Commandfifo
+}
+arduterm_ende() {
+  ## Funktion: Programm sauber beenden
+  trap - EXIT
+  
+  # Eventuell laufende Videoaufnahme stoppen
+  videoaufnahme stop-movie
+  
+  # Hintergrundprozesse stoppen
+  for Pid in $Watchreadlinepid $Watchdevicepid $Watchkeypresspid $Xinputpid $(cat $Xtrlockpidfile) $Imageviewerpid $Hubloopstepinpid $Hubloopstepoutpid ; do mykill $Pid ; done
+  
+  exec 4<&-
+  exec 6<&-
+  exec 7<&-
+  exec 8<&-
+
+  rm -R $Cachefolder
+  
+  exit
+}
+main() {
+  arduterm_init
+  
+  readline_watch <&0                      & Watchreadlinepid=$!
+  
+  xinput test $Keyboardid >>$Keywatchfifo & Xinputpid=$!
+  keypress_watch                          & Watchkeypresspid=$!
+  
+  hubloop_stepin                          & Hubloopstepinpid=$!
+  hubloop_stepout                         & Hubloopstepoutpid=$!
+  
+  cmd_loop
+  arduterm_ende
+}
+main
