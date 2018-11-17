@@ -1,8 +1,8 @@
-#!/bin/bash
+#! /bin/sh
 
 # Script to draw a ruler into an image. Intended for microscope captures.
-# Needs imagemagick.
-# Published under free MIT license.
+# Needs ImageMagick: https://www.imagemagick.org/
+# Published under free MIT license. Feel free to use it for whatever you like to.
 
 round() {
   # round up or down at 0.5. Usage: `echo 4.5 | round`
@@ -10,16 +10,19 @@ round() {
 }
 
 imgruler() {
-  local Sourcefile Destinationfile Sourcefilearray Sourcefilecount=0
-  local Elementsize Elementunit Elementwidth Elementcount Elementheight Elementwidthrounded
+  local Sourcefile Destinationfile Sourcefilelist Destinationfilelist
+  local Elementsize Elementunit Elementwidth Elementcount Elementheight
   local Linesstring Labelstring Pointsize Color
-  local Ypos Xpos Xoffset Imagewidth Imageheight
+  local Xpos Ypos Xoffset Imagewidth Imageheight
   local Shortoptions Longoptions Parsedoptions
-  local i n
+  local Magick Line
+  local Tabulator="$(printf "\t")"
   
-  convert -version | grep -q ImageMagick || {
-    echo "Need convert utility from ImageMagick. convert not found. Exit." 2>/dev/null
-    return 1
+  command -v magick >/dev/null && Magick="magick" || {
+    convert -version | grep -q ImageMagick || {
+      echo "Need convert utility from ImageMagick. convert not found. Exit." 2>/dev/null
+      return 1
+    }
   }
   
   Shortoptions="u:w:h:n:o:c:p:b:x:y:m:"
@@ -43,7 +46,7 @@ Options: All options except --help expect an argument.
 
      --help         Show this help
      
- -u, --unit         Unit [and identifier] of one element. Example: 5µm
+ -u, --unit         Real world size [and unit] of one element. Example: 5µm
                     Default: 10
  -w, --width        Pixel width of one element. 
                     Floating values like 7.4 are allowed. Element line positions
@@ -54,11 +57,11 @@ Options: All options except --help expect an argument.
  -n, --number       Number of elements of the ruler. Determines its length.
                     Default: 100
                   
- -x                 X position of ruler. Default: centered.
+ -x                 X position of ruler. Default: center of image.
  -y                 Y position of ruler. Default: bottom of image.
  
- -c, --color        Color of ruler. Default: black.
- -p, --pointsize    Font point size. Default: double of element height.
+ -c, --color        Color of ruler. Default: black. Possible e.g. white, red.
+ -p, --pointsize    Font point size. Default: twice the element height.
  -b, --background   Background color of empty ruler images.
                     Default: white. Possible e.g.: transparent
                   
@@ -70,7 +73,7 @@ Options: All options except --help expect an argument.
         return 0
       ;;
       -u|--unit)                                       # Unit size and identifier, e.g. 5µm
-                       Elementunit="$(sed 's/[.0-9]*//g' <<< "${2:-}")"
+                       Elementunit="$(echo "${2:-}" | sed 's/[.0-9]*//g')"
                        Elementsize="${2%$Elementunit}"
       ;;
       -w|--width)      Elementwidth="${2:-}"  ;;       # Pixel width of one element. Floating values allowed.
@@ -84,76 +87,89 @@ Options: All options except --help expect an argument.
       -c|--color)      Color="${2:-}" ;;               # Color of ruler
       -b|--background) Background="${2:-}" ;;          # Background color for ruler-only images
       
-      -m|--mode)       imgruler_predefined "${2:-}" ;; # Set parameters predefined in ruler_predefined()
+      -m|--mode)       imgruler_calibrated "${2:-}" ;; # Set parameters predefined in ruler_calibrated()
       
       -o|--output)     Destinationfile="${2:-}" ;;     # Output file.
       --)                                              # Source file(s)
         shift
         while [ $# -gt 0 ]; do
-          Sourcefilecount=$((Sourcefilecount +1))
-          Sourcefilearray[$Sourcefilecount]="${1:-}"
+          Sourcefilelist="$Sourcefilelist$Tabulator${1:-}"
           shift
         done
       ;;
     esac
-    shift ; shift
+    [ $# -gt 0 ] && shift
+    [ $# -gt 0 ] && shift
   done
-
+  
+  [ "$Parsedoptions" = " --" ] && echo "Get a list of available options with: imgruler --help"
+  
   # Default values if not already set
   Elementsize="${Elementsize:-10}"
   Elementwidth="${Elementwidth:-10}"
-  Elementwidthrounded="$(echo "$Elementwidth" | round)"
-  Elementheight="${Elementheight:-$Elementwidthrounded}"
+  Elementheight="${Elementheight:-$(echo "$Elementwidth" | round)}"
   Elementcount="${Elementcount:-100}"
   Pointsize="${Pointsize:-$((Elementheight * 2))}"
   Color="${Color:-black}"
   Background="${Background:-white}"
-  
-  [ "$Sourcefilecount" = "0" ] && Sourcefilecount="1"
-  for ((n=1 ; n<=$Sourcefilecount ; n++)); do
-    Sourcefile="${Sourcefilearray[$n]}"
+
+  [ "$Sourcefilelist" ] || {
+    # No source file? Create empty image with ruler only.
+    echo "Will create a new empty image with a ruler in it."
+    Imagewidth="$(awk "BEGIN {print $Elementwidth * $((Elementcount +14))}" | round)"
+    Imageheight="$((Elementheight * 5))"
+    Destinationfile="${Destinationfile:-ruler.png}"
+    $Magick convert -size ${Imagewidth}x${Imageheight} xc:$Background "$Destinationfile"
+    Sourcefilelist="$Destinationfile"
+  }
+
+  IFS="$Tabulator"
+  for Sourcefile in $Sourcefilelist ; do
     
-    [ "$Sourcefile" ] && {
-      Imagewidth=$(identify -format "%w" "$Sourcefile")
-      Imageheight=$(identify -format "%h" "$Sourcefile")
-      Destinationfile="${Destinationfile:-$(dirname $Sourcefile)/ruler_$(basename $Sourcefile)}"
-    } || {
-      # No source file? Create empty image with ruler only.
-      Imagewidth="$(awk "BEGIN {print $Elementwidth * $((Elementcount +14))}" | round)"
-      Imageheight="$((Elementheight * 5))"
-      Destinationfile="${Destinationfile:-ruler.jpg}"
-    }
+    Imagewidth=$(identify -format "%w" "$Sourcefile")
+    Imageheight=$(identify -format "%h" "$Sourcefile")
+    Destinationfile="${Destinationfile:-$(dirname "$Sourcefile")/ruler_$(basename "$Sourcefile")}"
 
     [ "$Xpos" ] || Xpos=$(awk "BEGIN {print $Imagewidth/2 - $Elementwidth * $Elementcount /2}" | round)
     [ "$Ypos" ] || Ypos=$Imageheight
 
-    for ((i=0 ; i<=Elementcount ; i++)); do           # small lines
-      Xoffset=$(awk "BEGIN {print $Elementwidth * $i}" | round)
+    Line=0
+    while [ "$Line" -le "$Elementcount" ] ; do   # small lines
+      Xoffset=$(awk "BEGIN {print $Elementwidth * $Line}" | round)
       Linesstring="$Linesstring line $((Xpos + Xoffset)),$Ypos $((Xpos + Xoffset)),$((Ypos - Elementheight * 1))"
+      Line=$((Line+1))
     done
-    for ((i=0 ; i<=Elementcount ; i=$((i+5)) )); do   # half lines
-      Xoffset=$(awk "BEGIN {print $Elementwidth * $i}" | round)
+    Line=0
+    while [ "$Line" -le "$Elementcount" ] ; do   # half lines
+      Xoffset=$(awk "BEGIN {print $Elementwidth * $Line}" | round)
       Linesstring="$Linesstring line $((Xpos + Xoffset)),$Ypos $((Xpos + Xoffset)),$((Ypos - Elementheight * 2))"
+      Line=$((Line+5))
     done
-    for ((i=0 ; i<=Elementcount ; i=$((i+10)) )); do   # long lines
-      Xoffset=$(awk "BEGIN {print $Elementwidth * $i}" | round)
+    Line=0
+    while [ "$Line" -le "$Elementcount" ] ; do   # long lines
+      Xoffset=$(awk "BEGIN {print $Elementwidth * $Line}" | round)
       Linesstring="$Linesstring line $((Xpos + Xoffset)),$Ypos $((Xpos + Xoffset)),$((Ypos - Elementheight * 3))"
-      Labelstring="$Labelstring text $((Xpos + Xoffset - Pointsize)),$((Ypos - Elementheight * 3 -2)) '$(awk "BEGIN {print $i * $Elementsize}")$Elementunit'"
+      Labelstring="$Labelstring text $((Xpos + Xoffset - Pointsize)),$((Ypos - Elementheight * 3 -2)) '$(awk "BEGIN {print $Line * $Elementsize}")$Elementunit'"
+      Line=$((Line+10))
     done
 
     #Create the ruler
     echo "Creating $Destinationfile"
     convert -size ${Imagewidth}x${Imageheight}  xc:$Background \
-            $( [ "$Sourcefile" ] && echo "-composite $Sourcefile" ) \
+            -composite "$Sourcefile" \
             -fill $Color -draw "$Linesstring" \
-            -fill $Color -font helvetica -pointsize $Pointsize -draw "$Labelstring" \
+            -fill $Color -font "helvetica" -pointsize $Pointsize -draw "$Labelstring" \
             "$Destinationfile"
+    Destinationfilelist="$Destinationfilelist$Tabulator$Destinationfile"
+    
+    # show created images
+    echo "${Sourcefilelist#$Tabulator}" | grep -q "$Tabulator" || env IFS=" $Tabulator" $Magick display $Destinationfilelist
     Destinationfile=""
   done
 }
 
-imgruler_predefined() {
-  # Predefined parameter sets customized for my microscope capture results.
+imgruler_calibrated() {
+  # Predefined parameter sets calibrated to my microscope capture results.
   # Can be used with e.g.: imgruler --mode 100c
   # Adjust for your own camera results checked with micrometer captures.
   case "${1:-}" in
@@ -246,4 +262,3 @@ imgruler_predefined() {
 }
 
 imgruler "$@"
-
