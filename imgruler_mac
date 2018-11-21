@@ -35,6 +35,7 @@ Without options (or -h only) this help is displayed.
  
  -c   Color of ruler. Default: black. Possible e.g. white, red.
  -p   Font point size. Default: twice the element height.
+ -f   Font to use. Get a list with: $Magick convert -list font | grep 'Font:'
  -b   Background color of empty ruler images.
       Default: white. Possible e.g.: transparent
                     
@@ -50,7 +51,7 @@ Without options (or -h only) this help is displayed.
 imgruler() {
   local Sourcefile Destinationfile Sourcefilelist Destinationfilelist
   local Elementsize Elementunit Elementwidth Elementcount Elementheight
-  local Linesstring Labelstring Pointsize Color
+  local Linesstring Labelstring Pointsize Color Font
   local Xpos Ypos Xoffset Imagewidth Imageheight
   local Magick Line Options Optioncount=0
   local Tabulator="$(printf "\t")"
@@ -69,7 +70,7 @@ imgruler() {
   }
 
   # check options
-  while getopts ":u:w:h:n:o:c:p:b:x:y:m:" Option; do
+  while getopts ":u:w:h:n:o:c:p:b:x:y:m:f:" Option; do
     case "$Option" in
       u)                                       # Unit size and identifier, e.g. 5µm
          Elementunit="$(echo "${OPTARG:-}" | sed 's/[.0-9]*//g')"
@@ -83,6 +84,7 @@ imgruler() {
       y) Ypos="${OPTARG:-}" ;;                # Y position of ruler
       
       p) Pointsize="${OPTARG:-}" ;;           # Font point size
+      f) Font="${OPTARG:-}" ;;                # Font
       c) Color="${OPTARG:-}" ;;               # Color of ruler
       b) Background="${OPTARG:-}" ;;          # Background color for ruler-only images
       
@@ -164,12 +166,16 @@ imgruler() {
       Line=$((Line+10))
     done
 
+    # Find a font
+    [ "$Font" ] || Font="$(convert -list font | grep Font: | cut -d: -f2 | grep -i -E 'arial|helvetica|times-roman|times-new-roman' | sort | head -n1 )"
+    Font="$(echo $Font | sed 's/ //g')"
+
     #Create the ruler
     echo "Creating $Destinationfile"
     convert -size ${Imagewidth}x${Imageheight}  xc:$Background \
             -composite "$Sourcefile" \
             -fill $Color -draw "$Linesstring" \
-            -fill $Color -font "helvetica" -pointsize $Pointsize -draw "$Labelstring" \
+            -fill $Color -font $Font -pointsize $Pointsize -draw "$Labelstring" \
             "$Destinationfile"
     Destinationfilelist="$Destinationfilelist$Tabulator$Destinationfile"
     
@@ -180,7 +186,6 @@ imgruler() {
     Destinationfile=""
   done
 }
-
 imgruler_calibrated() {
   # Predefined parameter sets calibrated to my microscope capture results.
   # Can be used with e.g.: imgruler --mode 100c
