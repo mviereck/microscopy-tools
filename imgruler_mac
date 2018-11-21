@@ -167,7 +167,7 @@ imgruler() {
     done
 
     # Find a font
-    [ "$Font" ] || Font="$(convert -list font | grep Font: | cut -d: -f2 | grep -i -E 'arial|helvetica|times-roman|times-new-roman' | sort | head -n1 )"
+    [ "$Font" ] || Font="$($Magick convert -list font | grep Font: | cut -d: -f2 | grep -i -E 'arial|helvetica|times-roman|times-new-roman' | sort | head -n1 )"
     Font="$(echo $Font | sed 's/ //g')"
 
     #Create the ruler
