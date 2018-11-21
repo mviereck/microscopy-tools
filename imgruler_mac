@@ -191,9 +191,22 @@ imgruler_calibrated() {
   # Can be used with e.g.: imgruler --mode 100c
   # Adjust for your own camera results checked with micrometer captures.
   # Most important:
-  #  --unit   sets Elementsize and Elementunit
-  #  --width  sets Elementwidth
-  #  --number sets Elementcount
+  #  Option -u sets Elementsize and Elementunit
+  #  Option -w sets Elementwidth
+  #  Option -n sets Elementcount
+  # How to calibrate:
+  #  - Set your camera to your desired image resolution that you want to use regulary.
+  #  - Capture an image of a micrometer.
+  #  - Run imgruler with options -x 100 -y 100
+  #  - Change -x and -y until the first 0 line of the ruler meets a micrometer line
+  #  - Try out several values for -w (width of one element) until the ruler lines match the micrometer in a useful way. 
+  #    Use floating values like -w 7.48 for fine tuning.
+  #  - Set option -u 5µm. Change the value until the ruler values match the measured size.
+  #  - Remove options -x and -y.
+  #  - Set option -n 40. Change value until ruler length looks nice to you.
+  #  - You can further adjust ruler height with -h or font size with -p if you like to.
+  #  - Create an entry below that matches your measured values. Give it a name that means something to you.
+  #  - You can use your created entry with e.g. -m 100c
   case "${1:-}" in
     100c) # 1000x900
       Elementsize="1"
