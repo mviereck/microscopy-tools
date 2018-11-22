@@ -8,14 +8,52 @@ round() {
   # round up or down at 0.5. Usage: `echo 4.5 | round`
   awk '{print int($1+0.5)}'
 }
+imgruler_help() {
+  echo "Draw a ruler into an image.
+Usage: imgruler [OPTIONS] [IMAGENAME]
 
+Does not overwrite source file IMAGENAME.
+Multiple IMAGENAMEs or wildcards * ? can be given. (E.g. pic*.jpg)
+Without IMAGENAME a new image with a ruler only will be created.
+
+Needs convert utility from ImageMagick.
+
+Options: All options expect an argument.
+Without options (or -h only) this help is displayed.
+     
+ -u   Real world size [and unit] of one element. Example: 5µm
+      Default: 10
+ -w   Pixel width of one element. 
+      Floating values like 7.4 are allowed. Element line positions
+      will be rounded within the full ruler length. Default: 10
+ -h   Pixel height of one element. Ruler height will be 5 times this height. 
+      Default: Same as element width.
+ -n   Number of elements of the ruler. Determines its length. Default: 100
+                  
+ -x   X position of ruler. Default: center of image.
+ -y   Y position of ruler. Default: bottom of image.
+ 
+ -c   Color of ruler. Default: black. Possible e.g. white, red.
+ -p   Font point size. Default: twice the element height.
+ -f   Font to use. Get a list with: $Magick convert -list font | grep 'Font:'
+ -b   Background color of empty ruler images.
+      Default: white. Possible e.g.: transparent
+                    
+ -m   Run with a predefined calibrated parameter set.
+      (Define your own parameter sets in imgruler_calibrated().)
+                  
+ -o   Output file. 
+      Default: Source file with 'ruler_' added before file name.
+      Default without source file: ruler.jpg
+      Option makes only sense with not more than one source file.
+"
+}
 imgruler() {
   local Sourcefile Destinationfile Sourcefilelist Destinationfilelist
   local Elementsize Elementunit Elementwidth Elementcount Elementheight
-  local Linesstring Labelstring Pointsize Color
+  local Linesstring Labelstring Pointsize Color Font
   local Xpos Ypos Xoffset Imagewidth Imageheight
-  local Shortoptions Longoptions Parsedoptions
-  local Magick Line
+  local Magick Line Options Optioncount=0
   local Tabulator="$(printf "\t")"
   
   command -v magick >/dev/null && Magick="magick" || {
@@ -25,84 +63,59 @@ imgruler() {
     }
   }
   
-  Shortoptions="u:w:h:n:o:c:p:b:x:y:m:"
-  Longoptions="unit:,width:,height:,number:,output:,color:,pointsize:,background:,mode:,help"
-  Parsedoptions="$(getopt --options $Shortoptions --longoptions $Longoptions --name "$0" -- "$@")"
-  eval set -- "$Parsedoptions"
+  # Show help if -h or no options are given
+  { [ -z "$*" ] || [ "$*" = "-h" ] ; } && {
+    imgruler_help
+    return 1
+  }
 
-  while [ $# -gt 0 ]; do
-    case "${1:-}" in
-      --help)
-        echo "Draw a ruler into an image.
-Usage: imgruler [OPTIONS] [IMAGENAME]
-
-Does not overwrite source file IMAGENAME.
-Multiple IMAGENAMEs or wildcards * ? can be given. (E.g. pic*.jpg)
-Without IMAGENAME a new image with a ruler only will be created.
-
-Needs convert utility from ImageMagick.
-
-Options: All options except --help expect an argument.
-
-     --help         Show this help
-     
- -u, --unit         Real world size [and unit] of one element. Example: 5µm
-                    Default: 10
- -w, --width        Pixel width of one element. 
-                    Floating values like 7.4 are allowed. Element line positions
-                    will be rounded within the full ruler length.
-                    Default: 10
- -h, --height       Pixel height of one element. Ruler height will be 5 times
-                    this height. Default: Same as element width.
- -n, --number       Number of elements of the ruler. Determines its length.
-                    Default: 100
-                  
- -x                 X position of ruler. Default: center of image.
- -y                 Y position of ruler. Default: bottom of image.
- 
- -c, --color        Color of ruler. Default: black. Possible e.g. white, red.
- -p, --pointsize    Font point size. Default: twice the element height.
- -b, --background   Background color of empty ruler images.
-                    Default: white. Possible e.g.: transparent
-                  
- -o, --output       Output file. 
-                    Default: Source file with 'ruler_' added before file name.
-                    Default without source file: ruler.jpg
-                    Option makes only sense with not more than one source file.
-"
-        return 0
+  # check options
+  while getopts ":u:w:h:n:o:c:p:b:x:y:m:f:" Option; do
+    case "$Option" in
+      u)                                       # Unit size and identifier, e.g. 5µm
+         Elementunit="$(echo "${OPTARG:-}" | sed 's/[.0-9]*//g')"
+         Elementsize="${OPTARG%$Elementunit}"
       ;;
-      -u|--unit)                                       # Unit size and identifier, e.g. 5µm
-                       Elementunit="$(echo "${2:-}" | sed 's/[.0-9]*//g')"
-                       Elementsize="${2%$Elementunit}"
-      ;;
-      -w|--width)      Elementwidth="${2:-}"  ;;       # Pixel width of one element. Floating values allowed.
-      -h|--height)     Elementheight="${2:-}" ;;       # Pixel height of one element.
-      -n|--number)     Elementcount="${2:-}" ;;        # Number of desired elements (=length of ruler)
+      w) Elementwidth="${OPTARG:-}"  ;;       # Pixel width of one element. Floating values allowed.
+      h) Elementheight="${OPTARG:-}" ;;       # Pixel height of one element.
+      n) Elementcount="${OPTARG:-}" ;;        # Number of desired elements (=length of ruler)
       
-      -x)              Xpos="${2:-}" ;;                # X position of ruler
-      -y)              Ypos="${2:-}" ;;                # Y position of ruler
+      x) Xpos="${OPTARG:-}" ;;                # X position of ruler
+      y) Ypos="${OPTARG:-}" ;;                # Y position of ruler
       
-      -p|--pointsize)  Pointsize="${2:-}" ;;           # Font point size
-      -c|--color)      Color="${2:-}" ;;               # Color of ruler
-      -b|--background) Background="${2:-}" ;;          # Background color for ruler-only images
+      p) Pointsize="${OPTARG:-}" ;;           # Font point size
+      f) Font="${OPTARG:-}" ;;                # Font
+      c) Color="${OPTARG:-}" ;;               # Color of ruler
+      b) Background="${OPTARG:-}" ;;          # Background color for ruler-only images
       
-      -m|--mode)       imgruler_calibrated "${2:-}" ;; # Set parameters predefined in ruler_calibrated()
+      m) imgruler_calibrated "${OPTARG:-}" ;; # Set parameters predefined in ruler_calibrated()
       
-      -o|--output)     Destinationfile="${2:-}" ;;     # Output file.
-      --)                                              # Source file(s)
-        shift
-        while [ $# -gt 0 ]; do
-          Sourcefilelist="$Sourcefilelist$Tabulator${1:-}"
-          shift
-        done
-      ;;
+      o) Destinationfile="${OPTARG:-}" ;;     # Output file.
+      
+      ?) echo "ERROR: Unkown option: -$OPTARG
+" >&2
+         imgruler_help >&2
+         return 1 ;;
     esac
-    [ $# -gt 0 ] && shift
-    [ $# -gt 0 ] && shift
+    Optioncount=$((Optioncount + 1))
   done
   
-  [ "$Parsedoptions" = " --" ] && echo "Get a list of available options with: imgruler --help"
+  Option=1
+  while [ "$Option" -le "$Optioncount" ]; do
+    shift
+    shift
+    Option=$((Option + 1))
+  done
+  
+  # check input files
+  while [ $# -gt 0 ]; do
+    Sourcefilelist="$Sourcefilelist$Tabulator${1:-}"
+    [ -e "${1:-}" ] || {
+      echo "ERROR: File not found: ${1:-}"
+      return 1
+    }
+    shift
+  done
   
   # Default values if not already set
   Elementsize="${Elementsize:-10}"
@@ -153,25 +166,47 @@ Options: All options except --help expect an argument.
       Line=$((Line+10))
     done
 
+    # Find a font
+    [ "$Font" ] || Font="$($Magick convert -list font | grep Font: | cut -d: -f2 | grep -i -E 'arial|helvetica|times-roman|times-new-roman' | sort | head -n1 )"
+    Font="$(echo $Font | sed 's/ //g')"
+
     #Create the ruler
     echo "Creating $Destinationfile"
     convert -size ${Imagewidth}x${Imageheight}  xc:$Background \
             -composite "$Sourcefile" \
             -fill $Color -draw "$Linesstring" \
-            -fill $Color -font "helvetica" -pointsize $Pointsize -draw "$Labelstring" \
+            -fill $Color -font $Font -pointsize $Pointsize -draw "$Labelstring" \
             "$Destinationfile"
     Destinationfilelist="$Destinationfilelist$Tabulator$Destinationfile"
     
-    # show created images
-    echo "${Sourcefilelist#$Tabulator}" | grep -q "$Tabulator" || env IFS=" $Tabulator" $Magick display $Destinationfilelist
+    [ "$DISPLAY" ] && {
+      # show created images
+      echo "${Sourcefilelist#$Tabulator}" | grep -q "$Tabulator" || env IFS=" $Tabulator" $Magick display $Destinationfilelist
+    }
     Destinationfile=""
   done
 }
-
 imgruler_calibrated() {
   # Predefined parameter sets calibrated to my microscope capture results.
   # Can be used with e.g.: imgruler --mode 100c
   # Adjust for your own camera results checked with micrometer captures.
+  # Most important:
+  #  Option -u sets Elementsize and Elementunit
+  #  Option -w sets Elementwidth
+  #  Option -n sets Elementcount
+  # How to calibrate:
+  #  - Set your camera to your desired image resolution that you want to use regulary.
+  #  - Capture an image of a micrometer.
+  #  - Run imgruler with options -x 100 -y 100
+  #  - Change -x and -y until the first 0 line of the ruler meets a micrometer line
+  #  - Try out several values for -w (width of one element) until the ruler lines match the micrometer in a useful way. 
+  #    Use floating values like -w 7.48 for fine tuning.
+  #  - Set option -u 5µm. Change the value until the ruler values match the measured size.
+  #  - Remove options -x and -y.
+  #  - Set option -n 40. Change value until ruler length looks nice to you.
+  #  - You can further adjust ruler height with -h or font size with -p if you like to.
+  #  - Create an entry below that matches your measured values. Give it a name that means something to you.
+  #  - You can use your created entry with e.g. -m 100c
   case "${1:-}" in
     100c) # 1000x900
       Elementsize="1"
