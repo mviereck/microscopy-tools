@@ -10,42 +10,69 @@ round() {
 }
 imgruler_help() {
   echo "Draw a ruler into an image.
+Ein Lineal in ein Bild zeichnen.
+
 Usage: imgruler [OPTIONS] [IMAGENAME]
 
 Does not overwrite source file IMAGENAME.
-Multiple IMAGENAMEs or wildcards * ? can be given. (E.g. pic*.jpg)
-Without IMAGENAME a new image with a ruler only will be created.
+Multiple IMAGENAMEs or wildcards * ? can be given. (E.g. pic*.jpg).
+Without IMAGENAME a new image ruler.png with a ruler only will be created.
 
-Needs convert utility from ImageMagick.
+Quelldatei IMAGENAME wird nicht überschrieben.
+Es können mehrere Quelldateien oder Wildcards mit * ? übergeben werden.
+Ohne Angabe eines Bildnamens wird nur ein Linealbild ruler.png erzeugt.
+
+Needs ImageMagick:    https://www.imagemagick.org
+Benötigt ImageMagick.
 
 Options: All options expect an argument.
 Without options (or -h only) this help is displayed.
+
+Optionen: Alle Optionen erwarten eine Wertangabe.
+Ohne Optionen (oder nur mit -h) wird diese Hilfe angezeigt.
      
  -u   Real world size [and unit] of one element. Example: 5µm
+      Reale Länge [und Längeneinheit] eines Linealelementes. Beispiel: 5µm
       Default: 10
  -w   Pixel width of one element. 
       Floating values like 7.4 are allowed. Element line positions
-      will be rounded within the full ruler length. Default: 10
- -h   Pixel height of one element. Ruler height will be 5 times this height. 
-      Default: Same as element width.
- -n   Number of elements of the ruler. Determines its length. Default: 100
+      will be rounded within the full ruler length. 
+      Breite in Pixel für ein Linealelement. Nachkommastellen sind nötig
+      für exakte Gesamtlänge des Lineales. Einzelstriche werden gerundet.
+      Default: 10
+ -h   Pixel height of one element. Ruler height will be 5 times this height.
+      Höhe in Pixel für ein Linealelement. Das Lineal ist 5 mal so hoch.
+      Default: Same as element width / Gleich mit Pixelbreite des Elements.
+ -n   Number of elements of the ruler. Determines its length.
+      Anzahl der Linealelemente. Bestimmt die Länge des Lineals.
+      Default: 100
                   
  -x   X position of ruler. Default: center of image.
+      X Position des Lineals. Default: Mitte.
  -y   Y position of ruler. Default: bottom of image.
+      Y Position des Lineals. Default: Unterer Bildrand.
  
- -c   Color of ruler. Default: black. Possible e.g. white, red.
+ -c   Color of ruler / Farbe des Lineals.
+      Default: black. Possible e.g. white, red.
  -p   Font point size. Default: twice the element height.
+      Schriftgröße. Default: Das Doppelte der Elementhöhe.
  -f   Font to use. Get a list with: $Magick convert -list font | grep 'Font:'
+      Schriftart. Liste: $Magick convert -list font | grep 'Font:'
  -b   Background color of empty ruler images.
+      Hintergrundfarbe für leeres Linealbild ruler.png.
       Default: white. Possible e.g.: transparent
                     
  -m   Run with a predefined calibrated parameter set.
       (Define your own parameter sets in imgruler_calibrated().)
+      Kalibrierte Voreinstellungswerte nutzen.
+      (Setze Deine kalibrierten Werte in Funktion imgruler_calibrated().)
                   
  -o   Output file. 
-      Default: Source file with 'ruler_' added before file name.
-      Default without source file: ruler.jpg
-      Option makes only sense with not more than one source file.
+        Default: Source file with 'ruler_' added before file name.
+        Default without source file: ruler.jpg
+      Bildname für neues Bild mit Lineal.
+        Default: ruler_IMAGENAME
+        Default ohne IMAGENAME: ruler.png
 "
 }
 imgruler() {
@@ -187,8 +214,9 @@ imgruler() {
   done
 }
 imgruler_calibrated() {
+  # English:
   # Predefined parameter sets calibrated to my microscope capture results.
-  # Can be used with e.g.: imgruler --mode 100c
+  # Can be used with e.g.: imgruler -m 100c
   # Adjust for your own camera results checked with micrometer captures.
   # Most important:
   #  Option -u sets Elementsize and Elementunit
@@ -207,6 +235,42 @@ imgruler_calibrated() {
   #  - You can further adjust ruler height with -h or font size with -p if you like to.
   #  - Create an entry below that matches your measured values. Give it a name that means something to you.
   #  - You can use your created entry with e.g. -m 100c
+  #
+  # Deutsch:
+  # Eigene kalibrierte Werte für die Option -m. Beispielaufruf: imgruler -m 100p bildname.jpg
+  # Bitte trage hier eigene Namen und Werte ein nach dem Vorbild der Beispiele.
+  # Am wichtigsten:
+  #   Elementsize    Reale Länge eines Linealelements, z.B. 5
+  #   Elementunit    Einheit des Lineals, z.B. µm
+  #   Elementwidth   Breite in Pixel einer Linealeinheit. Nachkommastellen möglich und nötig für genaue Kalibrierung
+  #   Elementcount   Anzahl der Linealelemente. Effektiv die Länge des Lineals.
+  # Außerdem möglich, aber nicht nötig:
+  #   Elementheight  Höhe eines Elementes
+  #   Pointsize      Schriftgröße
+  #   Color          Farbe
+  #   Font           Schriftart
+  #   Background     Hintergrundfarbe für Lineal ohne Bild
+  #
+  # Vorgehensweise beim Kalibrieren:
+  #  - Kamera auf die gewollte/übliche Bildauflösung einstellen.
+  #  - Eine Aufnahme von einem Mikrometer machen.
+  #  - Mit Positionsoptionen -x und -y starten.
+  #    Beispiel: imgruler -x 100 -y 100 bildname.jpg
+  #  - Die Werte von -x und -y anpassen, bis der Anfang des Lineals eine Linie des Mikrometers trifft.
+  #    Beispiel: imgruler -x 196 -y 240 bildname.jpg
+  #  - Verschiedene Werte für -w (Pixelbreite eines Elements) ausprobieren, 
+  #    bis die Hauptlinien des Lineals mit dem Mikrometer deckungsgleich sind.
+  #    Beispiel: imgruler -x 196 -y 240 -w 7.48 bildname.jpg
+  #  - Größe und Einheit eines Linealelementes mit -u festlegen.
+  #    Beispiel: imgruler -x 196 -y 240 -w 7.48 -u 2µm bildname.jpg
+  #  - Sobald das Lineal gut zum Mikrometer paßt: Positionsangaben -x und -y entfernen.
+  #  - Länge des Lineals mit -n festlegen, bis es optisch gefällt und sinnvoll ist.
+  #    Beispiel: imgruler -w 7.48 -u 2µm -n 50 bildname.jpg
+  #  - In der case-Abfrage unten eigene Namen mit den kalibrierten Werten eintragen.
+  #    Dabei an den Beispieleinträgen orientieren.
+  #  . Mit der Option -m und dem definierten Namen werden die kalibrierten Werte gesetzt.
+  #    Beispiel: imgruler -m 100p bildname.jpg
+  #
   case "${1:-}" in
     100c) # 1000x900
       Elementsize="1"
