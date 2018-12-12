@@ -89,6 +89,8 @@ imgruler() {
       return 1
     }
   }
+  Imdisplay="$(command -v imdisplay)"
+  [ "$Imdisplay" ] || Imdisplay="$Magick display"
   
   # Show help if -h or no options are given
   { [ -z "$*" ] || [ "$*" = "-h" ] ; } && {
@@ -208,7 +210,7 @@ imgruler() {
     
     [ "$DISPLAY" ] && {
       # show created images
-      echo "${Sourcefilelist#$Tabulator}" | grep -q "$Tabulator" || env IFS=" $Tabulator" $Magick display $Destinationfilelist
+      echo "${Sourcefilelist#$Tabulator}" | grep -q "$Tabulator" || env IFS="$Tabulator" $Imdisplay $Destinationfilelist
     }
     Destinationfile=""
   done
