@@ -166,8 +166,8 @@ imgruler() {
   IFS="$Tabulator"
   for Sourcefile in $Sourcefilelist ; do
     
-    Imagewidth=$(identify -format "%w" "$Sourcefile")
-    Imageheight=$(identify -format "%h" "$Sourcefile")
+    Imagewidth=$($Magick identify -format "%w" "$Sourcefile")
+    Imageheight=$($Magick identify -format "%h" "$Sourcefile")
     Destinationfile="${Destinationfile:-$(dirname "$Sourcefile")/ruler_$(basename "$Sourcefile")}"
 
     [ "$Xpos" ] || Xpos=$(awk "BEGIN {print $Imagewidth/2 - $Elementwidth * $Elementcount /2}" | round)
@@ -199,7 +199,7 @@ imgruler() {
 
     #Create the ruler
     echo "Creating $Destinationfile"
-    convert -size ${Imagewidth}x${Imageheight}  xc:$Background \
+    $Magick convert -size ${Imagewidth}x${Imageheight}  xc:$Background \
             -composite "$Sourcefile" \
             -fill $Color -draw "$Linesstring" \
             -fill $Color -font $Font -pointsize $Pointsize -draw "$Labelstring" \
@@ -268,7 +268,7 @@ imgruler_calibrated() {
   #    Beispiel: imgruler -w 7.48 -u 2µm -n 50 bildname.jpg
   #  - In der case-Abfrage unten eigene Namen mit den kalibrierten Werten eintragen.
   #    Dabei an den Beispieleinträgen orientieren.
-  #  . Mit der Option -m und dem definierten Namen werden die kalibrierten Werte gesetzt.
+  #  - Mit der Option -m und dem definierten Namen werden die kalibrierten Werte gesetzt.
   #    Beispiel: imgruler -m 100p bildname.jpg
   #
   case "${1:-}" in
