@@ -207,12 +207,12 @@ imgruler() {
             -fill $Color -draw "$Linesstring" \
             -fill $Color -font $Font -pointsize $Pointsize -draw "$Labelstring" \
             "$Destinationfile"
+            
     Destinationfilelist="$Destinationfilelist$Tabulator$Destinationfile"
-    
-    # show created images
-    echo "${Sourcefilelist#$Tabulator}" | grep -q "$Tabulator" || env IFS="$Tabulator" $Imdisplay $Destinationfilelist
     Destinationfile=""
   done
+  # show created images
+  echo "${Sourcefilelist#$Tabulator}" | grep -q "$Tabulator" || env IFS="$Tabulator" $Imdisplay $Destinationfilelist
 }
 imgruler_calibrated() {
   # English:
