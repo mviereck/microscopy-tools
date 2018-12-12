@@ -209,10 +209,8 @@ imgruler() {
             "$Destinationfile"
     Destinationfilelist="$Destinationfilelist$Tabulator$Destinationfile"
     
-    [ "$DISPLAY" ] && {
-      # show created images
-      echo "${Sourcefilelist#$Tabulator}" | grep -q "$Tabulator" || env IFS="$Tabulator" $Imdisplay $Destinationfilelist
-    }
+    # show created images
+    echo "${Sourcefilelist#$Tabulator}" | grep -q "$Tabulator" || env IFS="$Tabulator" $Imdisplay $Destinationfilelist
     Destinationfile=""
   done
 }
