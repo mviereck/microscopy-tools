@@ -83,9 +83,10 @@ imgruler() {
   local Magick Line Options Optioncount=0
   local Tabulator="$(printf "\t")"
   
-  command -v magick >/dev/null && Magick="magick" || {
+  Magick="$(command -v magick)"
+  [ "$Magick" ] || {
     convert -version | grep -q ImageMagick || {
-      echo "Need convert utility from ImageMagick. convert not found. Exit." 2>/dev/null
+      echo "Need convert utility from ImageMagick. convert not found. Exit." >&2
       return 1
     }
   }
