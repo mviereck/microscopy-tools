@@ -212,7 +212,7 @@ imgruler() {
     Destinationfile=""
   done
   # show created images
-  echo "${Sourcefilelist#$Tabulator}" | grep -q "$Tabulator" || env IFS="$Tabulator" $Imdisplay $Destinationfilelist
+  env IFS="$Tabulator" $Imdisplay $Destinationfilelist
 }
 imgruler_calibrated() {
   # English:
