@@ -33,18 +33,24 @@
 # in die Datei /tmp/arduterm/arduterm.command.execute
 #############################################################################
 
-VERSION="v0.4.0"
+VERSION="v0.4.0-beta"
 
 ########################################
 #### Programmspezifische Funktionen ####
 
 comment() {
   ## Funktion: Allgemeine Meldungen ausgeben
-  echo -e "${GELB}$*${WEISS}" >&2
+  local Line
+  Line="$(sed "s%$Arduhome%-%g" <<< "$*")"
+  echo -e "${GELB}${Line}${WEISS}" >&2
+  return 0
 }
 fehler() {
   ## Funktion: Fehlermeldungen ausgeben
-  echo -e "${ROT}$*${WEISS}" >&2
+  local Line
+  Line="$(sed "s%$Arduhome%-%g" <<< "$*")"
+  echo -e "${ROT}${Line}${WEISS}" >&2
+  return 0
 }
 mykill() {
   # Funktion: Prozeß $1 beenden
@@ -54,42 +60,6 @@ mykill() {
     kill $Pid
     wait $Pid 2>/dev/null
   } || return 1
-}
-window_placement() {
-  ## Funktion: Fenster von Imageviewer und Videospieler nebeneinander oder maximiert anordnen.
-  ## Zweiten Monitor bevorzugen. Guake Terminal oben halten.
-  
-  local Targetmonitor Screenpos ScreenX ScreenW
-  
-  # Versuche, zweiten Monitor zu finden.
-  Targetmonitor=$(xrandr | grep " connected" | grep -v "+0+0" | cut -d' ' -f1 | head -n1)
-  [ "$Targetmonitor" ] || Targetmonitor=$(xrandr | grep " connected" | cut -d' ' -f1 | head -n1)
-  
-  Screenpos=$(xrandr | grep $Targetmonitor | sed 's/primary//' | awk '{print $3}')
-  ScreenX=$(cut -d+ -f2 <<< "$Screenpos")
-  ScreenW=$(cut -dx -f1 <<< "$Screenpos")
-  
-  case $Windowmode in
-    split)
-      wmctrl -r sxiv -e 0,$ScreenX,0,$(bc <<< "$ScreenW / 2"),-1
-      wmctrl -r arduterm-Video -e 0,$(bc <<< "$ScreenX + $ScreenW / 2"),0,$(bc <<< "$ScreenW / 2"),-1
-      wmctrl -r sxiv -b add,maximized_vert
-      wmctrl -r arduterm-Video -b add,maximized_vert
-      wmctrl -a Guake
-    ;;
-    fullimage)
-      wmctrl -r sxiv -e 0,$ScreenX,0,$ScreenW,-1
-      wmctrl -r sxiv -b add,maximized_vert
-      wmctrl -a sxiv
-      wmctrl -a Guake
-    ;;
-    fullpreview)
-      wmctrl -r arduterm-Video -e 0,$ScreenX,0,$ScreenW,-1
-      wmctrl -r arduterm-Video -b add,maximized_vert
-      wmctrl -a arduterm-Video
-      wmctrl -a Guake
-    ;;
-  esac
 }
 window_wait() {
   for ((i=1 ; i<=50 ; i++)); do
@@ -108,7 +78,7 @@ get_latest_file() {
 }
 get_last_file() {
   ## Funktion: Die alphabetisch/numerisch letzte Datei, die mit $1 beginnt, ermitteln und Name ausgeben
-  basename -a $(find -maxdepth 1) | grep "$1" | sort | tail -n1
+  basename -a $(find "$(dirname "$(realpath ${1:-})" )" -mindepth 1 -maxdepth 1) | grep "$(basename ${1:-})" | sort | tail -n1
 }
 get_free_filenumber(){
   ## Funktion: Zu Dateiname $1 nächste freie Nummer ausgeben
@@ -116,8 +86,93 @@ get_free_filenumber(){
   #     DATEINAME_000x.jpg nur DATEINAME übergeben. 
   #     DATEINAME darf keine Unterstriche _ oder Zahlen 0..9 oder Punkte enthalten
   local Nummer
-  Nummer=$(get_last_file $1 | cut -d_ -f2 | cut -d. -f1)  
-  printf "%04d" $(bc <<<"${Nummer:-0} + 1")
+  Nummer=$(get_last_file $1 | rev | cut -d_ -f1 | rev | cut -d. -f1)  
+  printf "%04d" $(bc <<<"${Nummer:-"-1"} + 1")
+}
+check_fileglob() {
+  # check whether files exist for glob $1
+  local File
+  for File in ${1:-}; do
+    [ -f "$File" ] && return 0
+  done
+  return 1
+}
+check_dirglob() {
+  # check whether directories exist for glob $1
+  local File
+  for File in ${1:-}; do
+    [ -d "$File" ] && return 0
+  done
+  return 1
+}
+fileglob() {
+  # echos files only for glob $1
+  # (except those with .pto in their name)
+  local File Filelist
+  for File in ${1:-}; do
+    [ -f "$File" ] && Filelist="$Filelist
+$File"
+  done
+  Filelist=$(sed '/^$/d'    <<< "$Filelist" | sort)
+  Filelist=$(grep -v '.pto' <<< "$Filelist")
+  [ "$Filelist" ] && echo $Filelist || return 1
+}
+dirglob() {
+  # echos directories only for glob $1
+  # (except those with .pto in their name)
+  local File Filelist
+  for File in ${1:-}; do
+    [ -d "$File" ] && Filelist="$Filelist
+$File"
+  done
+  Filelist=$(sed '/^$/d'    <<< "$Filelist" | sort)
+  Filelist=$(grep -v '.pto' <<< "$Filelist")
+  [ "$Filelist" ] && echo $Filelist || return 1
+}
+setup_projectdir() {
+  [ "${1:-}" ] && Projektname="${1:-}.$(date +%Y-%m-%d)"
+  Projektname="${Projektname:-project.$(date +%Y-%m-%d)}"
+  cd "$Arduhome"
+  mkdir -p "$Projektname"
+  cd "$Projektname"
+  pwd > $Workdirfile
+}
+check_doubledir() {
+  # splits directory name $1 at dots . and checks if a directory exists in sequence variations of the name
+
+  local IFS Dir Basedir Line Count Combi
+  
+  Dir="${1:-}"
+  Basedir="$(dirname "$Dir")"
+  Dir="$(basename "$Dir")"
+  
+  IFS="."
+  Count=-1
+  for Line in $Dir; do
+     Count=$((Count+1))
+  done
+  IFS=" "
+  
+  Dir="{$(tr '.' ',' <<< "$Dir")}"
+  for ((i=0 ; i<=Count; i++));do
+    Combi="$Combi.$Dir"
+  done
+  Combi="${Combi#'.'}"
+  
+  for Line in $(eval echo $Combi); do
+    [ -d "$Basedir/$Line" ] && return 0
+  done
+  return 1
+}
+check_destinationfile() {
+  local Destinationfile Function
+  Destinationfile="${1:-}"
+  Function="${2:-}"
+  [ -e "$Destinationfile" ] && {
+    fehler "$Function: Destination file already exists: $Destinationfile"
+    return 1
+  }
+  return 0
 }
 
 ###########################################
@@ -150,9 +205,12 @@ device_init() {
   # Seriellen Port initialisieren
   stty -F $Deviceadresse raw ispeed 9600 ospeed 9600 cs8 -hupcl -ignpar -cstopb -echo || {
     fehler "Fehler bei Initialisierung von Device $Deviceadresse"
+    return 1
   }
+  sleep 2
 }
 device_send() {
+
   ## Funktion: Daten an Arduino senden  
   # Alle übergebenen Optionen werden an $Deviceadresse gesendet
   echo "$*" >&6
@@ -238,16 +296,75 @@ showimage() {
   ## Funktion: Imageviewer starten
   # $1 = Bildname
   
-  mykill $Imageviewerpid
-  sxiv -sf $1 2>/dev/null & Imageviewerpid=$!
+  #mykill $Imageviewerpid
+  #sxiv -sf $1 2>/dev/null & Imageviewerpid=$!
+  geeqie -t -r file:"${1:-}"
+  #display -remote "${1:-}"  & Imageviewerpid=$!
+  #[ "${1:-}" ] && ln -f -s "$(realpath ${1:-})" $Latestimagelink
+  #pgrep imvr >/dev/null || imvr "$Latestimagelink"  & Imageviewerpid=$!
   
   # Fenster arrangieren
   {  
     [ "$Windowmode" = "fullpreview" ] && Windowmode="split"
     [ "$Ffplaypid" ]                  || Windowmode="fullimage"
-    window_wait sxiv
+    window_wait Geeqie
+#    window_wait imv
+#    window_wait sxiv
+ #
+ #window_wait ImageMagick
     window_placement
   } &
+}
+window_placement() {
+  ## Funktion: Fenster von Imageviewer und Videospieler nebeneinander oder maximiert anordnen.
+  ## Zweiten Monitor bevorzugen. Guake Terminal oben halten.
+  
+  local Targetmonitor Screenpos ScreenX ScreenW
+  
+  # Versuche, zweiten Monitor zu finden.
+  Targetmonitor=$(xrandr | grep " connected" | grep -v "+0+0" | cut -d' ' -f1 | head -n1)
+  [ "$Targetmonitor" ] || Targetmonitor=$(xrandr | grep " connected" | cut -d' ' -f1 | head -n1)
+  
+  Screenpos=$(xrandr | grep $Targetmonitor | sed 's/primary//' | awk '{print $3}')
+  ScreenX=$(cut -d+ -f2 <<< "$Screenpos")
+  ScreenW=$(cut -dx -f1 <<< "$Screenpos")
+  ScreenH=$(cut -dx -f2 <<< "$Screenpos" | cut -d+ -f1)
+
+  
+  case $Windowmode in
+    split)
+#      wmctrl -r sxiv -e 0,$ScreenX,0,$(bc <<< "$ScreenW / 2"),-1
+#      wmctrl -r ImageMagick: -e 0,$ScreenX,0,$(bc <<< "$ScreenW / 2"),-1
+#      wmctrl -r imv -e 0,$ScreenX,0,$(bc <<< "$ScreenW / 2"),-1
+      wmctrl -r Geeqie -e 0,$ScreenX,0,$(bc <<< "$ScreenW / 2"),-1
+      wmctrl -r arduterm-Video -e 0,$(bc <<< "$ScreenX + $ScreenW / 2"),0,$(bc <<< "$ScreenW / 2"),-1
+#      wmctrl -r sxiv -b add,maximized_vert
+#      wmctrl -r ImageMagick: -b add,maximized_vert
+#      wmctrl -r imv -b add,maximized_vert
+      wmctrl -r Geeqie -b add,maximized_vert
+      wmctrl -r arduterm-Video -b add,maximized_vert
+      wmctrl -a Guake
+    ;;
+    fullimage)
+#      wmctrl -r sxiv -e 0,$ScreenX,0,$ScreenW,-1
+#      wmctrl -r imv -e 0,$ScreenX,0,$ScreenW,-1
+      wmctrl -r Geeqie -e 0,$ScreenX,0,$ScreenW,-1
+      #wmctrl -r ImageMagick: -e 0,$ScreenX,0,$ScreenW,$ScreenH
+#      wmctrl -r sxiv -b add,maximized_vert
+#      wmctrl -r ImageMagick: -b add,maximized_vert,maximized_horz
+#      wmctrl -r imv -b add,maximized_vert,maximized_horz
+      wmctrl -r Geeqie -b add,maximized_vert,maximized_horz
+#      wmctrl -a sxiv
+      #wmctrl -a ImageMagick
+      wmctrl -a Guake
+    ;;
+    fullpreview)
+      wmctrl -r arduterm-Video -e 0,$ScreenX,0,$ScreenW,-1
+      wmctrl -r arduterm-Video -b add,maximized_vert
+      wmctrl -a arduterm-Video
+      wmctrl -a Guake
+    ;;
+  esac
 }
 
 ########################################
@@ -296,7 +413,9 @@ ardu_gphoto2 () {
       mygphoto2 --capture-image-and-download --filename $Latestimage
       Return=$?
       # Dateiname mit tatsächlichem Suffix ermitteln. 
-      Latestimage="$(pwd)/$(get_latest_file capture)"
+      Latestimage="$(pwd)/$(get_latest_file "capture*.jpg")"
+      [ "$Latestimage" ] || Latestimage="$(pwd)/$(get_latest_file "capture*")"
+      echo "$Latestimage" > $Latestimagefile
       ;;
     capture-preview)                         # Einzelnes Videobild aufnehmen, ohne daß der Spiegel zuklappt
       ## Funktioniert ab gphoto2 Version >= 2.5.9 ##
@@ -306,6 +425,7 @@ ardu_gphoto2 () {
       [ "$Return" = "0" ] && {
         Latestimage="$(pwd)/preview_$(get_free_filenumber preview).jpg"
         mv capture_preview.jpg $Latestimage
+        echo "$Latestimage" > $Latestimagefile
       } 
       ;;
     mirrorup)                                 # Viewfinder einschalten = Spiegel hoch
@@ -646,14 +766,33 @@ stackshot() {
   # -c   Serie aus richtigen Fotos / Captures.
   
   local Posmem=
-  local Warten= Anzahl= Count=
-  local Fotomodus= Ordnername=
+  local Stepwait Evalmode Anzahl= Count= Loopcount=0 Evalcount
+  local Fotomodus= Ordnername= Glob
+  local Shortoptions Longoptions
   
+  Shortoptions="cpm::"
+  Longoptions=""
+  Parsedoptions="$(getopt --options $Shortoptions --longoptions $Longoptions --name "$0" -- "$@")"
+  eval set -- "$Parsedoptions"
+
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      -c) Fotomodus="capture" ;;
+      -p) Fotomodus="preview" ;;
+      -m) 
+        Evalstack="yes"
+        Evalnumber="${2:-5}"
+        shift
+      ;;
+    esac
+    shift
+  done
+    
   [ "$1" = "-c" ] && Fotomodus="capture" && shift
   [ "$1" = "-p" ] && Fotomodus="preview" && shift
   Fotomodus="${Fotomodus:-preview}"
   
-  Warten="0.4"
+  Stepwait="0.4"
   Windowmode=fullimage
   
   # Markierung für loop, daß es weiterlaufen soll
@@ -662,7 +801,7 @@ stackshot() {
   # ggf. Positionen für stepin korrigieren
   readpos
   [ "$Pos1" -gt "$Pos2" ] && {
-    comment "Switching Pos1:$Pos1 and Pos2:$Pos2"
+    comment "stack: Switching Pos1:$Pos1 and Pos2:$Pos2"
     Posmem=$Pos1
     Pos1=$Pos2
     Pos2=$Posmem
@@ -670,37 +809,79 @@ stackshot() {
   }
   
   Anzahl="$(bc <<< "($Pos2 - $Pos1) / $Schrittweite" | cut -d. -f1)"
-  comment "Anzahl Stackbilder: $Anzahl"
+  comment "stack: Number of steps: $Anzahl"
   
   # An Startposition gehen
-  cmd -w go1
-  #sleep $(bc <<< "($Pos2 - $Pos1) * 0.02")
+  cmd -w go1   ### FIXME somehow does not wait
   readpos
-  [ "$Poscurrent" = "$Pos1" ] || { fehler "Fehler: Position $Pos1 verfehlt: $Poscurrent." ; return 1 ; }
-  set -x
+  [ "$Poscurrent" = "$Pos1" ] || { fehler "stack: Error: Missed position $Pos1: $Poscurrent." ; return 1 ; }
+
   # Unterordner anlegen
-  cd "$Arduhome/$Projektname"
-  Lateststack="$Arduhome/$Projektname/${Stackshotname}_$(get_free_filenumber "$Stackshotname")"
-  mkdir -p "$Lateststack"
-  cmd -w cd "$Lateststack"
-  cd "$Lateststack"
+  Stackshotname="${Stackshotname:-stackshot}"
+  Lateststack="$Arduhome/$Projektname/${Stackshotname}_$(get_free_filenumber "$Arduhome/$Projektname/$Stackshotname")"
+  mkdir -p "$Lateststack/stackshot"
   echo "$Lateststack" >"$Lateststackfile"
-  set +x
+  [ "$Evalstack" = "yes" ] && {
+    mkdir -p $Lateststack/median.source
+    for Line in $Evalmodelist; do
+      mkdir -p $Lateststack/$Line
+    done
+  }
+
   # Stackshot
-  comment "Stackshot $Lateststack wird gestartet"
+  comment "stack: Shooting stack $Lateststack"
   sleep 1
 
+  mygphoto2 --set-config-value viewfinder="1"
   while [ "$Poscurrent" -lt "$Pos2" ] ; do
-    case $Fotomodus in
-      capture) cmd -w "capture-image-and-download" ;;
-      preview) cmd -w "capture-preview" ;;
-    esac
+    Loopcount=$((Loopcount +1 ))
+    
+    for ((Evalcount=1 ; Evalcount<=$Evalnumber ; Evalcount++)); do
+      [ -s $Stackshotfile ] || { fehler "stack: interrupted" ; break ; }
+      [ "$Evalstack" = "yes" ] && sleep $Evalwait
 
+      case $Fotomodus in
+        capture) 
+          #cmd -w "capture-image-and-download"
+          mygphoto2 "capture-image-and-download"
+        ;;
+        preview)
+          # cmd -w "capture-preview"
+          mygphoto2 --capture-preview
+          Latestimage="$Lateststack/stackshot/preview_$(printf "%04d" $Loopcount).jpg"
+          mv -f capture_preview.jpg $Latestimage
+        ;;
+      esac
+      case $Evalstack in
+        yes)
+          Evalgroup="$Lateststack/median.source/img_$(printf "%04d" $Loopcount)"
+          Latestmedian="${Evalgroup}_m$(printf "%02d" $Evalcount).jpg"
+          cp $Latestimage $Latestmedian
+          comment "stack: Image stored as $Latestmedian"
+          showimage "$Latestmedian"
+        ;;
+        no)
+          comment "stack: Image stored as $Latestimage"
+          showimage "$Latestimage"
+        ;;
+      esac
+      echo "$Latestimage" > $Latestimagefile
+    done
+    
+    [ "$Evalstack" = "yes" ] && {
+      comment "stack: Aligning captures of step $Loopcount."
+      align_image_stack -m --use-given-order -a ${Evalgroup}_align $Evalgroup*.jpg 2>&1 | grep -v "Unable to read EXIF data"
+      Latestimage="$Lateststack/stackshot-median/${Fotomodus}_$(printf "%04d" $Loopcount).tif"
+      $Convert ${Evalgroup}_align*.tif -evaluate-sequence median "$Latestimage"
+      showimage "$Latestimage"
+    }
+
+    # step in
     cmd -w stepin
-    sleep $Warten
+    [ "$Evalstack" = "no" ] && sleep $Stepwait
     readpos
     
-    [ -s $Stackshotfile ] || { comment "Stacking unterbrochen" ; break ; }
+    [ -s $Stackshotfile ] || { fehler "stack: interrupted" ; break ; }
     
     # Fortschrittsanzeige %
     Count=$((Count + 1))
@@ -711,104 +892,829 @@ stackshot() {
     echo " $Prozent%"
   done
   
-  comment "Stackshot $Stackshotname mit $Count Bildern ist fertig."
-  comment "Speicherort: $Lateststack"
-  :> $Stackshotfile
-  cmd -w cd ..
-}
-fuse() {
-  local Fusedir= Bildliste= Stackbildname= Lateststack=
+  # Create video from stackshot
+  comment "stack: Creating video from stackshot"
+  [ -e "$Lateststack/stackshot" ]    && Glob="$Lateststack/stackshot/*"
+  [ -e "$Lateststack/median.source" ] && Glob="$Lateststack/median.source/*"
+  ffmpeg -framerate 5 -pattern_type glob -i "$Glob" -c:v libx264  -pix_fmt yuv420p "$Lateststack/stackshotvideo.mp4"
   
-  Lateststack=$(cat $Lateststackfile 2>/dev/null)
-  Fusedir="${1:-$Lateststack}"
-  [ "$Fusedir" ] || {
-    fehler "Bitte Verzeichnis mit Stackshotfotos angeben, oder erst einen Stackshot machen."
+  comment "stack: Ready: Stackshot $Stackshotname with $((Count * Evalnumber)) images in $Count steps."
+  comment "stack: Location: $Lateststack"
+  :> $Stackshotfile
+}
+
+##########################
+#### Image processing ####
+
+detect_sourcedir() {
+  # Detect possible source directories in $2 for function $1
+  # Set up variables that can be used to call function $1
+  # Usage:
+  #   detect_sourcedir Function Targetdir
+  # Args:
+  #   Function       One of align, sharpen, fuse, median, min, max, mean, set
+  #   Targetdir      Target directory [+glob] to check.
+  #                  Can already be in an arduterm-structure or an arbitrary one.
+  #                  Location of $Destinationdir depends on detected directory structure.
+  #   Functionmode   Mode of Function
+  # Sets variables:
+  #   Sourcedir                 Source directory within $Targetdir
+  #   Sourcefileglob            Glob to get files. Mostly just "*"
+  #   Destinationdir            Recommended directory to store resulting images.
+  #                             Often serves as source dir for following functions.
+  #   Destinationfilebasename   Possible prefix of destination file(s). Can be "", though.
+  #   Targetcachedir            Cache folder
+  #
+  # Run in a loop to check for next possible source dir in Targetdir.
+  # Returns 0 on success and 1 if nothing more is to do.
+  #
+  # Stores already checked source dirs of $Targetdir in $Sourcedirchecklist. 
+  # -> Set Sourcedirchecklist="" before running a loop with detect_sourcedir().
+  # Use local in calling function:
+  #   local Sourcedir Sourcefileglob Destinationdir Destinationfilebasename Targetptofile Targetcachedir Sourcedirchecklist
+
+  local Function Targetdir Singleshotdir Stackdir Checkline Skip
+  
+  Function="${1:-}"
+  Targetdir="${2:-}"
+  Functionmode="${3:-}"
+  
+  # Check if a glob like * is given
+  check_fileglob "$Targetdir" && {
+    Sourcefileglob="$(basename "$Targetdir")"
+    Targetdir="$(dirname "$Targetdir")"
+  }
+  Sourcefileglob="${Sourcefileglob:-"*"}"
+  Targetdir="$(realpath "$Targetdir")"
+  
+  # check if it is an arduterm directory structure, or an arbitrary image directory
+  [ -d "$Targetdir/stackshot" ] && {
+    Singleshotdir="stackshot"
+  } || {
+    Singleshotdir="$(basename "$Targetdir")"
+  }
+  [ -d "$Targetdir/stackshot-median" ] && Singleshotdir="$Singleshotdir stackshot-median"
+  Targetcachedir="$Targetdir/cache"
+  
+  [ -d "$Targetdir" ] || {
+    fehler "No target directory found. Please specify a target directory or make a stackshot.
+  Wrong Target: $Targetdir"
     return 1
   }
-  Fusedir="$(realpath "$Fusedir")"
-  [ -d "$Fusedir" ] || {
-    Bildliste=$(basename "$Fusedir")
-    Fusedir=$(dirname "$Fusedir")
+  
+  for Stackdir in $Singleshotdir $(dirglob "$Targetcachedir/*") ; do
+    Stackdir="$(basename $Stackdir)"
+    grep -q -E 'sharpen|align|level' <<< "$Stackdir" && Sourcedir="$Targetcachedir/$Stackdir" || Sourcedir="$Targetdir/$Stackdir"
+    grep -q -E 'stackshot' <<< "$Singleshotdir" || {
+      [ "$Stackdir" = "$Singleshotdir" ] && Sourcedir="$Targetdir"
+    }
+    Destinationdir=""
+    Destinationfilebasename=""
+    Skip="no"
+      
+    case $Function in
+      fuse|evaluate|compose)
+        #[ "$Singleshotdir" = "stackshot" ] && Destinationdir="$Targetdir" || Destinationdir="$Targetdir/fuse"
+        case $Function in
+          fuse) Destinationdir="$Targetdir/fuse" ;;
+          *)    Destinationdir="$Targetdir/compose" ;;
+        esac
+        Destinationfilebasename="$Stackdir"
+        # exclude some less interesting dirs to save computing time
+        grep -q align   <<< "$(basename "$Stackdir")" || Skip="yes"  # only fuse aligned stacks
+        grep -q level   <<< "$(basename "$Stackdir")" || Skip="yes"  # only fuse leveled stacks
+        grep -q sharpen <<< "$(basename "$Stackdir")" || Skip="yes"  # only fuse sharpened stacks
+      ;;
+      
+      align|sharpen*|level)
+        Destinationdir="$Targetcachedir/$Stackdir.$Function$Functionmode"
+        # exclude some less interesting dirs to save time and space
+        # avoid double work
+        case "$Function" in
+          sharpen*) grep -q sharpen     <<< "$Stackdir" && Skip="yes" ;;
+          *)        grep -q "$Function" <<< "$Stackdir" && Skip="yes" ;;
+        esac
+        check_doubledir "$Destinationdir" && Skip="yes"
+        [ "$Function" != "level" ] && ! grep -q level <<<"$Destinationdir" && check_dirglob "$Targetcachedir/*level*" && Skip="yes" 
+      ;;
+      
+      evaluate_fuse)
+        Sourcedir="$Targetdir/fuse"
+        Destinationdir="$Targetdir/compose"
+        Destinationfilebasename="$(basename "$Targetdir").fuse"
+        #grep -q -E 'stackshot' <<< "$Singleshotdir" && Functionmode="$Targetdir" || Functionmode=""
+      ;;
+    esac
+      
+    check_fileglob "$Sourcedir/$Sourcefileglob" || Skip="yes"
+    [ "$Destinationdir" ] || Skip="yes"
+    [ "$Skip" = "no" ] && {
+#      Checkline="$Function$Option$Sourcedir$Destinationdir"
+      Checkline="$Sourcedir$Destinationdir"
+      grep -q "$Checkline" <<< "$Sourcedirchecklist" || {
+        mkdir -p "$Destinationdir"
+        #check_fileglob "$Destinationdir/$Destinationfilebasename*" && fehler "detect_sourcedir: ${1:-}: Destination file(s) already exists: $Destinationdir/$Destinationfilebasename*"
+        Sourcedirchecklist="$Sourcedirchecklist
+$Checkline"
+        return 0
+      }
+    }
+  done
+  return 1
+}
+batch_all() {
+  # Apply all image processing functions on target directory $1
+  
+  local Targetdir
+
+  Targetdir="${1:-$Lateststack}"
+  [ -d "$Targetdir" ] || check_fileglob "$Targetdir" || {
+    fehler "batch_all: Target directory not found: $Targetdir"
+    return 1
+  }
+  
+  batch_function level         "$Targetdir"
+  batch_function align         "$Targetdir"
+  batch_function sharpen       "$Targetdir" "6x2"
+  batch_function sharpen       "$Targetdir" "12x4"
+  
+  batch_function evaluate      "$Targetdir" max
+  batch_function evaluate      "$Targetdir" median
+  batch_function evaluate      "$Targetdir" min
+  batch_function evaluate      "$Targetdir" mean
+  #batch_function evaluate      "$Targetdir" set
+  
+  batch_function compose       "$Targetdir" bumpmap
+  batch_function compose       "$Targetdir" colorburn
+  batch_function compose       "$Targetdir" difference
+  #batch_function compose       "$Targetdir" hardlight
+  batch_function compose       "$Targetdir" linearburn
+  batch_function compose       "$Targetdir" linearlight
+  batch_function compose       "$Targetdir" modulate
+  batch_function compose       "$Targetdir" multiply
+  batch_function compose       "$Targetdir" pegtoplight
+  batch_function compose       "$Targetdir" overlay
+  
+  batch_function fuse          "$Targetdir" all
+  batch_function evaluate_fuse "$Targetdir" min
+  batch_function evaluate_fuse "$Targetdir" mean
+  batch_function evaluate_fuse "$Targetdir" max
+  batch_function evaluate_fuse "$Targetdir" set
+  batch_function evaluate_fuse "$Targetdir" median
+  
+  comment "batch_all is ready: $Targetdir"
+}
+batch_function() {
+  # Apply image processing function $1 on all possible source dirs in target directory $2
+  
+  local Function Targetdir Option
+  local Sourcedir Sourcefileglob Destinationdir Destinationfilebasename Targetcachedir Sourcedirchecklist # vars of detect_sourcedir()
+
+  Function="${1:-}"
+  Targetdir="${2:-$Lateststack}"
+  Option="${3:-}"
+  
+  [ -d "$Targetdir" ] || check_fileglob "$Targetdir" || {
+    fehler "$Function: Target directory not found: $Targetdir"
+    return 1
+  }
+  [ "$Function" ] || {
+    fehler "batch: No function defined for $Targetdir"
+    return 1
+  }
+  
+  [ -z "$Option" ] && case "$Function" in
+    compose)  Option="bumpmap" ;;
+    evaluate) Option="max" ;;
+    fuse)     Option="all" ;;
+    sharpen)  Option="6x2" ;;
+  esac
+  
+  while detect_sourcedir "$Function" "$Targetdir" "$Option"; do
+    comment "$Function $Option is running: $(basename "$Targetdir")/*/$(basename "$Sourcedir")"
+    case "$Function" in
+      "align")                           align         "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Targetcachedir" ;;
+      "compose")                         compose       "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
+      "evaluate")                        evaluate      "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
+      "evaluate_fuse")                   evaluate_fuse "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
+      "fuse")                            fuse          "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
+      "level")                           level         "$Sourcedir/$Sourcefileglob" "$Destinationdir" ;;
+      "sharpen")                         sharpen       "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Option" ;;
+    esac
+    comment "$Function $Option is ready: $(basename "$Targetdir")/*/$(basename "$Sourcedir")"
+  done
+}
+sharpen() {
+  # Sharpen images
+  # Usage:
+  #   sharpen Sharpmode Sourceglob Destinationdir
+  # Args:
+  #   Sharpmode        radius x sigma, auto-radius if 0. sigma is more important.
+  #   Sourceglob       Path[+glob] to source files
+  #   Destinationdir   Path where to store sharpened images
+  # detect_sourcedir() can help to set up Args.
+  
+  local Sharpmode Sourceglob Destinationdir
+  local Destinationfile
+  
+  Sourceglob="${1:-"*"}"
+  Destinationdir="${2:-}"
+  check_fileglob "$Sourceglob" || Sourceglob="$Sourceglob/*"
+  check_fileglob "$Sourceglob" || {
+    fehler "sharpen: No source files found: $Sourceglob"
+    return 1
+  }
+  Sharpmode="${3:-"6x2"}"
+  
+  for Image in $(fileglob "$Sourcedir/$Sourcefileglob"); do
+    Destinationfile="$(basename "$Image")"
+    check_destinationfile "$Destinationdir/$Destinationfile" "sharpen $Sharpmode" || break
+    $Convert "$Image" -contrast -adaptive-sharpen $Sharpmode "$Destinationdir/$Destinationfile"
+    showimage "$Destinationdir/$Destinationfile"
+  done
+}
+level() {
+
+  # Normalize images (white balance, contrast)
+  # Usage:
+  #   level Sourceglob Destinationdir
+  # Args:
+  #   Sourceglob       Path[+glob] to source files
+  #   Destinationdir   Path where to store sharpened images
+  # detect_sourcedir() can help to set up Args.
+  
+  local Sourceglob Destinationdir
+  local Destinationfile
+  
+  Sourceglob="${1:-"*"}"
+  Destinationdir="${2:-}"
+  check_fileglob "$Sourceglob" || Sourceglob="$Sourceglob/*"
+  check_fileglob "$Sourceglob" || {
+    fehler "level: No source files found: $Sourceglob"
+    return 1
+  }
+  
+  for Image in $(fileglob "$Sourcedir/$Sourcefileglob"); do
+    Destinationfile="$(basename "$Image")"
+    check_destinationfile "$Destinationdir/$Destinationfile" "level" || break
+    $Convert "$Image" -auto-level "$Destinationdir/$Destinationfile"
+    showimage "$Destinationdir/$Destinationfile"
+  done
+}
+align() {
+  # Align image stack with some panotools. Similar to align_image_stack
+  # Advantage: pto file with aligned control points can be reused for multiple similar stacks
+  # Usage:
+  #  align Sourceglob Destinationdir [Cachedir]
+  # Args:
+  #  Sourcedir         Path[+glob] to source image stack
+  #  Destinationdir    Path where to store aligned images
+  #  Cachedir          Cache folder will contain align.pto file with control points. Can be reused to skip control point calculation.
+  
+  local Sourcedir Destinationdir Ptofile
+  local Sourcefileglob Prevdir
+  local Imagewidth Imageheight
+  local Count Line Filearray Destinationfile
+  local Logfile Cachedir
+  local Crop Cropx Cropy Cropsize
+  
+  
+  Sourcedir="${1:-"*"}"
+  Destinationdir="${2:-}"
+  Cachedir="${3:-"/tmp/align$(mcookie)"}/align.pto.dir"
+  mkdir -p "$Cachedir"
+  
+  [ -d "$Sourcedir" ] && {
+    Sourcefileglob="*"
+  }
+  check_fileglob "$Sourcedir" && {
+    Sourcefileglob="$(basename "$Sourcedir")"
+    Sourcedir="$(dirname "$Sourcedir")"
+  }
+  check_fileglob "$Sourcedir/$Sourcefileglob" || {
+    fehler "align: No source files found: $Sourcedir/$Sourcefileglob"
+    cd "$Prevdir"
+    return 1
+  }
+  
+  #echo "AS $Sourcedir/$Sourcefileglob"
+  #echo "AD $Destinationdir"
+  #echo "AC $Cachedir"
+  #echo ""
+  
+  # cd to source dir to collect base file names only. Allows multiple use of aligned $Ptofile
+  Prevdir="$(pwd)"
+  cd "$Sourcedir"
+  
+  # read source file names in array
+  Count=-1
+  for Line in $(fileglob "$Sourcefileglob"); do
+    Count=$((Count +1))
+    Filearray[$Count]="$Line"
+  done
+  
+  # Use existing pto file if possible
+  Ptofile="align.pto"
+  [ -f "$Cachedir/$Ptofile" ] && cp "$Cachedir/$Ptofile" "$Sourcedir/$Ptofile"
+  Logfile="$Cachedir/$Ptofile.log"
+  #tail -f "$Logfile" &
+  
+  comment "align: Aligning $Sourcedir/$Sourcefileglob"
+  check_destinationfile "$Destinationdir/${Filearray[0]}" align || {
+    cd "$Prevdir"
+    return 1
+  }
+  
+  # Get image size. Assuming same size for all images.
+  Imagewidth=$($Convert  -format '%w'  ${Filearray[0]} info:)
+  Imageheight=$($Convert -format '%h'  ${Filearray[0]} info:)
+  
+  [ -e "$Ptofile" ] && {
+    comment "align: Using control points of given pto file $Ptofile"
+  } || {
+    echo "########## pto_gen ##########" >> "$Logfile"
+    comment "align: Running pto_gen to create list of files"
+    pto_gen -o "$Ptofile.pto_gen.pto" -p 0 -f 40 --crop=0,${Imagewidth},0,${Imageheight} $(fileglob "$Sourcefileglob") >> "$Logfile" 2>&1 || {
+      fehler "Error in pto_gen
+$(tail $Logfile)"
+      cd "$Prevdir"
+      return 1
+    }
+    sed -i '3 s/r:CROP//'                     "$Ptofile.pto_gen.pto"
+    sed -i '3 s/\bf[0-9]*\b/f0/'              "$Ptofile.pto_gen.pto"
+    sed -i "3 s/\bw[0-9]*\b/w${Imagewidth}/"  "$Ptofile.pto_gen.pto"
+    sed -i "3 s/\bh[0-9]*\b/h${Imageheight}/" "$Ptofile.pto_gen.pto"
+    sed -i "3 s/\bv[0-9]*\b/v40/"             "$Ptofile.pto_gen.pto"
+    
+#    pano_modify --projection=0 $Ptofile.pto_gen.pto
+#    pano_modify --canvas=${Imagewidth}x${Imageheight} $Ptofile.pto_gen.pto
+#    pano_modify --output-type=FUSEDSTACKS $Ptofile.pto_gen.pto
+
+    # find control points
+    echo "########## cpfind ##########" >> "$Logfile"
+    comment "align: Running cpfind to find control points for alignment. That will take a while."
+    cpfind -o "$Ptofile.cpfind.pto"  \
+        --fullscale \
+        --minmatches 4 \
+        --linearmatch \
+        --linearmatchlen 3 \
+        --ransacmode rpyv \
+        "$Ptofile.pto_gen.pto" 2>&1 >> "$Logfile" || {
+      fehler "Error in cpfind
+$(tail $Logfile)"
+      cd "$Prevdir"
+      return 1
+    }
+
+    # clean up useless/wrong control points
+    echo "########## cpclean ##########" >> "$Logfile"
+    comment "align: Running cpclean to remove wrong control points"
+    cpclean -s -o "$Ptofile.cpclean.pto" --pairwise-checking "$Ptofile.cpfind.pto" >> "$Logfile" || {
+      fehler "Error in cpclean
+$(tail $Logfile)"
+      cd "$Prevdir"
+      return 1
+    }
+
+    #pano_modify --crop=AUTO $Ptofile.cpclean.pto
+    
+    # calculate distortion of images to align control points
+    echo "########## autooptimiser ##########" >> "$Logfile"
+    comment "align: Running autooptimiser to transform control points into image distortion"
+    autooptimiser -p -o "$Ptofile" "$Ptofile.cpclean.pto" >> "$Logfile" || {
+      fehler "Error in autooptimiser
+$(tail $Logfile)"
+      cd "$Prevdir"
+      return 1
+    }
+    #pano_modify --crop=AUTO $Ptofile
+    
+    # remove all pto files except the final one
+    rm $Ptofile.*.pto
   }
 
-  
-  cd $Fusedir
-  
-  [ "$Bildliste" ] || Bildliste="preview*.jpg capture*.JPG"
-  Bildliste="$(ls $Bildliste 2>/dev/null)"
-  
-  Exposureweight=0.3
-  Saturationweight=0.3
-  Contrastweight=1
-  
-  
-##  Laplacian Edge Detection
-# Enfuse provides a Laplacian-based algorithm that can help in situations where weighting based on the standard deviation fails. 
-# It is activated with a positive value for SCALE in --contrast-edge-scale=SCALE. 
-# The Laplacian will detect two-dimensional curvature on the scale of SCALE. 
-# Here and in the following we simply speak of curvature where we mean magnitude of curvature. 
-# That is, we shall not distinguish between convex and concave edges. Enfuse always use the magnitude of curvature for weighting.
-#
-# Typically, SCALE ranges between 0.1 pixels and 0.5 pixels, where 0.3 pixels are a reasonable starting point. 
-# To find the best value for SCALE though, usually some experimentation will be necessary. 
-# Use --save-masks to get all soft-mask (default: softmask-%n.tif) and hard-mask files (default: hardmask-%n.tif). Check how different scales affect the artifacts. 
-#
-## Local Contrast Enhancement
-# Sometimes Enfuse misses smoother edges with --contrast-edge-scale and a little local contrast enhancement (LCE) helps. 
-# Set --contrast-edge-scale=SCALE:LCE-SCALE:LCE-FACTOR, 
-# where LCE-SCALE and LCE-FACTOR work like the unsharp mask filters in various image manipulation programs. 
-# Start with LCE-SCALE ten times the value of SCALE and a LCE-FACTOR of 2-5.
-#
-# LCE-SCALE can be specified as a percentage of SCALE. LCE-FACTOR also can be specified as a percentage. 
-# Examples:
-#    --contrast-edge-scale=0.3:3.0:3
-#    --contrast-edge-scale=0.3:1000%:3.0
-#    --contrast-edge-scale=0.3:3:300%
-#    --contrast-edge-scale=0.3:1000%:300% 
-Contrastedgescale="0.3:3:3"
+  grep -q "Strange values may result!" < "$Logfile" && fehler "WARNING: You may get strange align results due to missing control points!
+  Check out log file $Logfile
+  Probably source images are distorted too much."
 
-# --exposure-weight-function=gaussian
-# one of the built-in exposure WEIGHT-FUNCTIONs: "gaussian", "lorentzian", "half-sine", "full-sine", or "bi-square"; default: "gaussian"
-Exposureweightfunction=gaussian
+  # distort images to align them
+  echo "########## nona ##########" >> "$Logfile"
+  comment "align: Running nona to transform images"
+  nona -o "$Destinationdir/PTO_ALIGN" "$Ptofile" >> "$Logfile" || {
+    fehler "Error in nona
+$(tail $Logfile)"
+    cd "$Prevdir"
+    return 1
+  }
+  mv "$Sourcedir/$Ptofile" "$Cachedir/$Ptofile"
 
-# --exposure-optimum=0.5
-# optimum  exposure  value, usually the maximum of the weighting function (0 <= OPTIMUM <= 1); default: 0.5
-#Exposureoptimum=0.5
-#    --exposure-optimum=$Exposureoptimum \
+  
+  cd "$Destinationdir"
+  
+  # Crop images
+  Crop="$(grep "arducrop" < "$Cachedir/$Ptofile" | tail -n1 | cut -d: -f2)"
+  [ "$Crop" ] && {
+    comment "align: Found crop values in $Cachedir/$Ptofile: $Crop"
+  } || {
+    comment "align: Checking crop coordinates of common area of all aligned images"
+    evaluate "$Destinationdir/PTO_ALIGN*" "$Cachedir/align_PTO" min
+    Crop="$(~/git/microscopy-tools/innercrop -o none -t "5,5,5,5" -m box "$Cachedir/align_PTO.min.tif" "$Cachedir/align_PTO_MINBOX.tif")"
+    showimage "$Cachedir/align_PTO_MINBOX.tif"
+    comment "align: innercrop check result: $Crop"
+    Cropx="$(grep "Left" <<< "$Crop" | cut -d: -f2 | cut -d, -f1)"
+    Cropx="${Cropx#" "}"
+    Cropy="$(grep "Upper" <<< "$Crop" | cut -d, -f2)"
+    Cropsize="$(grep "Width" <<< "$Crop" | cut -d: -f2 | cut -d" " -f2)"
+    Crop="${Cropsize}+${Cropx}+${Cropy}"
+    [ "$Crop" = "++" ] && Crop="" || echo "# arducrop:$Crop" >> "$Cachedir/$Ptofile"
+  }
+  [ "$Crop" ] && comment "align: Crop at $Crop" || {
+    fehler "align: Crop failed. Continuing image processing with possibly damaged edges."
+    Crop="${Imagewidth}x${Imageheight}+0+0"
+  }
 
-# --contrast-window-size=SIZE
-#   set window SIZE for local-contrast analysis (SIZE >= 3); default: 5
-#   Does not take effect if --contrast-edge-scale is in use.
-#Contrastwindowsize=5
-#    --contrast-window-size=$Contrastwindowsize \
+  Count=-1
+  for Line in $(fileglob "PTO_ALIGN*"); do
+    Count=$((Count +1))
+    $Convert -crop "$Crop" "$Destinationdir/$Line" "$Destinationdir/${Filearray[$Count]}"
+    $Convert "$Destinationdir/$Line" "$Cachedir/$Line.jpg" 
+    rm "$Line"
+  done
+  
+  [ "$(dirname "$Cachedir")" = "/tmp" ] && rm -R "$Cachedir"
+  cd "$Prevdir"
+}
+evaluate() {
+  # Evaluate image stack. Mostly used to calculate a median to eliminate moving objects.
+  # Usage:
+  #   evaluate Evalmode Sourceglob Destinationfile
+  # Args:
+  #   Evalmode         Evaluation mode, e.g. median, max, min. Get a list of possible modes with: convert -list evaluate
+  #   Sourceglob       Path[+glob] to image stack. Default: ./*
+  #   Destinationfilebasename  Output file base name
+  # detect_sourcedir() can help to set up Args.
+  
+  local Evalmode Sourceglob Destinationfile Destinationfilebasename
+  Sourceglob="${1:-"*"}"
+  Destinationfilebasename="${2:-evaluate}"
+  Evalmode="${3:-}"
+  Destinationfile="$Destinationfilebasename.$Evalmode.tif"
+  
+  #echo "ES $Sourceglob"
+  #echo "ED $Destinationfile"
+  #echo "EM $Evalmode"
+  
+  check_fileglob "$Sourceglob" || Sourceglob="$Sourceglob/*"
+  check_fileglob "$Sourceglob" || {
+    fehler "evaluate $Evalmode: No source files found: $Sourceglob"
+    return 1
+  }
+  check_destinationfile "$Destinationfile" "evaluate $Evalmode" || return 1
+  $Convert $(fileglob "$Sourceglob") -evaluate-sequence $Evalmode "$Destinationfile" || {
+    fehler "evaluate $Evalmode: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all input images have to be the same size."
+    return 1
+  }
+  showimage "$Destinationfile"
+}
+evaluate_fuse() {
+  local Sourceglob Destinationfilebasename Functionmode
+  local Sourcedir Destinationfile
+  Sourceglob="${1:-}"
+  Destinationfilebasename="${2:-}"
+  Functionmode="${3:-}"
+  Sourcedir="$(dirname "$Sourceglob")"
+  Destinationfile="$Destinationfilebasename.$Functionmode.tif"
 
-  Stackbildname=$Fusedir.fuse_edg${Contrastedgescale}.tif
+  evaluate "$Sourceglob" "$Destinationfilebasename" "$Functionmode"
+ 
+  [ -d "$Sourcedir/../stackshot" ] && ln -f "$Destinationfile" "$Sourcedir/../"
+  [ "$Sourcedir" != "${Sourcedir#$Arduhome}" ] && [ "$Functionmode" = "median" ] && ln -f "$Destinationfile" "$Sourcedir/../../"
+  showimage "$Destinationfile"
+#  evaluate "$Targetdir/fuse/*fuse??.jpg" "$Targetdir/fuse/fuse_all" median
+#  [ -d "$Targetdir/stackshot" ] && ln "$Targetdir/fuse/fuse_all.median.tif" "$Targetdir/fuse_all.median.tif"
+}
+compose() {
 
-  Enfusecommand="enfuse \
+  local Mode Sourceglob Destinationfilebasename
+  local Minfile Maxfile Destinationdir
+  Sourceglob="${1:-"*"}"
+  Destinationfilebasename="${2:-compose}"
+  Mode="${3:-linearburn}"
+  Mode="$(tr '[:upper:]' '[:lower:]' <<< "$Mode")"
+  Destinationdir="$(dirname "$Destinationfilebasename")"
+  
+  
+  check_fileglob "$Sourceglob" || Sourceglob="$Sourceglob/*"
+  check_fileglob "$Sourceglob" || {
+    fehler "compose $Mode: No source files found: $Sourceglob"
+    return 1
+  }
+  
+  Maxfile="$Destinationfilebasename.max.tif"
+  Minfile="$Destinationfilebasename.min.tif"
+  [ -e "$Maxfile" ] || evaluate "$Sourceglob" "$Maxfile" "max"
+  [ -e "$Minfile" ] || evaluate "$Sourceglob" "$Minfile" "min"
+  [ -e "$Maxfile" ] && [ -e "$Minfile" ] || {
+    fehler "compose $Mode: Failed to find or create min and max files."
+    return 1
+  }
+  
+  Destinationfile="$Destinationfilebasename.${Mode}1.jpg"
+  check_destinationfile "$Destinationfile" "compose $Mode" && {
+    $Convert "$Minfile" "$Maxfile" -compose "$Mode" -composite "$Destinationfile"
+    showimage "$Destinationfile"
+  }
+  case $Mode in # link interesting results to parent folder
+    bumpmap|multiply|overlay)
+      [ -d "$Destinationdir/../stackshot" ] && ln -f "$Destinationfile" "$Destinationdir/../"
+    ;;
+  esac
+  case $Mode in
+    linearburn|multiply) ;;  # skip second compose for modes with identical result
+    difference)
+      $Convert "$Destinationfile" -negate "$Destinationfilebasename.$Mode-negate.jpg"
+    ;;
+    *)
+      Destinationfile="$Destinationfilebasename.${Mode}2.jpg"
+      check_destinationfile "$Destinationfile" "compose $Mode" && {
+        $Convert "$Maxfile" "$Minfile" -compose "$Mode" -composite "$Destinationfile"
+        showimage "$Destinationfile"
+      }
+    ;;
+  esac
+}
+fuse() {
+  # fuse stackshot of images with enfuse
+  # Usage:
+  #   fuse [-m Fusemode] Sourceglob Destinationfile
+  # Args:
+  # -m Fusemode         Parameter set to use. Default: 1
+  #    Sourceglob       Path[+glob] to image stack. Default: ./*
+  #    Destinationfile  Output file. Default: fuse??.tif
+  # detect_sourcedir() can help to set up Args.
+  
+  local Fusemode Sourceglob Destinationfile Destinationfilebasename
+  local Exposureweight Saturationweight Contrastweight
+  local Contrastedgescale Exposureweightfunction Exposureoptimum
+  
+  
+  # Source and destination
+  Sourceglob="${1:-"*"}"
+  Destinationfilebasename="${2:-enfuse}"
+  check_fileglob "$Sourceglob" || Sourceglob="$Sourceglob/*"
+  check_fileglob "$Sourceglob" || {
+    fehler "fuse: No source files found: $Sourceglob"
+    return 1
+  }
+  Fusemode="${3:-1}"
+  #echo "FS $Sourceglob"
+  #echo "FD $Destinationfile"
+  #echo ""
+ 
+  # Predefined parameter sets
+  Exposureweight=0.0
+  Saturationweight=0.0
+  Contrastweight=1.0
+  Contrastedgescale=0
+  Contrastmincurvature=0
+  Contrastwindowsize="3"
+  Grayprojector="luminance"
+  case $Fusemode in
+    all)
+      fuse_all "$Sourceglob" "$Destinationfilebasename"
+      return
+    ;;
+    1)
+    ;;
+    2)
+      Saturationweight="0.1"
+    ;;
+    3) 
+      Contrastwindowsize="7"
+    ;;
+    4) 
+      Contrastwindowsize="7"
+      Saturationweight="0.1"
+    ;;
+    5) 
+      Contrastwindowsize="15"
+    ;;
+    6) 
+      Contrastwindowsize="15"
+      Saturationweight="0.1"
+    ;;
+    xxx7)
+      Contrastedgescale="0.3:1000%:300%"
+      Contrastmincurvature="+0.3%"
+    ;;
+    xxx8)
+      Contrastedgescale="0.3:1000%:300%"
+      Contrastmincurvature="+0.3%"
+      Saturationweight="0.1"
+    ;;
+    9)
+      Contrastedgescale="0.8:2000%:300%"
+    ;;
+    10)
+      Contrastedgescale="0.8:2000%:300%"
+      Saturationweight="0.1"
+    ;;
+    11)
+      Contrastedgescale="1.2:16:4"
+      #Contrastmincurvature="+8.0%"
+    ;;
+    12)
+      Contrastedgescale="1.2:16:4"
+      #Contrastmincurvature="+8.0%"
+      Saturationweight="0.1"
+    ;;
+    13)
+      Contrastedgescale="1.6:16:4"
+      #Contrastmincurvature="+4.0%"
+    ;;
+    14)
+      Contrastedgescale="1.6:16:4"
+      #Contrastmincurvature="+5.0%"
+      Saturationweight="0.1"
+    ;;
+    15)
+      Contrastedgescale="1.6:16:10"
+      #Contrastmincurvature="+10.0%"
+    ;;
+    16)
+      Contrastedgescale="1.6:16:10"
+      #Contrastmincurvature="+10.0%"
+      Saturationweight="0.1"
+    ;;
+    
+    
+    
+    
+    x11)
+      Grayprojector="l-star"
+    ;;
+    x12) 
+      Contrastwindowsize="7"
+      Grayprojector="l-star"
+    ;;
+    x13)
+      Grayprojector="l-star"
+      Contrastedgescale="0.3:1000%:300%"
+      Contrastmincurvature="+0.3%"
+      Grayprojector="l-star"
+    ;;
+    x14)
+      Contrastedgescale="0.8:2000%:300%"
+      Grayprojector="l-star"
+    ;;
+    x15)
+      Contrastedgescale="1.2:16:4"
+      Contrastmincurvature="+8.0%"
+      Grayprojector="l-star"
+    ;;
+    x16)
+      Contrastedgescale="1.6:16:4"
+      Contrastmincurvature="+4.0%"
+      Grayprojector="l-star"
+    ;;
+    x17)
+      Contrastedgescale="1.6:16:4"
+      Saturationweight="0.1"
+      Contrastmincurvature="+5.0%"
+      Grayprojector="l-star"
+    ;;
+    x18)
+      Contrastedgescale="1.6:16:10"
+      Saturationweight="0.1"
+      Contrastmincurvature="+10.0%"
+      Grayprojector="l-star"
+    ;;
+    *) return 1 ;;
+  esac
+  
+  
+  ##  Laplacian Edge Detection
+  # Enfuse provides a Laplacian-based algorithm that can help in situations where weighting based on the standard deviation fails. 
+  # It is activated with a positive value for SCALE in --contrast-edge-scale=SCALE. 
+  # The Laplacian will detect two-dimensional curvature on the scale of SCALE. 
+  # Here and in the following we simply speak of curvature where we mean magnitude of curvature. 
+  # That is, we shall not distinguish between convex and concave edges. Enfuse always use the magnitude of curvature for weighting.
+  #
+  # Typically, SCALE ranges between 0.1 pixels and 0.5 pixels, where 0.3 pixels are a reasonable starting point. 
+  # To find the best value for SCALE though, usually some experimentation will be necessary. 
+  # Use --save-masks to get all soft-mask (default: softmask-%n.tif) and hard-mask files (default: hardmask-%n.tif). Check how different scales affect the artifacts. 
+  #
+  ## Local Contrast Enhancement
+  # Sometimes Enfuse misses smoother edges with --contrast-edge-scale and a little local contrast enhancement (LCE) helps. 
+  # Set --contrast-edge-scale=SCALE:LCE-SCALE:LCE-FACTOR, 
+  # where LCE-SCALE and LCE-FACTOR work like the unsharp mask filters in various image manipulation programs. 
+  # Start with LCE-SCALE ten times the value of SCALE and a LCE-FACTOR of 2-5.
+  #
+  # LCE-SCALE can be specified as a percentage of SCALE. LCE-FACTOR also can be specified as a percentage. 
+  # Examples:
+  #    --contrast-edge-scale=0.3:3.0:3
+  #    --contrast-edge-scale=0.3:1000%:3.0
+  #    --contrast-edge-scale=0.3:3:300%
+  #    --contrast-edge-scale=0.3:1000%:300% 
+  #  Contrastedgescale="0.3:3:3"
+  #
+  # --exposure-weight-function=gaussian
+  # one of the built-in exposure WEIGHT-FUNCTIONs: "gaussian", "lorentzian", "half-sine", "full-sine", or "bi-square"; default: "gaussian"
+  #  Exposureweightfunction=gaussian
+  #
+  # --exposure-optimum=0.5
+  # optimum  exposure  value, usually the maximum of the weighting function (0 <= OPTIMUM <= 1); default: 0.5
+  #Exposureoptimum=0.5
+  #    --exposure-optimum=$Exposureoptimum \
+  #
+  # --contrast-window-size=SIZE
+  #   set window SIZE for local-contrast analysis (SIZE >= 3); default: 5
+  #   Does not take effect if --contrast-edge-scale is in use.
+  #Contrastwindowsize=5
+  #    --contrast-window-size=$Contrastwindowsize \
+
+  Destinationfile="$Destinationfilebasename.fuse$(printf %02d $Fusemode).jpg"
+  check_destinationfile "$Destinationfile" "fuse" || return 1
+  comment "fuse: Creating $Destinationfile"
+  
+  Enfuseoptions="
       --exposure-weight=$Exposureweight \
       --saturation-weight=$Saturationweight \
       --contrast-weight=$Contrastweight \
       --hard-mask \
       \
       --contrast-edge-scale=$Contrastedgescale \
-      --exposure-weight-function=$Exposureweightfunction \
+      --contrast-min-curvature=$Contrastmincurvature \
+      --contrast-window-size=$Contrastwindowsize \
       \
-      --output=$Stackbildname \
-      --verbose \
-      $Bildliste"
-  Enfusecommand="$(echo $Enfusecommand)"
-  {
-    xterm -hold -title "$Stackbildname" -e "$Enfusecommand"
-
-
-#      --gray-projector=l-star \
-#    --contrast-window-size=$Contrastsize \
-
+      --gray-projector=$Grayprojector \
+"
+  # Fusing here
+  enfuse $Enfuseoptions \
+      --output=$Destinationfile \
+      $(fileglob "$Sourceglob") \
+      2>&1 | grep -v "does not have an alpha channel" | grep -v "assuming all pixels should contribute" | grep -v "loading next image"
     
-  comment "enfuse is ready: $Stackbildname"
-  cd ..
-  cmd image "$Stackbildname"
-  } &
+#    --contrast-window-size=$Contrastsize \
+    
+  # Write enfuse options into EXIF data of image
+  exiv2 -M"set Exif.Photo.UserComment Comment charset=Ascii enfuse $(echo $Enfuseoptions)" "$Destinationfile"
+
+  comment "fuse is ready: ${Destinationfile}"
+  showimage "$Destinationfile"
+}
+fuse_all() {
+  # Iterate through all fuse modes of fuse(). Run as much threads as CPU cores are given.
+  # detect_sourcedir() can help to set up Args.
+  # Usage:
+  #  fuse_all Sourceglob Destinationdir Destinationfilebasename
+  # Args:
+  #  Sourceglob                Path[and glob] to stackshot images.
+  #  Destinationdir            folder where to store results
+  #  Destinationfilebasename   Prefix of created files. Default: "fuse". Suffix will be ??.tif
+  
+  local Sourceglob Destinationdir Destinationfilebasename Destinationfile
+  local Fusemode Fusepid Fusethreads Cpucount
+  
+  Sourceglob="${1:-"*"}"
+  Destinationfilebasename="${2:-}"
+#  [ -d "$Destinationdir" ] && {
+#    Destinationfilebasename="fuse"
+#  } || {
+#    Destinationfilebasename="$(basename "$Destinationdir")"
+#    Destinationdir="$(dirname "$Destinationdir")"
+#  }
+#  check_fileglob "$Sourceglob" || Sourceglob="$Sourceglob/*"
+#  check_fileglob "$Sourceglob" || {
+#    fehler "fuse: No source files found: $Sourceglob"
+#    return 1
+#  }
+ 
+  # number of CPUs to use
+  Cpucount="$(nproc)"
+  #Cpucount="$((Cpucount-1))"
+#  Cpucount=1
+  
+  # fuse with enfuse
+  # some hickhack to run multiple threads at once, but not more than number of CPUs.
+  for Fusemode in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+    Destinationfile="$Destinationfilebasename.fuse$(printf %02d $Fusemode).jpg"
+    check_destinationfile "$Destinationfile" "fuse" && {
+      fuse "$Sourceglob" "$Destinationfilebasename" "$Fusemode" & Fusepid[$Fusemode]=$! 
+      echo "${Fusepid[$Fusemode]} fuse" >>$Backgroundpidfile
+      ps -p ${Fusepid[$Fusemode]} >/dev/null && while :; do
+        sleep 1
+        Fusethreads=0
+        for ((i=1; i<=100; i++)); do
+          [ "${Fusepid[$i]}" ] && ps -p "${Fusepid[$i]}" >/dev/null 2>&1 && Fusethreads=$((Fusethreads+1)) || Fusepid[$i]=""
+        done
+        [ "$Fusethreads" -lt $Cpucount ] && break
+      done
+    }
+  done
+  for ((i=1; i<=100; i++)); do
+    [ "${Fusepid[$i]}" ] && ps -p "${Fusepid[$i]}" >/dev/null 2>&1 && wait ${Fusepid[$i]}
+  done
 }
 
 #########################
@@ -979,6 +1885,7 @@ readline_watch() {
   while : ; do
     cd $(cat $Workdirfile)
     history -n $Historyfile
+    sleep 0.5
     read -r -e Commandline
     echo "$Commandline" >> $Commandfifo
   done
@@ -1009,26 +1916,45 @@ cmd() {
   }
 }
 cmd_loop() {
-  ## Funktion: Kommandostapel teilenweise an Parser weiterreichen
+  ## Funktion: Kommandostapel zeilenweise an Parser weiterreichen
   local Commandline
   while :; do
-    ps -p $Imageviewerpid >/dev/null 2>&1 || Imageviewerpid=""
-    ps -p $Ffplaypid      >/dev/null 2>&1 || Ffplaypid=""
   
     read -r Commandline <&4
     echo  "$Commandline" >> $Historyfile       # Eintrag für history von readline
     echo  "$Commandline" > "$Pleasewaitfile"   # Kommandosperre setzen
 
+    ps -p $Imageviewerpid >/dev/null 2>&1 || Imageviewerpid=""
+    ps -p $Ffplaypid      >/dev/null 2>&1 || Ffplaypid=""
+    
+    Lateststack="$(cat "$Lateststackfile")"
+    cd "$(cat "$Workdirfile")"
+    
+    set -f
     cmd_parser $Commandline
+    set +f
     
     [ -s "$Ardutermrunfile" ] || break
     
     # Prompt anzeigen
     Currentdir=$(pwd)
-    echo -e "${WEISS} $Poscurrent  ${BLAU}Pos1:${GELB}$Pos1 ${BLAU}Pos2:${GELB}$Pos2 \
+    echo -e "${WEISS} $Poscurrent  ${BLAU}Pos1:${GELB}$Pos1 ${BLAU}[$(awk 'BEGIN {print 0.048 * '$((Pos2 - Pos1))'}')µm][$(( (Pos2-Pos1) / $Schrittweite )) shots] ${BLAU}Pos2:${GELB}$Pos2 \
 ${BLAU}w:${WEISS}$Schrittweite(=$(awk 'BEGIN {print 0.048 * '$Schrittweite'}')µm) \
-${BLAU}iso:${WEISS}${Iso:-N/A} ${BLAU}shutter:${WEISS}${Shutterspeed:-N/A} \
-${BLAU}dir:${Currentdir#$Arduhome}> $WEISS"
+${BLAU}iso:${WEISS}${Iso:-N/A} ${BLAU}shutter:${WEISS}${Shutterspeed:-N/A}
+${BLAU}dir:${Currentdir#"$Arduhome/"} $WEISS"
+    # check [and show] background processes
+    Batchpids=0
+    Fusepids=0
+    Stackpids=0
+    while read Pid Name; do
+      ps -p $Pid>/dev/null && case $Name in
+        batch) Batchpids=$((Batchpids+1)) ;;
+        fuse) Fusepids=$((Fusepids+1)) ;;
+        stack) Stackpids=$((Stackpids+1)) ;;
+      esac || sed -i "/$Pid /d" $Backgroundpidfile
+    done <$Backgroundpidfile
+    [ "$((Batchpids + Fusepids + Stackpids))" = "0" ] || echo -e "${BLAU}Background processes still running: batch:${ROT}$Batchpids${BLAU} fuse:${ROT}$Fusepids${BLAU} stack:${ROT}$Stackpids${WEISS}"
+    
     # Kommandosperre aufheben
     :> "$Pleasewaitfile"
   done
@@ -1041,6 +1967,7 @@ cmd_parser() {
   
   Command="${1:-}"
   shift
+  set +f
   
   case "$Command" in       # Laufende Videoaufnahme bei gphoto2 Aufruf unterbrechen, ggf. nach Kommando wieder starten
     "get-config"|"gc"|"set-config"|"setconfig"|"sc"|\
@@ -1172,13 +2099,11 @@ stop-movie | stop                   Videoaufnahme stoppen
     #### Dateioperationen ####
     "home") # Basisverzeichnis für arduterm Bilder+Videos festlegen
        [ "${1:-}" ] && Arduhome="$1"
-       cmd cd $Arduhome
+       cd "$Arduhome"
+       pwd > $Workdirfile
        ;;
     "projekt"|"project") # Projektname festlegen, Ordner erzeugen und hineingehen
-       Projektname="${1:-unknown}.$(date +%Y-%m-%d)"
-       mkdir -p "$Arduhome/$Projektname"
-       cd "$Arduhome/$Projektname"
-       cmd cd "$Arduhome/$Projektname"
+       setup_projectdir "$1"
        ;;
     "name")
        Stackshotname="$1"
@@ -1187,7 +2112,7 @@ stop-movie | stop                   Videoaufnahme stoppen
        cd ${1:-$Arduhome/$Projektname}
        pwd >$Workdirfile
        sleep 0.1
-       xdotool key Return
+       #xdotool key Return
        ;;
     "mkdir") # Verzeichnis anlegen
        comment "Erzeuge Ordner $1"
@@ -1196,7 +2121,7 @@ stop-movie | stop                   Videoaufnahme stoppen
     "ls") # Verzeichnisinhalt anzeigen
        ls "$@"
        ;;
-    "image") # Bild $1 anzeigen.
+    "showimage"|"image") # Bild $1 anzeigen.
        showimage "$@"
        ;;
     "video") # Video $1 oder $Latestvideo abspielen
@@ -1243,16 +2168,19 @@ stop-movie | stop                   Videoaufnahme stoppen
        
     "capture-image"|"cap") 
        comment "Fotoaufnahme in Kameraspeicher"
+       setup_projectdir
        ardu_gphoto2 capture-image
        ;;
     "capture-image-and-download"|"capd")
        comment "Fotoaufnahme auf Festplatte"
+       setup_projectdir
        ardu_gphoto2 capture-image-and-download
        showimage "$Latestimage"
        comment "Bild gespeichert als $Latestimage"
        ;;
     "capture-preview"|"capp")
        comment "Nehme einzelnes Video-Preview-Bild auf"
+       setup_projectdir
        ardu_gphoto2 capture-preview
        showimage "$Latestimage"
        comment "Bild gespeichert als $Latestimage"
@@ -1287,11 +2215,13 @@ stop-movie | stop                   Videoaufnahme stoppen
        ;;
     "capture-movie-no-preview")
        comment "Videoaufnahme wird gespeichert, aber nicht angezeigt."
+       setup_projectdir
        videoaufnahme capture-movie
        comment "Video wird gespeichert als $Latestvideo"
        ;;
     "capture-movie"|"start")
        comment "Videoaufnahme wird gespeichert und angezeigt."
+       setup_projectdir
        videoaufnahme capture-movie-and-preview
        comment "Video wird gespeichert als $Latestvideo"
        ;;
@@ -1303,12 +2233,33 @@ stop-movie | stop                   Videoaufnahme stoppen
     #### Stacking ####
     "stack")
        Videomode_restore=""
-       stackshot $1 & 
+       setup_projectdir
+       stackshot $1 & echo $! stack >>$Backgroundpidfile
        ;;
-    "fuse")
-       fuse $1
+    "bat"|"batch")
+       batch_all "$1" & echo $! batch >>$Backgroundpidfile
+       ;;
+    "align")
+       batch_function align "${1:-}" & echo $! batch >>$Backgroundpidfile
+       ;;
+    "evaluate"|"eval")
+       batch_function evaluate "${1:-}" & echo $! batch >>$Backgroundpidfile
+       ;;
+    "median"|"med")
+       Evalstack="yes"
+       Evalnumber="${1:-4}"
+       [ "$Evalnumber" -gt "1" ] || Evalnumber="1"
+       [ "$Evalnumber" =   "1" ] && Evalstack="no"
+       ;;
+    "sharp"|"sharpen")
+       batch_function sharpen "${1:-}"
        ;;
        
+    "kill")
+       while read Pid Name; do
+         ps -p $Pid | grep -q -E 'arduterm|enfuse|align_image_stack' && kill "$Pid"
+       done <$Backgroundpidfile
+       ;;
     "") ;;
     *) fehler "Fehler: unbekanntes Kommando: $Command" ;;
   esac
@@ -1334,7 +2285,6 @@ declare_variables() {
   Arduhome="$HOME/Bilder/arduterm"
   Latestvideo=
   
-  
   Deviceadresse="/dev/null"
   Devicetimeout=2
   
@@ -1344,8 +2294,8 @@ declare_variables() {
   Schrittweite=1
   Poscurrent=0
   Pos0=0
-  Pos1=0
-  Pos2=1
+  Pos1=1000
+  Pos2=1001
   
   Previewzoom=1
   Shutterspeed=
@@ -1358,6 +2308,16 @@ declare_variables() {
   Watchreadlinepid=
   
   Keywatch="off"
+  
+  Evalnumber="1"
+  Evalstack="no"
+  Evalwait="2.5"
+  Evalmodelist="median min max"
+
+  Projektname=""
+  Stackshotname="stack"
+  
+  Convert="convert -quality 100%"
 }
 create_cachefiles() {
   Cachefolder=/tmp/arduterm
@@ -1394,11 +2354,19 @@ create_cachefiles() {
   Lateststackfile=$Cachefolder/stack.latest
   :> $Lateststackfile
   
+  Latestimagefile=$Cachefolder/image.latest
+  :> $Latestimagefile
+  
   Xtrlockpidfile=$Cachefolder/xtrlock.pid
   :> $Xtrlockpidfile
   
+  Latestimagelink=$Cachefolder/image.latest.link
+  
   Ardutermrunfile=$Cachefolder/arduterm.action
   echo "action" >$Ardutermrunfile
+  
+  Backgroundpidfile=$Cachefolder/bgpids
+  :> $Backgroundpidfile
   
   Hubloop_stepinfile=$Cachefolder/loop.stepin.action
   Hubloop_stepoutfile=$Cachefolder/loop.stepout.action
@@ -1419,7 +2387,7 @@ arduterm_init() {
 
   # Abhängigkeiten prüfen
   command -v gphoto2 >/dev/null || fehler "Warnung: gphoto2 nicht gefunden. Wird benötigt für Kamerasteuerung."
-  command -v sxiv >/dev/null    || fehler "Warnung: sxiv nicht gefunden. Wird benötigt für Bildanzeige."
+  command -v geeqie >/dev/null  || fehler "Warnung: geeqie nicht gefunden. Wird benötigt für Bildanzeige."
   command -v ffmpeg >/dev/null  || fehler "Warnung: ffmpeg nicht gefunden. Wird benötigt für Videovorschau."
   command -v dialog >/dev/null  || fehler "Warnung: dialog nicht gefunden. Wird benötigt für interaktive Kamerakonfiguration."
   command -v xtrlock >/dev/null || fehler "Warnung: xtrlock nicht gefunden. Wird benötigt für Tastatursteuerung mit CAPSLOCK."
@@ -1432,9 +2400,6 @@ arduterm_init() {
   
   # Auf Guake Terminal prüfen
   ps -p $(ps -o ppid -p $PPID | tail -n1) | grep -q guake || fehler "Warnung: arduterm ist für Terminal Emulator Guake ausgelegt."
-  
-  # Configfile auswerten
-  [ -s "$Configfile" ] && cat $Configfile >> $Commandfifo
 }
 arduterm_ende() {
   ## Funktion: Programm sauber beenden
@@ -1445,6 +2410,12 @@ arduterm_ende() {
   
   # Hintergrundprozesse stoppen
   for Pid in $Watchreadlinepid $Watchdevicepid $Watchkeypresspid $Xinputpid $(cat $Xtrlockpidfile) $Imageviewerpid $Hubloopstepinpid $Hubloopstepoutpid ; do mykill $Pid ; done
+  while read Pid Name; do
+    ps -p $Pid | grep -q -E 'arduterm|enfuse|align_image_stack' && {
+      fehler "Beende $Pid $Name"
+      kill $Pid
+    }
+  done <$Backgroundpidfile
   
   exec 4<&-
   exec 6<&-
@@ -1458,6 +2429,16 @@ arduterm_ende() {
 main() {
   arduterm_init
   
+  [ "$*" ] && {         # execute single command only if given on cli
+    Commandline="$*"
+    [ -d "$Commandline" ] || check_fileglob "$Commandline" && Commandline="batch $Commandline"
+    cmd_parser $Commandline
+    wait
+    arduterm_ende
+  }
+  
+  [ -s "$Configfile" ] && cat $Configfile >> $Commandfifo
+  
   readline_watch <&0                      & Watchreadlinepid=$!
   
   xinput test $Keyboardid >>$Keywatchfifo & Xinputpid=$!
@@ -1469,4 +2450,100 @@ main() {
   cmd_loop
   arduterm_ende
 }
-main
+main "$@"
+
+
+X_align() {
+  # align images with align_image_stack.
+  # special: devide into two halves starting from the middle and merge again later.
+  # run detect_sourcedir() first to set some variables.
+  
+  local Line Middle Count Filecount Filelist
+  local Destinationfile
+  local Alignpid
+
+  comment "Aligning stack: ${Sourcedir-$Arduhome}/$Sourcefileglob"
+  
+  # read filenames in array
+  Filecount=-1
+  for Line in $(fileglob "$Sourcedir/$Sourcefileglob") ; do
+    [ -f "$Line" ] && {
+      Filecount=$((Filecount+1))
+      Filelist[$Filecount]="$Line"
+    }
+  done
+  [ "$Filecount" = "-1" ] && fehler "align: Keine Bilder gefunden" && return 1
+  
+  # create temporary working dirs
+  mkdir $Sourcedir/align.tmp.1
+  mkdir $Sourcedir/align.tmp.2
+  mkdir $Sourcedir/align.tmp.3
+
+  # split files with softlinks into two folders
+  # reverse order for first half of images in folder 1
+  # middle file is part of both folders and the first of both alignments
+  Middle=$((Filecount / 2))
+  for ((Line=0 ; Line<=Middle ; Line++)); do
+    ln -s ${Filelist[$Line]} $Sourcedir/align.tmp.1/sl$(printf %04d $((Middle-Line)))
+  done
+  for ((Line=Middle ; Line<=Filecount ; Line++)); do
+    ln -s ${Filelist[$Line]} $Sourcedir/align.tmp.2/sl$(printf %04d $Line)
+  done
+#  for ((Line=0 ; Line<=Filecount ; Line++)); do
+#    ln -s ${Filelist[$Line]} $Sourcedir/align.tmp.2/sl$(printf %04d $Line)
+#  done
+  
+  # align both folders
+  time align_image_stack -l -m -s 0 --use-given-order -a $Sourcedir/align.tmp.1/align $Sourcedir/align.tmp.1/sl* 2>&1 | grep -v "Unable to read EXIF data" & Alignpid1=$!
+  time align_image_stack -l -m -s 0 --use-given-order -a $Sourcedir/align.tmp.2/align $Sourcedir/align.tmp.2/sl* 2>&1 | grep -v "Unable to read EXIF data" & Alignpid2=$!
+  echo $Alignpid1 align >>$Backgroundpidfile
+  echo $Alignpid2 align >>$Backgroundpidfile
+  wait $Alignpid1
+  wait $Alignpid2
+#  time align_image_stack -C -l -m -v -v --use-given-order -a $Sourcedir/align.tmp.2/align $Sourcedir/align.tmp.2/sl* 2>&1 | grep -v "Unable to read EXIF data" & Alignpid=$!
+#  echo $Alignpid align >>$Backgroundpidfile
+#  wait $Alignpid
+  
+  # move aligned images in right order to source dir
+  [ "$Sourcefileglob" = "s_*" ] && Destinationprefix="sa_" || Destinationprefix="a_"
+    for ((Line=0 ; Line<=Middle ; Line++)); do
+    Destinationfile="$(basename ${Filelist[$((Middle - Line))]})"
+    [ "$Sourcefileglob" = "s_*" ] && Destinationfile="${Destinationcode}_$(cut -d_ -f2- <<< "$Destinationfile")" ||  Destinationfile="${Destinationcode}_$Destinationfile"
+    Destinationfile="$(echo $Destinationfile | rev | cut -d. -f2- | rev).tif"
+    mv $Sourcedir/align.tmp.1/align$(printf %04d $Line).tif  $Destinationdir/$Destinationfile
+#     mv $Sourcedir/align.tmp.1/align$(printf %04d $Line).tif  $Sourcedir/align.tmp.3/$Destinationfile
+  done
+  Count=0
+  for ((Line=Middle ; Line<=Filecount ; Line++)); do
+    Destinationfile="$(basename ${Filelist[$((Line))]})"
+    [ "$Sourcefileglob" = "s_*" ] && Destinationfile="${Destinationcode}_$(cut -d_ -f2- <<< "$Destinationfile")" ||  Destinationfile="${Destinationcode}_$Destinationfile"
+    Destinationfile="$(echo $Destinationfile | rev | cut -d. -f2- | rev).tif"
+    mv $Sourcedir/align.tmp.2/align$(printf %04d $((Count))).tif $Destinationdir/$Destinationfile
+#    mv $Sourcedir/align.tmp.2/align$(printf %04d $((Count))).tif $Sourcedir/align.tmp.3/$Destinationfile
+    Count=$((Count+1))
+  done
+#  time align_image_stack -l -C --use-given-order -a $Sourcedir/align.tmp.3/align $Sourcedir/align.tmp.3/$Sourcefileglob 2>&1 | grep -v "Unable to read EXIF data" & Alignpid=$!
+#  echo $Alignpid align >>$Backgroundpidfile
+#  wait $Alignpid
+#  for ((Line=0 ; Line<=Filecount ; Line++)); do
+#    Destinationfile="$(basename ${Filelist[$((Line))]})"
+#    [ "$Sourcefileglob" = "s_*" ] && Destinationfile="${Destinationcode}_$(cut -d_ -f2- <<< "$Destinationfile")" ||  Destinationfile="${Destinationcode}_$Destinationfile"
+#    Destinationfile="$(echo $Destinationfile | rev | cut -d. -f2- | rev).tif"
+#    mv $Sourcedir/align.tmp.3/align$(printf %04d $Line).tif $Destinationdir/$Destinationfile
+#  done
+#  Count=0
+#  for ((Line=0 ; Line<=Filecount ; Line++)); do
+#    Destinationfile="$(basename ${Filelist[$((Line))]})"
+#    [ "$Sourcefileglob" = "s_*" ] && Destinationfile="${Destinationcode}_$(cut -d_ -f2- <<< "$Destinationfile")" ||  Destinationfile="${Destinationcode}_$Destinationfile"
+#    Destinationfile="$(echo $Destinationfile | rev | cut -d. -f2- | rev).tif"
+#    mv $Sourcedir/align.tmp.2/align$(printf %04d $((Count))).tif $Destinationdir/$Destinationfile
+#    Count=$((Count+1))
+#  done
+  
+  # remove workdirs with softlinks
+  rm -R $Sourcedir/align.tmp.1
+  rm -R $Sourcedir/align.tmp.2
+  rm -R $Sourcedir/align.tmp.3
+  
+  comment "Align ready: ${Sourcedir-$Arduhome}/$Sourcefileglob"
+}
