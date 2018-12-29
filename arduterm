@@ -169,7 +169,8 @@ check_destinationfile() {
   Destinationfile="${1:-}"
   Function="${2:-}"
   [ -e "$Destinationfile" ] && {
-    fehler "$Function: Destination file already exists: $Destinationfile"
+    #fehler "$Function: Destination file already exists: $Destinationfile"
+    fehler "$Function: Destination file already exists: $(basename "$Destinationfile")"
     return 1
   }
   return 0
@@ -823,7 +824,7 @@ stackshot() {
   echo "$Lateststack" >"$Lateststackfile"
   [ "$Evalstack" = "yes" ] && {
     mkdir -p $Lateststack/median.source
-    for Line in $Evalmodelist; do
+    for Line in median min max; do
       mkdir -p $Lateststack/$Line
     done
   }
@@ -871,7 +872,7 @@ stackshot() {
     [ "$Evalstack" = "yes" ] && {
       comment "stack: Aligning captures of step $Loopcount."
       align_image_stack -m --use-given-order -a ${Evalgroup}_align $Evalgroup*.jpg 2>&1 | grep -v "Unable to read EXIF data"
-      Latestimage="$Lateststack/stackshot-median/${Fotomodus}_$(printf "%04d" $Loopcount).tif"
+      Latestimage="$Lateststack/stackshot-median/${Fotomodus}_$(printf "%04d" $Loopcount).jpg"
       $Convert ${Evalgroup}_align*.tif -evaluate-sequence median "$Latestimage"
       showimage "$Latestimage"
     }
@@ -946,6 +947,8 @@ detect_sourcedir() {
   }
   Sourcefileglob="${Sourcefileglob:-"*"}"
   Targetdir="$(realpath "$Targetdir")"
+  Targetfusedir="$Targetdir/fuse"
+  Targetcomposedir="$Targetdir/compose"
   
   # check if it is an arduterm directory structure, or an arbitrary image directory
   [ -d "$Targetdir/stackshot" ] && {
@@ -962,9 +965,9 @@ detect_sourcedir() {
     return 1
   }
   
-  for Stackdir in $Singleshotdir $(dirglob "$Targetcachedir/*") ; do
+  for Stackdir in $Singleshotdir $(dirglob "$Targetcachedir/*") $Targetfusedir; do
     Stackdir="$(basename $Stackdir)"
-    grep -q -E 'sharpen|align|level' <<< "$Stackdir" && Sourcedir="$Targetcachedir/$Stackdir" || Sourcedir="$Targetdir/$Stackdir"
+    grep -q -E 'sharpen|align|level|contrast' <<< "$Stackdir" && Sourcedir="$Targetcachedir/$Stackdir" || Sourcedir="$Targetdir/$Stackdir"
     grep -q -E 'stackshot' <<< "$Singleshotdir" || {
       [ "$Stackdir" = "$Singleshotdir" ] && Sourcedir="$Targetdir"
     }
@@ -973,36 +976,61 @@ detect_sourcedir() {
     Skip="no"
       
     case $Function in
-      fuse|evaluate|compose)
-        #[ "$Singleshotdir" = "stackshot" ] && Destinationdir="$Targetdir" || Destinationdir="$Targetdir/fuse"
-        case $Function in
-          fuse) Destinationdir="$Targetdir/fuse" ;;
-          *)    Destinationdir="$Targetdir/compose" ;;
-        esac
+      fuse)
+        Destinationdir="$Targetfusedir"
         Destinationfilebasename="$Stackdir"
-        # exclude some less interesting dirs to save computing time
-        grep -q align   <<< "$(basename "$Stackdir")" || Skip="yes"  # only fuse aligned stacks
-        grep -q level   <<< "$(basename "$Stackdir")" || Skip="yes"  # only fuse leveled stacks
-        grep -q sharpen <<< "$(basename "$Stackdir")" || Skip="yes"  # only fuse sharpened stacks
-      ;;
-      
-      align|sharpen*|level)
-        Destinationdir="$Targetcachedir/$Stackdir.$Function$Functionmode"
-        # exclude some less interesting dirs to save time and space
-        # avoid double work
-        case "$Function" in
-          sharpen*) grep -q sharpen     <<< "$Stackdir" && Skip="yes" ;;
-          *)        grep -q "$Function" <<< "$Stackdir" && Skip="yes" ;;
+        case $Stackdir in
+          fuse) Skip="yes" ;;
         esac
-        check_doubledir "$Destinationdir" && Skip="yes"
-        [ "$Function" != "level" ] && ! grep -q level <<<"$Destinationdir" && check_dirglob "$Targetcachedir/*level*" && Skip="yes" 
+        # exclude some less interesting dirs to save computing time
+        grep -q align    <<< "$Stackdir" || Skip="yes"  # only fuse aligned stacks
+        grep -q level    <<< "$Stackdir" || Skip="yes"  # only fuse leveled stacks
+        grep -q sharpen  <<< "$Stackdir" || Skip="yes"  # only fuse sharpened stacks
+        grep -q contrast <<< "$Stackdir" || Skip="yes"  # only fuse contrasted stacks
       ;;
       
-      evaluate_fuse)
-        Sourcedir="$Targetdir/fuse"
-        Destinationdir="$Targetdir/compose"
-        Destinationfilebasename="$(basename "$Targetdir").fuse"
-        #grep -q -E 'stackshot' <<< "$Singleshotdir" && Functionmode="$Targetdir" || Functionmode=""
+      evaluate|compose)
+        Destinationfilebasename="$(basename "$Targetdir").$Stackdir"
+        case $Stackdir in
+          fuse) Destinationdir="$Targetcomposedir" ;;
+          *)    
+            Destinationdir="$Targetcomposedir" 
+            grep -q align    <<< "$Stackdir" || Skip="yes"  # only compose aligned stacks
+            grep -q level    <<< "$Stackdir" || Skip="yes"  # only compose leveled stacks
+            grep -q sharpen  <<< "$Stackdir" || Skip="yes"  # only compose sharpened stacks
+            grep -q contrast <<< "$Stackdir" || Skip="yes"  # only compose contrasted stacks
+          ;;
+        esac
+      ;;
+      
+      align|sharpen|level|contrast)
+        Destinationdir="$Targetcachedir/$Stackdir.$Function$Functionmode"
+        grep -q "$Function" <<< "$Stackdir" && Skip="yes"
+        check_doubledir "$Destinationdir"   && Skip="yes"
+        #[ "$Function" != "level" ] && ! grep -q level <<<"$Destinationdir" && check_dirglob "$Targetcachedir/*level*" && Skip="yes"
+        case $Stackdir in
+          fuse) Skip="yes" ;;
+        esac
+        case $Function in
+          sharpen)
+            check_doubledir "$Targetcachedir/$Stackdir.align" && Skip="yes"
+            check_doubledir "$Targetcachedir/$Stackdir.level" && Skip="yes"
+            check_doubledir "$Targetcachedir/$Stackdir.contrast*" && Skip="yes"
+          ;;
+          align)
+            check_doubledir "$Targetcachedir/$Stackdir.level" && Skip="yes"
+            #echo "Source: $Sourcedir"
+            #ls -l $Sourcedir
+            #echo "look for level:"
+            #ls -l $Sourcedir.level
+            #echo ---
+          ;;
+          contrast)
+            check_doubledir "$Targetcachedir/$Stackdir.align" && Skip="yes"
+            check_doubledir "$Targetcachedir/$Stackdir.level" && Skip="yes"
+            check_doubledir "$Targetcachedir/$Stackdir.sharpen*" && Skip="yes"
+          ;;
+        esac
       ;;
     esac
       
@@ -1033,34 +1061,15 @@ batch_all() {
     return 1
   }
   
-  batch_function level         "$Targetdir"
-  batch_function align         "$Targetdir"
-  batch_function sharpen       "$Targetdir" "6x2"
-  batch_function sharpen       "$Targetdir" "12x4"
-  
-  batch_function evaluate      "$Targetdir" max
-  batch_function evaluate      "$Targetdir" median
-  batch_function evaluate      "$Targetdir" min
-  batch_function evaluate      "$Targetdir" mean
-  #batch_function evaluate      "$Targetdir" set
-  
-  batch_function compose       "$Targetdir" bumpmap
-  batch_function compose       "$Targetdir" colorburn
-  batch_function compose       "$Targetdir" difference
-  #batch_function compose       "$Targetdir" hardlight
-  batch_function compose       "$Targetdir" linearburn
-  batch_function compose       "$Targetdir" linearlight
-  batch_function compose       "$Targetdir" modulate
-  batch_function compose       "$Targetdir" multiply
-  batch_function compose       "$Targetdir" pegtoplight
-  batch_function compose       "$Targetdir" overlay
-  
-  batch_function fuse          "$Targetdir" all
-  batch_function evaluate_fuse "$Targetdir" min
-  batch_function evaluate_fuse "$Targetdir" mean
-  batch_function evaluate_fuse "$Targetdir" max
-  batch_function evaluate_fuse "$Targetdir" set
-  batch_function evaluate_fuse "$Targetdir" median
+  batch_function level    "$Targetdir"
+  batch_function contrast "$Targetdir" "3x50%"
+  batch_function align    "$Targetdir"
+  batch_function sharpen  "$Targetdir" "6x2"
+  batch_function evaluate "$Targetdir" all
+  batch_function compose  "$Targetdir" all
+  batch_function fuse     "$Targetdir" all
+  batch_function compose  "$Targetdir" all
+  batch_function evaluate "$Targetdir" all
   
   comment "batch_all is ready: $Targetdir"
 }
@@ -1088,18 +1097,19 @@ batch_function() {
     evaluate) Option="max" ;;
     fuse)     Option="all" ;;
     sharpen)  Option="6x2" ;;
+    contrast) Option="6x50%" ;;
   esac
   
   while detect_sourcedir "$Function" "$Targetdir" "$Option"; do
     comment "$Function $Option is running: $(basename "$Targetdir")/*/$(basename "$Sourcedir")"
     case "$Function" in
-      "align")                           align         "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Targetcachedir" ;;
-      "compose")                         compose       "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
-      "evaluate")                        evaluate      "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
-      "evaluate_fuse")                   evaluate_fuse "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
       "fuse")                            fuse          "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
       "level")                           level         "$Sourcedir/$Sourcefileglob" "$Destinationdir" ;;
+      "contrast")                        contrast      "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Option" ;;
       "sharpen")                         sharpen       "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Option" ;;
+      "align")                           align         "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Targetcachedir" ;;
+      "evaluate")                        evaluate      "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
+      "compose")                         compose       "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
     esac
     comment "$Function $Option is ready: $(basename "$Targetdir")/*/$(basename "$Sourcedir")"
   done
@@ -1109,9 +1119,9 @@ sharpen() {
   # Usage:
   #   sharpen Sharpmode Sourceglob Destinationdir
   # Args:
-  #   Sharpmode        radius x sigma, auto-radius if 0. sigma is more important.
   #   Sourceglob       Path[+glob] to source files
   #   Destinationdir   Path where to store sharpened images
+  #   Sharpmode        radius x sigma, auto-radius if 0. sigma is more important.
   # detect_sourcedir() can help to set up Args.
   
   local Sharpmode Sourceglob Destinationdir
@@ -1129,7 +1139,8 @@ sharpen() {
   for Image in $(fileglob "$Sourcedir/$Sourcefileglob"); do
     Destinationfile="$(basename "$Image")"
     check_destinationfile "$Destinationdir/$Destinationfile" "sharpen $Sharpmode" || break
-    $Convert "$Image" -contrast -adaptive-sharpen $Sharpmode "$Destinationdir/$Destinationfile"
+#    $Convert "$Image" -contrast -adaptive-sharpen $Sharpmode "$Destinationdir/$Destinationfile"
+    $Convert "$Image" -adaptive-sharpen $Sharpmode "$Destinationdir/$Destinationfile"
     showimage "$Destinationdir/$Destinationfile"
   done
 }
@@ -1157,7 +1168,41 @@ level() {
   for Image in $(fileglob "$Sourcedir/$Sourcefileglob"); do
     Destinationfile="$(basename "$Image")"
     check_destinationfile "$Destinationdir/$Destinationfile" "level" || break
-    $Convert "$Image" -auto-level "$Destinationdir/$Destinationfile"
+#    $Convert "$Image" -auto-level "$Destinationdir/$Destinationfile"
+#    $Convert "$Image" -auto-level -auto-gamma -contrast-stretch 0% "$Destinationdir/$Destinationfile"
+#    $Convert "$Image" -auto-level "$Destinationdir/$Destinationfile"
+    $Convert "$Image" -contrast-stretch 0 -kuwahara 0.5 "$Destinationdir/$Destinationfile"
+    showimage "$Destinationdir/$Destinationfile"
+  done
+}
+contrast() {
+
+  # Enhance contrast
+  # Usage:
+  #   level Sourceglob Destinationdir
+  # Args:
+  #   Sourceglob       Path[+glob] to source files
+  #   Destinationdir   Path where to store contrasted images
+  # detect_sourcedir() can help to set up Args.
+  
+  local Sourceglob Destinationdir
+  local Destinationfile
+  
+  Sourceglob="${1:-"*"}"
+  Destinationdir="${2:-}"
+  Functionmode="${3:-3x50%}"
+  check_fileglob "$Sourceglob" || Sourceglob="$Sourceglob/*"
+  check_fileglob "$Sourceglob" || {
+    fehler "contrast: No source files found: $Sourceglob"
+    return 1
+  }
+  
+  for Image in $(fileglob "$Sourcedir/$Sourcefileglob"); do
+    Destinationfile="$(basename "$Image")"
+    check_destinationfile "$Destinationdir/$Destinationfile" "contrast" || break
+#    $Convert "$Image" -auto-level "$Destinationdir/$Destinationfile"
+#    $Convert "$Image" -auto-level -auto-gamma -contrast-stretch 0% "$Destinationdir/$Destinationfile"
+    $Convert "$Image" -sigmoidal-contrast "$Functionmode" -kuwahara 0.5 "$Destinationdir/$Destinationfile"
     showimage "$Destinationdir/$Destinationfile"
   done
 }
@@ -1317,16 +1362,17 @@ $(tail $Logfile)"
     comment "align: Found crop values in $Cachedir/$Ptofile: $Crop"
   } || {
     comment "align: Checking crop coordinates of common area of all aligned images"
-    evaluate "$Destinationdir/PTO_ALIGN*" "$Cachedir/align_PTO" min
-    Crop="$(~/git/microscopy-tools/innercrop -o none -t "5,5,5,5" -m box "$Cachedir/align_PTO.min.tif" "$Cachedir/align_PTO_MINBOX.tif")"
-    showimage "$Cachedir/align_PTO_MINBOX.tif"
-    comment "align: innercrop check result: $Crop"
-    Cropx="$(grep "Left" <<< "$Crop" | cut -d: -f2 | cut -d, -f1)"
-    Cropx="${Cropx#" "}"
-    Cropy="$(grep "Upper" <<< "$Crop" | cut -d, -f2)"
-    Cropsize="$(grep "Width" <<< "$Crop" | cut -d: -f2 | cut -d" " -f2)"
-    Crop="${Cropsize}+${Cropx}+${Cropy}"
-    [ "$Crop" = "++" ] && Crop="" || echo "# arducrop:$Crop" >> "$Cachedir/$Ptofile"
+    evaluate "$Destinationdir/PTO_ALIGN*" "$Cachedir/align_PTO" min tif
+    Crop="$(trim_hard "$Cachedir/align_PTO.min.tif")"
+    [ "$Crop" = "${Imagewidth}x${Imageheight}+0+0" ] || echo "# arducrop:$Crop" >> "$Cachedir/$Ptofile"
+#    Crop="$(~/git/microscopy-tools/innercrop -o none -t "5,5,5,5" -m box "$Cachedir/align_PTO.min.tif" "$Cachedir/align_PTO_MINBOX.tif")"
+#    #comment "align: innercrop check result: $Crop"
+#    Cropx="$(grep "Left" <<< "$Crop" | cut -d: -f2 | cut -d, -f1)"
+#    Cropx="${Cropx#" "}"
+#    Cropy="$(grep "Upper" <<< "$Crop" | cut -d, -f2)"
+#    Cropsize="$(grep "Width" <<< "$Crop" | cut -d: -f2 | cut -d" " -f2)"
+#    Crop="${Cropsize}+${Cropx}+${Cropy}"
+#    [ "$Crop" = "++" ] && [ "$Crop" = "" ] || echo "# arducrop:$Crop" >> "$Cachedir/$Ptofile"
   }
   [ "$Crop" ] && comment "align: Crop at $Crop" || {
     fehler "align: Crop failed. Continuing image processing with possibly damaged edges."
@@ -1337,7 +1383,7 @@ $(tail $Logfile)"
   for Line in $(fileglob "PTO_ALIGN*"); do
     Count=$((Count +1))
     $Convert -crop "$Crop" "$Destinationdir/$Line" "$Destinationdir/${Filearray[$Count]}"
-    $Convert "$Destinationdir/$Line" "$Cachedir/$Line.jpg" 
+    #$Convert "$Destinationdir/$Line" "$Cachedir/${Line%.tif}.jpg" 
     rm "$Line"
   done
   
@@ -1347,51 +1393,50 @@ $(tail $Logfile)"
 evaluate() {
   # Evaluate image stack. Mostly used to calculate a median to eliminate moving objects.
   # Usage:
-  #   evaluate Evalmode Sourceglob Destinationfile
+  #   evaluate Functionmode Sourceglob Destinationfile [Fileformat]
   # Args:
-  #   Evalmode         Evaluation mode, e.g. median, max, min. Get a list of possible modes with: convert -list evaluate
+  #   Functionmode         Evaluation mode, e.g. median, max, min. Get a list of possible modes with: convert -list evaluate
   #   Sourceglob       Path[+glob] to image stack. Default: ./*
   #   Destinationfilebasename  Output file base name
   # detect_sourcedir() can help to set up Args.
   
-  local Evalmode Sourceglob Destinationfile Destinationfilebasename
+  local Functionmode Sourceglob Destinationfile Destinationfilebasename Fileformat
+  local Sourcedir
   Sourceglob="${1:-"*"}"
   Destinationfilebasename="${2:-evaluate}"
-  Evalmode="${3:-}"
-  Destinationfile="$Destinationfilebasename.$Evalmode.tif"
+  Functionmode="${3:-}"
+  Fileformat="${4:-jpg}"
   
   #echo "ES $Sourceglob"
   #echo "ED $Destinationfile"
-  #echo "EM $Evalmode"
+  #echo "EM $Functionmode"
   
   check_fileglob "$Sourceglob" || Sourceglob="$Sourceglob/*"
   check_fileglob "$Sourceglob" || {
-    fehler "evaluate $Evalmode: No source files found: $Sourceglob"
+    fehler "evaluate $Functionmode: No source files found: $Sourceglob"
     return 1
   }
-  check_destinationfile "$Destinationfile" "evaluate $Evalmode" || return 1
-  $Convert $(fileglob "$Sourceglob") -evaluate-sequence $Evalmode "$Destinationfile" || {
-    fehler "evaluate $Evalmode: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all input images have to be the same size."
-    return 1
-  }
-  showimage "$Destinationfile"
-}
-evaluate_fuse() {
-  local Sourceglob Destinationfilebasename Functionmode
-  local Sourcedir Destinationfile
-  Sourceglob="${1:-}"
-  Destinationfilebasename="${2:-}"
-  Functionmode="${3:-}"
   Sourcedir="$(dirname "$Sourceglob")"
-  Destinationfile="$Destinationfilebasename.$Functionmode.tif"
-
-  evaluate "$Sourceglob" "$Destinationfilebasename" "$Functionmode"
- 
-  [ -d "$Sourcedir/../stackshot" ] && ln -f "$Destinationfile" "$Sourcedir/../"
-  [ "$Sourcedir" != "${Sourcedir#$Arduhome}" ] && [ "$Functionmode" = "median" ] && ln -f "$Destinationfile" "$Sourcedir/../../"
+  
+  [ "$Functionmode" = "all" ] && {
+    for Functionmode in min mean set max median; do
+      evaluate "$Sourceglob" "$Destinationfilebasename" "$Functionmode" "$Fileformat"
+    done
+    return 0
+  }
+  
+  Destinationfile="$Destinationfilebasename.$Functionmode.$Fileformat"
+  [ "$(basename "$Sourcedir")" = "fuse" ] || check_destinationfile "$Destinationfile" "evaluate $Functionmode" || return 1
+  $Convert $(fileglob "$Sourceglob") -evaluate-sequence $Functionmode "$Destinationfile" || {
+    fehler "evaluate $Functionmode: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all input images have to be the same size."
+    return 1
+  }
   showimage "$Destinationfile"
-#  evaluate "$Targetdir/fuse/*fuse??.jpg" "$Targetdir/fuse/fuse_all" median
-#  [ -d "$Targetdir/stackshot" ] && ln "$Targetdir/fuse/fuse_all.median.tif" "$Targetdir/fuse_all.median.tif"
+  
+  [ "$(basename "$Sourcedir")" = "fuse" ] && {
+    [ -d "$Sourcedir/../stackshot" ] && ln -f "$Destinationfile" "$Sourcedir/../"
+    [ "$Sourcedir" != "${Sourcedir#$Arduhome}" ] && [ "$Functionmode" = "median" ] && ln -f "$Destinationfile" "$Sourcedir/../../"
+  }
 }
 compose() {
 
@@ -1403,20 +1448,26 @@ compose() {
   Mode="$(tr '[:upper:]' '[:lower:]' <<< "$Mode")"
   Destinationdir="$(dirname "$Destinationfilebasename")"
   
-  
   check_fileglob "$Sourceglob" || Sourceglob="$Sourceglob/*"
   check_fileglob "$Sourceglob" || {
     fehler "compose $Mode: No source files found: $Sourceglob"
     return 1
   }
   
-  Maxfile="$Destinationfilebasename.max.tif"
-  Minfile="$Destinationfilebasename.min.tif"
-  [ -e "$Maxfile" ] || evaluate "$Sourceglob" "$Maxfile" "max"
-  [ -e "$Minfile" ] || evaluate "$Sourceglob" "$Minfile" "min"
+  Maxfile="$Destinationfilebasename.max.jpg"
+  Minfile="$Destinationfilebasename.min.jpg"
+  [ -e "$Maxfile" ] || evaluate "$Sourceglob" "$Destinationfilebasename" "max"
+  [ -e "$Minfile" ] || evaluate "$Sourceglob" "$Destinationfilebasename" "min"
   [ -e "$Maxfile" ] && [ -e "$Minfile" ] || {
     fehler "compose $Mode: Failed to find or create min and max files."
     return 1
+  }
+  
+  [ "$Mode" = "all" ] && {
+    for Mode in bumpmap colorburn difference linearburn linearlight modulate multiply overlay pegtoplight; do
+      compose "$Sourceglob" "$Destinationfilebasename" "$Mode"
+    done
+    return 0
   }
   
   Destinationfile="$Destinationfilebasename.${Mode}1.jpg"
@@ -1424,11 +1475,11 @@ compose() {
     $Convert "$Minfile" "$Maxfile" -compose "$Mode" -composite "$Destinationfile"
     showimage "$Destinationfile"
   }
-  case $Mode in # link interesting results to parent folder
-    bumpmap|multiply|overlay)
-      [ -d "$Destinationdir/../stackshot" ] && ln -f "$Destinationfile" "$Destinationdir/../"
-    ;;
-  esac
+#  case $Mode in # link interesting results to parent folder
+#    bumpmap|multiply|overlay)
+#      [ -d "$Destinationdir/../stackshot" ] && ln -f "$Destinationfile" "$Destinationdir/../"
+#    ;;
+#  esac
   case $Mode in
     linearburn|multiply) ;;  # skip second compose for modes with identical result
     difference)
@@ -1476,7 +1527,7 @@ fuse() {
   Saturationweight=0.0
   Contrastweight=1.0
   Contrastedgescale=0
-  Contrastmincurvature=0
+  Contrastmincurvature=""
   Contrastwindowsize="3"
   Grayprojector="luminance"
   case $Fusemode in
@@ -1503,6 +1554,56 @@ fuse() {
       Contrastwindowsize="15"
       Saturationweight="0.1"
     ;;
+    7) 
+      Contrastwindowsize="23"
+    ;;
+    8) 
+      Contrastwindowsize="23"
+      Saturationweight="0.1"
+    ;;
+    9)
+      Contrastedgescale="0.8:2000%:300%"
+      Contrastmincurvature="+8.0%"
+    ;;
+    10)
+      Contrastedgescale="0.8:500%:500%"
+      Contrastmincurvature="+8.0%"
+    ;;
+    11)
+      Contrastedgescale="1.2:16:4"
+      Contrastmincurvature="+5.0%"
+    ;;
+    12)
+      Contrastedgescale="1.2:8:4"
+      Contrastmincurvature="+5.0%"
+      #Saturationweight="0.1"
+    ;;
+    13)
+      Contrastedgescale="1.6:16:4"
+      Contrastmincurvature="+3.0%"
+    ;;
+    14)
+      Contrastedgescale="1.6:8:4"
+      Contrastmincurvature="+3.0%"
+      #Saturationweight="0.1"
+    ;;
+    15)
+      Contrastedgescale="1.6:16:10"
+      Contrastmincurvature="+6.0%"
+    ;;
+    16)
+      Contrastedgescale="1.6:8:10"
+      Contrastmincurvature="+8.0%"
+      #Saturationweight="0.1"
+    ;;
+    17)
+      Contrastedgescale="2.0:500%:500%"
+      Contrastmincurvature="+2.0%"
+    ;;
+    
+    
+    
+    
     xxx7)
       Contrastedgescale="0.3:1000%:300%"
       Contrastmincurvature="+0.3%"
@@ -1510,40 +1611,6 @@ fuse() {
     xxx8)
       Contrastedgescale="0.3:1000%:300%"
       Contrastmincurvature="+0.3%"
-      Saturationweight="0.1"
-    ;;
-    9)
-      Contrastedgescale="0.8:2000%:300%"
-    ;;
-    10)
-      Contrastedgescale="0.8:2000%:300%"
-      Saturationweight="0.1"
-    ;;
-    11)
-      Contrastedgescale="1.2:16:4"
-      #Contrastmincurvature="+8.0%"
-    ;;
-    12)
-      Contrastedgescale="1.2:16:4"
-      #Contrastmincurvature="+8.0%"
-      Saturationweight="0.1"
-    ;;
-    13)
-      Contrastedgescale="1.6:16:4"
-      #Contrastmincurvature="+4.0%"
-    ;;
-    14)
-      Contrastedgescale="1.6:16:4"
-      #Contrastmincurvature="+5.0%"
-      Saturationweight="0.1"
-    ;;
-    15)
-      Contrastedgescale="1.6:16:10"
-      #Contrastmincurvature="+10.0%"
-    ;;
-    16)
-      Contrastedgescale="1.6:16:10"
-      #Contrastmincurvature="+10.0%"
       Saturationweight="0.1"
     ;;
     
@@ -1644,19 +1711,18 @@ fuse() {
       --hard-mask \
       \
       --contrast-edge-scale=$Contrastedgescale \
-      --contrast-min-curvature=$Contrastmincurvature \
       --contrast-window-size=$Contrastwindowsize \
       \
-      --gray-projector=$Grayprojector \
-"
+      --gray-projector=$Grayprojector"
+  [ "$Contrastmincurvature" ] && Enfuseoptions="$Enfuseoptions \
+      --contrast-min-curvature=$Contrastmincurvature"
+  
   # Fusing here
   enfuse $Enfuseoptions \
       --output=$Destinationfile \
       $(fileglob "$Sourceglob") \
       2>&1 | grep -v "does not have an alpha channel" | grep -v "assuming all pixels should contribute" | grep -v "loading next image"
-    
-#    --contrast-window-size=$Contrastsize \
-    
+        
   # Write enfuse options into EXIF data of image
   exiv2 -M"set Exif.Photo.UserComment Comment charset=Ascii enfuse $(echo $Enfuseoptions)" "$Destinationfile"
 
@@ -1716,7 +1782,132 @@ fuse_all() {
     [ "${Fusepid[$i]}" ] && ps -p "${Fusepid[$i]}" >/dev/null 2>&1 && wait ${Fusepid[$i]}
   done
 }
+cropcolorpermille() {
+  # Function: Calculate permille part of pixels of color $2 in crop rectangle $3 of image $1
+  # $1  $Image      image
+  # $2  $Trimcolor  color to count
+  # $3  $Cropgeometry       crop rectangle to search in
+  # Output: Permille part of color in crop region
+  
+  local Image Trimcolor Cropgeometry
+  local Colorcount Cropwidth Cropheight Permille
+  
+  Image="${1:-}"
+  Trimcolor="${2:-}"
+  Cropgeometry="${3:-}"
+  
+  Cropwidth=$(cut -dx -f1 <<< "$Cropgeometry")
+  Cropheight=$(cut -dx -f2 <<< "$Cropgeometry" | cut -d+ -f1)
 
+  Colorcount="$(convert "$Image" -crop "$Cropgeometry" txt: | grep -c "$Trimcolor")"
+  # second way to count color, a bit slower.
+#  Colorcount="$(convert "$Image" -crop "$Cropgeometry" -fill black +opaque "$Trimcolor"  -format %c histogram:info: | grep "$Trimcolor")"
+#  Colorcount="$(awk '{print $1}' <<< "$Colorcount" | cut -d: -f1)"
+
+  Permille=$((1000 * $Colorcount / ($Cropwidth*$Cropheight) ))
+  echo "${Permille:-0}"
+}
+trim_hard() {
+  # Function: Trim all border with color $2 from image $1
+  # Results in a maximal inner rectangle without border color.
+  # $1  $Image      image
+  # $2  $Trimcolor  color to trim. Default: transparent
+  # Output: crop geometry
+  
+  local Image Trimcolor
+  local Imagewidth Imageheight
+  local Left         Right         Top         Bottom
+  local Skipleft     Skipright     Skiptop     Skipbottom
+  local Permilleleft Permilleright Permilletop Permillebottom Permillemax
+  local Return
+  local Debugmode Loopcount
+  
+  Image="${1:-}"
+  Trimcolor="${2:-"#00000000"}"
+  
+  Imagewidth=$(convert  -format '%w'  $Image info:)
+  Imageheight=$(convert -format '%h'  $Image info:)
+  
+  Left=0
+  Top=0
+  Right=$((Imagewidth-1))
+  Bottom=$((Imageheight-1))
+  
+  # First cut with regular trim to save some time.
+  # Add a colored border so trim uses the desired color. Afterward remove border from canvas to get correct geometry values. 
+  Line="$(convert "$Image" -bordercolor "$Trimcolor" -border 1x1  -trim -set page '%[fx:page.width-2]x%[fx:page.height-2]+%[fx:page.x-1]+%[fx:page.y-1]' info:)"
+  Left="$(awk '{print $4}' <<< "$Line" | cut -d+ -f2)"
+  Top="$(awk '{print $4}' <<< "$Line" | cut -d+ -f3)"
+  Right="$(awk '{print $3}' <<< "$Line" | cut -dx -f1)"
+  Right="$((Left+Right-1))"
+  Bottom="$(awk '{print $3}' <<< "$Line" | cut -dx -f2)"
+  Bottom="$((Top+Bottom-1))"
+  
+  # Workflow:
+  # - Get permille amount of $Trimcolor from all sides.
+  # - Remove side with greatest permille amount of $Trimcolor.
+  # - Repeat check with new geometry
+  while :; do
+    # Get permille of $Trimcolor at each side
+    [ "$Skipleft" ]   || Permilleleft=$(cropcolorpermille   $Image "$Trimcolor" 1x$((Bottom-Top+1))+$Left+$Top)
+    [ "$Skipright" ]  || Permilleright=$(cropcolorpermille  $Image "$Trimcolor" 1x$((Bottom-Top+1))+$Right+$Top)
+    [ "$Skiptop" ]    || Permilletop=$(cropcolorpermille    $Image "$Trimcolor" $((Right-Left+1))x1+$Left+$Top)
+    [ "$Skipbottom" ] || Permillebottom=$(cropcolorpermille $Image "$Trimcolor" $((Right-Left+1))x1+$Left+$Bottom)
+    
+    # Determine maximal permille value
+    Permillemax=$(echo "
+$Permilleleft
+$Permilleright
+$Permilletop
+$Permillebottom
+" | sort -n | tail -n1)
+    [ "$Permillemax" = "0" ] && break # Ready
+    
+    # Remove side with maximal permille of $Trimcolor.
+    [ "$Permillemax" = "$Permilleleft" ]   && Left=$((Left+1))
+    [ "$Permillemax" = "$Permilleright" ]  && Right=$((Right-1))
+    [ "$Permillemax" = "$Permilletop" ]    && Top=$((Top+1))
+    [ "$Permillemax" = "$Permillebottom" ] && Bottom=$((Bottom-1))
+    
+    # Skip check for sides without $Trimcolor in future to save some time
+    [ "0" = "$Permilleleft" ]   && Skipleft=yes
+    [ "0" = "$Permilleright" ]  && Skipright=yes
+    [ "0" = "$Permilletop" ]    && Skiptop=yes
+    [ "0" = "$Permillebottom" ] && Skipbottom=yes
+    
+    # Out-of-range error
+    { [ "$Left" -gt "$Right" ] || [ "$Top" -gt "$Bottom" ] ; } && {
+      echo "Error: Failed to find an inner rectangle. Unuseable result: $((Right-Left+1))x$((Bottom-Top+1))+$Left+$Top" >&2
+      Return=1
+      Left=0
+      Top=0
+      Right=$((Imagewidth-1))
+      Bottom=$((Imageheight-1))
+      break
+    }
+    
+    # Debugging: show intermediate results
+    Debugmode=yes
+    [ "$Debugmode" ] && {
+      Loopcount=$((Loopcount+1))
+      [ "$Loopcount" = "25" ] && {
+        Loopcount=0
+        convert $Image -fill none -stroke red -strokewidth 1 -draw "rectangle $Left,$Top $Right,$Bottom" $Image.trim_hard.png
+        showimage $Image.trim_hard.png
+      }
+    }
+  done
+  
+  # Output of result
+  #echo "$Left,$Top $Right,$Bottom"                     # "-draw rectangle" geometry
+  echo $((Right-Left+1))x$((Bottom-Top+1))+$Left+$Top  # "-crop" geometry
+  
+  # Create image with red rectangle at crop coordinates and show it
+  convert $Image -fill none -stroke red -strokewidth 1 -draw "rectangle $Left,$Top $Right,$Bottom" $Image.trim_hard.png
+  showimage $Image.trim_hard.png
+  
+  return ${Return:-0}
+}
 #########################
 # unsortiert            #
 
@@ -2236,23 +2427,29 @@ stop-movie | stop                   Videoaufnahme stoppen
        setup_projectdir
        stackshot $1 & echo $! stack >>$Backgroundpidfile
        ;;
-    "bat"|"batch")
-       batch_all "$1" & echo $! batch >>$Backgroundpidfile
-       ;;
-    "align")
-       batch_function align "${1:-}" & echo $! batch >>$Backgroundpidfile
-       ;;
-    "evaluate"|"eval")
-       batch_function evaluate "${1:-}" & echo $! batch >>$Backgroundpidfile
-       ;;
     "median"|"med")
        Evalstack="yes"
        Evalnumber="${1:-4}"
        [ "$Evalnumber" -gt "1" ] || Evalnumber="1"
        [ "$Evalnumber" =   "1" ] && Evalstack="no"
        ;;
+       
+    #### Image processing ####
+    "bat"|"batch")
+       batch_all "$1" & echo $! batch >>$Backgroundpidfile
+       ;;
+    "align")
+       batch_function align "${1:-}" & echo $! batch >>$Backgroundpidfile
+       ;;
     "sharp"|"sharpen")
-       batch_function sharpen "${1:-}"
+       batch_function sharpen "${1:-}" "${2:-12x4}"
+       ;;
+    "compose")
+       batch_function evaluate "${1:-}" all
+       batch_function compose "${1:-}" all
+       ;;
+    "contrast")
+       batch_function contrast "${1:-}" "${2:-9x50%}"
        ;;
        
     "kill")
@@ -2312,7 +2509,8 @@ declare_variables() {
   Evalnumber="1"
   Evalstack="no"
   Evalwait="2.5"
-  Evalmodelist="median min max"
+  
+  Fileformat="tif"
 
   Projektname=""
   Stackshotname="stack"
@@ -2453,7 +2651,7 @@ main() {
 main "$@"
 
 
-X_align() {
+XXX_align() {
   # align images with align_image_stack.
   # special: devide into two halves starting from the middle and merge again later.
   # run detect_sourcedir() first to set some variables.
@@ -2546,4 +2744,38 @@ X_align() {
   rm -R $Sourcedir/align.tmp.3
   
   comment "Align ready: ${Sourcedir-$Arduhome}/$Sourcefileglob"
+}
+XXX_trim_hard() {
+  # Remove border color of image similar to -trim, but also cut the parts of image that contain the border color.
+  # Weakness: Does no corner detection. Just ignores the outer 10% of each image corner and trims the inner 80%.
+  # Not foolproof, but works for my use cases.
+  # $1  Imagefile
+  # $2  Color to trim. Default: transparent
+  # Result: output of crop values for later use.
+  
+  local Image Trimcolor
+  local Imagewidth Imageheight Xoffset Yoffset
+  local Top Bottom Left Right
+  
+  Image="${1:-}"
+  Trimcolor="${2:-"#00000000"}"
+  
+  Imagewidth=$($Convert  -format '%w'  $Image info:)
+  Imageheight=$($Convert -format '%h'  $Image info:)
+  Xoffset=$((Imagewidth / 10))
+  Yoffset=$((Imageheight / 10))
+  
+  for ((Top=0;                Top    <= Imageheight; Top++ )); do
+    $Convert $Image -crop $((Imagewidth -Xoffset*2))x1+$Xoffset+$Top    txt: | grep -q "$Trimcolor" || break
+  done
+  for ((Bottom=$Imageheight;  Bottom >= 0;           Bottom-- )); do
+    $Convert $Image -crop $((Imagewidth -Xoffset*2))x1+$Xoffset+$Bottom txt: | grep -q "$Trimcolor" || break
+  done
+  for ((Left=0;               Left   <= Imagewidth;  Left++)); do
+    $Convert $Image -crop 1x$((Imageheight -Yoffset*2))+$Left+$Yoffset  txt: | grep -q "$Trimcolor" || break
+  done
+  for ((Right=$Imagewidth;    Right  >= 0;           Right--)); do
+    $Convert $Image -crop 1x$((Imageheight -Yoffset*2))+$Right+$Yoffset txt: | grep -q "$Trimcolor" || break
+  done
+  echo "$((Right-Left))x$((Bottom-Top))+$Left+$Top"
 }
