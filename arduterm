@@ -958,6 +958,7 @@ detect_sourcedir() {
   }
   [ -d "$Targetdir/stackshot-median" ] && Singleshotdir="$Singleshotdir stackshot-median"
   Targetcachedir="$Targetdir/cache"
+  [ -d "$Targetcachedir/crop" ] && Singleshotdir="crop"
   
   [ -d "$Targetdir" ] || {
     fehler "No target directory found. Please specify a target directory or make a stackshot.
@@ -965,10 +966,10 @@ detect_sourcedir() {
     return 1
   }
   
-  for Stackdir in $Singleshotdir $(dirglob "$Targetcachedir/*") $Targetfusedir; do
+  for Stackdir in $Singleshotdir $(dirglob "$Targetcachedir/*") $Targetfusedir $Targetcomposedir; do
     Stackdir="$(basename $Stackdir)"
-    grep -q -E 'sharpen|align|level|contrast' <<< "$Stackdir" && Sourcedir="$Targetcachedir/$Stackdir" || Sourcedir="$Targetdir/$Stackdir"
-    grep -q -E 'stackshot' <<< "$Singleshotdir" || {
+    grep -q -E 'sharpen|align|level|contrast|crop' <<< "$Stackdir" && Sourcedir="$Targetcachedir/$Stackdir" || Sourcedir="$Targetdir/$Stackdir"
+    grep -q -E 'stackshot|crop' <<< "$Singleshotdir" || {
       [ "$Stackdir" = "$Singleshotdir" ] && Sourcedir="$Targetdir"
     }
     Destinationdir=""
@@ -980,7 +981,7 @@ detect_sourcedir() {
         Destinationdir="$Targetfusedir"
         Destinationfilebasename="$Stackdir"
         case $Stackdir in
-          fuse) Skip="yes" ;;
+          fuse|compose) Skip="yes" ;;
         esac
         # exclude some less interesting dirs to save computing time
         grep -q align    <<< "$Stackdir" || Skip="yes"  # only fuse aligned stacks
@@ -993,6 +994,7 @@ detect_sourcedir() {
         Destinationfilebasename="$(basename "$Targetdir").$Stackdir"
         case $Stackdir in
           fuse) Destinationdir="$Targetcomposedir" ;;
+          compose) Skip="yes" ;;
           *)    
             Destinationdir="$Targetcomposedir" 
             grep -q align    <<< "$Stackdir" || Skip="yes"  # only compose aligned stacks
@@ -1009,13 +1011,14 @@ detect_sourcedir() {
         check_doubledir "$Destinationdir"   && Skip="yes"
         #[ "$Function" != "level" ] && ! grep -q level <<<"$Destinationdir" && check_dirglob "$Targetcachedir/*level*" && Skip="yes"
         case $Stackdir in
-          fuse) Skip="yes" ;;
+          fuse|compose) Skip="yes" ;;
         esac
         case $Function in
           sharpen)
             check_doubledir "$Targetcachedir/$Stackdir.align" && Skip="yes"
             check_doubledir "$Targetcachedir/$Stackdir.level" && Skip="yes"
             check_doubledir "$Targetcachedir/$Stackdir.contrast*" && Skip="yes"
+            check_doubledir "$Targetcachedir/$Stackdir.wb" && Skip="yes"
           ;;
           align)
             check_doubledir "$Targetcachedir/$Stackdir.level" && Skip="yes"
@@ -1029,13 +1032,50 @@ detect_sourcedir() {
             check_doubledir "$Targetcachedir/$Stackdir.align" && Skip="yes"
             check_doubledir "$Targetcachedir/$Stackdir.level" && Skip="yes"
             check_doubledir "$Targetcachedir/$Stackdir.sharpen*" && Skip="yes"
+            check_doubledir "$Targetcachedir/$Stackdir.wb" && Skip="yes"
           ;;
         esac
       ;;
-    esac
       
+      crop)
+        [ "$Stackdir" != "$Singleshotdir" ] && Skip="yes"
+        [ "$Stackdir"  = "crop" ]           && Skip="yes"
+        Destinationdir="$Targetcachedir/crop"
+      ;;
+      
+      whitebalance-choose)
+        case $Stackdir in
+          compose)
+            Sourcefileglob="*.fuse.median.*"
+            Sourcefileglob="$(find "$Targetcomposedir" -name "$Sourcefileglob")"
+            [ -f "$Sourcefileglob" ] && {
+              Sourcefileglob="$(basename "$Sourcefileglob")"
+              Destinationdir="$Targetcachedir"
+              Destinationfilebasename="whitebalance.geometry"
+            } || Skip="yes"
+          ;;
+          *) Skip="yes" ;;
+        esac
+      ;;
+      
+      whitebalance)
+        case $Stackdir in
+          fuse)    Destinationdir="$Targetfusedir.wb" ;;
+          compose) Destinationdir="$Targetcomposedir.wb" ;;
+          *) 
+            Destinationdir="$Targetcachedir/$Stackdir.wb" 
+            [ -d "$Targetcomposedir" ] && Skip="yes"
+          ;;
+        esac
+        grep -q "wb" <<< "$Stackdir"        && Skip="yes"
+        check_doubledir "$Destinationdir"   && Skip="yes"
+        [ -e "$Targetcachedir/whitebalance.geometry" ] || Skip="yes"
+      ;;
+    esac
+
     check_fileglob "$Sourcedir/$Sourcefileglob" || Skip="yes"
     [ "$Destinationdir" ] || Skip="yes"
+    
     [ "$Skip" = "no" ] && {
 #      Checkline="$Function$Option$Sourcedir$Destinationdir"
       Checkline="$Sourcedir$Destinationdir"
@@ -1061,9 +1101,9 @@ batch_all() {
     return 1
   }
   
+  batch_function align    "$Targetdir"
   batch_function level    "$Targetdir"
   batch_function contrast "$Targetdir" "3x50%"
-  batch_function align    "$Targetdir"
   batch_function sharpen  "$Targetdir" "6x2"
   batch_function evaluate "$Targetdir" all
   batch_function compose  "$Targetdir" all
@@ -1107,9 +1147,13 @@ batch_function() {
       "level")                           level         "$Sourcedir/$Sourcefileglob" "$Destinationdir" ;;
       "contrast")                        contrast      "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Option" ;;
       "sharpen")                         sharpen       "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Option" ;;
-      "align")                           align         "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Targetcachedir" ;;
+      "align")                           align         "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Targetcachedir/align.pto.dir" ;;
+      "align2")                          align         "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Targetcachedir/align2.pto.dir" ;;
       "evaluate")                        evaluate      "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
       "compose")                         compose       "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" "$Option" ;;
+      "crop")                            mycrop        "$Sourcedir/$Sourcefileglob" "$Destinationdir" ;;
+      "whitebalance-choose")       choose_whitebalance "$Sourcedir/$Sourcefileglob" "$Destinationdir/$Destinationfilebasename" ;;
+      "whitebalance")                    whitebalance  "$Sourcedir/$Sourcefileglob" "$Destinationdir" "$Targetcachedir" ;;
     esac
     comment "$Function $Option is ready: $(basename "$Targetdir")/*/$(basename "$Sourcedir")"
   done
@@ -1171,7 +1215,8 @@ level() {
 #    $Convert "$Image" -auto-level "$Destinationdir/$Destinationfile"
 #    $Convert "$Image" -auto-level -auto-gamma -contrast-stretch 0% "$Destinationdir/$Destinationfile"
 #    $Convert "$Image" -auto-level "$Destinationdir/$Destinationfile"
-    $Convert "$Image" -contrast-stretch 0 -kuwahara 0.5 "$Destinationdir/$Destinationfile"
+#    $Convert "$Image" -contrast-stretch 0 -kuwahara 0.5 "$Destinationdir/$Destinationfile"
+    $Convert "$Image" -auto-gamma -auto-level "$Destinationdir/$Destinationfile"
     showimage "$Destinationdir/$Destinationfile"
   done
 }
@@ -1226,7 +1271,7 @@ align() {
   
   Sourcedir="${1:-"*"}"
   Destinationdir="${2:-}"
-  Cachedir="${3:-"/tmp/align$(mcookie)"}/align.pto.dir"
+  Cachedir="${3:-"/tmp/align$(mcookie)"}"
   mkdir -p "$Cachedir"
   
   [ -d "$Sourcedir" ] && {
@@ -1303,7 +1348,7 @@ $(tail $Logfile)"
         --minmatches 4 \
         --linearmatch \
         --linearmatchlen 3 \
-        --ransacmode rpyv \
+        --ransacmode hom \
         "$Ptofile.pto_gen.pto" 2>&1 >> "$Logfile" || {
       fehler "Error in cpfind
 $(tail $Logfile)"
@@ -1389,6 +1434,15 @@ $(tail $Logfile)"
   
   [ "$(dirname "$Cachedir")" = "/tmp" ] && rm -R "$Cachedir"
   cd "$Prevdir"
+}
+align_ais() {
+
+  Sourcedir="${1:-"*"}"
+  Destinationdir="${2:-}"
+  Cachedir="${3:-"/tmp/align$(mcookie)"}/align.pto.dir"
+  mkdir -p "$Cachedir"
+  time align_image_stack -l -s 0 -C --use-given-order -a $Destinationdir/align $Sourcedir 2>&1 | grep -v "Unable to read EXIF data"
+
 }
 evaluate() {
   # Evaluate image stack. Mostly used to calculate a median to eliminate moving objects.
@@ -1782,6 +1836,7 @@ fuse_all() {
     [ "${Fusepid[$i]}" ] && ps -p "${Fusepid[$i]}" >/dev/null 2>&1 && wait ${Fusepid[$i]}
   done
 }
+
 cropcolorpermille() {
   # Function: Calculate permille part of pixels of color $2 in crop rectangle $3 of image $1
   # $1  $Image      image
@@ -1907,6 +1962,75 @@ $Permillebottom
   showimage $Image.trim_hard.png
   
   return ${Return:-0}
+}
+choose_crop() {
+  local Image
+  local Geometry Windowid Xwininfo Displaypid
+  local WinX  WinY  WinW  WinH
+  local CropX CropY CropW CropH
+  
+  Image="${1:-}"
+
+  display -title "Choose crop area of $Image" "$Image" & Displaypid=$!
+  Geometry="$($Xmeasure)"
+  
+  Windowid=$(xdotool search "Choose crop area")
+  Xwininfo="$(xwininfo -id "$Windowid" -stats)"
+  WinX="$(( $(grep "Absolute upper-left X" <<< "$Xwininfo" | cut -d: -f2)  ))"
+  WinY="$(( $(grep "Absolute upper-left Y" <<< "$Xwininfo" | cut -d: -f2)  ))"
+  WinW="$(grep "geometry" <<< "$Xwininfo" | cut -dx -f1 | rev | cut -d' ' -f1 | rev)"
+  WinH="$(grep "geometry" <<< "$Xwininfo" | cut -dx -f2 | cut -d+ -f1 | cut -d- -f1)"
+  kill $Displaypid
+    
+  CropX="$(grep X <<< "$Geometry" | cut -d' ' -f2)"
+  CropY="$(grep Y <<< "$Geometry" | cut -d' ' -f2)"
+  CropW="$(grep W <<< "$Geometry" | cut -d' ' -f2)"
+  CropH="$(grep H <<< "$Geometry" | cut -d' ' -f2)"
+  CropX=$((CropX - WinX))
+  CropY=$((CropY - WinY))
+  
+  { [ "$CropW" = "0" ] || [ "$CropH" = "0" ] || [ "$CropX" -lt "0" ] || [ "$CropY" -lt "0" ] ; } && return 1
+  
+  echo "${CropW}x${CropH}+$CropX+$CropY"
+  return 0
+}
+mycrop() {
+  Sourceglob="${1:-}"
+  Destinationdir="${2:-}"
+  Image="$Cachefolder/crop.min.tif"
+  $Convert $Sourceglob -evaluate-sequence min "$Image"
+  Cropgeometry="$(choose_crop "$Image")"
+  rm "$Image"
+  [ "$Cropgeometry" ] || return 1
+  for Image in $Sourceglob ; do
+    $Convert "$Image" -crop $Cropgeometry "$Destinationdir/$(basename "$Image")"
+  done
+}
+choose_whitebalance() {
+  local Image Destinationfile
+  local Cropgeometry
+  Image="${1:-}"
+  Destinationfile="${2:-}"
+  Cropgeometry="$(choose_crop "$Image")"
+  [ "$Cropgeometry" ] || return 1
+  echo "$Cropgeometry" > "$Destinationfile"
+}
+whitebalance() {
+  local Sourceglob Destinationdir Cachedir
+  local Cropgeometry Meancolor Destinationfile Image
+  Sourceglob="${1:-}"
+  Destinationdir="${2:-}"
+  Cachedir="${3:-}"
+  
+  [ -e "$Cachedir/whitebalance.geometry" ] || return 1
+  Cropgeometry="$(cat "$Cachedir/whitebalance.geometry")"
+  for Image in $(fileglob "$Sourceglob"); do
+    Meancolor=$(convert $Image -crop $Cropgeometry -filter box -resize 1x1! -format "%[pixel:u]" info:)
+    Destinationfile="$Destinationdir/$(basename "$Image")"
+    $Whitebalance -c "$Meancolor" -r '#AAAA99' "$Image" "$Destinationfile"
+    showimage "$Destinationfile"
+  done
+  
 }
 #########################
 # unsortiert            #
@@ -2441,6 +2565,9 @@ stop-movie | stop                   Videoaufnahme stoppen
     "align")
        batch_function align "${1:-}" & echo $! batch >>$Backgroundpidfile
        ;;
+    "align2")
+       batch_function align2 "${1:-}" & echo $! batch >>$Backgroundpidfile
+       ;;
     "sharp"|"sharpen")
        batch_function sharpen "${1:-}" "${2:-12x4}"
        ;;
@@ -2450,6 +2577,12 @@ stop-movie | stop                   Videoaufnahme stoppen
        ;;
     "contrast")
        batch_function contrast "${1:-}" "${2:-9x50%}"
+       ;;
+    "crop") batch_function crop "${1:-}"
+       ;;
+    "white"|"whitebalance"|"wb")
+       batch_function whitebalance-choose "${1:-}"
+       batch_function whitebalance "${1:-}"
        ;;
        
     "kill")
@@ -2516,6 +2649,8 @@ declare_variables() {
   Stackshotname="stack"
   
   Convert="convert -quality 100%"
+  Xmeasure="/home/lauscher/git/microscopy-tools/xmeasure"
+  Whitebalance="/home/lauscher/git/microscopy-tools/whitebalance"
 }
 create_cachefiles() {
   Cachefolder=/tmp/arduterm
