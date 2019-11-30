@@ -26,6 +26,7 @@ Dependencies:
  - ffmpeg
  - geeqie
  - viewnior
+ - imgruler
  - From [Fred's ImageMagick Scripts](http://www.fmwconcepts.com/imagemagick/index.php):
    - whitebalance
 
@@ -39,5 +40,6 @@ It can show preview videos and make stackshots with tethered shooting and focus 
 Useable, but in beta stage. Currently not recommended for production use.
 
 Dependencies:
+ - gphoto2
  - ffmpeg
  - geeqie
