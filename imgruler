@@ -52,6 +52,8 @@ Ohne Optionen (oder nur mit -h) wird diese Hilfe angezeigt.
  -y   Y position of ruler. Default: bottom of image.
       Y Position des Lineals. Default: Unterer Bildrand.
  
+ -t   Title of image / Überschrift
+ 
  -c   Color of ruler / Farbe des Lineals.
       Default: black. Possible e.g. white, red.
  -p   Font point size. Default: twice the element height.
@@ -68,10 +70,10 @@ Ohne Optionen (oder nur mit -h) wird diese Hilfe angezeigt.
       (Setze Deine kalibrierten Werte in Funktion imgruler_calibrated().)
                   
  -o   Output file. 
-        Default: Source file with 'ruler_' added before file name.
+        Default: Source file with '.ruler' added before file suffix.
         Default without source file: ruler.jpg
       Bildname für neues Bild mit Lineal.
-        Default: ruler_IMAGENAME
+        Default: IMAGENAME.ruler.ENDUNG
         Default ohne IMAGENAME: ruler.png
 "
 }
@@ -91,7 +93,7 @@ imgruler() {
     }
   }
   Imdisplay="$(command -v imdisplay)"
-  [ "$Imdisplay" ] || Imdisplay="$Magick display"
+  [ "$Imdisplay" ] || Imdisplay="display"
   
   # Show help if -h or no options are given
   { [ -z "$*" ] || [ "$*" = "-h" ] ; } && {
@@ -100,7 +102,7 @@ imgruler() {
   }
 
   # check options
-  while getopts ":u:w:h:n:o:c:p:b:x:y:m:f:" Option; do
+  while getopts ":u:w:h:n:o:c:p:b:x:y:m:f:t:" Option; do
     case "$Option" in
       u)                                       # Unit size and identifier, e.g. 5µm
          Elementunit="$(echo "${OPTARG:-}" | sed 's/[.0-9]*//g')"
@@ -113,6 +115,7 @@ imgruler() {
       x) Xpos="${OPTARG:-}" ;;                # X position of ruler
       y) Ypos="${OPTARG:-}" ;;                # Y position of ruler
       
+      t) Title="${OPTARG:-}" ;;               # Title
       p) Pointsize="${OPTARG:-}" ;;           # Font point size
       f) Font="${OPTARG:-}" ;;                # Font
       c) Color="${OPTARG:-}" ;;               # Color of ruler
@@ -155,12 +158,13 @@ imgruler() {
   Pointsize="${Pointsize:-$((Elementheight * 2))}"
   Color="${Color:-black}"
   Background="${Background:-white}"
+  Title="${Title:-}"
 
   [ "$Sourcefilelist" ] || {
     # No source file? Create empty image with ruler only.
     echo "Will create a new empty image with a ruler in it."
     Imagewidth="$(awk "BEGIN {print $Elementwidth * $((Elementcount +14))}" | round)"
-    Imageheight="$((Elementheight * 5))"
+    Imageheight="$((Elementheight * 7))"
     Destinationfile="${Destinationfile:-ruler.png}"
     $Magick convert -size ${Imagewidth}x${Imageheight} xc:$Background "$Destinationfile"
     Sourcefilelist="$Destinationfile"
@@ -171,7 +175,10 @@ imgruler() {
     
     Imagewidth=$($Magick identify -format "%w" "$Sourcefile")
     Imageheight=$($Magick identify -format "%h" "$Sourcefile")
-    Destinationfile="${Destinationfile:-$(dirname "$Sourcefile")/ruler_$(basename "$Sourcefile")}"
+    #Destinationfile="${Destinationfile:-$(dirname "$Sourcefile")/ruler_$(basename "$Sourcefile")}"
+    [ "$Destinationfile" ] || {
+      Destinationfile="$(echo "$Sourcefile" | rev | cut -d. -f2- | rev).ruler.$(echo "$Sourcefile" | rev | cut -d. -f1 | rev)"
+    }
 
     [ "$Xpos" ] || Xpos=$(awk "BEGIN {print $Imagewidth/2 - $Elementwidth * $Elementcount /2}" | round)
     [ "$Ypos" ] || Ypos=$Imageheight
@@ -202,17 +209,17 @@ imgruler() {
 
     #Create the ruler
     echo "Creating $Destinationfile"
-    $Magick convert -size ${Imagewidth}x${Imageheight}  xc:$Background \
-            -composite "$Sourcefile" \
+    $Magick convert "$Sourcefile" \
             -fill $Color -draw "$Linesstring" \
             -fill $Color -font $Font -pointsize $Pointsize -draw "$Labelstring" \
+            -gravity north -draw "text 0,10 '$Title'" \
             "$Destinationfile"
             
     Destinationfilelist="$Destinationfilelist$Tabulator$Destinationfile"
     Destinationfile=""
   done
   # show created images
-  env IFS="$Tabulator" $Imdisplay $Destinationfilelist
+  #env IFS="$Tabulator" $Imdisplay $Destinationfilelist
 }
 imgruler_calibrated() {
   # English:
