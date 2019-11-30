@@ -44,4 +44,8 @@ Dependencies:
  - ffmpeg
  - geeqie
 
+## Example
+
+Image of pollen. Generated with the tools from this repository and a microscope from Hund/Wetzlar. Stackshot result of 69 single captures.
+
 ![screenshot](example.jpg)
