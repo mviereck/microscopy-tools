@@ -43,3 +43,5 @@ Dependencies:
  - gphoto2
  - ffmpeg
  - geeqie
+
+![screenshot](example.jpg)
