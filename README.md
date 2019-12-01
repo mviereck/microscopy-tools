@@ -7,7 +7,7 @@ Some rather special tools customized for my needs.
 
 Draws a ruler into an image.
 Intended to draw micrometers into micoscopic captures.
-Contains a calibration instruction.
+Contains a calibration instruction in english and german.
 
 Runs on Linux, macOS and (in Cygwin) on MS Windows.
 Considered to be ready for general use.
@@ -17,12 +17,14 @@ Dependencies:
 
 ## fusewizard
 
-GUI frontend for image foto stacking with enfuse. 
-Provides image preprocessing with imagemagick to enhane contrast and sharpiness. 
-Image alignment with ffmpeg/vidstab. 
-Expect a folder `stackshot` containing the source images. `stackshot` should be in an empty parent folder.
+GUI frontend for image foto stacking with enfuse. In development, beta stage, useable.
 
-In development, beta stage.
+Provides:
+ - Image preprocessing with imagemagick to enhance contrast and sharpiness. 
+ - Image alignment with ffmpeg/[vidstab](https://github.com/georgmartius/vid.stab).
+ - Multiple combinings of stackshot images with enfuse. Further combining of results with imagemagick.
+ 
+Expects a folder `stackshot` containing the source images. `stackshot` should be in an empty parent folder. The images in `stackshot` won't be changed.
 
 Dependencies: 
  - enfuse
@@ -40,7 +42,7 @@ Designed for my microscope with a mounted camera and a steppermotor at the focus
 It can show preview videos and make stackshots with tethered shooting and focus adjustment with stepper motor.
 `pololu_a4988.ino` is the code in use to control the stepper motor driver with an Arduino.
 
-Useable, but in beta stage. Currently not recommended for production use.
+Useable, but in beta stage. Currently not recommended for production use. Would need custom adjustment of either `pololu_a4988.ino` or respective the arduino commands in script.
 
 Dependencies:
  - ffmpeg

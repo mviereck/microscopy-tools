@@ -951,7 +951,7 @@ whitebalance() {
   local Destinationfile Imagelist Imagecount Count
   local Refred  Refgreen  Refblue
   local Meanred Meangreen Meanblue
-  local Fracred Fracgreen Fracblue
+  local Partred Partgreen Partblue
   
   parse_batchoptions "$@" || return 1
     
@@ -973,10 +973,6 @@ whitebalance() {
     bottomright) Cropgeometry="10x10+$((Imagewidth-15))+$((Imageheight-15))" ;;
     full)        Cropgeometry="${Imagewidth}x${Imageheight}+0+0" ;;
     interactive) 
-      [ -x "$Whitebalance" ] || {
-        failure "Need script 'whitebalance' in same folder as wizard"
-        return 1
-      }
       Image="$Cachedir/whitebalance.min.jpg"
       $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "50x50+10+10")"  ### FIXME rotate
@@ -1012,11 +1008,11 @@ whitebalance() {
     Meangreen="$(convert $Meancolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
     Meanblue="$(convert  $Meancolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
     
-    [ "$Meanred"   = "0" ] && Fracred=255   || Fracred="$(awk   "BEGIN { print $Refred   / $Meanred }")"
-    [ "$Meangreen" = "0" ] && Fracgreen=255 || Fracgreen="$(awk "BEGIN { print $Refgreen / $Meangreen }")"
-    [ "$Meanblue"  = "0" ] && Fracblue=255  || Fracblue="$(awk  "BEGIN { print $Refblue  / $Meanblue }")"
+    [ "$Meanred"   = "0" ] && Partred=255   || Partred="$(awk   "BEGIN { print $Refred   / $Meanred }")"
+    [ "$Meangreen" = "0" ] && Partgreen=255 || Partgreen="$(awk "BEGIN { print $Refgreen / $Meangreen }")"
+    [ "$Meanblue"  = "0" ] && Partblue=255  || Partblue="$(awk  "BEGIN { print $Refblue  / $Meanblue }")"
     
-    multicore "convert $Image -color-matrix '$Fracred 0 0 0 $Fracgreen 0 0 0 $Fracblue' $Destinationfile" "$Destinationfile" || return 1
+    multicore "convert $Image -color-matrix '$Partred 0 0 0 $Partgreen 0 0 0 $Partblue' $Destinationfile" "$Destinationfile" || return 1
     showpercent "$Count" "$Imagecount"
   done
   multicore_wait || return 1
@@ -2723,8 +2719,6 @@ declare_variables() {
   Historyfile=""
   
   Imgruler="$(dirname $0)/imgruler"
-  Xmeasure="$(dirname $0)/xmeasure"
-  Whitebalance="$(dirname $0)/whitebalance"
 }
 
 create_cachefiles() {
@@ -2855,179 +2849,6 @@ compose_independent() {
       $Convert "$Maxfile" "$Minfile" -compose "$Functionmode" -composite "$Destinationfile"
       echo "$Destinationfile"
       showimage "$Destinationfile"
-    ;;
-  esac
-}
-
-cropgeometry_interactive_mouse() {
-  local Image Imagewidth Imageheight
-  local Geometry Windowid Xwininfo Displaypid
-  local WinX  WinY  WinW  WinH
-  local CropX CropY CropW CropH
-  
-  Image="${1:-}"
-  Imagewidth=$(convert  -format '%w'  $Image info:)
-  Imageheight=$(convert -format '%h'  $Image info:)
-
-  [ -x "$Xmeasure" ] || {
-    failure "cropgeometry_interactive(): Need program 'xmeasure' in same folder as wizard"
-    return 1
-  }
-  
-  display -title "Choose crop area of $(basename "$Image")" "$Image" & Displaypid=$!
-  Geometry="$($Xmeasure)"
-  
-  Windowid=$(xdotool search "Choose crop area")
-  Xwininfo="$(xwininfo -id "$Windowid" -stats)"
-  WinX="$(( $(grep "Absolute upper-left X" <<< "$Xwininfo" | cut -d: -f2)  ))"
-  WinY="$(( $(grep "Absolute upper-left Y" <<< "$Xwininfo" | cut -d: -f2)  ))"
-  WinW="$(grep "geometry" <<< "$Xwininfo" | cut -dx -f1 | rev | cut -d' ' -f1 | rev)"
-  WinH="$(grep "geometry" <<< "$Xwininfo" | cut -dx -f2 | cut -d+ -f1 | cut -d- -f1)"
-  kill $Displaypid
-    
-  CropX="$(grep X <<< "$Geometry" | cut -d' ' -f2)"
-  CropY="$(grep Y <<< "$Geometry" | cut -d' ' -f2)"
-  CropW="$(grep W <<< "$Geometry" | cut -d' ' -f2)"
-  CropH="$(grep H <<< "$Geometry" | cut -d' ' -f2)"
-  CropX=$((CropX - WinX))
-  CropY=$((CropY - WinY))
-  
-  { [ "$CropW" = "0" ] || [ "$CropH" = "0" ] || [ "$CropX" -lt "0" ] || [ "$CropY" -lt "0" ] ; } && return 1
-  
-  echo "${CropW}x${CropH}+$CropX+$CropY"
-  return 0
-}
-
-vidstab_zoom() {
-  local $Batchlocal
-  local Sourcefilelist Imagelist Destinationfile Sourcefile
-  local Image Imagewidth Imageheight Count
-  local CropW CropH CropX CropY Cropgeometry Zoom
-  local Shakiness Blackborder Rotate Stepsize
-  local Cropevendir
-
-  parse_batchoptions "$@" || return 1
-  
-  cd $Cachedir
-  
-  Functionmode="${Functionmode:-vidstab}"
-  Shakiness="$( cut -d: -f1 <<< "$Functionoption")"
-  Shakiness="${Shakiness:-1}"
-  Rotate="$( cut -s -d: -f2 <<< "$Functionoption")"
-  [ -z "$Rotate" ] && Rotate="maxangle=0:" || Rotate=""
-  Blackborder="crop=black:"
-  Stepsize=6
-  
-  Cropevendir="$Cachedir/cropeven"
-  mkdir -p "$Cropevendir"
-  crop -m even -s "$Sourcedir" -g "$Sourcefileglob" -d "$Cropevendir"
-
-  Sourcefilelist=$Cachedir/align.source.list
-  :> $Sourcefilelist
-  
-  Imagelist="$(fileglob "$Cropevendir/$Sourcefileglob")"
-  for Image in $Imagelist; do
-    echo "file $Image" >>$Sourcefilelist
-  done
-  
-  worknote "align_ffmpeg: generating video from images"
-  ffmpeg -y -hide_banner -nostdin -safe "0" -f "concat" -i "$Sourcefilelist" \
-         -vcodec "libx264" -profile:v "high444" -refs "16" -crf "0" -preset "ultrafast" \
-         "$Cachedir/align.source.mp4" || return 1
-  ffplay -autoexit -loglevel quiet "$Cachedir/align.source.mp4"
-  
-  case $Functionmode in
-    vidstab)
-      worknote "align_ffmpeg: Analyzing video with shakiness=$Shakiness"
-      ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
-             -vf "vidstabdetect=shakiness=$Shakiness:accuracy=15:mincontrast=0.1:stepsize=$Stepsize:show=1:result=$Cachedir/transforms$Shakiness.trf" \
-             "$Cachedir/align.vidstab-show.mp4" || return 1
-      ffplay -autoexit -loglevel quiet "$Cachedir/align.vidstab-show.mp4"
-
-      Transformoptions="smoothing=0:interpol=bicubic:relative=1:${Blackborder}${Rotate}"
-
-      worknote "align_ffmpeg: Transforming video with $Transformoptions"
-      ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
-             -vf "vidstabtransform=optzoom=0:${Transformoptions}debug=1:input=$Cachedir/transforms$Shakiness.trf,unsharp=5:5:0.8:3:3:0.4" \
-             "$Cachedir/align.result.mp4" || return 1
-      ffplay -autoexit -loglevel quiet "$Cachedir/align.result.mp4"
-      
-      worknote "align_ffmpeg: Checking zoom factor for crop"
-      Zoom="$(ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
-             -vf "vidstabtransform=optzoom=1:${Transformoptions}input=$Cachedir/transforms$Shakiness.trf,unsharp=5:5:0.8:3:3:0.4" \
-             "$Cachedir/align.zoom.mp4" 2>&1 | grep -m1 "Final zoom")"
-      Zoom="$(cut -d: -f2 <<< "$Zoom")"
-      Zoom="${Zoom# }"
-      [ -z "$Zoom" ] && return 1
-    ;;
-    deshake)
-      worknote "align_ffmpeg: Deshaking video"
-      ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
-             -vf "deshake=edge=blank:contrast=16:rx=64:ry=64:blocksize=32:filename=$Cachedir/align.ffmpeg.log" \
-             "$Cachedir/align.result.mp4" || return 1
-    ;;
-  esac
-  
-  worknote "align_ffmpeg: Splitting aligned video into images"
-  ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.result.mp4" "$Cachedir/alignimg%04d.tif" -hide_banner || return 1
-  
-  case $Functionmode in
-    vidstab)
-      # crop geometry
-      Image="$(head -n1 <<< "$Imagelist")"
-      Imagewidth=$(convert  -format '%w'  $Image info:)
-      Imageheight=$(convert -format '%h'  $Image info:)
-      
-      CropW="$(awk "BEGIN {print $Imagewidth   * (99-$Zoom/2) /100 }")"
-      CropH="$(awk "BEGIN {print $Imageheight  * (99-$Zoom/2) /100 }")"
-      
-      #CropW="$(awk "BEGIN {print $Imagewidth   * 100/(100+$Zoom) }")"
-      #CropH="$(awk "BEGIN {print $Imageheight  * 100/(100+$Zoom) }")"
-      
-      CropW="$(cut -d. -f1 <<< "$CropW")"
-      CropH="$(cut -d. -f1 <<< "$CropH")"
-      CropX="$(( (Imagewidth-CropW) /2))"
-      CropY="$(( (Imageheight-CropH) /2))"
-      Cropgeometry="${CropW}x${CropH}+$CropX+$CropY"
-  
-      note "align_ffmpeg: Calculated crop area from zoom factor $Zoom: $Cropgeometry from ${Imagewidth}x${Imageheight}"
-      
-      # draw min image to show crop area
-      Cropminimage="$Cachedir/cropmin.png"
-      convert $(fileglob "$Cachedir/*.tif") -evaluate-sequence min "$Cropminimage"
-      convert "$Cropminimage" -fill none -stroke red -strokewidth 1 -draw "rectangle $((CropX-1)),$((CropY-1)) $((CropX+CropW+1)),$((CropY+CropH+1))" "$Cropminimage"
-      showimage "$Cropminimage"
-      
-      # draw red rectangle in distorted images
-      for Image in $(fileglob "$Cachedir/*.tif"); do
-        convert "$Image" -fill none -stroke red -strokewidth 1 -draw "rectangle $((CropX-1)),$((CropY-1)) $((CropX+CropW+1)),$((CropY+CropH+1))" "$Image"
-      done
-      
-      # crop
-      mkdir -p $Cachedir/crop
-      crop -s "$Cachedir"      -g "*.tif" -d "$Cachedir/crop"  -c "$Cachedir" -m geometry -o "$Cropgeometry" || return 1
-  
-      showimage "$Cropminimage"
-      
-      # move and convert to destination
-      Count=0
-      for Image in $(fileglob "$Cachedir/crop/*.tif"); do
-        Count="$((Count+1))"
-        Destinationfile="$(sed "s/file // ; ${Count}q;d" $Sourcefilelist)"
-        Destinationfile="$Destinationdir/$(basename $Destinationfile)"
-        $Convert "$Image" "$Destinationfile" || return 1
-        #rm "$Image"
-      done
-    ;;
-    deshake)
-      Count=0
-      for Image in $(fileglob "$Cachedir/*.tif"); do
-        Count="$((Count+1))"
-        Sourcefile="$(sed "s/file // ; ${Count}q;d" $Sourcefilelist)"
-        Destinationfile="$Destinationdir/$(basename $Sourcefile)"
-        $Convert "$Image" "$Destinationfile" || return 1
-        showimagediff "$Sourcefile" "$Destinationfile"
-      done
     ;;
   esac
 }
