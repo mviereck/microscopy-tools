@@ -947,7 +947,11 @@ align_hugin() {
 whitebalance() {
   local $Batchlocal
   local Image Cropgeometry Imagewidth Imageheight
-  local Referencecolor Meancolor Destinationfile Imagelist Imagecount Count
+  local Referencecolor Referencecolorimage Meancolorimage 
+  local Destinationfile Imagelist Imagecount Count
+  local Refred  Refgreen  Refblue
+  local Meanred Meangreen Meanblue
+  local Fracred Fracgreen Fracblue
   
   parse_batchoptions "$@" || return 1
     
@@ -958,6 +962,9 @@ whitebalance() {
   Imagecount="$(grep -c . <<< "$Imagelist")"
   Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
   Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
+  
+  Meancolorimage="$Cachedir/meancolor.mpc"
+  Referencecolorimage="$Cachedir/referencecolor.mpc"
   
   case $Functionmode in
     topleft)     Cropgeometry="10x10+5+5" ;;
@@ -982,22 +989,34 @@ whitebalance() {
   esac
   
   [ "$Referencecolor" = "mean" ] && {
-    Image="$Cachedir/whitebalance.mean.jpg"
-    $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -crop "$Cropgeometry" -evaluate-sequence mean "$Image"
+    Image="$Cachedir/whitebalance.mean.mpc"
+    convert $(fileglob "$Sourcedir/$Sourcefileglob") -crop "$Cropgeometry" -evaluate-sequence mean "$Image"
     Referencecolor=$($Convert "$Image" -filter box -resize 1x1! -format "%[pixel:u]" info:)
-    worknote "whitebalance mean: Reference color: $Referencecolor"
   }
   
-  echo "# whitebalance geometry: $Cropgeometry" >> "$Historyfile"
+  convert -size 1x1 xc:"$Referencecolor" $Referencecolorimage
+  Refred="$(convert   $Referencecolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
+  Refgreen="$(convert $Referencecolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
+  Refblue="$(convert  $Referencecolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
+
+#  echo "# whitebalance geometry: $Cropgeometry" >> "$Historyfile"
+
   Count=0
   for Image in $Imagelist; do
     Count="$((Count + 1))"
-    Meancolor=$($Convert $Image -crop $Cropgeometry -filter box -resize 1x1! -format "%[pixel:u]" info:)
     Destinationfile="$Destinationdir/$(basename "$Image")"
-    worknote "whitebalance: reference color=$Referencecolor, local mean=$Meancolor: $(basename "$Destinationfile")"
-#    $Whitebalance -c "$Meancolor" -r "$Referencecolor" "$Image" "$Destinationfile" || return 1
-    multicore "$Whitebalance -c '$Meancolor' -r '$Referencecolor' '$Image' '$Destinationfile'" "$Destinationfile" || return 1
-    #showimagediff "$Image" "$Destinationfile" "$(basename "$Image")" "whitebalance $Functionmode $Functionoption $Cropgeometry" 
+    
+    convert $Image -crop $Cropgeometry -resize 1x1! "$Meancolorimage"
+    
+    Meanred="$(convert   $Meancolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
+    Meangreen="$(convert $Meancolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
+    Meanblue="$(convert  $Meancolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
+    
+    [ "$Meanred"   = "0" ] && Fracred=255   || Fracred="$(awk   "BEGIN { print $Refred   / $Meanred }")"
+    [ "$Meangreen" = "0" ] && Fracgreen=255 || Fracgreen="$(awk "BEGIN { print $Refgreen / $Meangreen }")"
+    [ "$Meanblue"  = "0" ] && Fracblue=255  || Fracblue="$(awk  "BEGIN { print $Refblue  / $Meanblue }")"
+    
+    multicore "convert $Image -color-matrix '$Fracred 0 0 0 $Fracgreen 0 0 0 $Fracblue' $Destinationfile" "$Destinationfile" || return 1
     showpercent "$Count" "$Imagecount"
   done
   multicore_wait || return 1
@@ -1966,7 +1985,7 @@ start "arduterm fuse" -> frameset;
           meanbalance:beside         "meanbalance"            ->  "on"  | "";
         whitebalanceline:beside                               -> whitebalance whitebalancemodecombo whitebalancecombo whitebalancemagick whitebalancefuse whitebalanceevaluate;
           whitebalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="interactive" ;
-          whitebalancecombo                                     -> @combow("mean","#777777","#888888","#999988","#999999","#AAAA99","#AAAAAA","#BBBBAA","#BBBBBB","#CCCCBB","#CCCCCC","#DDDDCC","#DDDDDD","#EEEEEE","#FFFFFF")="#AAAAAA" ;
+          whitebalancecombo                                     -> @combow("mean","#777777","#888888","#999988","#999999","#AAAA99","#AAAAAA","#BBBBAA","#BBBBBB","#CCCCBB","#CCCCCC","#DDDDCC","#DDDDDD","#EEEEEE","#FFFFFF")="#CCCCCC" ;
           whitebalancemagick                                    -> @button="magick" ;
           whitebalanceevaluate                                  -> @button="evaluate" ;
           whitebalancefuse                                      -> @button="fuse" ;

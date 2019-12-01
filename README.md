@@ -5,8 +5,8 @@ Some rather special tools customized for my needs.
 
 ## imgruler
 
-Draws a ruler into an image. Needs ImageMagick.
-Intended to draw a micrometer into micoscopic captures.
+Draws a ruler into an image.
+Intended to draw micrometers into micoscopic captures.
 Contains a calibration instruction.
 
 Runs on Linux, macOS and (in Cygwin) on MS Windows.
@@ -17,18 +17,21 @@ Dependencies:
 
 ## fusewizard
 
-GUI frontend for image foto stacking with enfuse and imagemagick. 
+GUI frontend for image foto stacking with enfuse. 
+Provides image preprocessing with imagemagick to enhane contrast and sharpiness. 
+Image alignment with ffmpeg/vidstab. 
+Expect a folder `stackshot` containing the source images. `stackshot` should be in an empty parent folder.
+
+In development, beta stage.
 
 Dependencies: 
- - [kaptain](https://github.com/mviereck/kaptain)
  - enfuse
- - imagemagick
  - ffmpeg
  - geeqie
- - viewnior
+ - imagemagick
  - imgruler
- - From [Fred's ImageMagick Scripts](http://www.fmwconcepts.com/imagemagick/index.php):
-   - whitebalance
+ - [kaptain](https://github.com/mviereck/kaptain)
+ - viewnior
 
 ## arduterm
 
@@ -40,12 +43,12 @@ It can show preview videos and make stackshots with tethered shooting and focus 
 Useable, but in beta stage. Currently not recommended for production use.
 
 Dependencies:
- - gphoto2
  - ffmpeg
  - geeqie
+ - gphoto2
 
 ## Example
 
-Image of pollen. Generated with the tools from this repository and a microscope from Hund/Wetzlar. Stackshot result of 69 single captures.
+Image of pollen. Generated with the tools from this repository and a [microscope from Hund/Wetzlar](https://www.hund.de/en/). Stackshot result of 69 single captures with slightly different focus.
 
 ![screenshot](example.jpg)
