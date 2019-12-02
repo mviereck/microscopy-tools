@@ -33,9 +33,7 @@
 # in die Datei /tmp/arduterm/arduterm.command.execute
 #############################################################################
 
-VERSION="v0.4.0-beta"
-
-shopt -s extglob
+VERSION="v0.5.0-beta"
 
 ########################################
 #### Programmspezifische Funktionen ####
@@ -1496,6 +1494,19 @@ stop-movie | stop                   Videoaufnahme stoppen
     "stop-movie"|"stop")
        comment "Videoaufnahme wird gestoppt"
        videoaufnahme stop-movie
+       ;;
+       
+    #### Stacking ####
+    "stack")
+       Videomode_restore=""
+       setup_projectdir
+       stackshot $1 & echo $! stack >>$Backgroundpidfile
+       ;;
+    "median"|"med")
+       Evalstack="yes"
+       Evalnumber="${1:-4}"
+       [ "$Evalnumber" -gt "1" ] || Evalnumber="1"
+       [ "$Evalnumber" =   "1" ] && Evalstack="no"
        ;;
        
     "kill")
