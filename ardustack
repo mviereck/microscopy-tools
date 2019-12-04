@@ -1,0 +1,991 @@
+#! /bin/bash
+# ardugui
+
+note() {
+  echo "${Colgreen}Note:${Colnorm} $*" >&2
+}
+failure() {
+  echo "${Colred}FAILURE:${Colnorm} $*" >&2
+}
+
+showimage() {
+  note "Show image $@"
+  geeqie -t -r file:"${1:-}"
+}
+milisleep() {
+  local Time 
+  Time="$(awk "BEGIN { print ${1:-1000} / 1000 }")"
+  sleep $Time
+}
+storeinfo() {
+  # store and provide pieces of information
+  # replace entry if codeword is already present
+  # Store as codeword=string:
+  #   $1 codeword=string
+  # Dump stored string:
+  #   $1 dump
+  #   #2 codeword
+  # Drop stored string:
+  #   $1 drop
+  #   #2 codeword
+  # Test for codeword: (return 1 if not found)
+  #   $1 test
+  #   $2 codeword
+  #
+  # note: sed -i causes file permission issues if called in container in Cygwin, compare ticket #187
+  #       chmod 666 for $Sharefolder could probably fix that. (FIXME)
+  #
+  [ -e "$Storeinfofile" ] || return 1
+  case "${1:-}" in
+    dump) grep     "^${2:-}="   $Storeinfofile | sed "s/^${2:-}=//" ;;      # dump entry
+    drop) sed -i  "/^${2:-}=/d" $Storeinfofile ;;                           # drop entry
+    test) grep -q  "^${2:-}="   $Storeinfofile ;;                           # test for entry
+    *)                                                                      # store entry
+      sed -i "/^$(echo "${1:-}" | cut -d= -f1)=/d"     $Storeinfofile       # drop possible old entry
+      echo "${1:-}"                                 >> $Storeinfofile
+    ;;
+  esac
+}
+
+get_latest_file() {
+  ## Funktion: Neueste erstellte Datei ermitteln
+  # $1 kann Suche auf Dateien DATEI* begrenzen
+  ls -p -t $1* 2> /dev/null | grep -v "/" | head -n 1
+}
+get_last_file() {
+  ## Funktion: Die alphabetisch/numerisch letzte Datei, die mit $1 beginnt, ermitteln und Name ausgeben
+  basename -a $(find "$(dirname "$(realpath ${1:-})" )" -mindepth 1 -maxdepth 1) | grep "$(basename ${1:-})" | sort | tail -n1
+}
+get_free_filenumber(){
+  ## Funktion: Zu Dateiname $1 nächste freie Nummer ausgeben
+  # $1  Dateiname ohne Nummer und _ohne_ suffix, nach dem Prinzip
+  #     DATEINAME_000x.jpg nur DATEINAME übergeben. 
+  #     DATEINAME darf keine Unterstriche _ oder Zahlen 0..9 oder Punkte enthalten
+  local Nummer
+  Nummer=$(get_last_file $1 | rev | cut -d_ -f1 | rev | cut -d. -f1)  
+  printf "%04d" $(bc <<<"${Nummer:-"-1"} + 1")
+}
+setup_projectdir() {
+  local Projecthome Projectname
+  
+  Projecthome="$(storeinfo dump projecthome)"
+  
+  [ "${1:-}" ] && Projectname="${1:-}.$(date +%Y-%m-%d)"
+  Projectname="${Projectname:-project.$(date +%Y-%m-%d)}"
+  storeinfo "projectname=$Projectname"
+  
+  cd "$Projecthome"
+  mkdir -p "$Projectname"
+  cd "$Projectname"
+}
+
+device_init() {
+  local Watchdevicepid Device
+  ## Funktion: Device initialisieren und Überwachung starten
+
+  # Falls eine Instanz von watch_device() läuft, beenden
+  Device="$(storeinfo dump device)"
+  Watchdevicepid="$(storeinfo dump watchdevicepid)"
+  ps -p "$Watchdevicepid" >/dev/null 2>&1 && {
+    kill $Watchdevicepid
+    wait $Watchdevicepid 2>/dev/null
+    exec 6<>-
+  }
+
+  # Device auf Gültigkeit prüfen
+  [ -e "$Device" ] || {
+    failure "Fehler: Geräteadresse nicht gefunden: $Device"
+    Device="/dev/null"
+    failure "Setze Geräteadresse auf $Device"
+  }
+  
+  # Daten von Device auf fifo umleiten
+  note "Beginne Überwachung von $Device"
+  exec 6<>$Device
+  cat <&6 >>$Devicemessagefifo & Watchdevicepid=$!
+  storeinfo "watchdevicepid=$Watchdevicepid"
+    
+  # Seriellen Port initialisieren
+  stty -F $Device raw ispeed 9600 ospeed 9600 cs8 -hupcl -ignpar -cstopb -echo || {
+    failure "Fehler bei Initialisierung von Device $Device"
+    return 1
+  }
+}
+device_send() {
+  ## Funktion: Daten an Arduino senden  
+  # Alle übergebenen Optionen werden an $Deviceadresse gesendet
+  note "Send to device: $*"
+  echo "$*" >&6
+}
+device_wait() {
+  ## Funktion: Auf ein beliebiges Signal vom Arduino warten
+  local Antwort=
+  
+  read -t ${1:-$Devicetimeout} -r Antwort <&6
+  
+  [ "$Antwort" ] || {
+    failure "Device: TIMEOUT"
+    echo "TIMEOUT"
+    return 1
+  }
+  
+  note "Arduino meldet: $Antwort"
+  echo "$Antwort"
+  return 0
+}
+device_check() {
+  # Prüfen, ob Arduino auf Kontrollsignal "c" antwortet
+  device_send c
+  [ "$(device_wait)" = "TIMEOUT" ] && return 1 && note "Device check failed" || return 0
+}
+
+position_store() {
+  storeinfo "poscurrent=$Poscurrent"
+  storeinfo "pos1=$Pos1"
+  storeinfo "pos2=$Pos2"
+  storeinfo "stepwidth=$Stepwidth"
+}
+position_read() {
+  Poscurrent="$(storeinfo dump poscurrent)"
+  Pos1="$(storeinfo dump pos1)"
+  Pos2="$(storeinfo dump pos2)"
+  Stepwidth="$(storeinfo dump stepwidth)"
+}
+
+stepcmd() {
+  local Return Antwort
+  position_read
+  case ${1:-} in
+    go) 
+      steplauf "${1:-$Poscurrent}"
+    ;;
+    stepin)  
+      steplauf "$(bc <<< "$Poscurrent + $Stepwidth")" 
+    ;;
+    stepout) 
+      steplauf "$(bc <<< "$Poscurrent - $Stepwidth")" 
+    ;;
+    setpos0)
+      Poscurrent=0
+      device_send z
+      Antwort="$(device_wait)"
+    ;;
+    setpos1)
+      Pos1=$Poscurrent
+    ;;
+    setpos2)
+      Pos2=$Poscurrent
+    ;;
+    gopos0)
+      steplauf "0" 
+    ;;
+    gopos1)
+      steplauf "$Pos1" 
+    ;;
+    gopos2)
+      steplauf "$Pos2" 
+    ;;
+    stepwidth)
+      device_send "w,${2:-25}"
+      Antwort="$(device_wait)"
+    ;;
+  esac
+  note "stepcmd $*: current:$Poscurrent pos1:$Pos1 pos2:$Pos2 stepwidth:$Stepwidth"
+  Return=$?
+  [ "$Antwort" = "TIMEOUT" ] && Return=1
+  position_store
+  return "${Return:-0}"
+}
+steplauf() {
+  # Zu Position $1 gehen
+  # $1   Zielposition (gewolltes $Poscurrent)
+  local Richtug= diff= Warten=
+  
+  diff="$(bc <<< "${1:-} - $Poscurrent")"
+  [ "$diff" -eq "0" ] && return 1
+  [ "$diff" -gt "0" ] && {
+    Richtung="i"
+  } || { 
+    Richtung="o"
+    diff="$(bc <<< "-1 * $diff")"
+  }
+  
+  device_check || return 1
+
+  [ "$diff" = "$Stepwidth" ] || {
+    device_send "w,$diff"
+    [ "$(device_wait)" = "TIMEOUT" ] && return 1
+  }
+
+  Warten="$(bc <<< "18 * $diff /10000 + $Devicetimeout")"
+
+  device_send "$Richtung"
+  Antwort="$(device_wait $Warten)"
+  [ "$Antwort" = "TIMEOUT" ] && return 1
+  
+  case $Richtung in
+    i)  Poscurrent="$(bc <<< "$Poscurrent + $diff")" ;;
+    o)  Poscurrent="$(bc <<< "$Poscurrent - $diff")" ;;
+  esac
+  
+  [ "$diff" = "$Stepwidth" ] || {
+    device_send "w,$Stepwidth"
+    device_wait >/dev/null
+  }
+}
+
+stackshot() {
+  ## Funktion: Fotoserie schießen, dabei Motor weiterdrehen. Geht von $Pos1 zu $Pos2.
+  # -p   Default: Serie aus Preview-Bildern.
+  # -c   Serie aus richtigen Fotos / Captures.
+  
+  local Posmem=
+  local Stackshotdelay Anzahl Count= Loopcount=0
+  local Fotomodus Ordnername= Glob
+  local Mediannumber Medianmode Mediancount
+  local Lateststack Stackshotname Projectname Storagebase
+    
+  [ "$1" = "-c" ] && Fotomodus="capture" && shift
+  [ "$1" = "-p" ] && Fotomodus="preview" && shift
+  Fotomodus="${Fotomodus:-preview}"
+  
+  Mediannumber="$(storeinfo dump mediannumber)"
+  Mediannumber="${Mediannumber:-1}"
+  [ "$Mediannumber" = "1" ] && Medianmode="no" || Medianmode="yes"
+  
+  Stackshotdelay="$(storeinfo dump stackshotdelay)"
+  Stackshotdelay="${Stackshotdelay:-500}"
+  
+  Storagebase="$(storeinfo dump storagebase)"
+  
+  gphoto2_cmd check || return 1
+  device_check      || return 1
+  
+  # ggf. Positionen für stepin korrigieren
+  position_read
+  [ "$Pos1" -gt "$Pos2" ] && {
+    note "stack: Switching Pos1:$Pos1 and Pos2:$Pos2"
+    Posmem=$Pos1
+    Pos1=$Pos2
+    Pos2=$Posmem
+    position_store
+  }
+  
+  Anzahl="$(bc <<< "($Pos2 - $Pos1) / $Stepwidth" | cut -d. -f1)"
+  note "stack: Number of steps: $Anzahl"
+  
+  # An Startposition gehen
+  stepcmd go $Pos1
+  ### FIXME wait
+  position_read
+  
+  [ "$Poscurrent" = "$Pos1" ] || { failure "stack: Error: Missed position $Pos1: $Poscurrent." ; return 1 ; }
+
+  # Unterordner anlegen
+  Stackshotname="${Stackshotname:-stackshot}" ### FIXME declare in GUI
+  
+  Projectname="$(storeinfo dump projectname)"
+  Projectname="${Projectname:-project_unknown}"
+  Lateststack="$Storagebase/$Projectname/${Stackshotname}_$(get_free_filenumber "$Storagebase/$Projektname/$Stackshotname")"
+  mkdir -p "$Lateststack/stackshot"
+  storeinfo "lateststack=$Lateststack"
+  
+  [ "$Medianmode" = "yes" ] && mkdir -p $Lateststack/median.source
+
+  # Stackshot
+  note "stack: Shooting stack $Lateststack"
+  sleep 1
+
+  gphoto2_cmd mirrorup
+  
+  while [ "$Poscurrent" -lt "$Pos2" ] ; do
+    Loopcount=$((Loopcount +1 ))
+    
+    for ((Mediancount=1 ; Mediancount<=$Mediannumber ; Mediancount++)); do
+      #[ -s $Stackshotfile ] || { failure "stack: interrupted" ; break ; }
+      milisleep $Stackshotdelay
+
+      case $Fotomodus in
+        capture) 
+          gphoto2_wrap --capture-image-and-download ### FIXME check filename
+        ;;
+        preview)
+          gphoto2_wrap --capture-preview
+          Latestimage="$Lateststack/stackshot/preview_$(printf "%04d" $Loopcount).jpg"
+          mv -f capture_preview.jpg $Latestimage
+          storeinfo "latestimage=$Latestimage"
+        ;;
+      esac
+      case $Medianmode in
+        yes)
+          Mediangroup="$Lateststack/median.source/img_$(printf "%04d" $Loopcount)"
+          Latestmedian="${Mediangroup}_m$(printf "%02d" $Mediancount).jpg"
+          cp $Latestimage $Latestmedian
+          note "stack: Image stored as $Latestmedian"
+          showimage "$Latestmedian"
+        ;;
+        no)
+          note "stack: Image stored as $Latestimage"
+          showimage "$Latestimage"
+        ;;
+      esac
+      storeinfo "latestimage=$Latestimage"
+    done
+    
+    [ "$Medianmode" = "yes" ] && {
+      note "stack: Aligning captures of step $Loopcount."
+      align_image_stack -m --use-given-order -a ${Mediangroup}_align $Mediangroup*.jpg 2>&1 | grep -v "Unable to read EXIF data"
+      Latestimage="$Lateststack/stackshot/${Fotomodus}_$(printf "%04d" $Loopcount).jpg"
+      $Convert ${Mediangroup}_align*.tif -evaluate-sequence median "$Latestimage"
+      showimage "$Latestimage"
+    }
+
+    # step in
+    stepcmd stepin
+    position_read
+        
+    # Fortschrittsanzeige %
+    #Count=$((Count + 1))
+    #for ((i=1 ; i<=100 ; i++)); do
+    #  Prozent="$((100 * $Count / $Anzahl))"
+    #  [ "$Prozent" -lt "$i" ] && echo -n "." || echo -n "X" 
+    #done
+    #echo " $Prozent%"
+  done
+  
+  # Create video from stackshot
+  note "stack: Creating video from stackshot"
+  [ -e "$Lateststack/stackshot" ]    && Glob="$Lateststack/stackshot/*"
+  [ -e "$Lateststack/median.source" ] && Glob="$Lateststack/median.source/*"
+  ffmpeg -framerate 5 -pattern_type glob -i "$Glob" -c:v libx264  -pix_fmt yuv420p "$Lateststack/stackshotvideo.mp4"
+  
+  note "stack: Ready: Stackshot $Stackshotname with $((Count * Mediannumber)) images in $Count steps."
+  note "stack: Location: $Lateststack"
+  :> $Stackshotfile
+}
+
+gphoto2_wrap() {
+  note "gphoto2 $@"
+  gphoto2 $@ || {
+    failure "gphoto2 failed. Is the camera plugged in and turned on?"
+    return 1
+  }
+  return 0
+}
+gphoto2_cmd () {
+  ## Funktion: Sammlung und Koordination der gphoto2-Aufrufe
+  #
+  local Command Return=0
+ 
+  Command="${1:-}"
+  shift
+  case $Command in
+    check)
+      gphoto2_wrap --list-config >/dev/null 2>&1
+      Return=$?
+    ;;
+    set-config)                               # Konfigurationsdialog
+      gphoto2_config_dialog $@
+      Return=$?
+      ;; 
+    get-config)                               # Kameraeinstellung lesen
+      gphoto2_get_config $@
+      Return=$? 
+      ;;
+    set-config-value|scv)                     # Kameraeinstellung setzen (Wert)
+      gphoto2_wrap --set-config-value $@
+      Return=$? 
+      ;;
+    set-config-index|sci)                     # Kameraeinstellung setzen (Indexnummer)
+      gphoto2_wrap --set-config-index $@
+      Return=$? 
+      ;;
+    switch-config)                            # Kameraeinstellung: Im Index eines weiter (+) oder zurück (-)
+      gphoto2_switch_config $@
+      Return=$? 
+      ;;
+    capture-image)                            # Bild aufnehmen und auf Kamera speichern
+      gphoto2_wrap --capture-image
+      Return=$? 
+      ;;
+    capture-image-and-download)               # Bild aufnehmen und herunterladen
+      # %C als Suffix läßt gphoto2 Dateiende selbst richtig einsetzen (jpg oder cr2 oder ...)
+      Latestimage="$(pwd)/capture_$(get_free_filenumber capture).%C"
+      gphoto2_wrap --capture-image-and-download --filename $Latestimage
+      Return=$?
+      # Dateiname mit tatsächlichem Suffix ermitteln. 
+      Latestimage="$(pwd)/$(get_latest_file "capture*.jpg")"
+      [ "$Latestimage" ] || Latestimage="$(pwd)/$(get_latest_file "capture*")"
+      storeinfo "latestimage=$Latestimage"
+      ;;
+    capture-preview)                         # Einzelnes Videobild aufnehmen, ohne daß der Spiegel zuklappt
+      ## Funktioniert ab gphoto2 Version >= 2.5.9 ##
+      gphoto2_cmd mirrorup
+      gphoto2_wrap --capture-preview
+      Return=$?
+      [ "$Return" = "0" ] && {
+        Latestimage="$(pwd)/preview_$(get_free_filenumber preview).jpg"
+        mv capture_preview.jpg "$Latestimage"
+        storeinfo "latestimage=$Latestimage"
+      } 
+      ;;
+    mirrorup)                                 # Viewfinder einschalten = Spiegel hoch
+      gphoto2_wrap --set-config-value viewfinder="1"
+      Return=$? 
+      ;;
+    zoom)                                     # Viewfinder-Zoom setzen. Zulässige Werte sind 1, 5, und 10
+      gphoto2_wrap --set-config-value eoszoom=$1
+      Return=$? 
+      ;;
+    move-zoom)                                # Position von Viewfinder-Zoom ändern
+      case $1 in
+        x) ZOOM_XPOS="$[$ZOOM_XPOS+$2]" ;;
+        y) ZOOM_YPOS="$[$ZOOM_YPOS+$2]" ;;
+      esac
+      [ "$ZOOM_XPOS" -lt "0" ] && ZOOM_XPOS="0" 
+      [ "$ZOOM_YPOS" -lt "0" ] && ZOOM_YPOS="0" 
+      gphoto2_wrap --set-config-value eoszoomposition="$ZOOM_XPOS,$ZOOM_YPOS"
+      Return=$? 
+      ;;
+    gphoto2) # gphoto2 direkt aufrufen
+      gphoto2_wrap $@
+      return=$?
+      ;;
+    *)
+      failure "gphoto2_cmd() mit ungültigen Parametern aufgerufen: $Command $@"
+      Return=1
+      ;;
+  esac
+  return $Return
+}
+gphoto2_switch_config() {
+  ## Funktion=Konfiguration vom Typ RADIO umschalten mit + oder -
+  # $1  Zu verändernder Konfigurationswert, Name im Config-Baum
+  # $2  + oder - für nächsten oder vorherigen Wert.
+  #     +n oder -n für n-weiten Schritt im config-Index
+  #     keine Angabe = +1
+  #     n ohne '+' oder '-' => +n
+  # Bei Überschreiten/Unterschreiten des Index wird auf Anfang/Ende vom Index gesetzt 
+
+  local Choicecount Configlabel Configtype Configcurrent 
+  local Dumpline Dumplineleft Dumplineright
+  
+  # Derzeitige Konfiguration auslesen und speichern
+  gphoto2_wrap --get-config $1 > $Kameradumpfile || {
+    failure "Fehler: Konfiguration der Kamera für $1 konnte nicht gelesen werden"
+    return 1
+  }
+  
+  # Konfiguration parsen
+  while read Dumpline ; do
+    Dumplineleft="$(cut -d: -f1 <<< $Dumpline)"
+    Dumplineright="$(cut -d' ' -f2- <<< $Dumpline)"
+    case $Dumplineleft in
+      Label)   Configlabel="$Dumplineright" ;;
+      Type)    Configtype="$Dumplineright" ;;
+      Current) Configcurrent="$Dumplineright" ;;
+      Readonly) ;;
+      END) ;;
+      Choice) 
+        [ "$(cut -d' ' -f2 <<<"$Dumplineright")" = "$Configcurrent" ] && Configcurrentindex="$(cut -d' ' -f1 <<<"$Dumplineright")" 
+        Choicecount=$((Choicecount + 1))
+      ;;
+      "") ;;
+    esac
+  done <$Kameradumpfile
+  
+  case $Configtype in
+    RADIO) ;;
+    TEXT|DATE|TOGGLE)
+      failure "Fehler: Werte vom Typ $TYPE können nicht mit Kommando 'switch' geändert werden."
+      failure "        Bitte Kommando 'set-config-value $1=WERT' oder 'set-config $1' verwenden."
+      return 1
+    ;;
+  esac
+  
+  # Indexänderung berechnen
+  case $2 in
+    "+"|"") Change="+1" ;;
+    "-")    Change="-1" ;;
+    *)
+      case $(cut -c1 <<< $2) in
+        "+"|"-") Change="$2" ;;
+        *)       Change="+$2" ;;
+      esac
+    ;;
+  esac
+  Newindex=$(($Configcurrentindex $Change))
+  # wrap index out of range
+  [ "$Newindex" -ge "$Choicecount" ] && Newindex=0
+  [ "$Newindex" -lt "0" ] && Newindex=$((Choicecount -1))
+  
+  # Neuen Wert ermitteln
+  while read Dumpline; do
+    [ "$(cut -d' ' -f2 <<<"$Dumpline")" = "$Newindex" ] && Newcurrent="$(cut -d' ' -f3- <<<"$Dumpline")" && break
+  done < <(grep Choice <$Kameradumpfile)
+ 
+  # Neuen Index setzen
+  gphoto2_wrap --set-config-index $1=$Newindex || {
+    failure "Fehler: $1: $Configlabel $Configcurrent konnte nicht geändert werden"
+    echo $Configcurrent
+    return 1
+  }
+  echo "$Newcurrent"
+  return 0
+}
+gphoto2_get_config() {
+  ## Funktion: Kameraeinstellungen anzeigen
+  # Usage: [-a | all] [ENTRY]
+  # ohne Optionen      Tabelle aller RADIO/MENU Einstellungen ausgeben
+  # ENTRY              Einstellung von ENTRY ausgeben
+  # -a, all            Tabelle aller Einstellungen ausgeben
+  #                    Mit ENTRY: Dump des ENTRY Eintrags ausgeben
+  
+  local Tabelle Configentry Configlabel Configtype Configcurrent Dumpline Showall
+  
+  case "${1:-}" in
+    "-a"|"all") Showall="yes" && shift ;;
+    *)          Showall="no" ;;
+  esac
+
+  case $1 in
+    "") # Keine einzelne Einstellung angegeben: Alle RADIO und MENU Einstellungen anzeigen
+      gphoto2_wrap --list-all-config > $Kameradumpfile || {
+        failure "Konnte Kamera nicht auslesen"
+        return 1
+      }
+      
+      while read Dumpline ; do
+      
+        Dumplineleft="$(cut -d: -f1 <<< "$Dumpline")"
+        case $Dumplineleft in
+          Label|Type|Current) Dumplineright="$(cut -d' ' -f2- <<< "$Dumpline")" ;;
+        esac
+        
+        case $Dumplineleft in
+          Label)    Configlabel="$Dumplineright" ;;
+          Type)     Configtype="$Dumplineright" ;;
+          Current)  Configcurrent="$Dumplineright" ;;
+          Readonly) ;;
+          Choice)   ;;
+          END)
+            echo -n "." >&2    # ...
+            case $Configtype in
+              RADIO|MENU)
+                Tabelle="$Tabelle
+${Configentry}§${Configlabel}§${Configcurrent}"
+                ;;
+              *|TOGGLE|TEXT|DATE)
+                [ "$Showall" = "yes" ] && Tabelle="$Tabelle
+${Configentry}§${Configlabel}§${Configcurrent}"
+                ;;
+            esac
+            ;;
+          *) [ "$(cut -c1 <<< "$Dumpline")" = "/" ] && Configentry="$(basename "$Dumpline")" ;;
+        esac
+        
+      done <$Kameradumpfile
+      echo ""
+  
+      # Ergebnis in eine übersichtliche Tabelle verwandeln
+      Tabelle="$(sort <<< "$Tabelle")"
+      column -t -s"§" <<< "$Tabelle"
+      ;;
+    
+    *) # einzelnes Config als Option angegeben
+      gphoto2_wrap --get-config $1 > $Kameradumpfile && {
+        case $Showall in
+          yes) cat $Kameradumpfile ;;
+          no)  grep "Current" <$Kameradumpfile | cut -d' ' -f2- ;;
+        esac
+      } || failure "Fehler: Konfiguration der Kamera konnte nicht gelesen werden"
+      ;;
+  esac
+}
+gphoto2_config_dialog() {
+  ## Funktion: Dialogboxen zur Konfiguration der Kamera erzeugen
+  # $1   ENTRY, der zu konfigurieren ist. Wenn leer, alle Configentrys zur Auswahl anbieten
+  local Configentry= Count= Dialogoptions= Line=
+
+  Configentry=$1
+  
+  # Auswahl aus allen Konfiguartionsmöglichkeiten anbieten
+  [ -z "$Configentry" ] && {
+    gphoto2_wrap --list-all-config > $Kameradumpfile || {
+      failure "Konnte Kamerakonfiguration nicht lesen."
+      return 1
+    }
+    
+    declare -i Count="0"
+    while read -r Line ; do
+      Configentry[$Count]="$(basename $Line)"
+      Count=$Count+1
+    done < <(look "/" $Kameradumpfile)
+
+    declare -i Count="0"
+    while read -r Line ; do
+      LABEL[$Count]="$(cut -d ' ' -f2- <<<"$Line")"
+      Count=$Count+1
+    done < <(look "Label:" $Kameradumpfile)
+  
+    declare -i Count="0"
+    while read -r Line ; do
+      TYPE[$Count]="$(cut -d ' ' -f2- <<<"$Line")"
+      Count=$Count+1
+    done < <(look "Type:" $Kameradumpfile)
+    
+    declare -i Count="0"
+    while read -r Line ; do
+      CURRENT[$Count]="$(cut -d ' ' -f2- <<< "$Line")"
+      Count=$Count+1
+    done < <(look "Current:" $Kameradumpfile)
+      
+    # Optionen sortieren, Type RADIO zuerst
+    :> $Kameradumpfile
+    while [ "$Count" -ge "1" ] ; do
+      Count=$Count-1
+      case ${TYPE[$Count]} in
+        RADIO|MENU) echo -n "AAAA " >> $Kameradumpfile ;;
+        TOGGLE) echo -n "BBBB " >> $Kameradumpfile ;;
+        TEXT) echo -n "DDDD " >> $Kameradumpfile ;;
+        DATE) echo -n "EEEE " >> $Kameradumpfile ;;
+        *) echo -n "CCCC " >> $Kameradumpfile ;;
+      esac
+      echo "'${Configentry[$Count]}' '${LABEL[$Count]}§${TYPE[$Count]}§${CURRENT[$Count]}'" >> $Kameradumpfile
+    done
+    while read -r Line ; do
+      Dialogoptions="$Dialogoptions $(echo $Line | cut -d ' ' -f2-)"
+    done < <(sort -V $Kameradumpfile)
+      
+    Configentry=$(eval dialog --column-separator '§' --menu '"Kamera Konfiguration auswählen"' 40 120 30 $Dialogoptions 3>&1 1>&2 2>&3 3>&-)
+  }
+
+  # Einzelne Konfiguration ändern
+  [ -n "$Configentry" ] && {
+    note "Lese Konfiguration von $Configentry von der Kamera, bitte warten ..."
+    gphoto2_wrap --get-config $Configentry > $Kameradumpfile || {
+      failure "Fehler: Konfiguration der Kamera konnte nicht gelesen werden"
+      return 1
+    }
+
+      INDEX="0"
+      Dialogoptions=""
+      LABEL=`look "Label:" $Kameradumpfile | cut -d ' ' -f2-`
+      TYPE=`look "Type:" $Kameradumpfile | cut -d ' ' -f2-`
+      CURRENT=`look "Current:" $Kameradumpfile | cut -d ' ' -f2-`
+      while read -r Line ; do
+        CHOICE[$INDEX]=`echo -n $Line | cut -d ' ' -f3-`
+        Dialogoptions="$Dialogoptions $INDEX '${CHOICE[$INDEX]}'"
+        if [ "${CHOICE[$INDEX]}" = "$CURRENT" ] ; then Dialogoptions="$Dialogoptions on"
+        else Dialogoptions="$Dialogoptions off" ; fi
+        INDEX=$[$INDEX+1]
+      done < <(look "Choice:" $Kameradumpfile)
+
+      case $TYPE in
+      RADIO|MENU)
+        INDEX=$(eval dialog --radiolist '"Auswahl für $Configentry: $LABEL \nDerzeit: $CURRENT"' 40 120 30 $Dialogoptions 3>&1 1>&2 2>&3 3>&-)
+        if test "$INDEX" ; then 
+          note "Setze $Configentry=$INDEX => $LABEL ${CHOICE[$INDEX]}"
+          gphoto2_wrap --set-config-index $Configentry=$INDEX
+        fi
+        ;;
+      TEXT)
+        CHOICE=$(eval dialog --inputbox '"Neuer Wert für $Configentry: $LABEL \nDerzeit: $CURRENT"' 12 78 '"$CURRENT"' 3>&1 1>&2 2>&3 3>&-)
+        if test "$CHOICE" ; then
+          note "Ändere $Configentry: $LABEL von $CURRENT auf $CHOICE"
+          gphoto2_wrap --set-config-value "$Configentry=$CHOICE"
+        fi
+        ;;
+      TOGGLE)
+        Dialogoptions="1 Ein off 0 Aus off"
+        #eval echo  --radiolist '"Schalter: $Configentry: $LABEL' 15 70 2 $Dialogoptions
+        CHOICE=$(eval dialog --radiolist '"Schalter: $Configentry: $LABEL"' 15 70 2 $Dialogoptions 3>&1 1>&2 2>&3 3>&-)
+        if test "$CHOICE" ; then 
+          note "Stelle Schalter $Configentry auf $CHOICE"
+          gphoto2_wrap --set-config-value $Configentry=$CHOICE 
+        fi
+        ;;
+      *)
+        DIALOGTEXT="Unbekannter Konfigurationstyp $TYPE. Ausgabe von get-config $Configentry:\n"
+        while read -r LINE ; do
+          DIALOGTEXT=$DIALOGTEXT$LINE"\n"
+        done < $Kameradumpfile
+        CHOICE=$(eval dialog --inputbox '"$DIALOGTEXT"' 12 78 '"$CURRENT"' 3>&1 1>&2 2>&3 3>&-)
+        if test -n "$CHOICE" ; then 
+          note "Setze $Configentry auf $CHOICE"
+          gphoto2_wrap --set-config-value $Configentry=$CHOICE
+        fi
+        ;;
+      esac
+  }
+}
+video() {
+  ## Funktion: Videoaufnahme starten oder stoppen, mit Speichern auf Festplatte oder ohne
+  # $1  Aufnahmemodus
+  local Videodauer Videomode FFplaypid
+  local GPHOTO2 FFMPEG FFPLAY
+  
+  Ffplaypid="$(storeinfo dump ffplaypid)"
+  [ "$Ffplaypid" ] && ps -p "$Ffplaypid" >/dev/null 2>&1 && {
+    kill $Ffplaypid
+    storeinfo drop ffplaypid
+    Ffplaypid=""
+  }
+  
+  Videodauer="3600s"
+  Videomode="${1:-preview}"
+  
+  GPHOTO2="gphoto2_wrap --capture-movie=$Videodauer --stdout"
+  FFMPEG="ffmpeg -loglevel error -i -  -c:v copy -f mpjpeg  - "
+  FFPLAY="ffplay -loglevel error -sync ext -window_title arduterm-Video - "
+
+  case $Videomode in
+    preview)
+      $GPHOTO2 | $FFPLAY & Ffplaypid=$!
+    ;;
+    capture)
+      # Dateiname für neues Video
+      Latestvideo="$(pwd)/movie_$(get_free_filenumber).mjpg"
+      $GPHOTO2 | $FFMPEG | tee $Latestvideo | $FFPLAY & Ffplaypid=$!
+    ;;
+    stop)
+      # Videowiedergabe/aufnahme stoppen. 
+      # Da das bereits am Anfang dieser Funktion geschieht, 
+      # muß weiter nichts getan werden
+    ;;
+  esac
+  
+  [ "$Ffplaypid" ] && ps -p "$Ffplaypid" >/dev/null 2>&1 && storeinfo "ffplaypid=$Ffplaypid"
+ 
+}
+
+kaptaingrammar() {
+  echo "#! /usr/bin/kaptain
+start 'ardustack'         -> mainframe;
+mainframe:framed            -> deviceframe naviframe camerasetframe videoframe captureframe stackshotframe;
+  deviceframe 'Device'         -> device send read ;
+    device:beside 'Device file'  -> @string='/dev/ttyACM0' @button='initialize' ;
+    send:beside                    -> @button='Send string to device' @string ;
+    read:beside                    -> @button='Read string from device' @string ;
+  naviframe 'Navigation'         -> stepline stepwidth pos0 pos1 pos2;
+    stepline:beside                -> stepin stepout stepcomment;
+      stepin                         -> @button='step in';
+      stepout                        -> @button='step out';
+      stepcomment '(Press shift to hold)' -> '' ;
+    stepwidth:beside 'step width'  -> @combow('1','5','10','25','50','100','250','500')='50' ;
+    pos0:beside                    -> setpos0 gopos0;
+      setpos0                        -> @button='Set current position as position zero' ;
+      gopos0                         -> @button='Go to pos0';
+    pos1:beside                    -> setpos1 gopos1;
+      setpos1                        -> @button='Set current position as start point of stack' ;
+      gopos1                         -> @button='Go to pos1' ;
+    pos2:beside                    -> setpos2 gopos2 ;
+      setpos2                        -> @button='Set current position as end point of stack' ;
+      gopos2                         -> @button='Go to pos2' ;
+  camerasetframe 'Camera settings' -> zoom iso shutter;
+    zoom:beside 'Zoom'             -> zoom1 zoom5 zoom10 ;
+      zoom1                          -> @button='1x' ;
+      zoom5                          -> @button='5x' ;
+      zoom10                         -> @button='10x' ;
+    iso:beside 'ISO'               -> @combo('100','200','400','800','1600')='400' ;
+    shutter:beside 'Shutterspeed'  -> @combo('1/10','1/20','1/40','1/80','1/125','1/200','1/320','1/400','1/800')='1/200' ;
+  videoframe 'Video'             -> videostart videocapture videostop;
+    videostart                     -> @button='Start preview video' ;
+    videocapture                   -> @button='Capture preview video' ;
+    videostop                      -> @button='Stop video' ;
+  captureframe 'Captures'        -> captureline ;
+    captureline:beside             -> capturepreview capturefullres ;
+      capturepreview                 -> @button='Capture preview' ;
+      capturefullres                 -> @button='Capture full resolution' ;
+  stackshotframe 'Stackshot'     -> stackshotline stackshotmedian stackshotvideo stackshotdelay;
+    stackshotline:beside           -> stackshotpreview stackshotfullres ;
+      stackshotpreview               -> @button='Run preview stackshot' ;
+      stackshotfullres               -> @button='Run full resolution stackshot' ;
+    stackshotmedian:beside 'Median captures to delete movements:' -> @combo('3','4','5','6','7','8','9','10')='5' | ! "";
+    stackshotvideo                 -> @button='Stackshot video' ;
+    stackshotdelay:beside 'Delay between captures (ms):' -> @combo('100','200','300','400','500','750','1000','1500','2000','2500','3000','4000','5000')='500';
+"
+}
+sendkaptain() {
+  # send messages to kaptain over its stdin
+  echo "$1" >&${Kaptainstdin}
+#  echo "sent to kaptain: $1"
+}
+askkaptain() {
+  # ask kaptain for value of $1
+  local Answer
+  kaptaingrammar | grep -q "${1:-}" || return 1
+  sendkaptain "${1:-}?"
+  read Answer <&${Kaptainstdout}
+  [ -z "$Answer" ] && return 1
+  echo "$Answer"
+  return 0
+}
+runkaptain() {
+
+  
+  kaptaingrammar > $Kaptaingrammar
+  #nl -ba $Kaptaingrammar
+  
+  kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  
+
+  # watch signals of kaptain
+  while ps -p $Kaptainpid >/dev/null; do
+    read -t1 Kaptainsignal <&${Kaptainstdout}
+    [ "$Kaptainsignal" ] && {
+      note "Signal from kaptain: $Kaptainsignal"
+      grep -q ":on"      <<< "$Kaptainsignal" && Kaptainsignal=""
+      grep -q ":off"     <<< "$Kaptainsignal" && Kaptainsignal=""
+      Kaptainsignal="${Kaptainsignal%:pressed}"
+    }
+    [ "$Kaptainsignal" ] && parse_kaptainsignal "$Kaptainsignal"
+  done
+}
+parse_kaptainsignal() {
+  local Kaptainsignal Argument
+  
+  Kaptainsignal="${1:-}"
+  Argument="$(cut -s -d: -f2 <<< "$Kaptainsignal")"
+
+  position_read
+  
+  case "$Kaptainsignal" in       # Laufende Videoaufnahme bei gphoto2 Aufruf unterbrechen, ggf. nach Kommando wieder starten
+    iso*|shutter*|capture*|video*)
+      video stop
+    ;;
+  esac
+  
+  case $Kaptainsignal in
+    zoom*)
+      Argument="${Kaptainsignal#zoom}"
+      gphoto2_cmd zoom $Argument
+      storeinfo "zoom=$Argument"
+    ;;
+    iso*)
+      gphoto2_cmd set-config-value iso="$Argument"
+      storeinfo "iso=$Argument"
+    ;;
+    shutter*)
+      gphoto2_cmd set-config-value shutterspeed="$Argument"
+      storeinfo "shutterspeed=$Argument"
+    ;;
+    capturepreview)
+      gphoto2_cmd capture-preview
+    ;;
+    capturefullres)
+      gphoto2_cmd capture-image-and-download
+    ;;
+    videostart)
+      storeinfo "videomode=preview"
+    ;;
+    videocapture)
+      storeinfo "videomode=capture"
+    ;;
+    videostop)
+      storeinfo drop videomode
+    ;;
+    
+    
+    setpos*|gopos*|stepin|stepout) 
+      stepcmd $Kaptainsignal
+    ;;
+    stepwidth)
+      Stepwidth="$Argument"
+      stepcmd stepwidth "$Argument"
+    ;;
+    
+    stackshot*)
+      storeinfo drop videomode
+      setup_projectdir
+      Argument="$(askkaptain stackshotmedian)"
+      Argument="${Argument:-1}"
+      storeinfo "mediannumber=$Argument"
+      Argument="$(askkaptain stackshotdelay)"
+      storeinfo "stackshotdelay=$Argument"
+      case $Kaptainsignal in
+        stackshotpreview) stackshot -p ;;
+        stackshotfullres) stackshot -c ;;
+      esac
+    ;;
+  esac
+
+  # start or restart video
+  storeinfo test videomode && {
+    ps -p "$(storeinfo dump ffplaypid)" >/dev/null 2>&1 || video "$(storeinfo dump videomode)"
+  }
+}
+
+declare_variables() {
+  Cachefolder=/tmp/ardustack  
+  
+  Storeinfofile="$Cachefolder/store.info"
+  
+  Kaptainpid=""
+
+  Kaptaingrammar=$Cachefolder/kaptain.grammar
+  Kaptainstdinfifo=$Cachefolder/kaptain.stdin 
+  Kaptainstdoutfifo=$Cachefolder/kaptain.stdout
+  
+  Latestimage=""
+  Latestvideo=""
+  
+  Devicetimeout=10
+  Devicemessagefifo="$Cachefolder/device.fifo"
+  
+  Poscurrent=0
+  Pos1=1000
+  Pos2=1100
+  Stepwidth=50
+  
+  # Terminal colors used for messages
+  Esc="$(printf '\033')"
+  Colblue="${Esc}[35m"
+  Colyellow="${Esc}[33m"
+  Colgreen="${Esc}[32m"
+  Colgreenbg="${Esc}[42m"
+  Colred="${Esc}[31m"
+  Colredbg="${Esc}[41m"
+  Coluline="${Esc}[4m"
+  Colnorm="${Esc}[0m"
+}
+setup_cache() {
+  mkdir $Cachefolder
+  :> $Storeinfofile
+  mkfifo $Devicemessagefifo
+  
+  
+  mkfifo   $Kaptainstdinfifo
+  exec  {Kaptainstdin}<>$Kaptainstdinfifo
+  mkfifo   $Kaptainstdoutfifo
+  exec  {Kaptainstdout}<>$Kaptainstdoutfifo
+}
+finish() {
+  kill $Kaptainpid
+  rm -R $Cachefolder
+}
+main() {
+  trap finish EXIT 
+  
+  # Dependencies:
+  # bc
+  # gphoto2
+  # ffmpeg
+  
+  declare_variables
+  setup_cache
+  
+  storeinfo "storagebase=$HOME/Bilder/arduterm"
+  
+  storeinfo "device=/dev/ttyACM0"
+  device_init
+  position_store
+  
+  storeinfo "iso=400"
+  storeinfo "shutterspeed=1/200"
+  storeinfo "zoom=1"
+  
+  runkaptain
+}
+
+main "$@"
