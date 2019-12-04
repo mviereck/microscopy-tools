@@ -956,7 +956,7 @@ whitebalance() {
   parse_batchoptions "$@" || return 1
     
   Functionmode="${Functionmode:-topleft}"
-  Referencecolor="${Functionoption:-#AAAA99}"
+  Referencecolor="${Functionoption:-#BBBBBB}"
   
   Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
   Imagecount="$(grep -c . <<< "$Imagelist")"

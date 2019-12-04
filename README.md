@@ -34,7 +34,27 @@ Dependencies:
  - imgruler
  - [kaptain](https://github.com/mviereck/kaptain)
  - viewnior
+ 
+## MacroFusion
+GUI for enfuse. See https://github.com/mviereck/macrofusion
 
+## camcfg
+`dialog` frontend for `gphoto2` camera configuration. Reads possible configurations of a camera and provides a dialog in terminal to choose desired settings.
+ - `camcfg` shows all available configurations.
+ - `camcfg ENTRY` shows configuration of entry ENTRY. Example: `camcfg iso`
+ 
+Dependencies:
+ - dialog
+ - gphoto2
+ 
+## ardustack
+GUI for foto stacking with a stepper motor controlled by an arduino and a camera connected on USB. Successor of `arduterm`. Alpha stage.
+
+Dependencies:
+ - ffmpeg
+ - geeqie
+ - gphoto2
+ 
 ## arduterm
 
 Terminal to coordinate a camera on USB and an Arduino with a stepper motor. 
@@ -51,6 +71,6 @@ Dependencies:
 
 ## Example
 
-Image of pollen. Generated with the tools from this repository and a [microscope from Hund/Wetzlar](https://www.hund.de/en/). Stackshot result of 69 single captures with slightly different focus.
+Image of pollen. Generated with the tools from this repository and a [microscope from Hund/Wetzlar](https://www.hund.de/en/). Camera Canon EOS 1000d. Stackshot result of 69 single captures with slightly different focus.
 
 ![screenshot](example.jpg)

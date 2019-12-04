@@ -129,46 +129,6 @@ get_free_filenumber(){
   Nummer=$(get_last_file $1 | rev | cut -d_ -f1 | rev | cut -d. -f1)  
   printf "%04d" $(bc <<<"${Nummer:-"-1"} + 1")
 }
-check_fileglob() {
-  # check whether files exist for glob $1
-  local File
-  for File in $(eval echo $@); do
-    [ -f "$File" ] && return 0
-  done
-  return 1
-}
-check_dirglob() {
-  # check whether directories exist for glob $1
-  local File
-  for File in ${1:-}; do
-    [ -d "$File" ] && return 0
-  done
-  return 1
-}
-fileglob() {
-  # echos files only for glob $1
-  # (except those with .pto in their name)
-  local File Filelist
-  for File in $*; do
-    [ -f "$File" ] && Filelist="$Filelist
-$File"
-  done
-  Filelist=$(sed '/^$/d'    <<< "$Filelist" | sort)
-  Filelist=$(grep -v '.pto' <<< "$Filelist")
-  [ "$Filelist" ] && echo $Filelist || return 1
-}
-dirglob() {
-  # echos directories only for glob $1
-  # (except those with .pto in their name)
-  local File Filelist
-  for File in ${1:-}; do
-    [ -d "$File" ] && Filelist="$Filelist
-$File"
-  done
-  Filelist=$(sed '/^$/d'    <<< "$Filelist" | sort)
-  Filelist=$(grep -v '.pto' <<< "$Filelist")
-  [ "$Filelist" ] && echo $Filelist || return 1
-}
 setup_projectdir() {
   [ "${1:-}" ] && Projektname="${1:-}.$(date +%Y-%m-%d)"
   Projektname="${Projektname:-project.$(date +%Y-%m-%d)}"
@@ -203,17 +163,6 @@ check_doubledir() {
     [ -d "$Basedir/$Line" ] && return 0
   done
   return 1
-}
-check_destinationfile() {
-  local Destinationfile Function
-  Destinationfile="${1:-}"
-  Function="${2:-}"
-  [ -e "$Destinationfile" ] && {
-    #fehler "$Function: Destination file already exists: $Destinationfile"
-    fehler "$Function: Destination file already exists: $(basename "$Destinationfile")"
-    return 1
-  }
-  return 0
 }
 
 ###########################################
@@ -1733,7 +1682,6 @@ main() {
     ;;
     oneshot)    # execute single command only if given on cli
       Commandline="$*"
-      [ -d "$Commandline" ] || check_fileglob $Commandline && Commandline="batch $Commandline"
       cmd_parser $Commandline
       wait
       arduterm_ende
