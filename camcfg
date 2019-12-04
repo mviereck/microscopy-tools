@@ -1,0 +1,299 @@
+#! /bin/bash
+# gphoto2 configuration with shell dialog
+
+note() {
+  echo "${Colgreen}Note:${Colnorm} $*" >&2
+}
+failure() {
+  echo "${Colred}FAILURE:${Colnorm} $*" >&2
+}
+gphoto2_wrap() {
+  #note "gphoto2 $@"
+  gphoto2 $@ || {
+    failure "gphoto2 failed. Is the camera plugged in and turned on?"
+    return 1
+  }
+  return 0
+}
+gphoto2_switch_config() {
+  ## Funktion=Konfiguration vom Typ RADIO umschalten mit + oder -
+  # $1  Zu verändernder Konfigurationswert, Name im Config-Baum
+  # $2  + oder - für nächsten oder vorherigen Wert.
+  #     +n oder -n für n-weiten Schritt im config-Index
+  #     keine Angabe = +1
+  #     n ohne '+' oder '-' => +n
+  # Bei Überschreiten/Unterschreiten des Index wird auf Anfang/Ende vom Index gesetzt 
+
+  local Choicecount Configlabel Configtype Configcurrent 
+  local Dumpline Dumplineleft Dumplineright
+  
+  # Derzeitige Konfiguration auslesen und speichern
+  gphoto2_wrap --get-config $1 > $Kameradumpfile || {
+    failure "Fehler: Konfiguration der Kamera für $1 konnte nicht gelesen werden"
+    return 1
+  }
+  
+  # Konfiguration parsen
+  while read Dumpline ; do
+    Dumplineleft="$(cut -d: -f1 <<< $Dumpline)"
+    Dumplineright="$(cut -d' ' -f2- <<< $Dumpline)"
+    case $Dumplineleft in
+      Label)   Configlabel="$Dumplineright" ;;
+      Type)    Configtype="$Dumplineright" ;;
+      Current) Configcurrent="$Dumplineright" ;;
+      Readonly) ;;
+      END) ;;
+      Choice) 
+        [ "$(cut -d' ' -f2 <<<"$Dumplineright")" = "$Configcurrent" ] && Configcurrentindex="$(cut -d' ' -f1 <<<"$Dumplineright")" 
+        Choicecount=$((Choicecount + 1))
+      ;;
+      "") ;;
+    esac
+  done <$Kameradumpfile
+  
+  case $Configtype in
+    RADIO) ;;
+    TEXT|DATE|TOGGLE)
+      failure "Fehler: Werte vom Typ $TYPE können nicht mit Kommando 'switch' geändert werden."
+      failure "        Bitte Kommando 'set-config-value $1=WERT' oder 'set-config $1' verwenden."
+      return 1
+    ;;
+  esac
+  
+  # Indexänderung berechnen
+  case $2 in
+    "+"|"") Change="+1" ;;
+    "-")    Change="-1" ;;
+    *)
+      case $(cut -c1 <<< $2) in
+        "+"|"-") Change="$2" ;;
+        *)       Change="+$2" ;;
+      esac
+    ;;
+  esac
+  Newindex=$(($Configcurrentindex $Change))
+  # wrap index out of range
+  [ "$Newindex" -ge "$Choicecount" ] && Newindex=0
+  [ "$Newindex" -lt "0" ] && Newindex=$((Choicecount -1))
+  
+  # Neuen Wert ermitteln
+  while read Dumpline; do
+    [ "$(cut -d' ' -f2 <<<"$Dumpline")" = "$Newindex" ] && Newcurrent="$(cut -d' ' -f3- <<<"$Dumpline")" && break
+  done < <(grep Choice <$Kameradumpfile)
+ 
+  # Neuen Index setzen
+  gphoto2_wrap --set-config-index $1=$Newindex || {
+    failure "Fehler: $1: $Configlabel $Configcurrent konnte nicht geändert werden"
+    echo $Configcurrent
+    return 1
+  }
+  echo "$Newcurrent"
+  return 0
+}
+gphoto2_get_config() {
+  ## Funktion: Kameraeinstellungen anzeigen
+  # Usage: [-a | all] [ENTRY]
+  # ohne Optionen      Tabelle aller RADIO/MENU Einstellungen ausgeben
+  # ENTRY              Einstellung von ENTRY ausgeben
+  # -a, all            Tabelle aller Einstellungen ausgeben
+  #                    Mit ENTRY: Dump des ENTRY Eintrags ausgeben
+  
+  local Tabelle Configentry Configlabel Configtype Configcurrent Dumpline Showall
+  
+  case "${1:-}" in
+    "-a"|"all") Showall="yes" && shift ;;
+    *)          Showall="no" ;;
+  esac
+
+  case $1 in
+    "") # Keine einzelne Einstellung angegeben: Alle RADIO und MENU Einstellungen anzeigen
+      gphoto2_wrap --list-all-config > $Kameradumpfile || {
+        failure "Konnte Kamera nicht auslesen"
+        return 1
+      }
+      
+      while read Dumpline ; do
+      
+        Dumplineleft="$(cut -d: -f1 <<< "$Dumpline")"
+        case $Dumplineleft in
+          Label|Type|Current) Dumplineright="$(cut -d' ' -f2- <<< "$Dumpline")" ;;
+        esac
+        
+        case $Dumplineleft in
+          Label)    Configlabel="$Dumplineright" ;;
+          Type)     Configtype="$Dumplineright" ;;
+          Current)  Configcurrent="$Dumplineright" ;;
+          Readonly) ;;
+          Choice)   ;;
+          END)
+            echo -n "." >&2    # ...
+            case $Configtype in
+              RADIO|MENU)
+                Tabelle="$Tabelle
+${Configentry}§${Configlabel}§${Configcurrent}"
+                ;;
+              *|TOGGLE|TEXT|DATE)
+                [ "$Showall" = "yes" ] && Tabelle="$Tabelle
+${Configentry}§${Configlabel}§${Configcurrent}"
+                ;;
+            esac
+            ;;
+          *) [ "$(cut -c1 <<< "$Dumpline")" = "/" ] && Configentry="$(basename "$Dumpline")" ;;
+        esac
+        
+      done <$Kameradumpfile
+      echo ""
+  
+      # Ergebnis in eine übersichtliche Tabelle verwandeln
+      Tabelle="$(sort <<< "$Tabelle")"
+      column -t -s"§" <<< "$Tabelle"
+      ;;
+    
+    *) # einzelnes Config als Option angegeben
+      gphoto2_wrap --get-config $1 > $Kameradumpfile && {
+        case $Showall in
+          yes) cat $Kameradumpfile ;;
+          no)  grep "Current" <$Kameradumpfile | cut -d' ' -f2- ;;
+        esac
+      } || failure "Fehler: Konfiguration der Kamera konnte nicht gelesen werden"
+      ;;
+  esac
+}
+gphoto2_config_dialog() {
+  ## Funktion: Dialogboxen zur Konfiguration der Kamera erzeugen
+  # $1   ENTRY, der zu konfigurieren ist. Wenn leer, alle Configentrys zur Auswahl anbieten
+  local Configentry= Count= Dialogoptions= Line=
+
+  Configentry=$1
+  
+  # Auswahl aus allen Konfiguartionsmöglichkeiten anbieten
+  [ -z "$Configentry" ] && {
+    gphoto2_wrap --list-all-config > $Kameradumpfile || {
+      failure "Could not read camera configuration."
+      return 1
+    }
+    
+    declare -i Count="0"
+    while read -r Line ; do
+      Configentry[$Count]="$(basename $Line)"
+      Count=$Count+1
+    done < <(look "/" $Kameradumpfile)
+
+    declare -i Count="0"
+    while read -r Line ; do
+      LABEL[$Count]="$(cut -d ' ' -f2- <<<"$Line")"
+      Count=$Count+1
+    done < <(look "Label:" $Kameradumpfile)
+  
+    declare -i Count="0"
+    while read -r Line ; do
+      TYPE[$Count]="$(cut -d ' ' -f2- <<<"$Line")"
+      Count=$Count+1
+    done < <(look "Type:" $Kameradumpfile)
+    
+    declare -i Count="0"
+    while read -r Line ; do
+      CURRENT[$Count]="$(cut -d ' ' -f2- <<< "$Line")"
+      Count=$Count+1
+    done < <(look "Current:" $Kameradumpfile)
+      
+    # Optionen sortieren, Type RADIO zuerst
+    :> $Kameradumpfile
+    while [ "$Count" -ge "1" ] ; do
+      Count=$Count-1
+      case ${TYPE[$Count]} in
+        RADIO|MENU) echo -n "AAAA " >> $Kameradumpfile ;;
+        TOGGLE) echo -n "BBBB " >> $Kameradumpfile ;;
+        TEXT) echo -n "DDDD " >> $Kameradumpfile ;;
+        DATE) echo -n "EEEE " >> $Kameradumpfile ;;
+        *) echo -n "CCCC " >> $Kameradumpfile ;;
+      esac
+      echo "'${Configentry[$Count]}' '${LABEL[$Count]}§${TYPE[$Count]}§${CURRENT[$Count]}'" >> $Kameradumpfile
+    done
+    while read -r Line ; do
+      Dialogoptions="$Dialogoptions $(echo $Line | cut -d ' ' -f2-)"
+    done < <(sort -V $Kameradumpfile)
+      
+    Configentry=$(eval dialog --column-separator '§' --menu '"Kamera Konfiguration auswählen"' 40 120 30 $Dialogoptions 3>&1 1>&2 2>&3 3>&-)
+  }
+
+  # Einzelne Konfiguration ändern
+  [ -n "$Configentry" ] && {
+    note "Lese Konfiguration von $Configentry von der Kamera, bitte warten ..."
+    gphoto2_wrap --get-config $Configentry > $Kameradumpfile || {
+      failure "Fehler: Konfiguration der Kamera konnte nicht gelesen werden"
+      return 1
+    }
+
+      INDEX="0"
+      Dialogoptions=""
+      LABEL=`look "Label:" $Kameradumpfile | cut -d ' ' -f2-`
+      TYPE=`look "Type:" $Kameradumpfile | cut -d ' ' -f2-`
+      CURRENT=`look "Current:" $Kameradumpfile | cut -d ' ' -f2-`
+      while read -r Line ; do
+        CHOICE[$INDEX]=`echo -n $Line | cut -d ' ' -f3-`
+        Dialogoptions="$Dialogoptions $INDEX '${CHOICE[$INDEX]}'"
+        if [ "${CHOICE[$INDEX]}" = "$CURRENT" ] ; then Dialogoptions="$Dialogoptions on"
+        else Dialogoptions="$Dialogoptions off" ; fi
+        INDEX=$[$INDEX+1]
+      done < <(look "Choice:" $Kameradumpfile)
+
+      case $TYPE in
+      RADIO|MENU)
+        INDEX=$(eval dialog --radiolist '"Auswahl für $Configentry: $LABEL \nDerzeit: $CURRENT"' 40 120 30 $Dialogoptions 3>&1 1>&2 2>&3 3>&-)
+        if test "$INDEX" ; then 
+          note "Setze $Configentry=$INDEX => $LABEL ${CHOICE[$INDEX]}"
+          gphoto2_wrap --set-config-index $Configentry=$INDEX
+        fi
+        ;;
+      TEXT)
+        CHOICE=$(eval dialog --inputbox '"Neuer Wert für $Configentry: $LABEL \nDerzeit: $CURRENT"' 12 78 '"$CURRENT"' 3>&1 1>&2 2>&3 3>&-)
+        if test "$CHOICE" ; then
+          note "Ändere $Configentry: $LABEL von $CURRENT auf $CHOICE"
+          gphoto2_wrap --set-config-value "$Configentry=$CHOICE"
+        fi
+        ;;
+      TOGGLE)
+        Dialogoptions="1 Ein off 0 Aus off"
+        #eval echo  --radiolist '"Schalter: $Configentry: $LABEL' 15 70 2 $Dialogoptions
+        CHOICE=$(eval dialog --radiolist '"Schalter: $Configentry: $LABEL"' 15 70 2 $Dialogoptions 3>&1 1>&2 2>&3 3>&-)
+        if test "$CHOICE" ; then 
+          note "Stelle Schalter $Configentry auf $CHOICE"
+          gphoto2_wrap --set-config-value $Configentry=$CHOICE 
+        fi
+        ;;
+      *)
+        DIALOGTEXT="Unbekannter Konfigurationstyp $TYPE. Ausgabe von get-config $Configentry:\n"
+        while read -r LINE ; do
+          DIALOGTEXT=$DIALOGTEXT$LINE"\n"
+        done < $Kameradumpfile
+        CHOICE=$(eval dialog --inputbox '"$DIALOGTEXT"' 12 78 '"$CURRENT"' 3>&1 1>&2 2>&3 3>&-)
+        if test -n "$CHOICE" ; then 
+          note "Setze $Configentry auf $CHOICE"
+          gphoto2_wrap --set-config-value $Configentry=$CHOICE
+        fi
+        ;;
+      esac
+  }
+}
+declare_variables() {
+  # Terminal colors used for messages
+  Esc="$(printf '\033')"
+  Colblue="${Esc}[35m"
+  Colyellow="${Esc}[33m"
+  Colgreen="${Esc}[32m"
+  Colgreenbg="${Esc}[42m"
+  Colred="${Esc}[31m"
+  Colredbg="${Esc}[41m"
+  Coluline="${Esc}[4m"
+  Colnorm="${Esc}[0m"
+  
+  Kameradumpfile=/tmp/camcfg.dump
+}
+main() {
+  declare_variables
+  :> $Kameradumpfile
+  gphoto2_config_dialog "$@"
+  rm $Kameradumpfile
+}
+main "$@"
