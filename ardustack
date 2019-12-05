@@ -7,6 +7,9 @@ failure() {
   echo "${Colred}FAILURE:${Colnorm} $*" >&2
 }
 
+isnum() {                       # check if $1 is a number
+  [ "1" = "$(awk -v a="${1:-}" 'BEGIN {print (a == a + 0)}')" ]
+}
 showimage() {
   note "Show image $@"
   geeqie -t -r file:"${1:-}"
@@ -65,19 +68,23 @@ get_free_filenumber(){
   local Number
   Number="$(get_last_file ${1:-} | rev | cut -d_ -f1 | rev | cut -d. -f1)"
   Number="${Number:-0}"
-  Number="$((Number + 1 ))"
+  Number="$(awk "BEGIN {print \"$Number\" + 1}" )"
   printf "%04d" "$Number"
 }
 
 setup_projectdir() {
-  local Projecthome Projectname
+  local Projecthome Projectname Projectdate
   
-  Projecthome="$(storeinfo dump storagebase)"
-  
-  [ "${1:-}" ] && Projectname="${1:-}.$(date +%Y-%m-%d)"
-  Projectname="${Projectname:-project.$(date +%Y-%m-%d)}"
+  Projecthome="$(storeinfo dump storagebasedir)"
+  Projecthome="${Projecthome:-$HOME/ardustack}"
+  Projectbasename="$(storeinfo dump projectbasename)"
+  Projectbasename="${Projectbasename:-project}"
+  Projectdate="$(date +%Y-%m-%d)"
+
+  [ "${1:-}" ] && Projectname="${1:-}.${Projectdate}"
+  Projectname="${Projectname:-${Projectbasename}.${Projectdate}}"
   storeinfo "projectname=$Projectname"
-  
+
   cd "$Projecthome"
   mkdir -p "$Projectname"
   cd "$Projectname"
@@ -102,7 +109,7 @@ device_init() {
     Device="/dev/null"
     failure "Fallback device: $Device"
   }
-  
+
   # Daten von Device auf fifo umleiten
   note "Beginne Überwachung von $Device"
   exec 6<>$Device
@@ -155,12 +162,24 @@ position_store() {
   sendkaptain "difference='$((Pos2 - Pos1))'"
   sendkaptain "distance='$(awk 'BEGIN {print 0.048 * '$((Pos2 - Pos1))'}') my'"
   sendkaptain "steps='$(( (Pos2 - Pos1)/Stepwidth ))'"
+  sendkaptain "stepmy='$(awk 'BEGIN {print 0.048 * '$Stepwidth'}') my'"
 }
 position_read() {
+  local Newstepwidth
+  
   Poscurrent="$(storeinfo dump poscurrent)"
   Pos1="$(storeinfo dump pos1)"
   Pos2="$(storeinfo dump pos2)"
   Stepwidth="$(storeinfo dump stepwidth)"
+  
+  storeinfo test pidkaptain && {
+    Newstepwidth="$(askkaptain stepwidth)"
+    isnum "$Newstepwidth" && [ "$Newstepwidth" != "$Stepwidth" ] && {
+      Stepwidth="$Newstepwidth"
+      storeinfo "stepwidth=$Stepwidth"
+      stepcmd stepwidth $Stepwidth
+    }
+  }
 }
 
 stepcmd() {
@@ -197,7 +216,8 @@ stepcmd() {
       steplauf "$Pos2" 
     ;;
     stepwidth)
-      device_send "w,${2:-25}"
+      Stepwidth="${2:-25}"
+      device_send "w,$Stepwidth"
       Antwort="$(device_wait)"
     ;;
   esac
@@ -254,8 +274,11 @@ stackshot() {
   local Stackshotdelay Anzahl Count= Loopcount=0
   local Fotomodus Ordnername= Glob
   local Mediannumber Medianmode Mediancount
-  local Lateststack Stackshotname Projectname Storagebase
-    
+  local Stackshotdir Stackshotbasename Stackshotname Projectname Storagebase
+  
+  gphoto2_cmd check || return 1
+  device_check      || return 1
+  
   [ "$1" = "-c" ] && Fotomodus="capture" && shift
   [ "$1" = "-p" ] && Fotomodus="preview" && shift
   Fotomodus="${Fotomodus:-preview}"
@@ -267,12 +290,25 @@ stackshot() {
   Stackshotdelay="$(storeinfo dump stackshotdelay)"
   Stackshotdelay="${Stackshotdelay:-500}"
   
-  Storagebase="$(storeinfo dump storagebase)"
+  Storagebasedir="$(storeinfo dump storagebasedir)"
+  Storagebasedir="${Storagebasedir:-$HOME/ardustack}"
   
-  gphoto2_cmd check || return 1
-  device_check      || return 1
+  Projectname="$(storeinfo dump projectname)"
+  Projectname="${Projectname:-project_unknown}"
   
-  # ggf. Positionen für stepin korrigieren
+  Stackshotbasename="$(storeinfo dump stackshotbasename)"
+  Stackshotbasename="${Stackshotname:-st}" ### FIXME declare in GUI
+  
+  cd "$Storagebasedir/$Projectname"
+  Stackshotname="$Stackshotbasename__$(get_free_filenumber "$Stackshotbasename")"
+  
+  Stackshotdir="$Storagebasedir/$Projectname/$Stackshotname"
+  storeinfo "lateststack=$Stackshotdir"
+  mkdir -p "$Stackshotdir/stackshot"
+  [ "$Medianmode" = "yes" ] && mkdir -p $Stackshotdir/median.source
+  cd $Stackshotdir
+  
+  # ggf. Positionen für stepin +/- korrigieren
   position_read
   [ "$Pos1" -gt "$Pos2" ] && {
     note "stack: Switching Pos1:$Pos1 and Pos2:$Pos2"
@@ -281,71 +317,54 @@ stackshot() {
     Pos2=$Posmem
     position_store
   }
-  
+    
+  # Stackshot
   Anzahl="$(bc <<< "($Pos2 - $Pos1) / $Stepwidth" | cut -d. -f1)"
-  note "stack: Number of steps: $Anzahl"
+  note "Shooting stack $Stackshotdir with $Anzahl steps."
   
   # An Startposition gehen
   stepcmd go $Pos1
-  position_read
-  
+  position_read  
   [ "$Poscurrent" = "$Pos1" ] || { failure "stack: Error: Missed position $Pos1: $Poscurrent." ; return 1 ; }
-
-  # Unterordner anlegen
-  Stackshotname="${Stackshotname:-stackshot}" ### FIXME declare in GUI
   
-  Projectname="$(storeinfo dump projectname)"
-  Projectname="${Projectname:-project_unknown}"
-  Lateststack="$Storagebase/$Projectname/${Stackshotname}_$(get_free_filenumber "$Storagebase/$Projektname/$Stackshotname")"
-  mkdir -p "$Lateststack/stackshot"
-  storeinfo "lateststack=$Lateststack"
-  
-  [ "$Medianmode" = "yes" ] && mkdir -p $Lateststack/median.source
-
-  # Stackshot
-  note "stack: Shooting stack $Lateststack"
-  sleep 1
-
   gphoto2_cmd mirrorup
   
   while [ "$Poscurrent" -lt "$Pos2" ] ; do
     Loopcount=$((Loopcount +1 ))
     
     for ((Mediancount=1 ; Mediancount<=$Mediannumber ; Mediancount++)); do
-      #[ -s $Stackshotfile ] || { failure "stack: interrupted" ; break ; }
-      milisleep $Stackshotdelay
+      milisleep "$Stackshotdelay"
 
       case $Fotomodus in
         capture) 
-          gphoto2_wrap --capture-image-and-download ### FIXME check filename
+          gphoto2_wrap --capture-image-and-download
         ;;
         preview)
           gphoto2_wrap --capture-preview
-          Latestimage="$Lateststack/stackshot/preview_$(printf "%04d" $Loopcount).jpg"
-          mv -f capture_preview.jpg $Latestimage
+          Latestimage="$Stackshotdir/stackshot/preview_$(printf "%04d" $Loopcount).jpg"
+          mv -f capture_preview.jpg "$Latestimage"
           storeinfo "latestimage=$Latestimage"
         ;;
       esac
       case $Medianmode in
         yes)
-          Mediangroup="$Lateststack/median.source/img_$(printf "%04d" $Loopcount)"
+          Mediangroup="$Stackshotdir/median.source/img_$(printf "%04d" $Loopcount)"
           Latestmedian="${Mediangroup}_m$(printf "%02d" $Mediancount).jpg"
           cp $Latestimage $Latestmedian
           note "stack: Image stored as $Latestmedian"
-          showimage "$Latestmedian"
+          storeinfo "latestimage=$Latestmedian"
         ;;
         no)
           note "stack: Image stored as $Latestimage"
-          showimage "$Latestimage"
         ;;
       esac
-      storeinfo "latestimage=$Latestimage"
+      showimage "$Latestimage"
     done
     
     [ "$Medianmode" = "yes" ] && {
       note "stack: Aligning captures of step $Loopcount."
       align_image_stack -m --use-given-order -a ${Mediangroup}_align $Mediangroup*.jpg 2>&1 | grep -v "Unable to read EXIF data"
-      Latestimage="$Lateststack/stackshot/${Fotomodus}_$(printf "%04d" $Loopcount).jpg"
+      Latestimage="$Stackshotdir/stackshot/${Fotomodus}_$(printf "%04d" $Loopcount).jpg"
       $Convert ${Mediangroup}_align*.tif -evaluate-sequence median "$Latestimage"
       showimage "$Latestimage"
     }
@@ -365,12 +384,12 @@ stackshot() {
   
   # Create video from stackshot
   #note "stack: Creating video from stackshot"
-  #[ -e "$Lateststack/stackshot" ]    && Glob="$Lateststack/stackshot/*"
-  #[ -e "$Lateststack/median.source" ] && Glob="$Lateststack/median.source/*"
-  #ffmpeg -framerate 5 -pattern_type glob -i "$Glob" -c:v libx264  -pix_fmt yuv420p "$Lateststack/stackshotvideo.mp4"
+  #[ -e "$Stackshotdir/stackshot" ]    && Glob="$Stackshotdir/stackshot/*"
+  #[ -e "$Stackshotdir/median.source" ] && Glob="$Stackshotdir/median.source/*"
+  #ffmpeg -framerate 5 -pattern_type glob -i "$Glob" -c:v libx264  -pix_fmt yuv420p "$Stackshotdir/stackshotvideo.mp4"
   
   note "stack: Ready: Stackshot $Stackshotname with $((Loopcount * Mediannumber)) images in $Loopcount steps."
-  note "stack: Location: $Lateststack"
+  note "stack: Location: $Stackshotdir"
 }
 
 gphoto2_wrap() {
@@ -390,9 +409,17 @@ gphoto2_cmd () {
   shift
   case $Command in
     check)
-      gphoto2_wrap --list-config >/dev/null 2>&1
+      gphoto2_wrap --list-config >/dev/null 2>&1 || failure "gphoto2 check failed. Is the camera connected and turned on?"
       Return=$?
-    ;;
+    ;;    
+    set-config-value|scv)                     # Kameraeinstellung setzen (Wert)
+      gphoto2_wrap --set-config-value $@
+      Return=$? 
+      ;;
+    set-config-index|sci)                     # Kameraeinstellung setzen (Indexnummer)
+      gphoto2_wrap --set-config-index $@
+      Return=$? 
+      ;;
     capture-image-and-download)               # Bild aufnehmen und herunterladen
       # %C als Suffix läßt gphoto2 Dateiende selbst richtig einsetzen (jpg oder cr2 oder ...)
       Latestimage="$(pwd)/capture_$(get_free_filenumber capture).%C"
@@ -457,7 +484,7 @@ video() {
   
   GPHOTO2="gphoto2 --capture-movie=$Videodauer --stdout"
   FFMPEG="ffmpeg -loglevel error -i -  -c:v copy -f mpjpeg  - "
-  FFPLAY="ffplay -loglevel error -sync ext -window_title arduterm-Video - "
+  FFPLAY="ffplay -loglevel error -sync ext -window_title ardustack-Video - "
 
   case $Videomode in
     preview)
@@ -481,17 +508,19 @@ video() {
 
 kaptaingrammar() {
   echo "#! /usr/bin/kaptain
-start 'ardustack'         -> mainframe;
-mainframe:framed            -> deviceframe naviframe camerasetframe captureframe videoframe stackshotframe;
-  deviceframe 'Device'         -> device send read ;
-    device:beside 'Device file'  -> @string='/dev/ttyACM0' @button='initialize' ;
-    send:beside                    -> @button='Send string to device' @string ;
-    read:beside                    -> @button='Read string from device' @string ;
+start 'ardustack'            -> mainframe;
+mainframe:framed               -> fileframe naviframe camerasetframe captureframe videoframe stackshotframe;
+  fileframe 'Files'              -> device storagebasedir projectbasename stackshotbasename;
+    device:beside            'Device file'            -> @string='/dev/ttyACM1' @button='initialize' ;
+    storagebasedir:beside    'Storage base dir:'      -> @string='$HOME/Bilder/ardustack' ;
+    projectbasename:beside   'Project base name:'     -> @string='project' ;
+    stackshotbasename:beside 'Stackshot base name:'   -> @string='st' ;
   naviframe 'Navigation'         -> stepline pos0line pos1line pos2line positionline poscalcline;
-    stepline:beside                -> stepin stepout stepwidth;
+    stepline:beside                -> stepin stepout stepwidth stepmy;
       stepin                         -> @button='Step in';
       stepout                        -> @button='Step out';
-      stepwidth:beside 'Step width:'  -> @combow('1','5','10','25','50','100','250','500')='50' ;
+      stepwidth:beside 'Step width:' -> @combow('1','5','10','25','50','100','250','500')='50' ;
+      stepmy                         -> @text='' ;  
     pos0line:beside                -> setpos0 gopos0 ;
       setpos0                        -> @button='Set current position as position zero' ;
       gopos0                         -> @button='Go to pos0';
@@ -536,15 +565,15 @@ mainframe:framed            -> deviceframe naviframe camerasetframe captureframe
 }
 sendkaptain() {
   # send messages to kaptain over its stdin
-  echo "$1" >&${Kaptainstdin}
-  echo "sent to kaptain: $1"
+#  note "Send to kaptain: $1"
+  storeinfo test pidkaptain && echo "$1" >&${Kaptainstdin}
 }
 askkaptain() {
   # ask kaptain for value of $1
   local Answer
-  kaptaingrammar | grep -q "${1:-}" || return 1
+  #kaptaingrammar | grep -q "${1:-}" || return 1
   sendkaptain "${1:-}?"
-  read Answer <&${Kaptainstdout}
+  storeinfo test pidkaptain && read Answer <&${Kaptainstdout}
   [ -z "$Answer" ] && return 1
   echo "$Answer"
   return 0
@@ -557,6 +586,7 @@ runkaptain() {
   
   kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
   storeinfo "pidkaptain=$Kaptainpid"
+  parse_kaptainsignal
 
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
@@ -578,25 +608,32 @@ parse_kaptainsignal() {
   Argument="$(cut -s -d: -f2 <<< "$Kaptainsignal")"
 
   position_read
-  
-  # Provide project dir if needed
+
+  # Provide project dir if needed, check settings in GUI
   case $Kaptainsignal in
-    *capture*|stackshot)
+    *capture*|stackshot*)
+      storeinfo "storagebasedir=$(askkaptain storagebasedir)"
+      storeinfo "projectbasename=$(askkaptain projectbasename)"
+      storeinfo "stackshotbasename=$(askkaptain stackshotbasename)"
       storeinfo test projectname || setup_projectdir
-      Projecthome="$(storeinfo dump storagebase)"
+      Projecthome="$(storeinfo dump storagebasedir)"
       Projectname="$(storeinfo dump projectname)"
       cd "$Projecthome/$Projectname"
     ;;
   esac
-  
+
   # Stop video if gphoto2 access
   case "$Kaptainsignal" in       # Laufende Videoaufnahme bei gphoto2 Aufruf unterbrechen, ggf. nach Kommando wieder starten
-    iso*|shutter*|capture*|video*|zoom*)
+    iso*|shutter*|capture*|video*|zoom*|stackshot*)
       video stop
     ;;
   esac
-  
+
   case $Kaptainsignal in
+    device*)
+      storeinfo "device=$(askkaptain device)"
+      device_init
+    ;;
     zoom*)
       Argument="${Kaptainsignal#zoom}"
       gphoto2_cmd zoom $Argument
@@ -613,9 +650,11 @@ parse_kaptainsignal() {
     
     capturepreview)
       gphoto2_cmd capture-preview
+      showimage "$(storeinfo dump latestimage)"
     ;;
     capturefullres)
       gphoto2_cmd capture-image-and-download
+      showimage "$(storeinfo dump latestimage)"
     ;;
     
     videostart)
@@ -628,13 +667,8 @@ parse_kaptainsignal() {
       storeinfo drop videomode
     ;;
     
-    
     setpos*|gopos*|stepin|stepout) 
       stepcmd $Kaptainsignal
-    ;;
-    stepwidth)
-      Stepwidth="$Argument"
-      stepcmd stepwidth "$Argument"
     ;;
     
     stackshot*)
@@ -652,7 +686,7 @@ parse_kaptainsignal() {
     ;;
   esac
 
-  # start or restart video
+  # restart video
   storeinfo test videomode && {
     ps -p "$(storeinfo dump pidffplay)" >/dev/null 2>&1 || video "$(storeinfo dump videomode)"
   }
@@ -728,7 +762,8 @@ main() {
   declare_variables
   setup_cache
   
-  storeinfo "storagebase=$HOME/Bilder/arduterm"
+  storeinfo "storagebasedir=$HOME/Bilder/ardustack"
+  sendkaptain "storagebasedir='$(storeinfo dump storagebasedir)'"
   
   storeinfo "device=/dev/ttyACM0"
   device_init
