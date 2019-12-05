@@ -1,5 +1,4 @@
-#! /bin/bash
-# ardugui
+#!/bin/bash
 
 note() {
   echo "${Colgreen}Note:${Colnorm} $*" >&2
@@ -53,22 +52,27 @@ get_latest_file() {
   ls -p -t $1* 2> /dev/null | grep -v "/" | head -n 1
 }
 get_last_file() {
-  ## Funktion: Die alphabetisch/numerisch letzte Datei, die mit $1 beginnt, ermitteln und Name ausgeben
-  basename -a $(find "$(dirname "$(realpath ${1:-})" )" -mindepth 1 -maxdepth 1) | grep "$(basename ${1:-})" | sort | tail -n1
+  # Find alphanumerically last file beginning with $1 in pwd.
+  local Filelist
+  Filelist="$(find -mindepth 1 -maxdepth 1 | xargs realpath --relative-base $(pwd) | grep "^${1:-}")"
+  Filelist="$(sort -V <<< "$Filelist")"
+  tail -n1 <<< "$Filelist"
 }
 get_free_filenumber(){
-  ## Funktion: Zu Dateiname $1 nächste freie Nummer ausgeben
-  # $1  Dateiname ohne Nummer und _ohne_ suffix, nach dem Prinzip
-  #     DATEINAME_000x.jpg nur DATEINAME übergeben. 
-  #     DATEINAME darf keine Unterstriche _ oder Zahlen 0..9 oder Punkte enthalten
-  local Nummer
-  Nummer=$(get_last_file $1 | rev | cut -d_ -f1 | rev | cut -d. -f1)  
-  printf "%04d" $(bc <<<"${Nummer:-"-1"} + 1")
+  # Provide next free file number to file base name $1. 
+  # Provide $1 without _00N.
+  # $1 must not contain _
+  local Number
+  Number="$(get_last_file ${1:-} | rev | cut -d_ -f1 | rev | cut -d. -f1)"
+  Number="${Number:-0}"
+  Number="$((Number + 1 ))"
+  printf "%04d" "$Number"
 }
+
 setup_projectdir() {
   local Projecthome Projectname
   
-  Projecthome="$(storeinfo dump projecthome)"
+  Projecthome="$(storeinfo dump storagebase)"
   
   [ "${1:-}" ] && Projectname="${1:-}.$(date +%Y-%m-%d)"
   Projectname="${Projectname:-project.$(date +%Y-%m-%d)}"
@@ -85,7 +89,7 @@ device_init() {
 
   # Falls eine Instanz von watch_device() läuft, beenden
   Device="$(storeinfo dump device)"
-  Watchdevicepid="$(storeinfo dump watchdevicepid)"
+  Watchdevicepid="$(storeinfo dump pidwatchdevice)"
   ps -p "$Watchdevicepid" >/dev/null 2>&1 && {
     kill $Watchdevicepid
     wait $Watchdevicepid 2>/dev/null
@@ -94,16 +98,16 @@ device_init() {
 
   # Device auf Gültigkeit prüfen
   [ -e "$Device" ] || {
-    failure "Fehler: Geräteadresse nicht gefunden: $Device"
+    failure "Device not found: $Device"
     Device="/dev/null"
-    failure "Setze Geräteadresse auf $Device"
+    failure "Fallback device: $Device"
   }
   
   # Daten von Device auf fifo umleiten
   note "Beginne Überwachung von $Device"
   exec 6<>$Device
   cat <&6 >>$Devicemessagefifo & Watchdevicepid=$!
-  storeinfo "watchdevicepid=$Watchdevicepid"
+  storeinfo "pidwatchdevice=$Watchdevicepid"
     
   # Seriellen Port initialisieren
   stty -F $Device raw ispeed 9600 ospeed 9600 cs8 -hupcl -ignpar -cstopb -echo || {
@@ -144,6 +148,13 @@ position_store() {
   storeinfo "pos1=$Pos1"
   storeinfo "pos2=$Pos2"
   storeinfo "stepwidth=$Stepwidth"
+  
+  sendkaptain "poscurrent='$Poscurrent'"
+  sendkaptain "pos1='$Pos1'"
+  sendkaptain "pos2='$Pos2'"
+  sendkaptain "difference='$((Pos2 - Pos1))'"
+  sendkaptain "distance='$(awk 'BEGIN {print 0.048 * '$((Pos2 - Pos1))'}') my'"
+  sendkaptain "steps='$(( (Pos2 - Pos1)/Stepwidth ))'"
 }
 position_read() {
   Poscurrent="$(storeinfo dump poscurrent)"
@@ -157,7 +168,7 @@ stepcmd() {
   position_read
   case ${1:-} in
     go) 
-      steplauf "${1:-$Poscurrent}"
+      steplauf "${2:-$Poscurrent}"
     ;;
     stepin)  
       steplauf "$(bc <<< "$Poscurrent + $Stepwidth")" 
@@ -276,7 +287,6 @@ stackshot() {
   
   # An Startposition gehen
   stepcmd go $Pos1
-  ### FIXME wait
   position_read
   
   [ "$Poscurrent" = "$Pos1" ] || { failure "stack: Error: Missed position $Pos1: $Poscurrent." ; return 1 ; }
@@ -354,14 +364,13 @@ stackshot() {
   done
   
   # Create video from stackshot
-  note "stack: Creating video from stackshot"
-  [ -e "$Lateststack/stackshot" ]    && Glob="$Lateststack/stackshot/*"
-  [ -e "$Lateststack/median.source" ] && Glob="$Lateststack/median.source/*"
-  ffmpeg -framerate 5 -pattern_type glob -i "$Glob" -c:v libx264  -pix_fmt yuv420p "$Lateststack/stackshotvideo.mp4"
+  #note "stack: Creating video from stackshot"
+  #[ -e "$Lateststack/stackshot" ]    && Glob="$Lateststack/stackshot/*"
+  #[ -e "$Lateststack/median.source" ] && Glob="$Lateststack/median.source/*"
+  #ffmpeg -framerate 5 -pattern_type glob -i "$Glob" -c:v libx264  -pix_fmt yuv420p "$Lateststack/stackshotvideo.mp4"
   
-  note "stack: Ready: Stackshot $Stackshotname with $((Count * Mediannumber)) images in $Count steps."
+  note "stack: Ready: Stackshot $Stackshotname with $((Loopcount * Mediannumber)) images in $Loopcount steps."
   note "stack: Location: $Lateststack"
-  :> $Stackshotfile
 }
 
 gphoto2_wrap() {
@@ -433,31 +442,31 @@ gphoto2_cmd () {
 video() {
   ## Funktion: Videoaufnahme starten oder stoppen, mit Speichern auf Festplatte oder ohne
   # $1  Aufnahmemodus
-  local Videodauer Videomode FFplaypid
+  local Videodauer Videomode Pidffplay
   local GPHOTO2 FFMPEG FFPLAY
   
-  Ffplaypid="$(storeinfo dump ffplaypid)"
-  [ "$Ffplaypid" ] && ps -p "$Ffplaypid" >/dev/null 2>&1 && {
-    kill $Ffplaypid
-    storeinfo drop ffplaypid
-    Ffplaypid=""
+  Pidffplay="$(storeinfo dump pidffplay)"
+  [ "$Pidffplay" ] && ps -p "$Pidffplay" >/dev/null 2>&1 && {
+    kill $Pidffplay
+    storeinfo drop pidffplay
+    Pidffplay=""
   }
   
   Videodauer="3600s"
   Videomode="${1:-preview}"
   
-  GPHOTO2="gphoto2_wrap --capture-movie=$Videodauer --stdout"
+  GPHOTO2="gphoto2 --capture-movie=$Videodauer --stdout"
   FFMPEG="ffmpeg -loglevel error -i -  -c:v copy -f mpjpeg  - "
   FFPLAY="ffplay -loglevel error -sync ext -window_title arduterm-Video - "
 
   case $Videomode in
     preview)
-      $GPHOTO2 | $FFPLAY & Ffplaypid=$!
+      $GPHOTO2 | $FFPLAY & Pidffplay=$!
     ;;
     capture)
       # Dateiname für neues Video
       Latestvideo="$(pwd)/movie_$(get_free_filenumber).mjpg"
-      $GPHOTO2 | $FFMPEG | tee $Latestvideo | $FFPLAY & Ffplaypid=$!
+      $GPHOTO2 | $FFMPEG | tee $Latestvideo | $FFPLAY & Pidffplay=$!
     ;;
     stop)
       # Videowiedergabe/aufnahme stoppen. 
@@ -466,61 +475,69 @@ video() {
     ;;
   esac
   
-  [ "$Ffplaypid" ] && ps -p "$Ffplaypid" >/dev/null 2>&1 && storeinfo "ffplaypid=$Ffplaypid"
+  [ "$Pidffplay" ] && ps -p "$Pidffplay" >/dev/null 2>&1 && storeinfo "pidffplay=$Pidffplay"
  
 }
 
 kaptaingrammar() {
   echo "#! /usr/bin/kaptain
 start 'ardustack'         -> mainframe;
-mainframe:framed            -> deviceframe naviframe camerasetframe videoframe captureframe stackshotframe;
+mainframe:framed            -> deviceframe naviframe camerasetframe captureframe videoframe stackshotframe;
   deviceframe 'Device'         -> device send read ;
     device:beside 'Device file'  -> @string='/dev/ttyACM0' @button='initialize' ;
     send:beside                    -> @button='Send string to device' @string ;
     read:beside                    -> @button='Read string from device' @string ;
-  naviframe 'Navigation'         -> stepline stepwidth pos0 pos1 pos2;
-    stepline:beside                -> stepin stepout stepcomment;
-      stepin                         -> @button='step in';
-      stepout                        -> @button='step out';
-      stepcomment '(Press shift to hold)' -> '' ;
-    stepwidth:beside 'step width'  -> @combow('1','5','10','25','50','100','250','500')='50' ;
-    pos0:beside                    -> setpos0 gopos0;
+  naviframe 'Navigation'         -> stepline pos0line pos1line pos2line positionline poscalcline;
+    stepline:beside                -> stepin stepout stepwidth;
+      stepin                         -> @button='Step in';
+      stepout                        -> @button='Step out';
+      stepwidth:beside 'Step width:'  -> @combow('1','5','10','25','50','100','250','500')='50' ;
+    pos0line:beside                -> setpos0 gopos0 ;
       setpos0                        -> @button='Set current position as position zero' ;
       gopos0                         -> @button='Go to pos0';
-    pos1:beside                    -> setpos1 gopos1;
+    pos1line:beside                -> setpos1 gopos1;
       setpos1                        -> @button='Set current position as start point of stack' ;
       gopos1                         -> @button='Go to pos1' ;
-    pos2:beside                    -> setpos2 gopos2 ;
+    pos2line:beside                -> setpos2 gopos2 ;
       setpos2                        -> @button='Set current position as end point of stack' ;
       gopos2                         -> @button='Go to pos2' ;
-  camerasetframe 'Camera settings' -> zoom iso shutter;
-    zoom:beside 'Zoom'             -> zoom1 zoom5 zoom10 ;
+    positionline:beside            -> poscurrent pos1 pos2;
+      poscurrent:beside 'Current:'   -> @text='' ;
+      pos1:beside       'Pos1:'      -> @text='' ;
+      pos2:beside       'Pos2:'      -> @text='' ;
+    poscalcline:beside             -> difference distance steps;
+      difference:beside 'Difference:'-> @text='' ;
+      distance:beside   'Distance:'  -> @text='' ;
+      steps:beside      'Steps:'     -> @text='' ;
+  camerasetframe 'Camera settings' -> zoom lightline ;
+    zoom:beside 'Zoom:'            -> zoom1 zoom5 zoom10 ;
       zoom1                          -> @button='1x' ;
       zoom5                          -> @button='5x' ;
       zoom10                         -> @button='10x' ;
-    iso:beside 'ISO'               -> @combo('100','200','400','800','1600')='400' ;
-    shutter:beside 'Shutterspeed'  -> @combo('1/10','1/20','1/40','1/80','1/125','1/200','1/320','1/400','1/800')='1/200' ;
-  videoframe 'Video'             -> videostart videocapture videostop;
-    videostart                     -> @button='Start preview video' ;
-    videocapture                   -> @button='Capture preview video' ;
-    videostop                      -> @button='Stop video' ;
+    lightline:beside               -> iso shutter;
+      iso:beside 'ISO:'              -> @combo('100','200','400','800','1600')='400' ;
+      shutter:beside 'Shutterspeed:' -> @combo('1/10','1/20','1/40','1/80','1/125','1/200','1/320','1/400','1/800')='1/200' ;
   captureframe 'Captures'        -> captureline ;
     captureline:beside             -> capturepreview capturefullres ;
       capturepreview                 -> @button='Capture preview' ;
       capturefullres                 -> @button='Capture full resolution' ;
-  stackshotframe 'Stackshot'     -> stackshotline stackshotmedian stackshotvideo stackshotdelay;
+  videoframe 'Video'             -> videoline;
+    videoline:beside               -> videostart videocapture videostop;
+    videostart                       -> @button='Start video' ;
+    videocapture                     -> @button='Capture video' ;
+    videostop                        -> @button='Stop video' ;
+  stackshotframe 'Stackshot'     -> stackshotline stackshotmedian stackshotdelay;
     stackshotline:beside           -> stackshotpreview stackshotfullres ;
       stackshotpreview               -> @button='Run preview stackshot' ;
       stackshotfullres               -> @button='Run full resolution stackshot' ;
-    stackshotmedian:beside 'Median captures to delete movements:' -> @combo('3','4','5','6','7','8','9','10')='5' | ! "";
-    stackshotvideo                 -> @button='Stackshot video' ;
+    stackshotmedian:beside 'Median captures to delete moved objects:' -> @combo('3','4','5','6','7','8','9','10')='5' | ! "";
     stackshotdelay:beside 'Delay between captures (ms):' -> @combo('100','200','300','400','500','750','1000','1500','2000','2500','3000','4000','5000')='500';
 "
 }
 sendkaptain() {
   # send messages to kaptain over its stdin
   echo "$1" >&${Kaptainstdin}
-#  echo "sent to kaptain: $1"
+  echo "sent to kaptain: $1"
 }
 askkaptain() {
   # ask kaptain for value of $1
@@ -539,7 +556,7 @@ runkaptain() {
   #nl -ba $Kaptaingrammar
   
   kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
-  
+  storeinfo "pidkaptain=$Kaptainpid"
 
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
@@ -555,14 +572,26 @@ runkaptain() {
 }
 parse_kaptainsignal() {
   local Kaptainsignal Argument
+  local Projecthome Projectname
   
   Kaptainsignal="${1:-}"
   Argument="$(cut -s -d: -f2 <<< "$Kaptainsignal")"
 
   position_read
   
+  # Provide project dir if needed
+  case $Kaptainsignal in
+    *capture*|stackshot)
+      storeinfo test projectname || setup_projectdir
+      Projecthome="$(storeinfo dump storagebase)"
+      Projectname="$(storeinfo dump projectname)"
+      cd "$Projecthome/$Projectname"
+    ;;
+  esac
+  
+  # Stop video if gphoto2 access
   case "$Kaptainsignal" in       # Laufende Videoaufnahme bei gphoto2 Aufruf unterbrechen, ggf. nach Kommando wieder starten
-    iso*|shutter*|capture*|video*)
+    iso*|shutter*|capture*|video*|zoom*)
       video stop
     ;;
   esac
@@ -581,12 +610,14 @@ parse_kaptainsignal() {
       gphoto2_cmd set-config-value shutterspeed="$Argument"
       storeinfo "shutterspeed=$Argument"
     ;;
+    
     capturepreview)
       gphoto2_cmd capture-preview
     ;;
     capturefullres)
       gphoto2_cmd capture-image-and-download
     ;;
+    
     videostart)
       storeinfo "videomode=preview"
     ;;
@@ -623,7 +654,7 @@ parse_kaptainsignal() {
 
   # start or restart video
   storeinfo test videomode && {
-    ps -p "$(storeinfo dump ffplaypid)" >/dev/null 2>&1 || video "$(storeinfo dump videomode)"
+    ps -p "$(storeinfo dump pidffplay)" >/dev/null 2>&1 || video "$(storeinfo dump videomode)"
   }
 }
 
@@ -672,7 +703,18 @@ setup_cache() {
   exec  {Kaptainstdout}<>$Kaptainstdoutfifo
 }
 finish() {
-  kill $Kaptainpid
+  local Line Pid
+  
+  # kill stored pids
+  while read Line; do
+    grep -q "^pid" <<< "$Line" && {
+      Pid="$(cut -d= -f2 <<< "$Line")"
+      ps -p "$Pid" >/dev/null 2>&1 && kill $Pid
+      wait $Pid 2>/dev/null
+    }
+  done < "$Storeinfofile"
+  
+  # remove cache
   rm -R $Cachefolder
 }
 main() {
@@ -691,6 +733,7 @@ main() {
   storeinfo "device=/dev/ttyACM0"
   device_init
   position_store
+  stepcmd setpos0
   
   storeinfo "iso=400"
   storeinfo "shutterspeed=1/200"

@@ -54,6 +54,7 @@ Dependencies:
  - ffmpeg
  - geeqie
  - gphoto2
+ - [kaptain](https://github.com/mviereck/kaptain)
  
 ## arduterm
 
@@ -65,6 +66,7 @@ It can show preview videos and make stackshots with tethered shooting and focus 
 Useable, but in beta stage. Currently not recommended for production use. Would need custom adjustment of either `pololu_a4988.ino` or respective the arduino commands in script.
 
 Dependencies:
+ - bc
  - ffmpeg
  - geeqie
  - gphoto2
