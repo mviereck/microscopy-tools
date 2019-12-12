@@ -1,17 +1,34 @@
 #!/bin/bash
+#
+# ardustack - Generate stackshots with arduino + steppermotor + camera
+#
+# License: MIT
+#
+# Dependencies:
+#  - ffmpeg
+#  - geeqie
+#  - gphoto2
+#  - kaptain  https://github.com/mviereck/kaptain
 
 note() {
   echo "${Colgreen}Note:${Colnorm} $*" >&2
 }
 failure() {
   echo "${Colred}FAILURE:${Colnorm} $*" >&2
+  statusmessage "FAILURE: $*"
+}
+statusmessage() {
+  sendkaptain "status='$*'"
 }
 
 isnum() {                       # check if $1 is a number
   [ "1" = "$(awk -v a="${1:-}" 'BEGIN {print (a == a + 0)}')" ]
 }
 showimage() {
-  note "Show image $@"
+  [ -f "${1:-}" ] || {
+    failure "Image not found: ${1:-}"
+    return 1
+  }
   geeqie -t -r file:"${1:-}"
 }
 milisleep() {
@@ -20,7 +37,7 @@ milisleep() {
   sleep $Time
 }
 storeinfo() {
-  # store and provide pieces of information
+  # store and provide pieces of information in file $Storeinfofile
   # replace entry if codeword is already present
   # Store as codeword=string:
   #   $1 codeword=string
@@ -34,19 +51,39 @@ storeinfo() {
   #   $1 test
   #   $2 codeword
   #
-  # note: sed -i causes file permission issues if called in container in Cygwin, compare ticket #187
-  #       chmod 666 for $Sharefolder could probably fix that. (FIXME)
-  #
-  [ -e "$Storeinfofile" ] || return 1
+  local Lockfile Return
+  
+  #note "$*"
+  
+  #[ -e "$Storeinfofile" ] || return 1
+  
+  Lockfile="$Storeinfofile.lock"
+  [ -e "$Lockfile" ] && {
+    while [ -e "$Lockfile" ] ; do
+      sleep 0.1
+    done
+  }
   case "${1:-}" in
-    dump) grep     "^${2:-}="   $Storeinfofile | sed "s/^${2:-}=//" ;;      # dump entry
-    drop) sed -i  "/^${2:-}=/d" $Storeinfofile ;;                           # drop entry
-    test) grep -q  "^${2:-}="   $Storeinfofile ;;                           # test for entry
-    *)                                                                      # store entry
-      sed -i "/^$(echo "${1:-}" | cut -d= -f1)=/d"     $Storeinfofile       # drop possible old entry
-      echo "${1:-}"                                 >> $Storeinfofile
+    dump|test) ;;
+    *) touch "$Storeinfofile.lock" ;;
+  esac
+  
+  case "${1:-}" in
+    dump) grep     "^${2:-}="   $Storeinfofile | sed "s/^${2:-}=//" || Return=1 ;;  # dump entry
+    drop) sed -i  "/^${2:-}=/d" $Storeinfofile ;;                                   # drop entry
+    test) grep -q  "^${2:-}="   $Storeinfofile                      || Return=1 ;;  # test for entry
+    *)                                                                              # store entry
+      sed -i "/^$(echo "${1:-}" | cut -d= -f1 | head -n1)=/d"  $Storeinfofile       # drop possible old entry
+      echo "${1:-}"                                         >> $Storeinfofile
     ;;
   esac
+  
+  case "${1:-}" in
+    dump|test) ;;
+    *) rm "$Storeinfofile.lock" ;;
+  esac
+  
+  return ${Return:-0}
 }
 
 get_latest_file() {
@@ -91,11 +128,13 @@ setup_projectdir() {
 }
 
 device_init() {
-  local Watchdevicepid Device
-  ## Funktion: Device initialisieren und Überwachung starten
+  # Init Device and start watching background process
+  
+  local Device Watchdevicepid i Return
 
-  # Falls eine Instanz von watch_device() läuft, beenden
   Device="$(storeinfo dump device)"
+  
+  # Stop a running watching instance
   Watchdevicepid="$(storeinfo dump pidwatchdevice)"
   ps -p "$Watchdevicepid" >/dev/null 2>&1 && {
     kill $Watchdevicepid
@@ -106,7 +145,7 @@ device_init() {
   # Device auf Gültigkeit prüfen
   [ -e "$Device" ] || {
     failure "Device not found: $Device"
-    Device="/dev/null"
+    Device="$Devicefallback"
     failure "Fallback device: $Device"
   }
 
@@ -118,9 +157,18 @@ device_init() {
     
   # Seriellen Port initialisieren
   stty -F $Device raw ispeed 9600 ospeed 9600 cs8 -hupcl -ignpar -cstopb -echo || {
-    failure "Fehler bei Initialisierung von Device $Device"
+    failure "Failed to initialize device $Device"
     return 1
   }
+  
+  sleep $Devicetimeout
+  for ((i=1;i<=10;i++)); do
+    device_check && break || Return=1
+  done
+  
+  [ "$Return" = "1" ] && failure "Initialized device $Device does not respond to signal $Ardu_check"
+  
+  return ${Return:-0}
 }
 device_send() {
   ## Funktion: Daten an Arduino senden  
@@ -130,23 +178,23 @@ device_send() {
 }
 device_wait() {
   ## Funktion: Auf ein beliebiges Signal vom Arduino warten
-  local Antwort=
+  local Answer=
   
-  read -t ${1:-$Devicetimeout} -r Antwort <&6
+  read -t ${1:-$Devicetimeout} -r Answer <&6
   
-  [ "$Antwort" ] || {
-    failure "Device: TIMEOUT"
+  [ "$Answer" ] || {
+    failure "Device $(storeinfo dump device): TIMEOUT"
     echo "TIMEOUT"
     return 1
   }
   
-  note "Arduino meldet: $Antwort"
-  echo "$Antwort"
+  note "Device responses: $Answer"
+  echo "$Answer"
   return 0
 }
 device_check() {
   # Prüfen, ob Arduino auf Kontrollsignal "c" antwortet
-  device_send c
+  device_send "$Ardu_check"
   [ "$(device_wait)" = "TIMEOUT" ] && return 1 && note "Device check failed" || return 0
 }
 
@@ -159,10 +207,10 @@ position_store() {
   sendkaptain "poscurrent='$Poscurrent'"
   sendkaptain "pos1='$Pos1'"
   sendkaptain "pos2='$Pos2'"
-  sendkaptain "difference='$((Pos2 - Pos1))'"
-  sendkaptain "distance='$(awk 'BEGIN {print 0.048 * '$((Pos2 - Pos1))'}') my'"
-  sendkaptain "steps='$(( (Pos2 - Pos1)/Stepwidth ))'"
-  sendkaptain "stepmy='$(awk 'BEGIN {print 0.048 * '$Stepwidth'}') my'"
+  sendkaptain "difference='$(awk "BEGIN {print $Pos2 - $Pos1 }" )'"
+  sendkaptain "distance='$(awk   "BEGIN {print $Stepdistance * ($Pos2 - $Pos1) }") $Stepunit'"
+  sendkaptain "steps='$(awk      "BEGIN {print ($Pos2 - $Pos1)/$Stepwidth }" )'"
+  sendkaptain "stepmy='$(awk     "BEGIN {print $Stepdistance * $Stepwidth}") $Stepunit'"
 }
 position_read() {
   local Newstepwidth
@@ -172,95 +220,102 @@ position_read() {
   Pos2="$(storeinfo dump pos2)"
   Stepwidth="$(storeinfo dump stepwidth)"
   
-  storeinfo test pidkaptain && {
-    Newstepwidth="$(askkaptain stepwidth)"
-    isnum "$Newstepwidth" && [ "$Newstepwidth" != "$Stepwidth" ] && {
-      Stepwidth="$Newstepwidth"
-      storeinfo "stepwidth=$Stepwidth"
-      stepcmd stepwidth $Stepwidth
-    }
-  }
+  #storeinfo test pidkaptain && {
+  #  Newstepwidth="$(askkaptain stepwidth)"
+  #  isnum "$Newstepwidth" && [ "$Newstepwidth" != "$Stepwidth" ] && {
+  #    Stepwidth="$Newstepwidth"
+  #    storeinfo "stepwidth=$Stepwidth"
+  #    stepcmd stepwidth $Stepwidth
+  #  }
+  #}
 }
 
 stepcmd() {
-  local Return Antwort
+  local Return Answer
   position_read
   case ${1:-} in
     go) 
       steplauf "${2:-$Poscurrent}"
     ;;
     stepin)  
-      steplauf "$(bc <<< "$Poscurrent + $Stepwidth")" 
+      #steplauf "$(bc <<< "$Poscurrent + $Stepwidth")" 
+      steplauf "$(awk "BEGIN {print $Poscurrent + $Stepwidth }" )" 
     ;;
     stepout) 
-      steplauf "$(bc <<< "$Poscurrent - $Stepwidth")" 
+      #steplauf "$(bc <<< "$Poscurrent - $Stepwidth")" 
+      echo " 1 $Poscurrent"
+      steplauf "$(awk "BEGIN {print $Poscurrent - $Stepwidth }" )" 
+      echo " 2 $Poscurrent"
     ;;
     setpos0)
       Poscurrent=0
-      device_send z
-      Antwort="$(device_wait)"
+      device_send "$Ardu_setpos0"
+      Answer="$(device_wait)"
     ;;
     setpos1)
-      Pos1=$Poscurrent
+      Pos1="$Poscurrent"
     ;;
     setpos2)
-      Pos2=$Poscurrent
+      Pos2="$Poscurrent"
     ;;
     gopos0)
       steplauf "0" 
     ;;
     gopos1)
+      echo " 1 $Poscurrent"
       steplauf "$Pos1" 
+      echo " 2 $Poscurrent"
     ;;
     gopos2)
       steplauf "$Pos2" 
     ;;
     stepwidth)
       Stepwidth="${2:-25}"
-      device_send "w,$Stepwidth"
-      Antwort="$(device_wait)"
+      device_send "$Ardu_stepwidth,$Stepwidth"
+      Answer="$(device_wait)"
     ;;
   esac
   note "stepcmd $*: current:$Poscurrent pos1:$Pos1 pos2:$Pos2 stepwidth:$Stepwidth"
   Return=$?
-  [ "$Antwort" = "TIMEOUT" ] && Return=1
+  [ "$Answer" = "TIMEOUT" ] && Return=1
   position_store
   return "${Return:-0}"
 }
 steplauf() {
-  # Zu Position $1 gehen
-  # $1   Zielposition (gewolltes $Poscurrent)
-  local Richtug= diff= Warten=
+  # Go to position $1
   
-  diff="$(bc <<< "${1:-} - $Poscurrent")"
-  [ "$diff" -eq "0" ] && return 1
-  [ "$diff" -gt "0" ] && {
-    Richtung="i"
-  } || { 
-    Richtung="o"
-    diff="$(bc <<< "-1 * $diff")"
-  }
+  local Direction Distance Timetowait Stepwith_store
   
   device_check || return 1
+  
+  Stepwidth_store="$Stepwidth"
+  # Use Distance from Poscurrent to $1 as temporary Stepwidth
+  Distance="$(awk "BEGIN {print ${1:-} - $Poscurrent }" )"
+  [ "$Distance" = "0" ] && return 0
+  [ "$Distance" -gt "0" ] && {
+    Direction="$Ardu_stepin"
+  } || { 
+    Direction="$Ardu_stepout"
+    Distance="$(awk "BEGIN {print -1 * $Distance }" )"
+  }
 
-  [ "$diff" = "$Stepwidth" ] || {
-    device_send "w,$diff"
+  [ "$Distance" = "$Stepwidth" ] || {
+    device_send "$Ardu_stepwidth,$Distance"
     [ "$(device_wait)" = "TIMEOUT" ] && return 1
   }
 
-  Warten="$(bc <<< "18 * $diff /10000 + $Devicetimeout")"
+  #Timetowait="$(bc <<< "18 * $Distance /10000 + $Devicetimeout")"
+  Timetowait="$(awk "BEGIN {print 18 * $Distance / 10000 + $Devicetimeout }" )" ### FIXME needs more general solution
 
-  device_send "$Richtung"
-  Antwort="$(device_wait $Warten)"
-  [ "$Antwort" = "TIMEOUT" ] && return 1
-  
-  case $Richtung in
-    i)  Poscurrent="$(bc <<< "$Poscurrent + $diff")" ;;
-    o)  Poscurrent="$(bc <<< "$Poscurrent - $diff")" ;;
+  device_send "$Direction"
+  Answer="$(device_wait "$Timetowait")"
+  [ "$Answer" = "TIMEOUT" ] && return 1
+  case $Direction in
+    "$Ardu_stepin")  Poscurrent="$(awk "BEGIN {print $Poscurrent + $Distance }" )" ;;
+    "$Ardu_stepout") Poscurrent="$(awk "BEGIN {print $Poscurrent - $Distance }" )" ;;
   esac
-  
-  [ "$diff" = "$Stepwidth" ] || {
-    device_send "w,$Stepwidth"
+  [ "$Distance" = "$Stepwidth_store" ] || {
+    device_send "$Ardu_stepwidth,$Stepwidth"
     device_wait >/dev/null
   }
 }
@@ -295,19 +350,19 @@ stackshot() {
   
   Projectname="$(storeinfo dump projectname)"
   Projectname="${Projectname:-project_unknown}"
-  
+
   Stackshotbasename="$(storeinfo dump stackshotbasename)"
-  Stackshotbasename="${Stackshotname:-st}" ### FIXME declare in GUI
+  Stackshotbasename="${Stackshotbasename:-st}" ### FIXME declare in GUI
   
   cd "$Storagebasedir/$Projectname"
-  Stackshotname="$Stackshotbasename__$(get_free_filenumber "$Stackshotbasename")"
+  Stackshotname="${Stackshotbasename}_$(get_free_filenumber "$Stackshotbasename")"
   
   Stackshotdir="$Storagebasedir/$Projectname/$Stackshotname"
   storeinfo "lateststack=$Stackshotdir"
   mkdir -p "$Stackshotdir/stackshot"
   [ "$Medianmode" = "yes" ] && mkdir -p $Stackshotdir/median.source
   cd $Stackshotdir
-  
+
   # ggf. Positionen für stepin +/- korrigieren
   position_read
   [ "$Pos1" -gt "$Pos2" ] && {
@@ -319,7 +374,8 @@ stackshot() {
   }
     
   # Stackshot
-  Anzahl="$(bc <<< "($Pos2 - $Pos1) / $Stepwidth" | cut -d. -f1)"
+  #Anzahl="$(bc <<< "($Pos2 - $Pos1) / $Stepwidth" | cut -d. -f1)"
+  Anzahl="$(awk "BEGIN {print ($Pos2 - $Pos1) / $Stepwidth }" | cut -d. -f1)"
   note "Shooting stack $Stackshotdir with $Anzahl steps."
   
   # An Startposition gehen
@@ -337,7 +393,15 @@ stackshot() {
 
       case $Fotomodus in
         capture) 
-          gphoto2_wrap --capture-image-and-download
+          Filename="$(LC_ALL=C gphoto2_wrap --capture-image-and-download --force-overwrite | grep 'Saving file as')"
+          gphoto2_cmd mirrorup
+          Filename="$(awk '{print $4}' <<< "$Filename")"
+          Latestimage="$Stackshotdir/stackshot/capture_$(printf "%04d" $Loopcount).jpg"
+          [ -e "$Filename" ] || {
+            failure "Capture failed"
+            return 1
+          }
+          mv "$Filename" "$Latestimage"
         ;;
         preview)
           gphoto2_wrap --capture-preview
@@ -392,10 +456,14 @@ stackshot() {
   note "stack: Location: $Stackshotdir"
 }
 
+#### gphoto2 camera
 gphoto2_wrap() {
-  note "gphoto2 $@"
-  gphoto2 $@ || {
-    failure "gphoto2 failed. Is the camera plugged in and turned on?"
+  local Cameraport
+  Cameraport="$(storeinfo dump cameraport)"
+  [ "$Cameraport" ] && Cameraport="--port=$Cameraport"
+  note "gphoto2 $Cameraport $@"
+  gphoto2 $Cameraport $@ || {
+    failure "gphoto2 failed with error code $?. Is the camera plugged in and turned on?"
     return 1
   }
   return 0
@@ -459,6 +527,10 @@ gphoto2_cmd () {
       gphoto2_wrap --set-config-value eoszoomposition="$ZOOM_XPOS,$ZOOM_YPOS"
       Return=$? 
       ;;
+    reset)
+      gphoto2_wrap --reset
+      Return=$?
+    ;;
     *)
       failure "gphoto2_cmd(): invalid command: $Command $@"
       Return=1
@@ -470,21 +542,35 @@ video() {
   ## Funktion: Videoaufnahme starten oder stoppen, mit Speichern auf Festplatte oder ohne
   # $1  Aufnahmemodus
   local Videodauer Videomode Pidffplay
-  local GPHOTO2 FFMPEG FFPLAY
-  
+  local GPHOTO2 FFMPEG FFPLAY FFPLAY_LOCATION
+  local Windowid Windowgeometry Ffplay_x Ffplay_y
+
   Pidffplay="$(storeinfo dump pidffplay)"
   [ "$Pidffplay" ] && ps -p "$Pidffplay" >/dev/null 2>&1 && {
+    # store window position
+    Windowid=$(xdotool search --pid "$Pidffplay" | tail -n1)
+    Windowgeometry="$(xdotool getwindowgeometry --shell $Windowid)"
+    grep -q "X=" <<< "$Windowgeometry" && {
+      Ffplay_x="$(grep "^X=" <<< "$Windowgeometry" | cut -d= -f2)"
+      Ffplay_y="$(grep "^Y=" <<< "$Windowgeometry" | cut -d= -f2)"
+      storeinfo "ffplay_x=$Ffplay_x"
+      storeinfo "ffplay_y=$Ffplay_y"
+    }
+    # kill ffplay
     kill $Pidffplay
     storeinfo drop pidffplay
     Pidffplay=""
   }
+
+  # Restore ffplay position
+  storeinfo test ffplay_x && FFPLAY_LOCATION="-left $(storeinfo dump ffplay_x) -top $(storeinfo dump ffplay_y)"
   
   Videodauer="3600s"
   Videomode="${1:-preview}"
   
   GPHOTO2="gphoto2 --capture-movie=$Videodauer --stdout"
   FFMPEG="ffmpeg -loglevel error -i -  -c:v copy -f mpjpeg  - "
-  FFPLAY="ffplay -loglevel error -sync ext -window_title ardustack-Video - "
+  FFPLAY="ffplay -loglevel error -sync ext -window_title ardustack-Video $FFPLAY_LOCATION - "
 
   case $Videomode in
     preview)
@@ -505,21 +591,130 @@ video() {
   [ "$Pidffplay" ] && ps -p "$Pidffplay" >/dev/null 2>&1 && storeinfo "pidffplay=$Pidffplay"
  
 }
+cameralist() {
+  local Camera Cameralist Cameralistkaptain
+  Camera="$(storeinfo dump camera)"
+  
+  Cameralist="$(gphoto2 --auto-detect | tail -n+3)"
+  while read Line; do
+    Cameralist="$Cameralist
+$(echo "$Line" | xargs)"
+  done <<< "$Cameralist"
+  Cameralist="$(tail -n+2 <<< "$Cameralist")"
+  
+  [ -z "$Cameralist" ] && failure "No camera detected."
+  
+  grep -q "$Camera" <<< "$Cameralist" || Camera=""
+  [ -z "$Camera" ] && Camera="$(head -n1 <<< "$Cameralist")"
+  [ -z "$Camera" ] && Camera="autodetect"
+  Cameraport="$(rev <<< "$Camera" | cut -d' ' -f1 | rev)"
+  
+  Cameralistkaptain="'autodetect'"
+  while read Line; do
+    Cameralistkaptain="$Cameralistkaptain,'$Line'"
+  done <<< "$Cameralist"
+  
+  sendkaptain "camera($Cameralistkaptain)='$Camera'"
+  
+  case $Camera in
+    autodetect) 
+      storeinfo drop camera 
+      storeinfo drop cameraport  
+    ;;
+    *)
+      storeinfo "camera=$Camera" 
+      storeinfo "cameraport=$Cameraport"
+    ;;
+  esac
+}
+camerainit() {
+  local Camera Cameraport
+  local Configlist Kaptainlist Setting Value
+  
+  Camera="${1:-}"
+  [ -z "$Camera" ] && Camera="$(storeinfo dump camera)"
+  Cameraport="$(rev <<< "$Camera" | cut -d' ' -f1 | rev)"
+  
+  storeinfo "camera=$Camera"
+  storeinfo "cameraport=$Cameraport"
+  
+  gphoto2_cmd reset
+  gphoto2_cmd check || return 1
+  gphoto2_cmd set-config-index autoexposuremode=3 # mode "Manuell"
+  gphoto2_cmd set-config-index imageformat=0      # Large fine JPG. 6=Large fine JPG + RAW
+  
+  for Setting in iso shutterspeed; do
+    note "Checking camera config options for $Setting"
+    Configlist="$(gphoto2_wrap --get-config $Setting | grep Choice | awk '{print $3}')"
+    Kaptainlist=""
+    while read Line; do
+      Kaptainlist="$Kaptainlist,'$Line'"
+    done <<< "$Configlist"
+    Kaptainlist="${Kaptainlist#,}"
+    Value="$(storeinfo dump $Setting)"
+    [ "$Value" ] && grep -q -x "$Value" <<< "$Configlist" || {
+      grep -q -x "1/80" <<< "$Configlist" && Value="1/80"
+      grep -q -x "800"  <<< "$Configlist" && Value="800"
+      [ -z "$Value" ] && Value="$(head -n1 <<< "$Configlist")"
+    }
+    storeinfo "$Setting=$Value"
+    gphoto2_cmd set-config-value $Setting=$Value
+    sendkaptain "$Setting($Kaptainlist)='$Value'"
+  done
+}
 
+#### Keyboard control
+keyboard_stepin() {
+  while :; do
+    [ -e "$Keyboardstepinfile" ]  && stepcmd stepin  || sleep 0.1
+  done
+}
+keyboard_stepout() {
+  while :; do
+    [ -e "$Keyboardstepoutfile" ] && stepcmd stepout || sleep 0.1
+  done
+}
+keyboard_watch() {
+  local Keyhub Keycode
+  while read Line <&${Keyboardfd} ; do
+    Keyhub=$(awk '{print $2}' <<< $Line)
+    Keycode=$(awk '{print $3}' <<< $Line)
+#    note "Keycode: $Keycode ; Keyhub: $Keyhub"
+    storeinfo test keyboard_watch && case $Keyhub in
+      press)
+        case $Keycode in
+          # Durchgehender Lauf von Stepin/Stepout
+          50) touch "$Keyboardstepinfile"  ;;  # L-Shift
+          37) touch "$Keyboardstepoutfile" ;; # L-Ctrl
+        esac
+      ;;
+      release)
+        case $Keycode in
+          50) rm -f "$Keyboardstepinfile" ;;        # L-Shift
+          37) rm -f "$Keyboardstepoutfile" ;;       # L-Ctrl
+          #62)  Shift_r="" ;;                          # R-Shift
+          #64)  keypress_lock ;;                       # L-Alt
+        esac
+      ;;
+    esac
+  done
+}
+
+#### GUI
 kaptaingrammar() {
   echo "#! /usr/bin/kaptain
 start 'ardustack'            -> mainframe;
-mainframe:framed               -> fileframe naviframe camerasetframe captureframe videoframe stackshotframe;
+mainframe:framed               -> fileframe naviframe camerasetframe captureframe videoframe stackshotframe statusframe;
   fileframe 'Files'              -> device storagebasedir projectbasename stackshotbasename;
     device:beside            'Device file'            -> @string='/dev/ttyACM1' @button='initialize' ;
     storagebasedir:beside    'Storage base dir:'      -> @string='$HOME/Bilder/ardustack' ;
     projectbasename:beside   'Project base name:'     -> @string='project' ;
     stackshotbasename:beside 'Stackshot base name:'   -> @string='st' ;
-  naviframe 'Navigation'         -> stepline pos0line pos1line pos2line positionline poscalcline;
+  naviframe 'Navigation'         -> stepline pos0line pos1line pos2line positionline poscalcline keyboardline;
     stepline:beside                -> stepin stepout stepwidth stepmy;
       stepin                         -> @button='Step in';
       stepout                        -> @button='Step out';
-      stepwidth:beside 'Step width:' -> @combow('1','5','10','25','50','100','250','500')='50' ;
+      stepwidth:beside 'Step width:' -> @combo('1','2','5','10','15','20','25','30','40','50','60','75','100','150','200','250','300','400','500','750','1000','1500','2000','3000','5000','7500','10000')='50' ;
       stepmy                         -> @text='' ;  
     pos0line:beside                -> setpos0 gopos0 ;
       setpos0                        -> @button='Set current position as position zero' ;
@@ -538,14 +733,14 @@ mainframe:framed               -> fileframe naviframe camerasetframe capturefram
       difference:beside 'Difference:'-> @text='' ;
       distance:beside   'Distance:'  -> @text='' ;
       steps:beside      'Steps:'     -> @text='' ;
-  camerasetframe 'Camera settings' -> zoom lightline ;
-    zoom:beside 'Zoom:'            -> zoom1 zoom5 zoom10 ;
-      zoom1                          -> @button='1x' ;
-      zoom5                          -> @button='5x' ;
-      zoom10                         -> @button='10x' ;
-    lightline:beside               -> iso shutter;
-      iso:beside 'ISO:'              -> @combo('100','200','400','800','1600')='400' ;
-      shutter:beside 'Shutterspeed:' -> @combo('1/10','1/20','1/40','1/80','1/125','1/200','1/320','1/400','1/800')='1/200' ;
+    keyboardline:beside 'Watch Keyboard (L-Shift=stepin, L-Ctrl=stepout)' -> "" | "" ;
+  camerasetframe 'Camera settings' -> cameraline settingline ;
+    settingline:beside               -> zoom iso shutterspeed ;
+      zoom:beside 'Zoom:'            -> @combo('1','10') ;
+      iso:beside 'ISO:'              -> @combo('____') ;
+      shutterspeed:beside 'Shutterspeed:' -> @combo('________') ;
+    cameraline:beside              -> camera ;
+      camera:beside                -> @combo('autodetect')='autodetect' ;
   captureframe 'Captures'        -> captureline ;
     captureline:beside             -> capturepreview capturefullres ;
       capturepreview                 -> @button='Capture preview' ;
@@ -561,6 +756,8 @@ mainframe:framed               -> fileframe naviframe camerasetframe capturefram
       stackshotfullres               -> @button='Run full resolution stackshot' ;
     stackshotmedian:beside 'Median captures to delete moved objects:' -> @combo('3','4','5','6','7','8','9','10')='5' | ! "";
     stackshotdelay:beside 'Delay between captures (ms):' -> @combo('100','200','300','400','500','750','1000','1500','2000','2500','3000','4000','5000')='500';
+  statusframe 'Status'           -> status ;
+    status                         -> @text ;
 "
 }
 sendkaptain() {
@@ -586,15 +783,16 @@ runkaptain() {
   
   kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
   storeinfo "pidkaptain=$Kaptainpid"
-  parse_kaptainsignal
+
+  position_store
+  sendkaptain "storagebasedir='$(storeinfo dump storagebasedir)'"
+  parse_kaptainsignal "camera:autodetect"
 
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
     read -t1 Kaptainsignal <&${Kaptainstdout}
     [ "$Kaptainsignal" ] && {
       note "Signal from kaptain: $Kaptainsignal"
-      grep -q ":on"      <<< "$Kaptainsignal" && Kaptainsignal=""
-      grep -q ":off"     <<< "$Kaptainsignal" && Kaptainsignal=""
       Kaptainsignal="${Kaptainsignal%:pressed}"
     }
     [ "$Kaptainsignal" ] && parse_kaptainsignal "$Kaptainsignal"
@@ -608,6 +806,8 @@ parse_kaptainsignal() {
   Argument="$(cut -s -d: -f2 <<< "$Kaptainsignal")"
 
   position_read
+  
+  statusmessage "*** BUSY *** ($Kaptainsignal)"
 
   # Provide project dir if needed, check settings in GUI
   case $Kaptainsignal in
@@ -634,8 +834,15 @@ parse_kaptainsignal() {
       storeinfo "device=$(askkaptain device)"
       device_init
     ;;
+    
+    camera:autodetect|camera:)
+      cameralist
+      camerainit
+    ;;
+    camera:*)
+      camerainit "$Argument"
+    ;;
     zoom*)
-      Argument="${Kaptainsignal#zoom}"
       gphoto2_cmd zoom $Argument
       storeinfo "zoom=$Argument"
     ;;
@@ -643,7 +850,7 @@ parse_kaptainsignal() {
       gphoto2_cmd set-config-value iso="$Argument"
       storeinfo "iso=$Argument"
     ;;
-    shutter*)
+    shutterspeed*)
       gphoto2_cmd set-config-value shutterspeed="$Argument"
       storeinfo "shutterspeed=$Argument"
     ;;
@@ -670,6 +877,15 @@ parse_kaptainsignal() {
     setpos*|gopos*|stepin|stepout) 
       stepcmd $Kaptainsignal
     ;;
+    stepwidth*)
+      stepcmd stepwidth $Argument
+    ;;
+    keyboardline:on)
+      storeinfo "keyboard_watch=yes"
+    ;;
+    keyboardline:off)
+      storeinfo drop keyboard_watch
+    ;;
     
     stackshot*)
       storeinfo drop videomode
@@ -690,30 +906,50 @@ parse_kaptainsignal() {
   storeinfo test videomode && {
     ps -p "$(storeinfo dump pidffplay)" >/dev/null 2>&1 || video "$(storeinfo dump videomode)"
   }
+  
+  statusmessage "idle"
 }
 
+#### main
 declare_variables() {
   Cachefolder=/tmp/ardustack  
   
   Storeinfofile="$Cachefolder/store.info"
   
   Kaptainpid=""
-
-  Kaptaingrammar=$Cachefolder/kaptain.grammar
-  Kaptainstdinfifo=$Cachefolder/kaptain.stdin 
-  Kaptainstdoutfifo=$Cachefolder/kaptain.stdout
+  Kaptaingrammar="$Cachefolder/kaptain.grammar"
+  Kaptainstdinfifo="$Cachefolder/kaptain.stdin" 
+  Kaptainstdoutfifo="$Cachefolder/kaptain.stdout"
   
   Latestimage=""
   Latestvideo=""
   
-  Devicetimeout=10
+  Devicetimeout=2
+  Devicefallback="/dev/null"
   Devicemessagefifo="$Cachefolder/device.fifo"
   
   Poscurrent=0
-  Pos1=1000
-  Pos2=1100
+  Pos1=100
+  Pos2=300
   Stepwidth=50
   
+  Stepdistance="0.048"
+  Stepunit="my"
+  
+  Keyboardid=""
+  Keyboardfifo="$Cachefolder/keyboard.fifo"
+  Keyboardfd=""
+  Keyboardstepinfile="$Cachefolder/keyboard.stepin"
+  Keyboardstepoutfile="$Cachefolder/keyboard.stepout"
+  
+  # Command codes send to Arduino. Each command expects an (arbitrary) answer string+newline from arduino.
+  # Answers will be shown and can contain sense making messages.
+  Ardu_check="c"
+  Ardu_stepin="i"
+  Ardu_stepout="o"
+  Ardu_stepwidth="w"  # sent with comma+value in form: w,12
+  Ardu_setpos0="z"
+    
   # Terminal colors used for messages
   Esc="$(printf '\033')"
   Colblue="${Esc}[35m"
@@ -726,15 +962,17 @@ declare_variables() {
   Colnorm="${Esc}[0m"
 }
 setup_cache() {
-  mkdir $Cachefolder
+  mkdir "$Cachefolder"
   :> $Storeinfofile
-  mkfifo $Devicemessagefifo
+  mkfifo "$Devicemessagefifo"
   
+  mkfifo "$Keyboardfifo"
+  exec {Keyboardfd}<>"$Keyboardfifo"
   
-  mkfifo   $Kaptainstdinfifo
-  exec  {Kaptainstdin}<>$Kaptainstdinfifo
-  mkfifo   $Kaptainstdoutfifo
-  exec  {Kaptainstdout}<>$Kaptainstdoutfifo
+  mkfifo   "$Kaptainstdinfifo"
+  exec  {Kaptainstdin}<>"$Kaptainstdinfifo"
+  mkfifo   "$Kaptainstdoutfifo"
+  exec  {Kaptainstdout}<>"$Kaptainstdoutfifo"
 }
 finish() {
   local Line Pid
@@ -763,18 +1001,24 @@ main() {
   setup_cache
   
   storeinfo "storagebasedir=$HOME/Bilder/ardustack"
-  sendkaptain "storagebasedir='$(storeinfo dump storagebasedir)'"
   
   storeinfo "device=/dev/ttyACM0"
   device_init
   position_store
   stepcmd setpos0
   
-  storeinfo "iso=400"
-  storeinfo "shutterspeed=1/200"
+  storeinfo "iso=800"
+  storeinfo "shutterspeed=1/80"
   storeinfo "zoom=1"
+  
+  Keyboardid=$(xinput | grep "AT Translated" | cut -d= -f2 | awk '{print $1}')
+  [ "$Keyboardid" ] && {
+    xinput test $Keyboardid >>$Keyboardfifo & storeinfo "pidxinput=$!"
+    keyboard_stepin                         & storeinfo "pidkeyboardstepin=$!"
+    keyboard_stepout                        & storeinfo "pidkeyboardstepout=$!"
+    keyboard_watch                          & storeinfo "pidkeyboardwatch=$!"
+  } || failure "Cannot watch keyboard. xinput not installed? Invalid keyboard id '$Keyboardid'?"
   
   runkaptain
 }
-
 main "$@"

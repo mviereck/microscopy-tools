@@ -17,7 +17,7 @@ Dependencies:
 
 ## fusewizard
 
-GUI frontend for image foto stacking with enfuse. In development, beta stage, useable.
+GUI frontend for image foto stacking with enfuse. In development, beta stage.
 
 Provides:
  - Image preprocessing with imagemagick to enhance contrast and sharpiness. 
@@ -29,7 +29,6 @@ Expects a folder `stackshot` containing the source images. `stackshot` should be
 Dependencies: 
  - enfuse
  - ffmpeg
- - geeqie
  - imagemagick
  - imgruler
  - [kaptain](https://github.com/mviereck/kaptain)
@@ -48,7 +47,7 @@ Dependencies:
  - gphoto2
  
 ## ardustack
-GUI for foto stacking with a stepper motor controlled by an arduino and a camera connected on USB. Successor of `arduterm`. Alpha stage.
+GUI for foto stacking with a stepper motor controlled by an arduino and a camera connected on USB. Successor of `arduterm`. Beta stage, under heavy development.
 
 Dependencies:
  - ffmpeg

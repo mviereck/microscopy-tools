@@ -205,7 +205,7 @@ setup_workdir() {
   # Args:
   #   Function       One of align, sharpen, fuse, median, min, max, mean, set
   #   Targetdir      Target directory [+glob] to check.
-  #                  Can already be in an arduterm-structure or an arbitrary one.
+  #                  Can already be in an ardustack-structure or an arbitrary one.
   #                  Location of $Destinationdir depends on detected directory structure.
   #   Functionoption   Mode of Function
   # Sets variables:
@@ -554,10 +554,14 @@ batch_function() {
   }
   
   [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluate" ] && [ -d "$Destinationdir/../stackshot" ] && {
-    # link fuse.median result into parent directory
-    ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../"
-    # link fuse.median result into $Galerydir directory
-    ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Galerydir"
+    ls $Destinationdir/*fuse.median* >/dev/null 2>&1 && {
+      # link fuse.median result into parent directory
+      ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../"
+      # link into project dir
+      ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../../"
+      # link fuse.median result into $Galerydir directory
+      ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Galerydir"
+    }
   }
   
   return $Return
@@ -603,7 +607,7 @@ parse_batchoptions() {
 
 getbatch1() {
   local Command= Line Argument
-  for Line in gamma level contrast kuwahara sharpen brightness stretch wizard; do
+  for Line in contrast sharpen kuwahara brightness gamma level stretch wizard; do
     Argument="$(askkaptain "$Line")"
     case $Line in
       brightness) Line="-brightness-contrast" ;;
@@ -716,7 +720,7 @@ align_vidstab() {
   ffmpeg -y -hide_banner -nostdin -safe "0" -f "concat" -i "$Sourcefilelist" \
          -vcodec "libx264" -profile:v "high444" -refs "16" -crf "0" -preset "ultrafast" \
          "$Cachedir/align.orig.mp4" || return 1
-  ffplay -autoexit -loglevel quiet "$Cachedir/align.orig.mp4"
+  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.orig.mp4"
   showpercent 1 100
   ifcmdbreak && return 1
   
@@ -741,7 +745,7 @@ align_vidstab() {
   ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
          -vf "vidstabdetect=shakiness=$Shakiness:accuracy=15:mincontrast=0.1:stepsize=$Stepsize:show=1:result=$Cachedir/transforms$Shakiness.trf" \
          "$Cachedir/align.vidstab-show.mp4" || return 1
-  ffplay -autoexit -loglevel quiet "$Cachedir/align.vidstab-show.mp4"
+  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.vidstab-show.mp4"
   showpercent 4 100
   ifcmdbreak && return 1
             
@@ -749,7 +753,7 @@ align_vidstab() {
   ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
          -vf "vidstabtransform=optzoom=0:smoothing=0:interpol=bicubic:relative=1:crop=black:debug=1:input=$Cachedir/transforms$Shakiness.trf,unsharp=5:5:0.8:3:3:0.4" \
          "$Cachedir/align.result.mp4" || return 1
-  ffplay -autoexit -loglevel quiet "$Cachedir/align.result.mp4"
+  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.result.mp4"
   showpercent 5 100
   ifcmdbreak && return 1
 
@@ -1106,7 +1110,7 @@ crop() {
     ;;
     interactive) 
       Image="$Cachedir/crop.min.jpg"
-      $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
+      convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Functionoption")"
       Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
       Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
@@ -1222,10 +1226,10 @@ fuse() {
     2)
       Saturationweight="0.1"
     ;;
-    3) 
+    3)
       Contrastwindowsize="7"
     ;;
-    4) 
+    4)
       Contrastwindowsize="7"
       Saturationweight="0.1"
     ;;
@@ -1243,28 +1247,28 @@ fuse() {
       Contrastwindowsize="23"
       Saturationweight="0.1"
     ;;
-    9)
+   x9)
       Contrastedgescale="0.8:2000%:300%"
       #Contrastmincurvature="+8.0%"
     ;;
-    10)
+   x10)
       Contrastedgescale="0.8:500%:500%"
       #Contrastmincurvature="+8.0%"
     ;;
-    11)
+   x11)
       Contrastedgescale="1.2:16:4"
       #Contrastmincurvature="+5.0%"
     ;;
-    12)
+   x12)
       Contrastedgescale="1.2:8:4"
       #Contrastmincurvature="+5.0%"
       #Saturationweight="0.1"
     ;;
-    13)
+   x13)
       Contrastedgescale="1.6:16:4"
       #Contrastmincurvature="+3.0%"
     ;;
-    14)
+   x14)
       Contrastedgescale="1.6:8:4"
       #Contrastmincurvature="+3.0%"
       #Saturationweight="0.1"
@@ -1282,12 +1286,12 @@ fuse() {
       Contrastedgescale="2.0:500%:500%"
       #Contrastmincurvature="+2.0%"
     ;;
-    18)
+   x18)
       Contrastwindowsize="15"
       Contrastedgescale="1.2:16:4"
       Contrastmincurvature="+8.01%"
     ;;
-    19)
+   x19)
       Contrastwindowsize="23"
       Contrastedgescale="1.2:16:4"
       Contrastmincurvature="+8.01%"
@@ -1528,200 +1532,6 @@ calc_evengeometry() {
   echo $Geometry
 }
 
-cropgeometry_interactive() {
-  # Interactive dialog to choose a crop geometry
-  #   $1   Image to crop.
-  #   $2   Cache folder to store files. Clean up yourself.
-  #   $3   Preset crop geometry (optional). Default: entire image
-  # Result:
-  #   return 0 : echo crop geometry WxH+X+Y
-  #   return 1 : no output
-  # Dependencies:
-  #   imagemagick
-  #   kaptain (https://github.com/mviereck/kaptain)
-
-  local Kaptaingrammar Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
-  local Image Imagewidth Imageheight
-  local CropX CropY CropW CropH Cropgeometry
-  local Rotate
-  local Refresh Stepsize Return
-  local Cachedir Cropimage
-  
-  Image="${1:-}"
-  Cachedir="${2:-}"
-  Cropgeometry="${3:-}"
-  
-  checkvar -e crop_interactive Image    "$Image"    || return 1
-  checkvar -d crop_interactive Cachedir "$Cachedir" || return 1
-  
-  worknote "Interactive choice of crop geometry of $Image"
-  
-  Cropimage="$Cachedir/cropgeometry.gui.png"
-  convert "$Image" "$Cropimage"
-  
-  Stepsize=50
-  Rotate=0
-  Refresh="yes"
-
-  Imagewidth=$(convert  -format '%w'  $Cropimage info:)
-  Imageheight=$(convert -format '%h'  $Cropimage info:)
-    
-  grep -q "x" <<< "$Cropgeometry" && grep -q "+" <<< "$Cropgeometry" && {
-    CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
-    CropY=$(cut -d+ -f3 <<< "$Cropgeometry")
-    CropW=$(cut -dx -f1 <<< "$Cropgeometry")
-    CropH=$(cut -dx -f2 <<< "$Cropgeometry")
-    CropH=$(cut -d+ -f1 <<< "$CropH")
-  } || {
-    CropX=0
-    CropY=0
-    CropW=$((Imagewidth-1))
-    CropH=$((Imageheight-1))
-  }
-  
-  Kaptaingrammar="$Cachedir/crop.kaptain.grammar"
-  Kaptainstdinfifo="$Cachedir/crop.kaptain.stdin"
-  Kaptainstdoutfifo="$Cachedir/crop.kaptain.stdout"
-  mkfifo   $Kaptainstdinfifo
-  mkfifo   $Kaptainstdoutfifo
-  exec  {Kaptainstdin}<>$Kaptainstdinfifo
-  exec  {Kaptainstdout}<>$Kaptainstdoutfifo
-  
-  echo "#! /usr/bin/kaptain
-start 'Choose geometry' -> frameset ;
-  frameset:beside -> frameleft frameright ;
-    frameleft:framed  -> arrowline stepsizeframe rotateline geometryline buttonline cmdpercent @fill;
-    frameright:framed -> showimage showimagename;
-  
-  showimage     -> @icon('$Cropimage');
-  showimagename -> "" ;
-  cmdpercent    -> @icon;
-  
-  arrowline:beside:framed -> arrowposframe arrowsizeframe ;
-    arrowposframe 'Position:' -> arrowpos1 arrowpos2 arrowpos3;
-      arrowpos1:beside -> @fill   postop    @fill;
-      arrowpos2:beside -> posleft @fill     posright ;
-      arrowpos3:beside -> @fill   posbottom @fill;
-        posleft          -> @button=' < ';
-        posright         -> @button=' > ';
-        postop           -> @button=' ^ ';
-        posbottom        -> @button=' v ';
-    arrowsizeframe 'Size:' -> size1 size2 size3;
-      size1:beside     -> @fill    sizetop    @fill;
-      size2:beside     -> sizeleft @fill      sizeright ;
-      size3:beside     -> @fill    sizebottom @fill;
-        sizeleft         -> @button=' < ';
-        sizeright        -> @button=' > ';
-        sizetop          -> @button=' ^ ';
-        sizebottom       -> @button=' v ';
-    rotateline:beside 'Rotate:'  -> rotatecombo rotateapply trim;
-      rotatecombo       -> @combow('0','5','10','15','30','45','90','-5','-10','-15','-30','-45','-90')='0';
-      rotateapply       -> @button='apply';
-      trim              -> @button='trim';
-  stepsizeframe 'Step size' -> stepsize1 stepsize2;
-  stepsize1:beside  -> ss1 ss2 ss5 ss10 ;
-  stepsize2:beside  -> ss25 ss50 ss100 ss250;
-    ss1           -> @button='1';
-    ss2           -> @button='2';
-    ss5           -> @button='5';
-    ss10          -> @button='10';
-    ss25          -> @button='25';
-    ss50          -> @button='50';
-    ss100         -> @button='100';
-    ss250         -> @button='250';
-  geometryline:beside -> geometry geometryapply;
-    geometry:beside  'Crop geometry:'      -> @string='$Cropgeometry';
-    geometryapply                          -> @button='apply';
-  buttonline:beside -> ok cancel ;
-    ok                                     -> @button=' OK' ;
-    cancel                                 -> @close='Cancel';
-" >> $Kaptaingrammar
-  kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
-
-  while ps -p $Kaptainpid >/dev/null; do
-
-    [ "$Refresh" = "yes" ] && {
-      Cropgeometry="${CropW}x${CropH}+$CropX+$CropY"
-      showpercent 10 100
-      convert $Image -background '#00000000' -rotate $Rotate +repage "$Cropimage"
-      showpercent 60 100
-      convert $Cropimage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropimage.show.tif"
-      echo "showimage('$Cropimage.show.tif')='x'"  >&${Kaptainstdin}
-      echo "geometry='$Cropgeometry'" >&${Kaptainstdin}
-      Refresh="no"
-      showpercent 100 100
-    }
-
-    Imagewidth=$(convert  -format '%w'  $Cropimage info:)
-    Imageheight=$(convert -format '%h'  $Cropimage info:)
-    
-    read -t1 Kaptainsignal <&${Kaptainstdout}
-    
-    ifcmdbreak && Return=1 && break
-    
-    [ "$Kaptainsignal" ] && {
-      Kaptainsignal="${Kaptainsignal%:pressed}"
-      case $Kaptainsignal in
-        posleft)    CropX=$((CropX-$Stepsize)) ;;
-        posright)   CropX=$((CropX+$Stepsize)) ;;
-        postop)     CropY=$((CropY-$Stepsize)) ;;
-        posbottom)  CropY=$((CropY+$Stepsize)) ;;
-        sizeleft)   CropW=$((CropW-$Stepsize)) ;;
-        sizeright)  CropW=$((CropW+$Stepsize)) ;;
-        sizetop)    CropH=$((CropH-$Stepsize)) ;;
-        sizebottom) CropH=$((CropH+$Stepsize)) ;;
-        ss*)        Stepsize="$(cut -c3- <<< "$Kaptainsignal")" ;;
-        rotatecombo*) Rotate="$(cut -d: -f2 <<< "$Kaptainsignal")" ;;
-        rotateapply) 
-          echo "rotatecombo?" >&${Kaptainstdin}
-          read Rotate <&${Kaptainstdout}
-        ;;
-        geometryapply)
-          echo "geometry?" >&${Kaptainstdin}
-          read Cropgeometry <&${Kaptainstdout}
-          [ "$Cropgeometry" ] && {
-            CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
-            CropY=$(cut -d+ -f3 <<< "$Cropgeometry")
-            CropW=$(cut -dx -f1 <<< "$Cropgeometry")
-            CropH=$(cut -dx -f2 <<< "$Cropgeometry")
-            CropH=$(cut -d+ -f1 <<< "$CropH")
-          }
-        ;;
-        trim)
-          Cropgeometry="$(trim_hard "$Cropimage" "$Cropgeometry" )"
-          [ "$Cropgeometry" ] && {
-            CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
-            CropY=$(cut -d+ -f3 <<< "$Cropgeometry")
-            CropW=$(cut -dx -f1 <<< "$Cropgeometry")
-            CropH=$(cut -dx -f2 <<< "$Cropgeometry")
-            CropH=$(cut -d+ -f1 <<< "$CropH")
-          }
-        ;;
-        ok)         Return=0; break ;;
-      esac
-      [ "$CropX" -lt "0" ] && CropX=0
-      [ "$CropY" -lt "0" ] && CropY=0
-      [ "$CropW" -lt "1" ] && CropW=1
-      [ "$CropH" -lt "1" ] && CropH=1
-      [ "$CropX" -gt "$Imagewidth" ]  && CropX=$Imagewidth
-      [ "$CropY" -gt "$Imageheight" ] && CropY=$Imageheight
-      [ "$((CropX+CropW-1))" -gt "$Imagewidth" ]  && CropW=$((Imagewidth-CropX))
-      [ "$((CropY+CropH-1))" -gt "$Imageheight" ] && CropH=$((Imageheight-CropY))
-      Refresh="yes"
-    }
-  done 
-  
-  Cropgeometry="$(trim_hard "$Cropimage" "$Cropgeometry")" # final check
-          
-  exec {Kaptainstdin}>&- {Kaptainstdout}>&-
-  ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
-  [ "$Return" = "0" ] && {
-    [ "$Rotate" = "0" ] && echo "$Cropgeometry" || echo "$Cropgeometry:$Rotate"
-    return 0
-  }
-  return 1
-}
-
 trim_hard() {
   # Function: Trim all border with transparency from image $1
   # Results in a maximal inner rectangle without border color.
@@ -1863,11 +1673,11 @@ $Permillebottom" | sort -n | head -n1)
   return ${Return:-0}
 }
 
-#### gui
+#### GUI
 
 kaptaingrammar() {
   echo '#! /usr/bin/kaptain
-start "arduterm fuse" -> frameset;
+start "fusewizard" -> frameset;
 
   frameset -> topframe bottomframe;
     topframe:beside   -> topleftframe toprightframe ;
@@ -1875,18 +1685,9 @@ start "arduterm fuse" -> frameset;
       toprightframe:framed  -> showimageframe ;
     bottomframe     -> statusframe ;
   
-  showimageframe -> showimage showimagename showimagebuttons;
+  showimageframe -> showimage showimagename ;
     showimage           -> @icon;
     showimagename       -> @text;
-    showimagebuttons:beside  -> show_fuse_max show_fuse_mean show_fuse_median show_fuse_min show_magick_max show_magick_mean show_magick_median show_magick_min ;
-      show_magick_max   -> @button="magick.max";
-      show_magick_mean  -> @button="magick.mean";
-      show_magick_median-> @button="magick.median";
-      show_magick_min   -> @button="magick.min";
-      show_fuse_max     -> @button="fuse.max";
-      show_fuse_mean    -> @button="fuse.mean";
-      show_fuse_median  -> @button="fuse.median";
-      show_fuse_min     -> @button="fuse.min";
     
   batchoptionframe:beside            -> batchframeleft  batchframeright;
     batchframeleft:framed              -> batchblock1 batchblock2 specialframe;
@@ -1894,11 +1695,12 @@ start "arduterm fuse" -> frameset;
     
   topleftbottomframe -> dirframe deleteframe ;
     
-  dirframe:beside -> choosedirguibutton choosedirbutton choosedir opendirbutton;
+  dirframe:beside -> choosedirguibutton choosedirbutton choosedir opendirbutton refreshbutton;
     choosedirguibutton  -> @button="X" ;
     choosedirbutton     -> @button="Choose stackshot directory:" ;
     choosedir           -> @string="'$Wizardhome'" ;
     opendirbutton       -> @button="Open in file manager";
+    refreshbutton       -> @button="refresh" ;
     
   deleteframe -> deletedir;
     deletedir:beside "Delete intermediate results" -> deletecache deleteevaluate deletecompose deletefuse deletemagick deleteall;
@@ -1917,15 +1719,15 @@ start "arduterm fuse" -> frameset;
     wizardlog           -> @text="" ;
       
     
-      batchblock1 "batch block 1: prepare stackshot images in magick" -> gammaline levelline contrastline kuwaharaline sharpenline brightnessline stretchline wizardline applyallline;
+      batchblock1 "batch block 1: prepare stackshot images in magick" -> contrastline sharpenline kuwaharaline brightnessline gammaline levelline stretchline wizardline applyallline;
         gammaline:beside                                      -> gamma gammamagick gammafuse gammaevaluate;
           gammacombo                                            -> @combow("auto","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
           gammamagick                                           -> @button="magick" ;
           gammaevaluate                                         -> @button="evaluate" ;
           gammafuse                                             -> @button="fuse" ;
-          gamma:beside                "gamma"                   -> gammacombo | ! "";
+          gamma:beside                "gamma"                   -> gammacombo | "";
         levelline:beside                                      -> level levelmagick levelfuse levelevaluate;
-          levelcombo                                            -> @combow("auto","5%","10%","15%","20%","25%","30%")="10%" ;
+          levelcombo                                            -> @combow("auto","5%","10%","15%","20%","25%","30%")="auto" ;
           levelmagick                                           -> @button="magick" ;
           levelevaluate                                         -> @button="evaluate" ;
           levelfuse                                             -> @button="fuse" ;
@@ -1959,7 +1761,7 @@ start "arduterm fuse" -> frameset;
           stretchmagick                                         -> @button="magick" ;
           stretchevaluate                                       -> @button="evaluate" ;
           stretchfuse                                           -> @button="fuse" ;
-          stretch:beside              "stretch-contrast"        -> stretchcombo | "";
+          stretch:beside              "stretch-contrast"        -> stretchcombo | ! "";
         wizardline:beside                                     -> wizard wizardmagick wizardfuse wizardevaluate;
           wizardcombo                                           -> @combow("","-negate","-despeckle","-edge 3","-emboss 3","-enhance","-equalize","-canny 3","-charcoal 3")="" ;
           wizardmagick                                          -> @button="magick" ;
@@ -2045,16 +1847,28 @@ start "arduterm fuse" -> frameset;
           undofuse                                              -> @button="fuse" ;
           undo                        "undo last step"          -> "" ;
           
-      showresultframe "Show results" -> showresultline @fill killviewnior;
-        showresultline -> showstackshot showmagickline showfuse showcompose showevaluate;
-          showstackshot                  -> @button="stackshot";
-          showmagickline:beside          -> showmagick showmagickbackup;
-            showmagick                     -> @button="magick";
-            showmagickbackup               -> @button="backup + magick";
-          showcompose                    -> @button="compose";
-          showfuse                       -> @button="fuse";
-          showevaluate                   -> @button="evaluate";
-        killviewnior:beside            -> @fill @action("killall viewnior")="killall viewnior" @fill;
+      showresultframe "Show results" -> showimagebuttons showresultline @fill killviewnior;
+        showimagebuttons:beside  -> showimageeval showimagefuse ;
+          showimageeval            -> show_magick_max show_magick_mean show_magick_median show_magick_min ;
+            show_magick_max          -> @button="magick.max";
+            show_magick_mean         -> @button="magick.mean";
+            show_magick_median       -> @button="magick.median";
+            show_magick_min          -> @button="magick.min";
+          showimagefuse            -> show_fuse_max   show_fuse_mean   show_fuse_median   show_fuse_min ;
+            show_fuse_max            -> @button="fuse.max";
+            show_fuse_mean           -> @button="fuse.mean";
+            show_fuse_median         -> @button="fuse.median";
+            show_fuse_min            -> @button="fuse.min";
+      
+          showresultline           -> @text="Directories" showresultline1 showresultline2 ;
+            showresultline1:beside   -> showstackshot showmagick ;
+              showstackshot            -> @button="stackshot";
+              showmagick               -> @button="magick";
+            showresultline2:beside   -> showfuse showcompose showevaluate;
+              showfuse                 -> @button="fuse";
+              showcompose              -> @button="compose";
+              showevaluate             -> @button="evaluate";
+        killviewnior:beside          -> @fill @action("killall viewnior")="killall viewnior" @fill;
 '
 }
 
@@ -2073,117 +1887,6 @@ askkaptain() {
   [ -z "$Answer" ] && return 1
   echo "$Answer"
   return 0
-}
-
-kaptain_update_preview() {
-  local Stackdir Currentimage Image Cachedir
-  
-  # check if currently in valid dir, otherwise clear display
-  storeinfo test pwd_valid || {
-    sendkaptain "showimage('')=x"
-    storeinfo drop preview_md5
-    storeinfo drop showimage
-    return 0
-  }
-  
-  Stackdir="$(storeinfo dump pwd)"
-  
-  # check if an image of current stackdir is shown
-  Currentimage="$(storeinfo dump showimage)"
-  grep -q "$Stackdir" <<< "$Currentimage" && [ -e "$Currentimage" ] && showimage "$Currentimage" && return 0
-  
-  # check for results
-  Image="$(fileglob "$Stackdir/evaluate/*fuse.median*")"
-  [ -e "$Image" ] && showimage "$Image" && return 0
-  
-  Image="$(fileglob "$Stackdir/evaluate/*magick.max*")"
-  [ -e "$Image" ] && showimage "$Image" && return 0
-  
-  Image="$(fileglob "$Stackdir/*fuse.median*" | head -n1)"
-  [ -e "$Image" ] && showimage "$Image" && return 0
-
-  Cachedir="$(storeinfo dump cache)"
-  Image="$Cachedir/preview.jpg"
-  
-  # Generate max from magick
-  check_fileglob "$Stackdir/magick/*" && {
-    convert "$Stackdir/magick/*" -evaluate-sequence max "$Image"
-    showimage "$Image"
-    return 0
-  }
-  
-  # Generate max from stackshot
-  convert "$Stackdir/stackshot/*" -evaluate-sequence max "$Image"
-  showimage "$Image"
-  return 0
-}
-
-kaptain_update_previewXXX() {
-  local Sourcedir Stackdir Cachedir Previewfile
-   
-  storeinfo test pwd_valid || {
-    sendkaptain "preview('')=x"
-    storeinfo drop preview_md5
-    return 0
-  }
-  
-  Cachedir="$(storeinfo dump cache)"
-  Stackdir="$(storeinfo dump pwd)"
-  Previewfile="$Cachedir/preview.jpg"
-
-  check_fileglob "$Stackdir/*fuse.median*" && {
-    cp -T "$(fileglob "$Stackdir/*fuse.median*" | head -n1)" "$Previewfile"
-  } || {
-    Sourcedir="$Stackdir/magick"
-    check_fileglob $Sourcedir/* || Sourcedir=""
-  
-    [ -z "$Sourcedir" ] && {
-      Sourcedir="$Stackdir/stackshot"
-      check_fileglob $Sourcedir/* || Sourcedir=""
-    }
-  
-    [ -z "$Sourcedir" ] && {
-      sendkaptain "preview('')=x"
-      return 1
-    }  
-    Md5="$(ls -l $Sourcedir/* 2>/dev/null | md5sum)"
-    [ "$Md5" = "$(storeinfo dump preview_md5)" ] && return 0
-    storeinfo "preview_md5=$Md5"
-  
-    sendkaptain "previewrefresh='* busy *'"
-  
-    convert $(fileglob $Sourcedir/*) -evaluate-sequence max "$Previewfile"
-  }
-  
-  convert "$Previewfile" -resize 256x256 "$Previewfile"
-  
-  sendkaptain "preview('$Previewfile')=x"
-  sendkaptain "previewrefresh='Refresh preview'"
-}
-
-showpercent() {
-  local Percent Part Full Percentimage
-  
-  Percentimage="$Wizardcache/percent.png"
-  Part="${1:-}"
-  Full="${2:-1}"
-  
-  case "$Part" in
-    idle) Percentimage="p_idle.png" ;;
-    ERROR) Percentimage="p_error.png" ;;
-    *)
-      Percent="$(( 100 * Part / Full ))"
-      Percentimage="p_$Percent.png" 
-    ;;
-  esac
-  Percentimage="$Percentcachedir/$Percentimage"
-
-  [ -e "$Percentimage" ] || case "$Part" in
-    idle)  convert -size 200x20 xc:transparent -fill black -pointsize 20 -draw "text 80,18 'idle'"   "$Percentimage" ;;
-    error) convert -size 200x20 xc:transparent -fill red   -pointsize 20 -draw "text 80,18 'ERROR'"  "$Percentimage" ;;
-    *)     convert -size 200x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 2)),20" -fill black -pointsize 20  -draw "text 80,18 '${Percent}%'" "$Percentimage" ;;
-  esac
-  sendkaptain "cmdpercent('$Percentimage')=''"
 }
 
 kaptain_update() {
@@ -2230,136 +1933,72 @@ kaptain_update() {
   kaptain_update_preview
 }
 
-choose_stackshot() {
-  # GUI to choose stackshot. Preview of median images. Sorted by project dirs.
-  local Dirlist Imagelist
-  local Allprojects Entrylist Projectimages Projectline
-  local Projectdir Oldprojectdir
-  local Count Dircount Dir Image
-  local FDin FDout
+kaptain_update_preview() {
+  local Stackdir Currentimage Image Cachedir
   
-  cd "$Wizardhome"
-  # generate empty X image for unfused stackshots
-  Emptyimage=$Thumbnaildir/empty.png
-  [ -e "$Emptyimage" ] || convert caption:X $Emptyimage
+  # check if currently in valid dir, otherwise clear display
+  storeinfo test pwd_valid || {
+    sendkaptain "showimage('')=x"
+    storeinfo drop preview_md5
+    storeinfo drop showimage
+    return 0
+  }
   
-  # get list of stackshot dirs and median images
-  Dirlist="$(find -name stackshot -type d | sed s%/stackshot%% | sort -V)"
-  for Dir in $Dirlist; do
-    Image="$(find $Dir/*fuse.median* 2>/dev/null | head -n1)"
-    Imagelist="$Imagelist
-$Image"
-  done
-  Imagelist="$(tail -n+2 <<< "$Imagelist")"
-  Dircount="$(grep -c . <<< "$Dirlist")"
-
-  Count=0
-  for Dir in $Dirlist EOL ; do
-    Count=$((Count +1))
-    showpercent "$Count" "$Dircount"
-    
-    # generate thumbnail. Check existing thumbnail with md5
-    Image="$(sed "${Count}q;d" <<< "$Imagelist")"
-    Image="${Image:-$Emptyimage}"
-    Md5="$(md5sum "$Image" | cut -d' ' -f1)"
-    Destinationfile=$Thumbnaildir/$(basename "$Image").$Md5.png
-    [ -e "$Destinationfile" ] || convert "$Image" -resize 256x256 "$Destinationfile"
-    
-    # Check current project dir
-    Projectdir="$(dirname $Dir)"
-
-    # Checking a project dir is ready
-    [ "$Projectdir" != "$Oldprojectdir" ] && {
-      [ "$Projectline" ] && {
-        # montage of all stackshot images in a project dir
-        #Projectimages="$(sort <<< "$Projectimages")"
-        Md5="$(cat $Projectimages | md5sum | cut -d' ' -f1)"
-        Montagefile="$Thumbnaildir/$(basename $Projectdir).$Md5.png"
-        [ -e "$Montagefile" ] || montage $Projectimages -tile x1 -geometry 100x100+5+5 $Montagefile
-        
-        # entry of subtree: montageimage + pjoject directory. Childs are stackshots.        
-        Projectline="project$Count:tree '{$Montagefile}$Oldprojectdir' -> $Projectline"
-        Allprojects="$Allprojects project$Count"
-        Entrylist="$Entrylist
-$Projectline ;"
-      }
-      
-      [ "$Dir" = "EOL" ] && break
-      
-      Oldprojectdir="$Projectdir"
-      Projectline=""
-      Projectimages=""
-      Montagefile=""
-    }
-    
-    # add stackshot to subtree list
-    Projectline="$Projectline stackshot$Count"
-    
-    # add stackshot
-    Entrylist="$Entrylist
-  stackshot$Count:beside '{$Destinationfile}$Dir' -> @dump('$Dir')='Choose this stackshot' @close='Cancel';"
+  Stackdir="$(storeinfo dump pwd)"
   
-    # add image to montage list
-    Projectimages="$Projectimages
-$Image"
-  done
+  # check if an image of current stackdir is shown
+  Currentimage="$(storeinfo dump showimage)"
+  grep -q "$Stackdir" <<< "$Currentimage" && [ -e "$Currentimage" ] && showimage "$Currentimage" && return 0
+  
+  # check for results
+  Image="$(fileglob "$Stackdir/evaluate/*fuse.median*")"
+  [ -e "$Image" ] && showimage "$Image" && return 0
+  
+  Image="$(fileglob "$Stackdir/evaluate/*magick.max*")"
+  [ -e "$Image" ] && showimage "$Image" && return 0
+  
+  Image="$(fileglob "$Stackdir/*fuse.median*" | head -n1)"
+  [ -e "$Image" ] && showimage "$Image" && return 0
 
-  echo "#! /usr/bin/kaptain
-start 'Choose a stackshot' -> frame1;
-  frame1:tree -> $Allprojects ;
-$Entrylist
-" > $Thumbnaildir/choose_stackshot.kaptain
-  Dir="$(kaptain $Thumbnaildir/choose_stackshot.kaptain)"
-  realpath "$Dir"
+  Cachedir="$(storeinfo dump cache)"
+  Image="$Cachedir/preview.jpg"
+  
+  # Generate max from magick
+  check_fileglob "$Stackdir/magick/*" && {
+    convert "$Stackdir/magick/*" -evaluate-sequence max "$Image"
+    showimage "$Image"
+    return 0
+  }
+  
+  # Generate max from stackshot
+  convert "$Stackdir/stackshot/*" -evaluate-sequence max "$Image"
+  showimage "$Image"
+  return 0
 }
 
-choose_fuseimages() {
+showpercent() {
+  local Percent Part Full Percentimage
+  
+  Percentimage="$Wizardcache/percent.png"
+  Part="${1:-}"
+  Full="${2:-1}"
+  
+  case "$Part" in
+    idle) Percentimage="p_idle.png" ;;
+    ERROR) Percentimage="p_error.png" ;;
+    *)
+      Percent="$(( 100 * Part / Full ))"
+      Percentimage="p_$Percent.png" 
+    ;;
+  esac
+  Percentimage="$Percentcachedir/$Percentimage"
 
-  Wizardcache=/tmp
-  Imagelist=""
-  Entrylist=""
-  Entryline=""
-  Sourcedir=/home/lauscher/Bilder/arduterm/test/fuse
-  Count=0
-  for Image in $Sourcedir/*; do
-    Count=$((Count+1))
-    Imagelist="$Imagelist
-$Image"
-    Entryline="$Entryline image$Count"
-    Entrylist="$Entrylist
-    image$Count:beside '$Count' -> @button('$Image')='$(basename $Image)' '$(basename $Image)' | '' ;"
-  done
-  echo "#! /usr/bin/kaptain
-start -> frameset;
-  frameset:beside:framed -> framelist framepreview frameexiv;
-    framelist    -> list;
-    framepreview -> @icon('/home/lauscher/Bilder/arduterm/test/fuse/np.test.fuse06.jpg');
-    frameexiv     -> exiv;
-  exiv -> @text='' ;
-  list -> $Entryline ;
-$Entrylist" > $Wizardcache/test.kaptn
-  cat $Wizardcache/test.kaptn
-  
-  rm $Wizardcache/test.fifo
-  rm $Wizardcache/test11.fifo
-  mkfifo $Wizardcache/test.fifo
-  mkfifo $Wizardcache/test11.fifo
-  exec {FDin}<>$Wizardcache/test.fifo
-  exec {FDout}<>$Wizardcache/test11.fifo
-  
-  kaptain --stdio $Wizardcache/test.kaptn <&${FDin} >&${FDout} &
-  Kaptainpid=$!
-  
-  while ps -p $Kaptainpid >/dev/null; do
-    read -t1 Kaptainsignal <&${FDout}
-    echo "Signal: $Kaptainsignal"
-    Exiftext=""
-    for Exifline in enfuse --exposure-weight=0.0  --saturation-weight=0.0  --contrast-weight=1.0  --hard-mask  --contrast-edge-scale=0  --contrast-window-size=3 --gray-projector=luminance ;do
-      Exiftext="$Exiftext \n $Exifline"
-    done
-    echo "exiv=\"$Exiftext\"" >&${FDin}
-  done 
-
+  [ -e "$Percentimage" ] || case "$Part" in
+    idle)  convert -size 200x20 xc:transparent -fill black -pointsize 20 -draw "text 80,18 'idle'"   "$Percentimage" ;;
+    error) convert -size 200x20 xc:transparent -fill red   -pointsize 20 -draw "text 80,18 'ERROR'"  "$Percentimage" ;;
+    *)     convert -size 200x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 2)),20" -fill black -pointsize 20  -draw "text 80,18 '${Percent}%'" "$Percentimage" ;;
+  esac
+  sendkaptain "cmdpercent('$Percentimage')=''"
 }
 
 parse_kaptainsignal() {
@@ -2486,6 +2125,339 @@ parse_kaptainsignal() {
       failure "Unknown signal: $Kaptainsignal"
     ;;
   esac
+}
+
+## sub GUIs
+
+choose_stackshot() {
+  # GUI to choose stackshot. Preview of median images. Sorted by project dirs.
+  local Dirlist Imagelist
+  local Allprojects Entrylist Projectimages Projectline
+  local Projectdir Oldprojectdir
+  local Count Dircount Dir Image
+  local FDin FDout
+  
+  cd "$Wizardhome"
+  # generate empty X image for unfused stackshots
+  Emptyimage=$Thumbnaildir/empty.png
+  [ -e "$Emptyimage" ] || convert caption:X $Emptyimage
+  
+  # get list of stackshot dirs and median images
+  Dirlist="$(find -name stackshot -type d | sed s%/stackshot%% | sort -V)"
+  for Dir in $Dirlist; do
+    Image="$(find $Dir/*fuse.median* 2>/dev/null | head -n1)"
+    Imagelist="$Imagelist
+$Image"
+  done
+  Imagelist="$(tail -n+2 <<< "$Imagelist")"
+  Dircount="$(grep -c . <<< "$Dirlist")"
+
+  Count=0
+  for Dir in $Dirlist EOL ; do
+    Count=$((Count +1))
+    showpercent "$Count" "$Dircount"
+    
+    # generate thumbnail. Check existing thumbnail with md5
+    Image="$(sed "${Count}q;d" <<< "$Imagelist")"
+    Image="${Image:-$Emptyimage}"
+    Md5="$(md5sum "$Image" | cut -d' ' -f1)"
+    Destinationfile=$Thumbnaildir/$(basename "$Image").$Md5.png
+    [ -e "$Destinationfile" ] || convert "$Image" -resize 256x256 "$Destinationfile"
+    
+    # Check current project dir
+    Projectdir="$(dirname $Dir)"
+
+    # Checking a project dir is ready
+    [ "$Projectdir" != "$Oldprojectdir" ] && {
+      [ "$Projectline" ] && {
+        # montage of all stackshot images in a project dir
+        #Projectimages="$(sort <<< "$Projectimages")"
+        Md5="$(cat $Projectimages | md5sum | cut -d' ' -f1)"
+        Montagefile="$Thumbnaildir/$(basename $Projectdir).$Md5.png"
+        [ -e "$Montagefile" ] || montage $Projectimages -tile x1 -geometry 100x100+5+5 $Montagefile
+        
+        # entry of subtree: montageimage + pjoject directory. Childs are stackshots.        
+        Projectline="project$Count:tree '{$Montagefile}$Oldprojectdir' -> $Projectline"
+        Allprojects="$Allprojects project$Count"
+        Entrylist="$Entrylist
+$Projectline ;"
+      }
+      
+      [ "$Dir" = "EOL" ] && break
+      
+      Oldprojectdir="$Projectdir"
+      Projectline=""
+      Projectimages=""
+      Montagefile=""
+    }
+    
+    # add stackshot to subtree list
+    Projectline="$Projectline stackshot$Count"
+    
+    # add stackshot
+    Entrylist="$Entrylist
+  stackshot$Count:beside '{$Destinationfile}$Dir' -> @dump('$Dir')='Choose this stackshot' @close='Cancel';"
+  
+    # add image to montage list
+    Projectimages="$Projectimages
+$Image"
+  done
+
+  echo "#! /usr/bin/kaptain
+start 'Choose a stackshot' -> frame1;
+  frame1:tree -> $Allprojects ;
+$Entrylist
+" > $Thumbnaildir/choose_stackshot.kaptain
+  Dir="$(kaptain $Thumbnaildir/choose_stackshot.kaptain)"
+  realpath "$Dir"
+}
+
+choose_fuseimages() {
+
+  Wizardcache=/tmp
+  Imagelist=""
+  Entrylist=""
+  Entryline=""
+  Sourcedir=/home/lauscher/Bilder/ardustack/test/fuse
+  Count=0
+  for Image in $Sourcedir/*; do
+    Count=$((Count+1))
+    Imagelist="$Imagelist
+$Image"
+    Entryline="$Entryline image$Count"
+    Entrylist="$Entrylist
+    image$Count:beside '$Count' -> @button('$Image')='$(basename $Image)' '$(basename $Image)' | '' ;"
+  done
+  echo "#! /usr/bin/kaptain
+start -> frameset;
+  frameset:beside:framed -> framelist framepreview frameexiv;
+    framelist    -> list;
+    framepreview -> @icon('/home/lauscher/Bilder/ardustack/test/fuse/np.test.fuse06.jpg');
+    frameexiv     -> exiv;
+  exiv -> @text='' ;
+  list -> $Entryline ;
+$Entrylist" > $Wizardcache/test.kaptn
+  cat $Wizardcache/test.kaptn
+  
+  rm $Wizardcache/test.fifo
+  rm $Wizardcache/test11.fifo
+  mkfifo $Wizardcache/test.fifo
+  mkfifo $Wizardcache/test11.fifo
+  exec {FDin}<>$Wizardcache/test.fifo
+  exec {FDout}<>$Wizardcache/test11.fifo
+  
+  kaptain --stdio $Wizardcache/test.kaptn <&${FDin} >&${FDout} &
+  Kaptainpid=$!
+  
+  while ps -p $Kaptainpid >/dev/null; do
+    read -t1 Kaptainsignal <&${FDout}
+    echo "Signal: $Kaptainsignal"
+    Exiftext=""
+    for Exifline in enfuse --exposure-weight=0.0  --saturation-weight=0.0  --contrast-weight=1.0  --hard-mask  --contrast-edge-scale=0  --contrast-window-size=3 --gray-projector=luminance ;do
+      Exiftext="$Exiftext \n $Exifline"
+    done
+    echo "exiv=\"$Exiftext\"" >&${FDin}
+  done 
+
+}
+
+cropgeometry_interactive() {
+  # Interactive dialog to choose a crop geometry
+  #   $1   Image to crop.
+  #   $2   Cache folder to store files. Clean up yourself.
+  #   $3   Preset crop geometry (optional). Default: entire image
+  # Result:
+  #   return 0 : echo crop geometry WxH+X+Y
+  #   return 1 : no output
+  # Dependencies:
+  #   imagemagick
+  #   kaptain (https://github.com/mviereck/kaptain)
+
+  local Kaptaingrammar Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
+  local Image Imagempc Imagewidth Imageheight
+  local CropX CropY CropW CropH Cropgeometry
+  local Rotate
+  local Refresh Stepsize Return
+  local Cachedir Cropimage
+  
+  Image="${1:-}"
+  Cachedir="${2:-}"
+  Cropgeometry="${3:-}"
+  
+  checkvar -e crop_interactive Image    "$Image"    || return 1
+  checkvar -d crop_interactive Cachedir "$Cachedir" || return 1
+  
+  worknote "Interactive choice of crop geometry of $Image"
+  
+  Imagempc="$Cachedir/cropgeometry.source.mpc"
+  Cropimage="$Cachedir/cropgeometry.gui.jpg"
+  convert "$Image" "$Imagempc"
+  convert "$Imagempc" "$Cropimage"
+  
+  Stepsize=50
+  Rotate=0
+  Refresh="yes"
+
+  Imagewidth=$(convert  -format '%w'  $Cropimage info:)
+  Imageheight=$(convert -format '%h'  $Cropimage info:)
+    
+  grep -q "x" <<< "$Cropgeometry" && grep -q "+" <<< "$Cropgeometry" && {
+    CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
+    CropY=$(cut -d+ -f3 <<< "$Cropgeometry")
+    CropW=$(cut -dx -f1 <<< "$Cropgeometry")
+    CropH=$(cut -dx -f2 <<< "$Cropgeometry")
+    CropH=$(cut -d+ -f1 <<< "$CropH")
+  } || {
+    CropX=0
+    CropY=0
+    CropW=$((Imagewidth-1))
+    CropH=$((Imageheight-1))
+  }
+  
+  Kaptaingrammar="$Cachedir/crop.kaptain.grammar"
+  Kaptainstdinfifo="$Cachedir/crop.kaptain.stdin"
+  Kaptainstdoutfifo="$Cachedir/crop.kaptain.stdout"
+  mkfifo   $Kaptainstdinfifo
+  mkfifo   $Kaptainstdoutfifo
+  exec  {Kaptainstdin}<>$Kaptainstdinfifo
+  exec  {Kaptainstdout}<>$Kaptainstdoutfifo
+  
+  echo "#! /usr/bin/kaptain
+start 'Choose geometry' -> frameset ;
+  frameset:beside -> frameleft frameright ;
+    frameleft:framed  -> arrowline stepsizeframe rotateline geometryline buttonline cmdpercent @fill;
+    frameright:framed -> showimage showimagename;
+  
+  showimage     -> @icon('$Cropimage');
+  showimagename -> "" ;
+  cmdpercent    -> @icon;
+  
+  arrowline:beside:framed -> arrowposframe arrowsizeframe ;
+    arrowposframe 'Position:' -> arrowpos1 arrowpos2 arrowpos3;
+      arrowpos1:beside -> @fill   postop    @fill;
+      arrowpos2:beside -> posleft @fill     posright ;
+      arrowpos3:beside -> @fill   posbottom @fill;
+        posleft          -> @button=' < ';
+        posright         -> @button=' > ';
+        postop           -> @button=' ^ ';
+        posbottom        -> @button=' v ';
+    arrowsizeframe 'Size:' -> size1 size2 size3;
+      size1:beside     -> @fill    sizetop    @fill;
+      size2:beside     -> sizeleft @fill      sizeright ;
+      size3:beside     -> @fill    sizebottom @fill;
+        sizeleft         -> @button=' < ';
+        sizeright        -> @button=' > ';
+        sizetop          -> @button=' ^ ';
+        sizebottom       -> @button=' v ';
+    rotateline:beside 'Rotate:'  -> rotatecombo rotateapply trim;
+      rotatecombo       -> @combow('0','5','10','15','30','45','90','-5','-10','-15','-30','-45','-90')='0';
+      rotateapply       -> @button='apply';
+      trim              -> @button='trim';
+  stepsizeframe 'Step size' -> stepsize1 stepsize2;
+  stepsize1:beside  -> ss1 ss2 ss5 ss10 ;
+  stepsize2:beside  -> ss25 ss50 ss100 ss250;
+    ss1           -> @button='1';
+    ss2           -> @button='2';
+    ss5           -> @button='5';
+    ss10          -> @button='10';
+    ss25          -> @button='25';
+    ss50          -> @button='50';
+    ss100         -> @button='100';
+    ss250         -> @button='250';
+  geometryline:beside -> geometry geometryapply;
+    geometry:beside  'Crop geometry:'      -> @string='$Cropgeometry';
+    geometryapply                          -> @button='apply';
+  buttonline:beside -> ok cancel ;
+    ok                                     -> @button=' OK' ;
+    cancel                                 -> @close='Cancel';
+" >> $Kaptaingrammar
+  kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+
+  while ps -p $Kaptainpid >/dev/null; do
+
+    [ "$Refresh" = "yes" ] && {
+      Cropgeometry="${CropW}x${CropH}+$CropX+$CropY"
+      showpercent 10 100
+      case $Rotate in
+        ""|0) cp "$Image" "$Cropimage" ;;
+        *)    convert $Imagempc -background '#00000000' -rotate $Rotate +repage "$Cropimage" ;;
+      esac
+      showpercent 60 100
+      convert $Cropimage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropimage.show.tif"
+      echo "showimage('$Cropimage.show.tif')='x'"  >&${Kaptainstdin}
+      echo "geometry='$Cropgeometry'" >&${Kaptainstdin}
+      Refresh="no"
+      showpercent 100 100
+    }
+
+    Imagewidth=$(convert  -format '%w'  $Cropimage info:)
+    Imageheight=$(convert -format '%h'  $Cropimage info:)
+    
+    read -t1 Kaptainsignal <&${Kaptainstdout}
+    
+    ifcmdbreak && Return=1 && break
+    
+    [ "$Kaptainsignal" ] && {
+      Kaptainsignal="${Kaptainsignal%:pressed}"
+      case $Kaptainsignal in
+        posleft)    CropX=$((CropX-$Stepsize)) ;;
+        posright)   CropX=$((CropX+$Stepsize)) ;;
+        postop)     CropY=$((CropY-$Stepsize)) ;;
+        posbottom)  CropY=$((CropY+$Stepsize)) ;;
+        sizeleft)   CropW=$((CropW-$Stepsize)) ;;
+        sizeright)  CropW=$((CropW+$Stepsize)) ;;
+        sizetop)    CropH=$((CropH-$Stepsize)) ;;
+        sizebottom) CropH=$((CropH+$Stepsize)) ;;
+        ss*)        Stepsize="$(cut -c3- <<< "$Kaptainsignal")" ;;
+        rotatecombo*) Rotate="$(cut -d: -f2 <<< "$Kaptainsignal")" ;;
+        rotateapply) 
+          echo "rotatecombo?" >&${Kaptainstdin}
+          read Rotate <&${Kaptainstdout}
+        ;;
+        geometryapply)
+          echo "geometry?" >&${Kaptainstdin}
+          read Cropgeometry <&${Kaptainstdout}
+          [ "$Cropgeometry" ] && {
+            CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
+            CropY=$(cut -d+ -f3 <<< "$Cropgeometry")
+            CropW=$(cut -dx -f1 <<< "$Cropgeometry")
+            CropH=$(cut -dx -f2 <<< "$Cropgeometry")
+            CropH=$(cut -d+ -f1 <<< "$CropH")
+          }
+        ;;
+        trim)
+          Cropgeometry="$(trim_hard "$Cropimage" "$Cropgeometry" )"
+          [ "$Cropgeometry" ] && {
+            CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
+            CropY=$(cut -d+ -f3 <<< "$Cropgeometry")
+            CropW=$(cut -dx -f1 <<< "$Cropgeometry")
+            CropH=$(cut -dx -f2 <<< "$Cropgeometry")
+            CropH=$(cut -d+ -f1 <<< "$CropH")
+          }
+        ;;
+        ok)         Return=0; break ;;
+      esac
+      [ "$CropX" -lt "0" ] && CropX=0
+      [ "$CropY" -lt "0" ] && CropY=0
+      [ "$CropW" -lt "1" ] && CropW=1
+      [ "$CropH" -lt "1" ] && CropH=1
+      [ "$CropX" -gt "$Imagewidth" ]  && CropX=$Imagewidth
+      [ "$CropY" -gt "$Imageheight" ] && CropY=$Imageheight
+      [ "$((CropX+CropW-1))" -gt "$Imagewidth" ]  && CropW=$((Imagewidth-CropX))
+      [ "$((CropY+CropH-1))" -gt "$Imageheight" ] && CropH=$((Imageheight-CropY))
+      Refresh="yes"
+    }
+  done 
+  
+  Cropgeometry="$(trim_hard "$Cropimage" "$Cropgeometry")" # final check
+          
+  exec {Kaptainstdin}>&- {Kaptainstdout}>&-
+  ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
+  [ "$Return" = "0" ] && {
+    [ "$Rotate" = "0" ] && echo "$Cropgeometry" || echo "$Cropgeometry:$Rotate"
+    return 0
+  }
+  return 1
 }
 
 #### run commands on all CPUs
@@ -2678,8 +2650,8 @@ parse_cmd() {
 #### main
 
 declare_variables() {
-  Wizardhome="/home/lauscher/Bilder/arduterm"
-  Galerydir="/home/lauscher/Bilder/arduterm"
+  Wizardhome="/home/lauscher/Bilder/ardustack"
+  Galerydir="/home/lauscher/Bilder/ardustack"
 
   Wizardcache="$HOME/.cache/fusewizard"
   Wizardlocalshare="$HOME/.local/share/fusewizard"
@@ -2853,7 +2825,7 @@ compose_independent() {
   esac
 }
 
-align_ffmpeg_rotatemagick() {
+align_ffmpeg_rotatemagick(){
   local $Batchlocal
   local Sourcefilelist Imagelist Destinationfile Sourcefile
   local Image Imagewidth Imageheight Count Imagecount
@@ -2891,7 +2863,7 @@ align_ffmpeg_rotatemagick() {
   ffmpeg -y -hide_banner -nostdin -safe "0" -f "concat" -i "$Sourcefilelist" \
          -vcodec "libx264" -profile:v "high444" -refs "16" -crf "0" -preset "ultrafast" \
          "$Cachedir/align.source.mp4" || return 1
-  ffplay -autoexit -loglevel quiet "$Cachedir/align.source.mp4"
+  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.source.mp4"
   
   showpercent "1" "100"
 
@@ -2901,7 +2873,7 @@ align_ffmpeg_rotatemagick() {
       ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
              -vf "vidstabdetect=shakiness=$Shakiness:accuracy=15:mincontrast=0.1:stepsize=$Stepsize:show=1:result=$Cachedir/transforms$Shakiness.trf" \
              "$Cachedir/align.vidstab-show.mp4" || return 1
-      ffplay -autoexit -loglevel quiet "$Cachedir/align.vidstab-show.mp4"
+      ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.vidstab-show.mp4"
       showpercent "2" "100"
 
       Transformoptions="smoothing=0:interpol=no:relative=1:${Blackborder}${Rotate}"
@@ -2910,7 +2882,7 @@ align_ffmpeg_rotatemagick() {
       ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
              -vf "vidstabtransform=optzoom=0:${Transformoptions}debug=1:input=$Cachedir/transforms$Shakiness.trf,unsharp=5:5:0.8:3:3:0.4" \
              "$Cachedir/align.result.mp4" || return 1
-      ffplay -autoexit -loglevel quiet "$Cachedir/align.result.mp4"
+      ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.result.mp4"
       showpercent "3" "100"
       
       worknote "align_ffmpeg: Splitting aligned video into images"
