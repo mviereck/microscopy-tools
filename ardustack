@@ -29,7 +29,7 @@ showimage() {
     failure "Image not found: ${1:-}"
     return 1
   }
-  geeqie -t -r file:"${1:-}"
+  geeqie -t -r File:"${1:-}"
 }
 milisleep() {
   local Time 

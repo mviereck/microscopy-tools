@@ -377,18 +377,18 @@ showimage() {
   case $(grep -c . <<< "$Imagelist") in
     0) 
       failure "showimage: Not found: ${1:-}" 
-      sendkaptain "showimage('')=''" 
-      sendkaptain "showimagename=''"
+      #sendkaptain "showimage('')=''" 
+      #sendkaptain "showimagename=''"
       storeinfo drop showimage
     ;;
     1) 
       Image="$Imagelist"
-      Shrinkimage="$Wizardcache/showimage.png"
-      convert "$Image" -scale 800x800\> "$Shrinkimage" 
-      sendkaptain "showimage('$Shrinkimage')=''" 
-#      sendkaptain "showimage('$Image')=''" 
-      sendkaptain "showimagename='$(shortpath "$Image")'"
-      storeinfo   "showimage=$Image"
+      #Shrinkimage="$Wizardcache/showimage.png"
+      #convert "$Image" -scale 800x800\> "$Shrinkimage" 
+      #sendkaptain "showimage('$Shrinkimage')=''" 
+      #sendkaptain "showimagename='$(shortpath "$Image")'"
+      #storeinfo   "showimage=$Image"
+      geeqie -t -r File:"$Image"
     ;;
 #    1) geeqie -t -r File:"$Imagelist" ;;
     *) viewnior           $Imagelist & ;;
@@ -559,8 +559,8 @@ batch_function() {
       ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../"
       # link into project dir
       ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../../"
-      # link fuse.median result into $Galerydir directory
-      ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Galerydir"
+      # link fuse.median result into $Gallerydir directory
+      ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Gallerydir"
     }
   }
   
@@ -626,17 +626,26 @@ getbatch1() {
   echo "$Command"
 }
 
+getfunctionsettings() {
+  Functionmode="$(askkaptain ${Function}modecombo)"
+  Functionoption="$(askkaptain ${Function}combo)"
+}
+
 runbatch1() {
+  askkaptain crop > /dev/null && {
+    Function="crop"
+    getfunctionsettings
+    cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+  }
   cmd -f wizard -o "$(getbatch1)" -t "$Stackdir"
 }
 
 runbatch2() {
   local Functionmode Functionoption
   local Iterate
-  for Function in whitebalance crop align_ais align_hugin align_vidstab1 align_vidstab2 align_vidstab3 ; do
+  for Function in whitebalance align_ais align_hugin align_vidstab1 align_vidstab2 align_vidstab3 ; do
     askkaptain $Function > /dev/null && {
-      Functionmode="$(askkaptain ${Function}modecombo)"
-      Functionoption="$(askkaptain ${Function}combo)"
+      getfunctionsettings
       Function="$(tr -c -d "a-z_" <<< "$Function")"  # remove 1 2 3 from align_vidstab
       cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
     }
@@ -812,8 +821,9 @@ align_vidstab() {
   done
   multicore_wait || return 1
       
-  Rotateminimage="$Cachedir/rotate.min.png"
-  $Convert $(fileglob "$Cachedir/rotate/*") -evaluate-sequence min "$Rotateminimage" || return 1
+#  Rotateminimage="$Cachedir/rotate.min.png"
+  Rotateminimage="$Cachedir/rotate.min.mpc"
+  convert $(fileglob "$Cachedir/rotate/*") -evaluate-sequence min "$Rotateminimage" || return 1
   case $Cropinteractive in
     yes) notify-send "align_vidstab(): Ready for interactive crop"
          Cropgeometry="$(cropgeometry_interactive "$Rotateminimage" "$Cachedir")" || return 1 ;;
@@ -977,7 +987,8 @@ whitebalance() {
     bottomright) Cropgeometry="10x10+$((Imagewidth-15))+$((Imageheight-15))" ;;
     full)        Cropgeometry="${Imagewidth}x${Imageheight}+0+0" ;;
     interactive) 
-      Image="$Cachedir/whitebalance.min.jpg"
+#      Image="$Cachedir/whitebalance.min.jpg"
+      Image="$Cachedir/whitebalance.min.mpc"
       $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "50x50+10+10")"  ### FIXME rotate
       Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")" 
@@ -1109,7 +1120,9 @@ crop() {
       Cropgeometry="$Functionoption"
     ;;
     interactive) 
-      Image="$Cachedir/crop.min.jpg"
+#      Image="$Cachedir/crop.min.jpg"
+      Image="$Cachedir/crop.min.mpc"
+      showpercent 1 100
       convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Functionoption")"
       Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
@@ -1542,7 +1555,7 @@ trim_hard() {
   # Output: crop geometry
   
   local Imagemask Trimcolor Cropgeometry Addcommand
-  local Sourceimage Sourceimagempc Imagewidth Imageheight
+  local Sourceimage Sourceimagempc Cropgeometryimage Imagewidth Imageheight
   local Left         Right         Top         Bottom
   local Skipleft     Skipright     Skiptop     Skipbottom
   local Permilleleft Permilleright Permilletop Permillebottom Permillemax
@@ -1554,14 +1567,20 @@ trim_hard() {
   Cropgeometry="${2:-}"
   Addcommand="${3:-}"
   
-  Trimcolor="#00000000" # to support other colors, creating mask must be fixed
+  Trimcolor="#00000000" # to support other colors, creating mask must be fixed FIXME
+  
+  # check source for mpc format, convert if not
+  [ "$Sourceimage" = "${Sourceimage%.mpc}" ] && {
+    Sourceimagempc="$Sourceimage.mpc"
+    convert "$Sourceimage" "$Sourceimagempc"
+  } || {
+    Sourceimagempc="$Sourceimage"
+  }
+  Cropgeometryimage="$Sourceimage.trim_hard.png"
   
   # Generate alpha mask image in imagemagick memory format for fastest possible access
   Imagemask="$Sourceimage.mask.mpc"
-  convert "$Sourceimage" -alpha extract "$Imagemask"
-  
-  Sourceimagempc="$Sourceimage.mpc"
-  convert $Sourceimage $Sourceimagempc
+  convert "$Sourceimagempc" -alpha extract "$Imagemask"
   
   worknote "trim_hard(): Searching for inner rectangle of $(basename $Image)"
   
@@ -1653,8 +1672,8 @@ $Permillebottom" | sort -n | head -n1)
       Loopcount=$((Loopcount+1))
       [ "$Loopcount" = "10" ] && {
         Loopcount=0
-        convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 14 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Sourceimage.trim_hard.png
-        showimage $Sourceimage.trim_hard.png
+        convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity south -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
+        showimage $Cropgeometryimage
         eval "$Addcommand"
       }
     }
@@ -1662,8 +1681,8 @@ $Permillebottom" | sort -n | head -n1)
 
   # show result
   showpercent 100 100
-  convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 14 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Sourceimage.trim_hard.png
-  showimage $Sourceimage.trim_hard.png
+  convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity south -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
+  showimage $Cropgeometryimage
   
   # Output of result
   #echo "$Left,$Top $Right,$Bottom"                     # "-draw rectangle" geometry
@@ -1680,7 +1699,7 @@ kaptaingrammar() {
 start "fusewizard" -> frameset;
 
   frameset -> topframe bottomframe;
-    topframe:beside   -> topleftframe toprightframe ;
+    topframe:beside   -> topleftframe ;
       topleftframe:framed   -> batchoptionframe topleftbottomframe ;
       toprightframe:framed  -> showimageframe ;
     bottomframe     -> statusframe ;
@@ -1712,14 +1731,13 @@ start "fusewizard" -> frameset;
       deleteall         -> @button="Delete all";
     
   statusframe -> wizardstatusline wizardlog wizardlog;
-    wizardstatusline:beside -> cmdpercent cmdbreak wizardcmd ;
+    wizardstatusline:beside -> cmdpercent cmdbreak ;
       cmdpercent        -> @icon ;
       cmdbreak          -> @button="break" ;
-      wizardcmd         -> @text="" ;
     wizardlog           -> @text="" ;
       
     
-      batchblock1 "batch block 1: prepare stackshot images in magick" -> contrastline sharpenline kuwaharaline brightnessline gammaline levelline stretchline wizardline applyallline;
+      batchblock1 "batch block 1: prepare stackshot images in directory magick" -> cropline @text="convert options" contrastline sharpenline kuwaharaline brightnessline gammaline levelline stretchline wizardline applyallline;
         gammaline:beside                                      -> gamma gammamagick gammafuse gammaevaluate;
           gammacombo                                            -> @combow("auto","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
           gammamagick                                           -> @button="magick" ;
@@ -1772,9 +1790,9 @@ start "fusewizard" -> frameset;
           applyallmagick                                        -> @button="magick" ;
           applyallevaluate                                      -> @button="evaluate" ;
           applyallfuse                                          -> @button="fuse" ;
-          applyall:beside             "Apply all"               -> "" ;
+          applyall:beside             "Apply all convert options"  -> "" ;
           
-      batchblock2 "batch block 2: post processing magick" -> meanbalanceline whitebalanceline cropline align_aisline align_huginline align_vidstab1line align_vidstab2line align_vidstab3line ;
+      batchblock2 "batch block 2: post processing directory magick" -> meanbalanceline whitebalanceline align_aisline align_huginline align_vidstab1line align_vidstab2line align_vidstab3line ;
         meanbalanceline:beside                               -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
           meanbalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
           meanbalancemagick                                    -> @button="magick" ;
@@ -1934,11 +1952,11 @@ kaptain_update() {
 }
 
 kaptain_update_preview() {
-  local Stackdir Currentimage Image Cachedir
+  local Stackdir Currentimage Image Cachedir Imagelist Imagenumber
   
   # check if currently in valid dir, otherwise clear display
   storeinfo test pwd_valid || {
-    sendkaptain "showimage('')=x"
+    #sendkaptain "showimage('')=x"
     storeinfo drop preview_md5
     storeinfo drop showimage
     return 0
@@ -1962,7 +1980,26 @@ kaptain_update_preview() {
 
   Cachedir="$(storeinfo dump cache)"
   Image="$Cachedir/preview.jpg"
+
+  Imagelist="$(fileglob "$Stackdir/magick/*")"
+  [ "$Imagelist" ] &&{
+    Imagenumber="$(grep -c . <<< "$Imagelist")"
+    Image="$(head -n$((Imagenumber/3)) <<< "$Imagelist" | tail -n1)"
+    showimage "$Image"
+    return 0
+  }
   
+  Imagelist="$(fileglob "$Stackdir/stackshot/*")"
+  [ "$Imagelist" ] &&{
+    Imagenumber="$(grep -c . <<< "$Imagelist")"
+    Image="$(head -n$((Imagenumber/2)) <<< "$Imagelist" | tail -n1)"
+    showimage "$Image"
+    return 0
+  }
+  
+  return 1
+
+  ######### disabled
   # Generate max from magick
   check_fileglob "$Stackdir/magick/*" && {
     convert "$Stackdir/magick/*" -evaluate-sequence max "$Image"
@@ -2278,7 +2315,7 @@ cropgeometry_interactive() {
   local CropX CropY CropW CropH Cropgeometry
   local Rotate
   local Refresh Stepsize Return
-  local Cachedir Cropimage
+  local Cachedir Cropgeometryimage Cropimagempc
   
   Image="${1:-}"
   Cachedir="${2:-}"
@@ -2289,17 +2326,23 @@ cropgeometry_interactive() {
   
   worknote "Interactive choice of crop geometry of $Image"
   
-  Imagempc="$Cachedir/cropgeometry.source.mpc"
-  Cropimage="$Cachedir/cropgeometry.gui.jpg"
-  convert "$Image" "$Imagempc"
-  convert "$Imagempc" "$Cropimage"
+  Cropgeometryimage="$Cachedir/cropgeometry.gui.tif"
+  Cropimagempc="$Cachedir/crop.mpc"
+  
+  # check source for mpc format, convert if not
+  [ "$Image" = "${Image%.mpc}" ] && {
+    Imagempc="$Cachedir/cropgeometry.source.mpc"
+    convert "$Image" "$Imagempc"
+  } || {
+    Imagempc="$Image"
+  }
   
   Stepsize=50
   Rotate=0
   Refresh="yes"
 
-  Imagewidth=$(convert  -format '%w'  $Cropimage info:)
-  Imageheight=$(convert -format '%h'  $Cropimage info:)
+  Imagewidth=$(convert  -format '%w'  $Imagempc info:)
+  Imageheight=$(convert -format '%h'  $Imagempc info:)
     
   grep -q "x" <<< "$Cropgeometry" && grep -q "+" <<< "$Cropgeometry" && {
     CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
@@ -2324,12 +2367,9 @@ cropgeometry_interactive() {
   
   echo "#! /usr/bin/kaptain
 start 'Choose geometry' -> frameset ;
-  frameset:beside -> frameleft frameright ;
-    frameleft:framed  -> arrowline stepsizeframe rotateline geometryline buttonline cmdpercent @fill;
-    frameright:framed -> showimage showimagename;
-  
-  showimage     -> @icon('$Cropimage');
-  showimagename -> "" ;
+  frameset:beside -> frameleft ;
+    frameleft:framed  -> arrowline stepsizeframe rotateline geometryline buttonline cmdpercent;
+    
   cmdpercent    -> @icon;
   
   arrowline:beside:framed -> arrowposframe arrowsizeframe ;
@@ -2350,7 +2390,7 @@ start 'Choose geometry' -> frameset ;
         sizetop          -> @button=' ^ ';
         sizebottom       -> @button=' v ';
     rotateline:beside 'Rotate:'  -> rotatecombo rotateapply trim;
-      rotatecombo       -> @combow('0','5','10','15','30','45','90','-5','-10','-15','-30','-45','-90')='0';
+      rotatecombo       -> @combow('0','0.5','-0.5','1','-1','1.5','-1.5','2','-2','2.5','-2.5','3','-3','5','-5','10','-10','45','-45','90','180','270')='0';
       rotateapply       -> @button='apply';
       trim              -> @button='trim';
   stepsizeframe 'Step size' -> stepsize1 stepsize2;
@@ -2373,25 +2413,22 @@ start 'Choose geometry' -> frameset ;
 " >> $Kaptaingrammar
   kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
 
+  Refresh="yes"
   while ps -p $Kaptainpid >/dev/null; do
 
     [ "$Refresh" = "yes" ] && {
       Cropgeometry="${CropW}x${CropH}+$CropX+$CropY"
       showpercent 10 100
-      case $Rotate in
-        ""|0) cp "$Image" "$Cropimage" ;;
-        *)    convert $Imagempc -background '#00000000' -rotate $Rotate +repage "$Cropimage" ;;
-      esac
+      convert $Imagempc -background '#00000000' -rotate $Rotate +repage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropgeometryimage"
       showpercent 60 100
-      convert $Cropimage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropimage.show.tif"
-      echo "showimage('$Cropimage.show.tif')='x'"  >&${Kaptainstdin}
+      showimage "$Cropgeometryimage"
       echo "geometry='$Cropgeometry'" >&${Kaptainstdin}
       Refresh="no"
       showpercent 100 100
     }
 
-    Imagewidth=$(convert  -format '%w'  $Cropimage info:)
-    Imageheight=$(convert -format '%h'  $Cropimage info:)
+    Imagewidth=$(convert  -format '%w'  $Cropgeometryimage info:)
+    Imageheight=$(convert -format '%h'  $Cropgeometryimage info:)
     
     read -t1 Kaptainsignal <&${Kaptainstdout}
     
@@ -2426,7 +2463,8 @@ start 'Choose geometry' -> frameset ;
           }
         ;;
         trim)
-          Cropgeometry="$(trim_hard "$Cropimage" "$Cropgeometry" )"
+          convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
+          Cropgeometry="$(trim_hard "$Cropimagempc" "$Cropgeometry" )"
           [ "$Cropgeometry" ] && {
             CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
             CropY=$(cut -d+ -f3 <<< "$Cropgeometry")
@@ -2449,7 +2487,9 @@ start 'Choose geometry' -> frameset ;
     }
   done 
   
-  Cropgeometry="$(trim_hard "$Cropimage" "$Cropgeometry")" # final check
+  worknote "trim_hard(): final check"
+  convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
+  Cropgeometry="$(trim_hard "$Cropimagempc" "$Cropgeometry")" # final check
           
   exec {Kaptainstdin}>&- {Kaptainstdout}>&-
   ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
@@ -2568,7 +2608,7 @@ stack_cmd() {
     [ "$Command" ] && {
       eval set -- $Command 
       
-      sendkaptain "wizardcmd=' $*'"
+      #sendkaptain "wizardcmd=' $*'"
       showpercent "0" "100"
       storeinfo "status=work"
       
@@ -2583,7 +2623,7 @@ stack_cmd() {
         0)
           storeinfo "status=idle"
           showpercent idle
-          sendkaptain "wizardcmd=''"
+          #sendkaptain "wizardcmd=''"
         ;;
         *)
           storeinfo "status=error"
@@ -2651,7 +2691,7 @@ parse_cmd() {
 
 declare_variables() {
   Wizardhome="/home/lauscher/Bilder/ardustack"
-  Galerydir="/home/lauscher/Bilder/ardustack"
+  Gallerydir="/home/lauscher/Gallery"
 
   Wizardcache="$HOME/.cache/fusewizard"
   Wizardlocalshare="$HOME/.local/share/fusewizard"
@@ -2926,7 +2966,7 @@ align_ffmpeg_rotatemagick(){
       done
       multicore_wait
           
-      Rotateminimage="$Cachedir/rotate.min.png"
+      Rotateminimage="$Cachedir/rotate.min.mpc"
       $Convert $(fileglob "$Cachedir/rotate/*") -evaluate-sequence min "$Rotateminimage" || return 1
       Cropgeometry="$(trim_hard "$Rotateminimage")"
       

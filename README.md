@@ -26,9 +26,11 @@ Provides:
  
 Expects a folder `stackshot` containing the source images. `stackshot` should be in an empty parent folder. The images in `stackshot` won't be changed.
 
-Dependencies: 
+Dependencies:
+ - align_image_stack (hugin tools)
  - enfuse
  - ffmpeg
+ - geeqie
  - imagemagick
  - imgruler
  - [kaptain](https://github.com/mviereck/kaptain)
