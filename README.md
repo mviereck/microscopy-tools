@@ -1,7 +1,20 @@
 # microscopy-tools
 
 Tools for microscopy and image focus stacking.
-Some rather special tools customized for my needs.
+
+ - Tools ready for use:
+   - [imgruler](#imgruler): Draw a ruler or micrometer into an image (Terminal)
+   - [MacroFusion](#macrofusion): Combine focus stack images (GUI)
+ - Tools in active development, beta stage:
+   - [fusewizard](#fusewizard): Combine focus stack images. (GUI)
+   - [ardustack](#ardustack): Shoot foto stack with stepper motor and camera. (GUI)
+   - [camcfg](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
+ - Tools in beta stage, currently no active development:
+   - [arduterm](#arduterm): Shoot foto stack with stepper motor and camera. Predecessor of [ardustack](#ardustack). (Terminal)
+   
+`fusewizard` and `ardustack` need some further development before they can be recommended for general use.
+However, if you are already interested to try them out, please give me some feedback in the [issue tracker](https://github.com/mviereck/microscopy-tools/issues) and I'll help to set them up.
+
 
 ## imgruler
 
@@ -17,7 +30,7 @@ Dependencies:
 
 ## fusewizard
 
-GUI frontend for image foto stacking with enfuse. In development, beta stage.
+GUI frontend for image foto stacking with enfuse. In active development, beta stage.
 
 Provides:
  - Image preprocessing with imagemagick to enhance contrast and sharpiness. 
@@ -37,10 +50,10 @@ Dependencies:
  - viewnior
  
 ## MacroFusion
-GUI for enfuse. See https://github.com/mviereck/macrofusion
+GUI for enfuse. Fork with some bug fixes: https://github.com/mviereck/macrofusion
 
 ## camcfg
-`dialog` frontend for `gphoto2` camera configuration. Reads possible configurations of a camera and provides a dialog in terminal to choose desired settings.
+`dialog` frontend for `gphoto2` camera configuration. Reads possible configurations of a camera and provides a dialog in terminal to choose desired settings. Beta stage, already useable.
  - `camcfg` shows all available configurations.
  - `camcfg ENTRY` shows configuration of entry ENTRY. Example: `camcfg iso`
  
@@ -49,7 +62,7 @@ Dependencies:
  - gphoto2
  
 ## ardustack
-GUI for foto stacking with a stepper motor controlled by an arduino and a camera connected on USB. Successor of `arduterm`. Beta stage, under heavy development.
+GUI for foto stacking with a stepper motor controlled by an arduino and a camera connected on USB. Successor of `arduterm`. Beta stage, in active development.
 
 Dependencies:
  - ffmpeg
@@ -64,7 +77,7 @@ Designed for my microscope with a mounted camera and a steppermotor at the focus
 It can show preview videos and make stackshots with tethered shooting and focus adjustment with stepper motor.
 `pololu_a4988.ino` is the code in use to control the stepper motor driver with an Arduino.
 
-Useable, but in beta stage. Currently not recommended for production use. Would need custom adjustment of either `pololu_a4988.ino` or respective the arduino commands in script.
+In beta stage, currently no development. Not recommended yet, rather use [ardustack](#ardustack). Would need custom adjustment of either `pololu_a4988.ino` or respective the arduino commands in script.
 
 Dependencies:
  - bc

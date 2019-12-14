@@ -70,7 +70,7 @@ showmessages() {
 }
 
 shortpath() {
-  LC_ALL=C sed "s!$Wizardhome!.!g" <<< "${1:-}"
+  LC_ALL=C sed "s!$Projecthome!.!g" <<< "${1:-}"
 #  echo "${1:-}"
 }
 
@@ -248,8 +248,9 @@ setup_workdir() {
     return 1
   }
   
-  Projectname="${Targetdir#$Wizardhome/}" ### FIXME
+  Projectname="${Targetdir#$Projecthome/}" ### FIXME
   [ "$Projectname" = "$(basename "$Targetdir")" ] && Projectname="np" || Projectname="$(cut -d/ -f1 <<< "$Projectname")"
+  [ -z "$Projectname" ] && Projectname="np"
   
   [ -d "$Targetdir/stackshot" ]          && Targetstackshotdir="$Targetdir/stackshot" || Targetstackshotdir="$Targetdir"
   [ -d "$Targetdir/stackshot-median" ]   && Targetstackshotdir="$Targetdir/stackshot-median"
@@ -632,6 +633,7 @@ getfunctionsettings() {
 }
 
 runbatch1() {
+  local Function Functionmode Functionoption
   askkaptain crop > /dev/null && {
     Function="crop"
     getfunctionsettings
@@ -641,7 +643,7 @@ runbatch1() {
 }
 
 runbatch2() {
-  local Functionmode Functionoption
+  local Function Functionmode Functionoption
   local Iterate
   for Function in whitebalance align_ais align_hugin align_vidstab1 align_vidstab2 align_vidstab3 ; do
     askkaptain $Function > /dev/null && {
@@ -1197,13 +1199,6 @@ evaluate() {
 
 fuse() {
   # fuse stackshot of images with enfuse
-  # Usage:
-  #   fuse [-m Fusemode] Sourceglob Destinationfile
-  # Args:
-  # -m Fusemode         Parameter set to use. Default: 1
-  #    Sourceglob       Path[+glob] to image stack. Default: ./*
-  #    Destinationfile  Output file. Default: fuse??.tif
-  # setup_workdir() can help to set up Args.
   
   local $Batchlocal
   local Destinationfilebasename
@@ -1717,7 +1712,7 @@ start "fusewizard" -> frameset;
   dirframe:beside -> choosedirguibutton choosedirbutton choosedir opendirbutton refreshbutton;
     choosedirguibutton  -> @button="X" ;
     choosedirbutton     -> @button="Choose stackshot directory:" ;
-    choosedir           -> @string="'$Wizardhome'" ;
+    choosedir           -> @string="'$Projecthome'" ;
     opendirbutton       -> @button="Open in file manager";
     refreshbutton       -> @button="refresh" ;
     
@@ -2048,14 +2043,10 @@ parse_kaptainsignal() {
   Stackdir="$(storeinfo dump pwd)"
   
   case $Kaptainsignal in
+    refreshbutton) ;;
     cmdbreak) 
       storeinfo "cmdbreak=yes"
-      Cmdpid=$(storeinfo dump cmdpid)
-      #[ "$Cmdpid" ] && {
-      #  kill -s SIGINT $Cmdpid
-      #}
-      #sleep 1
-      #storeinfo drop cmdbreak
+      #Cmdpid=$(storeinfo dump cmdpid)
     ;;
     choosedirguibutton)
       worknote "Generating GUI"
@@ -2174,7 +2165,7 @@ choose_stackshot() {
   local Count Dircount Dir Image
   local FDin FDout
   
-  cd "$Wizardhome"
+  cd "$Projecthome"
   # generate empty X image for unfused stackshots
   Emptyimage=$Thumbnaildir/empty.png
   [ -e "$Emptyimage" ] || convert caption:X $Emptyimage
@@ -2690,8 +2681,8 @@ parse_cmd() {
 #### main
 
 declare_variables() {
-  Wizardhome="/home/lauscher/Bilder/ardustack"
-  Gallerydir="/home/lauscher/Gallery"
+  Projecthome="$HOME/Bilder/ardustack"
+  Gallerydir="$HOME/Gallery"
 
   Wizardcache="$HOME/.cache/fusewizard"
   Wizardlocalshare="$HOME/.local/share/fusewizard"
