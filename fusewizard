@@ -65,7 +65,10 @@ showmessages() {
   while read Line; do
     echo "$Line"
     echo "$Line" >> $Wizardmessagefile
-    sendkaptain 'wizardlog=`tail -n1 '$Wizardmessagefile'`'
+#    sendkaptain 'wizardlog=`tail -n1 '$Wizardmessagefile'`'
+    Line="${Line#note: }"
+    Line="${Line#@work: }"
+    sendkaptain "wizardlog='${Line}'"
   done <&${FDmessage}
 }
 
@@ -163,7 +166,7 @@ check_fileglob() {
 check_dirglob() {
   # check whether directories exist for glob $1
   [ -f "${1:-}" ] && return 1
-  [ -n "$(find ${1:-} -maxdepth 0 -type d -print -quit)" ]
+  [ -n "$(find ${1:-} -maxdepth 0 -type d -print -quit 2>/dev/null)" ]
 }
 
 fileglob() {
@@ -195,6 +198,54 @@ check_destinationfile() {
     return 1
   }
   return 0
+}
+
+check_stackdir() {
+  # Check $1 if it is a valid directory containing a subfolder stackshot
+  local Stackdir Newstackdir Stackdirvalid Projectname Projecthome
+  
+  Stackdir="$(storeinfo dump stackshotdir)"
+  Newstackdir="${1:-}"
+  Newstackdir="${Newstackdir:-$Stackdir}"
+  Newstackdir="${Newstackdir%/}"
+  
+  Projecthome="$(storeinfo dump projecthome)"
+  
+  [ -z "$Newstackdir" ]   && failure "No stackshot directory given." && return 1
+  [ ! -d "$Newstackdir" ] && failure "Not a directory: $Newstackdir" && return 1
+  
+  [ -d "$Newstackdir/stackshot" ] && Stackdirvalid="yes" || Stackdirvalid="no"
+
+  [ "$Stackdirvalid" = "no" ] && [ "${Newstackdir%/stackshot}" != "$Newstackdir" ] && {
+    Newstackdir="${Newstackdir%/stackshot}"
+    Stackdirvalid="yes"
+  }
+  
+  storeinfo "stackshotdir=$Newstackdir"
+  case "$Stackdirvalid" in
+    yes)
+      storeinfo "stackshotdir_valid=yes"
+      storeinfo "history=$Newstackdir/wizard.history"
+
+      grep -q "$Projecthome" <<< "$Newstackdir" && {
+        Projectname="${Newstackdir#$Projecthome/}"
+        Projectname="$(dirname "$Projectname")"
+        [ "$Projectname" = "$(basename "$Newstackdir")" ] && Projectname=""
+        [ "$Projectname" = "." ]                          && Projectname=""
+      }
+      [ "$Projectname" ] && storeinfo "projectdir=$Projecthome/$Projectname" || storeinfo drop projectdir
+      [ -z "$Projecthome" ] && Projectname="np"
+      [ -z "$Projectname" ] && Projectname="np"
+      storeinfo "projectname=$Projectname"
+      return 0
+    ;;
+    no)
+      storeinfo drop stackshotdir_valid
+      storeinfo drop history
+      storeinfo "projectname=np"
+      return 1
+    ;;
+  esac
 }
 
 setup_workdir() {
@@ -248,9 +299,7 @@ setup_workdir() {
     return 1
   }
   
-  Projectname="${Targetdir#$Projecthome/}" ### FIXME
-  [ "$Projectname" = "$(basename "$Targetdir")" ] && Projectname="np" || Projectname="$(cut -d/ -f1 <<< "$Projectname")"
-  [ -z "$Projectname" ] && Projectname="np"
+  Projectname="$(storeinfo dump projectname)"
   
   [ -d "$Targetdir/stackshot" ]          && Targetstackshotdir="$Targetdir/stackshot" || Targetstackshotdir="$Targetdir"
   [ -d "$Targetdir/stackshot-median" ]   && Targetstackshotdir="$Targetdir/stackshot-median"
@@ -279,6 +328,7 @@ setup_workdir() {
   # backup for undo, serving also as source for batch operations
   case $Function in
     undo*) ;;
+    evaluate*) ;;
     *)
       mkdir -p $Targetprevdir
       check_fileglob "$Targetnewdir/*" && mymv "$Targetnewdir/*" "$Targetprevdir/"
@@ -482,9 +532,10 @@ batch_function() {
   
   local $Batchlocal
   local Sourcedirchecklist Return=0
+  local Gallerydir
     
   parse_batchoptions "$@"  || return 1
-  storeinfo test pwd_valid || return 1
+  storeinfo test stackshotdir_valid || return 1
   
   checkvar -d batch Targetdir "$Targetdir" || return 1
   checkvar    batch Function  "$Function"  || return 1
@@ -533,7 +584,7 @@ batch_function() {
     compose|evaluate|fuse) Functionmode="all" ;;
   esac
   
-  note "Running: $Function $Functionmode $Functionoption: $(basename "$Sourcedir") -> $(basename "$Destinationdir")"
+  note "$Function $Functionmode $Functionoption"
   storeinfo "cmd=$@"
   storeinfo "cmd_source=$Sourcedir"
   storeinfo "cmd_destination=$Destinationdir"
@@ -548,20 +599,23 @@ batch_function() {
   storeinfo drop cmd_cache
   
   [ "$Return" = "0" ] && {
-    note "Ready: $Function $Functionmode $Functionoption: $(basename "$Sourcedir") -> $(basename "$Destinationdir")"
+    note "Ready: $Function $Functionmode $Functionoption"
   } || {
     failure "ERROR in $Function $Functionmode $Functionoption: $(basename "$Sourcedir") -> $(basename "$Destinationdir")"
     undo -s "$Sourcedir" -d "$Destinationdir" -c "$Cachedir"
   }
   
-  [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluate" ] && [ -d "$Destinationdir/../stackshot" ] && {
+  [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluate" ] && {
     ls $Destinationdir/*fuse.median* >/dev/null 2>&1 && {
-      # link fuse.median result into parent directory
-      ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../"
-      # link into project dir
-      ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../../"
+      [ -d "$Destinationdir/../stackshot" ] && {
+        # link fuse.median result into parent directory
+        ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../"
+        # link into project dir
+        ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../../"
+      }
       # link fuse.median result into $Gallerydir directory
-      ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Gallerydir"
+      Gallerydir="$(storeinfo dump gallerydir)"
+      [ -d "$Gallerydir" ] && ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Gallerydir"
     }
   }
   
@@ -633,7 +687,8 @@ getfunctionsettings() {
 }
 
 runbatch1() {
-  local Function Functionmode Functionoption
+  local Function Functionmode Functionoption Stackdir
+  Stackdir="${1:-}"
   askkaptain crop > /dev/null && {
     Function="crop"
     getfunctionsettings
@@ -668,7 +723,7 @@ runbatch3() {
   cmd -f showimage -s "$Stackdir/evaluate" -g "*fuse.median*"
 }
 
-#### multiple image operations
+#### image sequence operations
 
 align_ais() {
   local $Batchlocal
@@ -801,15 +856,6 @@ align_vidstab() {
     Degree="$(awk  "BEGIN { print $Radians * 180 / 3.141592652}")"
         
     Destinationfile="$Rotatedir/rotate$Count.png"
-    #multicore "$Convert -size ${Imagewidth}x${Imageheight} xc:transparent -fill white -stroke white \
-    #           -draw 'translate $((Imagewidth/2)),$((Imageheight/2)) \
-    #                  rotate $Degree \
-    #                  polygon $(awk "BEGIN {print -$Imagewidth/2  +$Xoffset +1}"),$(awk "BEGIN {print -$Imageheight/2 +$Yoffset +1}") \
-    #                          $(awk "BEGIN {print +$Imagewidth/2  +$Xoffset -2}"),$(awk "BEGIN {print -$Imageheight/2 +$Yoffset +1}") \
-    #                          $(awk "BEGIN {print +$Imagewidth/2  +$Xoffset -2}"),$(awk "BEGIN {print +$Imageheight/2 +$Yoffset -2}") \
-    #                          $(awk "BEGIN {print -$Imagewidth/2  +$Xoffset +1}"),$(awk "BEGIN {print +$Imageheight/2 +$Yoffset -2}") \
-    #                          $(awk "BEGIN {print -$Imagewidth/2  +$Xoffset +1}"),$(awk "BEGIN {print -$Imageheight/2 +$Yoffset +1}") '\
-    #           $Image -evaluate-sequence min $Destinationfile" "$Destinationfile" || return 1
     multicore "$Convert -size ${Imagewidth}x${Imageheight} xc:transparent -fill white -stroke white \
                -draw 'translate $((Imagewidth/2)),$((Imageheight/2)) \
                       rotate $Degree \
@@ -854,7 +900,7 @@ align_vidstab() {
   done
   multicore_wait || return 1
             
-  showimage "$Rotateminimage.trim_hard.tif"
+  showimage "$Rotateminimage.trim_hard.png"
   return 0    
 }
 
@@ -1489,7 +1535,7 @@ wizard() {
     brightness) Functionoption="10x10" ;;
     contrast)   Functionoption="3x50%" ;;
     gamma)      Functionoption="auto" ;;
-    kuwahara)   Functionoption="1" ;;
+    kuwahara)   Functionoption="1.5" ;;
     level)      Functionoption="auto" ;;
     sharpen)    Functionoption="6x2" ;;
     stretch)    Functionoption="0%" ;;
@@ -1507,8 +1553,6 @@ wizard() {
     kuwahara)    Functionmode="-kuwahara" ;;
     sharpen)     Functionmode="-adaptive-sharpen" ;;
     stretch)     Functionmode="-contrast-stretch" ;;
-#    prepare)     Function="-sigmoidal-contrast 3x50% -kuwahara 0.5 -adaptive-sharpen 6x2" ; Functionoption="" ;;
-    prepare)     Functionmode="-auto-gamma -auto-level -sigmoidal-contrast 3x50% -kuwahara 0.5 -adaptive-sharpen 6x2" ; Functionoption="" ;;
     wizard)      Functionmode="" ;;
   esac
   
@@ -1667,7 +1711,7 @@ $Permillebottom" | sort -n | head -n1)
       Loopcount=$((Loopcount+1))
       [ "$Loopcount" = "10" ] && {
         Loopcount=0
-        convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity south -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
+        convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
         showimage $Cropgeometryimage
         eval "$Addcommand"
       }
@@ -1676,7 +1720,7 @@ $Permillebottom" | sort -n | head -n1)
 
   # show result
   showpercent 100 100
-  convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity south -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
+  convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
   showimage $Cropgeometryimage
   
   # Output of result
@@ -1685,6 +1729,83 @@ $Permillebottom" | sort -n | head -n1)
   echo "$Cropgeometry"
 
   return ${Return:-0}
+}
+
+#### run commands on all CPUs
+
+multicore() {
+  # Run multiple processes in parallel, but not more than $Wizardthreads
+  # $1 Command
+  # $2 Image to show if $1 is finished
+  # Run multicore_wait afterwards to wait for the last processes to finish.
+  
+  local Process
+    
+  [ "$Multicoreprocesscount" = $Wizardthreads ] && {
+    for Process in $(seq $Wizardthreads); do
+      [ "${Multicoreprocess[$Process]}" ] && {
+        multicore_waitprocess "${Multicoreprocess[$Process]}" || {
+          multicore_break
+          return 1
+        }
+        [ "${Multicoreimage[$Process]}" ] && showimage "${Multicoreimage[$Process]}"
+      }
+      Multicoreprocess[$Process]=""
+      Multicoreimage[$Process]=""
+    done
+    Multicoreprocesscount=0
+  }
+  
+  ifcmdbreak && {
+    multicore_break
+    return 1
+  }
+        
+  Multicoreprocesscount=$((Multicoreprocesscount +1))
+
+  #echo "${1:-} "
+  eval "${1:-} &"
+  
+  Multicoreprocess[Multicoreprocesscount]=$!
+  Multicoreimage[Multicoreprocesscount]="${2:-}"
+  
+  return 0
+}
+
+multicore_wait() {
+  local Process
+  for Process in $(seq $Wizardthreads); do
+    [ "${Multicoreprocess[$Process]}" ] && {
+      multicore_waitprocess "${Multicoreprocess[$Process]}" || {
+        multicore_break
+        return 1
+      }
+      [ "${Multicoreimage[$Process]}" ] && showimage "${Multicoreimage[$Process]}"
+    }
+    Multicoreprocess[$Process]=""
+    Multicoreimage[$Process]=""
+  done
+  Multicoreprocesscount=0
+  return 0
+}
+
+multicore_waitprocess() {
+  while sleep 0.05 ; do
+    ps -p "${1:-}" >/dev/null || break
+    ifcmdbreak && return 1
+  done
+  wait "${1:-}"
+  return $?
+}
+
+multicore_break() {
+  local Process
+  for Process in $(seq $Wizardthreads); do
+    [ "${Multicoreprocess[$Process]}" ] && {
+      kill "${Multicoreprocess[$Process]}"
+      wait "${Multicoreprocess[$Process]}"
+    }
+  done
 }
 
 #### GUI
@@ -1696,40 +1817,35 @@ start "fusewizard" -> frameset;
   frameset -> topframe bottomframe;
     topframe:beside   -> topleftframe ;
       topleftframe:framed   -> batchoptionframe topleftbottomframe ;
-      toprightframe:framed  -> showimageframe ;
     bottomframe     -> statusframe ;
-  
-  showimageframe -> showimage showimagename ;
-    showimage           -> @icon;
-    showimagename       -> @text;
     
   batchoptionframe:beside            -> batchframeleft  batchframeright;
     batchframeleft:framed              -> batchblock1 batchblock2 specialframe;
-    batchframeright:framed             -> batchblock3 runbatchframe showresultframe;
+    batchframeright:framed             -> batchblock3 runbatchframe showresultframe deleteframe;
     
-  topleftbottomframe -> dirframe deleteframe ;
+  topleftbottomframe -> dirframe  ;
     
-  dirframe:beside -> choosedirguibutton choosedirbutton choosedir opendirbutton refreshbutton;
-    choosedirguibutton  -> @button="X" ;
-    choosedirbutton     -> @button="Choose stackshot directory:" ;
-    choosedir           -> @string="'$Projecthome'" ;
-    opendirbutton       -> @button="Open in file manager";
-    refreshbutton       -> @button="refresh" ;
+  dirframe:beside -> choosedirbutton choosedirguibutton choosedir refreshbutton ;
+    choosedirguibutton -> @button="X" ;
+    choosedirbutton    -> @button="Stackshot dir:" ;
+    choosedir          -> @string="'$Projecthome'" ;
+    refreshbutton      -> @button="refresh" ;
+
     
-  deleteframe -> deletedir;
-    deletedir:beside "Delete intermediate results" -> deletecache deleteevaluate deletecompose deletefuse deletemagick deleteall;
-      deletecache       -> @button="-" ;
-      deletemagick      -> @button="-" ;
-      deletecompose     -> @button="-" ;
-      deleteevaluate    -> @button="-" ;
-      deletefuse        -> @button="-" ;
-      deleteall         -> @button="Delete all";
+  deleteframe "Delete intermediate results" -> deleteline1 deleteline2;
+    deleteline1:beside -> deleteall deletemagick deletecache ;
+    deleteline2:beside -> deletefuse deletecompose deleteevaluate ;
+      deletecache        -> @button="-" ;
+      deletemagick       -> @button="-" ;
+      deletecompose      -> @button="-" ;
+      deleteevaluate     -> @button="-" ;
+      deletefuse         -> @button="-" ;
+      deleteall          -> @button="Delete all";
     
-  statusframe -> wizardstatusline wizardlog wizardlog;
-    wizardstatusline:beside -> cmdpercent cmdbreak ;
+  statusframe -> wizardstatusline ;
+    wizardstatusline:beside -> cmdpercent wizardlog;
       cmdpercent        -> @icon ;
-      cmdbreak          -> @button="break" ;
-    wizardlog           -> @text="" ;
+      wizardlog         -> @text="" ;
       
     
       batchblock1 "batch block 1: prepare stackshot images in directory magick" -> cropline @text="convert options" contrastline sharpenline kuwaharaline brightnessline gammaline levelline stretchline wizardline applyallline;
@@ -1752,13 +1868,13 @@ start "fusewizard" -> frameset;
           contrastfuse                                          -> @button="fuse" ;
           contrast:beside             "sigmoidal-contrast"      -> contrastcombo | "";
         kuwaharaline:beside                                   -> kuwahara kuwaharamagick kuwaharafuse kuwaharaevaluate;
-          kuwaharacombo                                         -> @combow("1.0","1.5","2.0","2.5","3.0","4.0","5.0")="1" ;
+          kuwaharacombo                                         -> @combow("1.2","1.5","2.0","2.5","3.0","4.0","5.0")="1.5" ;
           kuwaharamagick                                        -> @button="magick" ;
           kuwaharaevaluate                                      -> @button="evaluate" ;
           kuwaharafuse                                          -> @button="fuse" ;
           kuwahara:beside             "kuwahara"                -> kuwaharacombo | ! "";
         sharpenline:beside                                    -> sharpen sharpenmagick sharpenfuse sharpenevaluate;
-          sharpencombo                                          -> @combow("3x1","6x2","8x4")="6x2" ;
+          sharpencombo                                          -> @combow("3x1","6x2","6x4","8x4")="6x4" ;
           sharpenmagick                                         -> @button="magick" ;
           sharpenevaluate                                       -> @button="evaluate" ;
           sharpenfuse                                           -> @button="fuse" ;
@@ -1795,7 +1911,7 @@ start "fusewizard" -> frameset;
           meanbalancefuse                                      -> @button="fuse" ;
           meanbalance:beside         "meanbalance"            ->  "on"  | "";
         whitebalanceline:beside                               -> whitebalance whitebalancemodecombo whitebalancecombo whitebalancemagick whitebalancefuse whitebalanceevaluate;
-          whitebalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="interactive" ;
+          whitebalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
           whitebalancecombo                                     -> @combow("mean","#777777","#888888","#999988","#999999","#AAAA99","#AAAAAA","#BBBBAA","#BBBBBB","#CCCCBB","#CCCCCC","#DDDDCC","#DDDDDD","#EEEEEE","#FFFFFF")="#CCCCCC" ;
           whitebalancemagick                                    -> @button="magick" ;
           whitebalanceevaluate                                  -> @button="evaluate" ;
@@ -1837,14 +1953,17 @@ start "fusewizard" -> frameset;
           evaluatefuse                                          -> @button="fuse" ;
           evaluate:beside             "evaluate"                -> "on" | "";
         sharpen_evaluate:beside       "sharpen 3x1"             -> @button="evaluate" "on" | "";
-        kuwahara_evaluate:beside      "kuwahara 1.0"            -> @button="evaluate" "on" | ! "";
+        kuwahara_evaluate:beside      "kuwahara 1.5"            -> @button="evaluate" "on" | ! "";
         compose:beside                "compose"                 -> @button="evaluate" "on" | "";
 
-      runbatchframe "Batch processing" -> runbatch1 runbatch2 runbatch3 runbatchprocessing;
-        runbatch1:beside              "batch block 1"           -> "batchblock1" | "" @button="run";
-        runbatch2:beside              "batch block 2"           -> "batchblock2" | "" @button="run";
-        runbatch3:beside              "batch block 3"           -> "batchblock3" | "" @button="run";
-        runbatchprocessing                                      -> @button="Run batch";
+      runbatchframe "Batch processing" -> batchblockline batchallline;
+        batchblockline -> runbatch1 runbatch2 runbatch3;
+          runbatch1:beside            "batch block 1"           -> "batchblock1" | "" @button="run";
+          runbatch2:beside            "batch block 2"           -> "batchblock2" | "" @button="run";
+          runbatch3:beside            "batch block 3"           -> "batchblock3" | "" @button="run";
+        batchallline:beside -> runbatchprocessing cmdbreak ;
+          runbatchprocessing                                    -> @button="Run selected batch blocks";
+          cmdbreak                                              -> @button="break" ;
         
       specialframe "Special operations" -> rulerline undoline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
@@ -1860,28 +1979,29 @@ start "fusewizard" -> frameset;
           undofuse                                              -> @button="fuse" ;
           undo                        "undo last step"          -> "" ;
           
-      showresultframe "Show results" -> showimagebuttons showresultline @fill killviewnior;
-        showimagebuttons:beside  -> showimageeval showimagefuse ;
-          showimageeval            -> show_magick_max show_magick_mean show_magick_median show_magick_min ;
-            show_magick_max          -> @button="magick.max";
-            show_magick_mean         -> @button="magick.mean";
-            show_magick_median       -> @button="magick.median";
-            show_magick_min          -> @button="magick.min";
-          showimagefuse            -> show_fuse_max   show_fuse_mean   show_fuse_median   show_fuse_min ;
-            show_fuse_max            -> @button="fuse.max";
-            show_fuse_mean           -> @button="fuse.mean";
-            show_fuse_median         -> @button="fuse.median";
-            show_fuse_min            -> @button="fuse.min";
-      
-          showresultline           -> @text="Directories" showresultline1 showresultline2 ;
-            showresultline1:beside   -> showstackshot showmagick ;
-              showstackshot            -> @button="stackshot";
-              showmagick               -> @button="magick";
-            showresultline2:beside   -> showfuse showcompose showevaluate;
-              showfuse                 -> @button="fuse";
-              showcompose              -> @button="compose";
-              showevaluate             -> @button="evaluate";
-        killviewnior:beside          -> @fill @action("killall viewnior")="killall viewnior" @fill;
+      showresultframe "Show results" -> showimagebuttons showresultline @fill showresultbottomline;
+        showimagebuttons:beside    -> showimageeval showimagefuse ;
+          showimageeval              -> show_magick_max show_magick_mean show_magick_median show_magick_min ;
+            show_magick_max            -> @button="magick.max";
+            show_magick_mean           -> @button="magick.mean";
+            show_magick_median         -> @button="magick.median";
+            show_magick_min            -> @button="magick.min";
+          showimagefuse              -> show_fuse_max   show_fuse_mean   show_fuse_median   show_fuse_min ;
+            show_fuse_max              -> @button="fuse.max";
+            show_fuse_mean             -> @button="fuse.mean";
+            show_fuse_median           -> @button="fuse.median";
+            show_fuse_min              -> @button="fuse.min";
+          showresultline             -> @text="Directories" showresultline1 showresultline2 ;
+            showresultline1:beside     -> showstackshot showmagick ;
+              showstackshot              -> @button="stackshot";
+              showmagick                 -> @button="magick";
+            showresultline2:beside     -> showfuse showcompose showevaluate;
+              showfuse                   -> @button="fuse";
+              showcompose                -> @button="compose";
+              showevaluate               -> @button="evaluate";
+        showresultbottomline:beside  -> killviewnior opendirbutton;
+          killviewnior                 -> @action("killall viewnior")="killall viewnior";
+          opendirbutton       -> @button="Open in file manager";
 '
 }
 
@@ -1903,30 +2023,56 @@ askkaptain() {
 }
 
 kaptain_update() {
-  local Stackdir Pwdvalid Historyfile Cmdstatus
-  Stackdir="$(storeinfo dump pwd)"
+  local Stackdir Stackdirvalid Historyfile Cmdstatus
+  Stackdir="$(storeinfo dump stackshotdir)"
   
   # update working directory
   sendkaptain "choosedir='$Stackdir'"
     
-  [ -d "$Stackdir/stackshot" ] && Pwdvalid="yes" || Pwdvalid="no"
+  Stackdirvalid="$(storeinfo dump stackshotdir_valid)"
   
-  case $Pwdvalid in
-    yes)
-      storeinfo "pwd_valid=yes"
-      storeinfo "history=$Stackdir/wizard.history"
+  case $Stackdirvalid in
+    yes|*)
       # update delete buttons
-      [ -d "$Stackdir/magick" ]                       && sendkaptain "deletemagick='Delete magick'"         || sendkaptain "deletemagick='-'"
-      [ -d "$Stackdir/evaluate" ]                     && sendkaptain "deleteevaluate='Delete evaluate'"     || sendkaptain "deleteevaluate='-'"
-      [ -d "$Stackdir/compose" ]                      && sendkaptain "deletecompose='Delete compose'"       || sendkaptain "deletecompose='-'"
-      [ -d "$Stackdir/fuse" ]                         && sendkaptain "deletefuse='Delete fuse'"             || sendkaptain "deletefuse='-'"
-      check_dirglob "$Stackdir/*.bak $Stackdir/cache" && sendkaptain "deletecache='Delete cache + backups'" || sendkaptain "deletecache='-'"
+      [ -d "$Stackdir/magick" ]                       && sendkaptain "deletemagick='magick'"         || sendkaptain "deletemagick='-'"
+      [ -d "$Stackdir/evaluate" ]                     && sendkaptain "deleteevaluate='evaluate'"     || sendkaptain "deleteevaluate='-'"
+      [ -d "$Stackdir/compose" ]                      && sendkaptain "deletecompose='compose'"       || sendkaptain "deletecompose='-'"
+      [ -d "$Stackdir/fuse" ]                         && sendkaptain "deletefuse='fuse'"             || sendkaptain "deletefuse='-'"
+      check_dirglob "$Stackdir/*.bak $Stackdir/cache" && sendkaptain "deletecache='cache'"           || sendkaptain "deletecache='-'"
+      
+      [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"   || sendkaptain "showstackshot='-'"
+      [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"         || sendkaptain "showmagick='-'"
+      [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"     || sendkaptain "showevaluate='-'"
+      [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"       || sendkaptain "showcompose='-'"
+      [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"             || sendkaptain "showfuse='-'"
+      
+      check_fileglob "$Stackdir/evaluate/*.magick.*" && {
+        sendkaptain "show_magick_max='magick.max'" 
+        sendkaptain "show_magick_mean='magick.mean'" 
+        sendkaptain "show_magick_median='magick.median'" 
+        sendkaptain "show_magick_min='magick.min'" 
+      } || {
+        sendkaptain "show_magick_max='-'"
+        sendkaptain "show_magick_mean='-'"
+        sendkaptain "show_magick_median='-'"
+        sendkaptain "show_magick_min='-'"
+      }
+      
+      check_fileglob "$Stackdir/evaluate/*.fuse.*" && {
+        sendkaptain "show_fuse_max='fuse.max'" 
+        sendkaptain "show_fuse_mean='fuse.mean'" 
+        sendkaptain "show_fuse_median='fuse.median'" 
+        sendkaptain "show_fuse_min='fuse.min'" 
+      } || {
+        sendkaptain "show_fuse_max='-'"
+        sendkaptain "show_fuse_mean='-'"
+        sendkaptain "show_fuse_median='-'"
+        sendkaptain "show_fuse_min='-'"
+      }
 
     ;;
-    no)
-      storeinfo drop pwd_valid
+    no|"")
       failure "Directory does not contain ./stackshot: $Stackdir"
-      storeinfo drop history
       
       # update delete buttons
       sendkaptain "deletemagick='-'"
@@ -1934,6 +2080,16 @@ kaptain_update() {
       sendkaptain "deletecompose='-'"
       sendkaptain "deletefuse='-'"
       sendkaptain "deletecache='-'"
+      
+      sendkaptain "show_magick_max='-'"
+      sendkaptain "show_magick_mean='-'"
+      sendkaptain "show_magick_median='-'"
+      sendkaptain "show_magick_min='-'"
+      
+      sendkaptain "show_fuse_max='-'"
+      sendkaptain "show_fuse_mean='-'"
+      sendkaptain "show_fuse_median='-'"
+      sendkaptain "show_fuse_min='-'"
     ;;
   esac
   
@@ -1950,14 +2106,12 @@ kaptain_update_preview() {
   local Stackdir Currentimage Image Cachedir Imagelist Imagenumber
   
   # check if currently in valid dir, otherwise clear display
-  storeinfo test pwd_valid || {
-    #sendkaptain "showimage('')=x"
-    storeinfo drop preview_md5
+  storeinfo test stackshotdir_valid || {
     storeinfo drop showimage
     return 0
   }
   
-  Stackdir="$(storeinfo dump pwd)"
+  Stackdir="$(storeinfo dump stackshotdir)"
   
   # check if an image of current stackdir is shown
   Currentimage="$(storeinfo dump showimage)"
@@ -1972,9 +2126,6 @@ kaptain_update_preview() {
   
   Image="$(fileglob "$Stackdir/*fuse.median*" | head -n1)"
   [ -e "$Image" ] && showimage "$Image" && return 0
-
-  Cachedir="$(storeinfo dump cache)"
-  Image="$Cachedir/preview.jpg"
 
   Imagelist="$(fileglob "$Stackdir/magick/*")"
   [ "$Imagelist" ] &&{
@@ -1993,19 +2144,6 @@ kaptain_update_preview() {
   }
   
   return 1
-
-  ######### disabled
-  # Generate max from magick
-  check_fileglob "$Stackdir/magick/*" && {
-    convert "$Stackdir/magick/*" -evaluate-sequence max "$Image"
-    showimage "$Image"
-    return 0
-  }
-  
-  # Generate max from stackshot
-  convert "$Stackdir/stackshot/*" -evaluate-sequence max "$Image"
-  showimage "$Image"
-  return 0
 }
 
 showpercent() {
@@ -2026,50 +2164,44 @@ showpercent() {
   Percentimage="$Percentcachedir/$Percentimage"
 
   [ -e "$Percentimage" ] || case "$Part" in
-    idle)  convert -size 200x20 xc:transparent -fill black -pointsize 20 -draw "text 80,18 'idle'"   "$Percentimage" ;;
-    error) convert -size 200x20 xc:transparent -fill red   -pointsize 20 -draw "text 80,18 'ERROR'"  "$Percentimage" ;;
-    *)     convert -size 200x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 2)),20" -fill black -pointsize 20  -draw "text 80,18 '${Percent}%'" "$Percentimage" ;;
+    idle)  convert -size 100x20 xc:transparent -fill black -pointsize 20 -draw "text 40,18 'idle'"   "$Percentimage" ;;
+    error) convert -size 100x20 xc:transparent -fill red   -pointsize 20 -draw "text 40,18 'ERROR'"  "$Percentimage" ;;
+    *)     convert -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 2)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
   esac
   sendkaptain "cmdpercent('$Percentimage')=''"
 }
 
 parse_kaptainsignal() {
   local Kaptainsignal
-  local Command Argument Functionmode Functionoption Stackdir Newstackdir
+  local Command Argument Functionmode Functionoption Stackdir Newstackdir Projecthome
   local Image
   local Iterate
   
   Kaptainsignal="${1:-}"
-  Stackdir="$(storeinfo dump pwd)"
+  Stackdir="$(storeinfo dump stackshotdir)"
+  Projecthome="$(storeinfo dump projecthome)"
   
   case $Kaptainsignal in
-    refreshbutton) ;;
-    cmdbreak) 
+    refreshbutton) 
+      kaptain_update
+    ;;
+    cmdbreak)
+      worknote "Sending BREAK to current action"
       storeinfo "cmdbreak=yes"
-      #Cmdpid=$(storeinfo dump cmdpid)
     ;;
     choosedirguibutton)
       worknote "Generating GUI"
-      Newstackdir="$(choose_stackshot "$Stackdir")"
-      [ "$Newstackdir" ] && {
-        Stackdir="$Newstackdir"
-        storeinfo "pwd=$Stackdir"
-      }
+      Newstackdir="$(choose_stackshot "$Projecthome")"
+      check_stackdir "$Newstackdir"
       kaptain_update
     ;;
     choosedirbutton)
-      Newstackdir="$(kdialog --getexistingdirectory "$Stackdir")"
-      [ "$Newstackdir" ] && {
-        Stackdir="$Newstackdir" 
-        storeinfo "pwd=$Stackdir"
-      }
+      Newstackdir="$(kdialog --getexistingdirectory "${Stackdir:-$Projecthome}")"
+      check_stackdir "$Newstackdir"
       kaptain_update
     ;;
     opendirbutton)
-      thunar "$Stackdir" &
-    ;;
-    previewrefresh)
-      kaptain_update
+      thunar "${Stackdir:-$Projecthome}" &
     ;;
     delete*) 
       cmd -f $Kaptainsignal -t "$Stackdir"
@@ -2093,7 +2225,7 @@ parse_kaptainsignal() {
       cmd -f sharpenevaluate -o 3x1 -t "$Stackdir"
     ;;
     kuwahara_evaluate)
-      cmd -f kuwaharaevaluate -o 1.0 -t "$Stackdir"
+      cmd -f kuwaharaevaluate -o 1.5 -t "$Stackdir"
     ;;
     
     *magick|*compose|*evaluate|*fuse)
@@ -2132,21 +2264,21 @@ parse_kaptainsignal() {
     ;;
     
     runbatch1) 
-      runbatch1 
+      runbatch1 "$Stackdir"
       note "Batch 1 is ready."
     ;;
     runbatch2) 
-      runbatch2 
+      runbatch2 "$Stackdir"
       note "Batch 2 is ready."
     ;;
     runbatch3) 
-      runbatch3 
+      runbatch3 "$Stackdir"
       note "Batch 3 is ready."
     ;;
     runbatchprocessing)
-      askkaptain "runbatch1" >/dev/null && runbatch1
-      askkaptain "runbatch2" >/dev/null && runbatch2
-      askkaptain "runbatch3" >/dev/null && runbatch3
+      askkaptain "runbatch1" >/dev/null && runbatch1 "$Stackdir"
+      askkaptain "runbatch2" >/dev/null && runbatch2 "$Stackdir"
+      askkaptain "runbatch3" >/dev/null && runbatch3 "$Stackdir"
       note "Batch all is ready."
     ;;
     *)
@@ -2161,11 +2293,14 @@ choose_stackshot() {
   # GUI to choose stackshot. Preview of median images. Sorted by project dirs.
   local Dirlist Imagelist
   local Allprojects Entrylist Projectimages Projectline
-  local Projectdir Oldprojectdir
+  local Projecthome Projectdir Oldprojectdir
   local Count Dircount Dir Image
   local FDin FDout
   
+  Projecthome="$(storeinfo dump projecthome)"
+  Projecthome="${1:-$Projecthome}"
   cd "$Projecthome"
+  
   # generate empty X image for unfused stackshots
   Emptyimage=$Thumbnaildir/empty.png
   [ -e "$Emptyimage" ] || convert caption:X $Emptyimage
@@ -2491,83 +2626,6 @@ start 'Choose geometry' -> frameset ;
   return 1
 }
 
-#### run commands on all CPUs
-
-multicore() {
-  # Run multiple processes in parallel, but not more than $Wizardthreads
-  # $1 Command
-  # $2 Image to show if $1 is finished
-  # Run multicore_wait afterwards to wait for the last processes to finish.
-  
-  local Process
-    
-  [ "$Multicoreprocesscount" = $Wizardthreads ] && {
-    for Process in $(seq $Wizardthreads); do
-      [ "${Multicoreprocess[$Process]}" ] && {
-        multicore_waitprocess "${Multicoreprocess[$Process]}" || {
-          multicore_break
-          return 1
-        }
-        [ "${Multicoreimage[$Process]}" ] && showimage "${Multicoreimage[$Process]}"
-      }
-      Multicoreprocess[$Process]=""
-      Multicoreimage[$Process]=""
-    done
-    Multicoreprocesscount=0
-  }
-  
-  ifcmdbreak && {
-    multicore_break
-    return 1
-  }
-        
-  Multicoreprocesscount=$((Multicoreprocesscount +1))
-
-  #echo "${1:-} "
-  eval "${1:-} &"
-  
-  Multicoreprocess[Multicoreprocesscount]=$!
-  Multicoreimage[Multicoreprocesscount]="${2:-}"
-  
-  return 0
-}
-
-multicore_wait() {
-  local Process
-  for Process in $(seq $Wizardthreads); do
-    [ "${Multicoreprocess[$Process]}" ] && {
-      multicore_waitprocess "${Multicoreprocess[$Process]}" || {
-        multicore_break
-        return 1
-      }
-      [ "${Multicoreimage[$Process]}" ] && showimage "${Multicoreimage[$Process]}"
-    }
-    Multicoreprocess[$Process]=""
-    Multicoreimage[$Process]=""
-  done
-  Multicoreprocesscount=0
-  return 0
-}
-
-multicore_waitprocess() {
-  while sleep 0.05 ; do
-    ps -p "${1:-}" >/dev/null || break
-    ifcmdbreak && return 1
-  done
-  wait "${1:-}"
-  return $?
-}
-
-multicore_break() {
-  local Process
-  for Process in $(seq $Wizardthreads); do
-    [ "${Multicoreprocess[$Process]}" ] && {
-      kill "${Multicoreprocess[$Process]}"
-      wait "${Multicoreprocess[$Process]}"
-    }
-  done
-}
-
 #### headquarter
 
 cmd() {
@@ -2671,7 +2729,7 @@ parse_cmd() {
 
   case $Return in
     0) 
-      echo "$Commandline" >> "$Historyfile"
+      [ "$Historyfile" ] && echo "$Commandline" >> "$Historyfile"
       return 0
     ;;
     *) return ${Return:-1} ;;
@@ -2721,7 +2779,8 @@ declare_variables() {
     
   Historyfile=""
   
-  Imgruler="$(dirname $0)/imgruler"
+  Imgruler="$(command -v imgruler)"
+  [ -z "$Imgruler" ] && Imgruler="$(dirname $0)/imgruler"
 }
 
 create_cachefiles() {
@@ -2763,6 +2822,9 @@ main() {
   declare_variables
   create_cachefiles
   storeinfo "cache=$Wizardcache"
+  storeinfo "projecthome=$Projecthome"
+  storeinfo "stackshotdir=$Projecthome"
+  storeinfo "gallerydir=$Gallerydir"
   
   # start kaptain
   kaptaingrammar > $Kaptaingrammar
@@ -2781,6 +2843,7 @@ main() {
   echo $! >> $Storepidfile
   
   storeinfo "status=idle"
+  kaptain_update
 
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
@@ -2791,11 +2854,10 @@ main() {
       grep -q ":off"     <<< "$Kaptainsignal" && Kaptainsignal=""
       grep -q ":pressed" <<< "$Kaptainsignal" && {
         Stackdir="$(askkaptain choosedir)"
-        [ "$Stackdir" != "$Oldstackdir" ] && {
-          storeinfo "pwd=$Stackdir"
+        [ "$Stackdir" != "$(storeinfo dump stackshotdir)" ] && {
+          check_stackdir "$Stackdir"
           kaptain_update
         }
-        Oldstackdir="$Stackdir"
       }
       Kaptainsignal="${Kaptainsignal%:pressed}"
     }

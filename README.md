@@ -62,7 +62,9 @@ Dependencies:
  - gphoto2
  
 ## ardustack
-GUI for foto stacking with a stepper motor controlled by an arduino and a camera connected on USB. Successor of `arduterm`. Beta stage, in active development.
+GUI for foto stacking with a stepper motor controlled by an Arduino and a camera connected on USB. Successor of `arduterm`. Beta stage, in active development.
+It can show preview videos and make stackshots with tethered shooting and focus adjustment with stepper motor.
+`pololu_a4988.ino` is the code in use to control the stepper motor driver with an Arduino.
 
 Dependencies:
  - ffmpeg
