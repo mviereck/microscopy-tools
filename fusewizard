@@ -22,6 +22,12 @@ error() {
   echo "ERROR: $(shortpath "$*")"   >> $Wizardmessagefifo
 }
 
+historyentry() {
+  local Historyfile
+  Historyfile="$(storeinfo dump history)"
+  [ "$Historyfile" ] && echo "$*" >> "$Historyfile"
+}
+
 storeinfo() {
   # store and provide pieces of information
   # replace entry if codeword is already present
@@ -474,12 +480,12 @@ showimagediff() {
 
 showimage_gui() {
 
-  local Kaptaingrammar Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal
+  local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal
   local Image
   
   Image="$Wizardcache/showimage.tif"
   
-  Kaptaingrammar="$Cachedir/crop.kaptain.grammar"
+  Kaptaingrammarfile="$Cachedir/crop.kaptain.grammar"
   Kaptainstdinfifo="$Cachedir/crop.kaptain.stdin"
   Kaptainstdoutfifo="$Cachedir/crop.kaptain.stdout"
   mkfifo   $Kaptainstdinfifo
@@ -500,8 +506,8 @@ start 'View image stack' -> image directoryline resultline;
     fusemean      -> @button='fuse.median';
     fusemin       -> @button='fuse.median';
     fusemax       -> @button='fuse.median';
-" >> "$Kaptaingrammar"
-  kaptain --stdio "$Kaptaingrammar" <&${FDin} >&${FDout} & Kaptainpid=$!
+" >> "$Kaptaingrammarfile"
+  kaptain --stdio "$Kaptaingrammarfile" <&${FDin} >&${FDout} & Kaptainpid=$!
 
   while ps -p $Kaptainpid >/dev/null; do
     [ "$Refresh" = "yes" ] && {
@@ -1058,7 +1064,7 @@ whitebalance() {
   Refgreen="$(convert $Referencecolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
   Refblue="$(convert  $Referencecolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
 
-#  echo "# whitebalance geometry: $Cropgeometry" >> "$Historyfile"
+  historyentry "# whitebalance geometry: $Cropgeometry"
 
   Count=0
   for Image in $Imagelist; do
@@ -1204,7 +1210,7 @@ crop() {
   multicore_wait || return 1
   Imagelist="$(fileglob "$Rotatedir/*")"
   
-  echo "# crop geometry: $Cropgeometry rotation: $Rotate" >> "$Historyfile"
+  historyentry "# crop geometry: $Cropgeometry rotation: $Rotate"
   return 0
 }
 
@@ -1812,42 +1818,25 @@ multicore_break() {
 
 kaptaingrammar() {
   echo '#! /usr/bin/kaptain
+
 start "fusewizard" -> frameset;
-
-  frameset -> topframe bottomframe;
-    topframe:beside   -> topleftframe ;
-      topleftframe:framed   -> batchoptionframe topleftbottomframe ;
-    bottomframe     -> statusframe ;
+  frameset:framed                    -> topframe bottomframe;
+    topframe                           -> batchoptionframe ;
+      batchoptionframe:beside            -> batchframeleft  batchframeright;
+        batchframeleft:framed              -> batchblock1 batchblock2 specialframe;
+        batchframeright:framed             -> batchblock3 runbatchframe showresultframe deleteframe;
+    bottomframe                        -> dirframe statusframe ;
     
-  batchoptionframe:beside            -> batchframeleft  batchframeright;
-    batchframeleft:framed              -> batchblock1 batchblock2 specialframe;
-    batchframeright:framed             -> batchblock3 runbatchframe showresultframe deleteframe;
+      dirframe:beside                    -> choosedirguibutton choosedir refreshbutton ;
+        choosedirguibutton                 -> @button="Stackshot directory:" ;
+        choosedir                          -> @directory="'$Projecthome'" ;
+        refreshbutton                      -> @button="refresh" ;
     
-  topleftbottomframe -> dirframe  ;
-    
-  dirframe:beside -> choosedirbutton choosedirguibutton choosedir refreshbutton ;
-    choosedirguibutton -> @button="X" ;
-    choosedirbutton    -> @button="Stackshot dir:" ;
-    choosedir          -> @string="'$Projecthome'" ;
-    refreshbutton      -> @button="refresh" ;
-
-    
-  deleteframe "Delete intermediate results" -> deleteline1 deleteline2;
-    deleteline1:beside -> deleteall deletemagick deletecache ;
-    deleteline2:beside -> deletefuse deletecompose deleteevaluate ;
-      deletecache        -> @button="-" ;
-      deletemagick       -> @button="-" ;
-      deletecompose      -> @button="-" ;
-      deleteevaluate     -> @button="-" ;
-      deletefuse         -> @button="-" ;
-      deleteall          -> @button="Delete all";
-    
-  statusframe -> wizardstatusline ;
-    wizardstatusline:beside -> cmdpercent wizardlog;
-      cmdpercent        -> @icon ;
-      wizardlog         -> @text="" ;
+      statusframe                        -> wizardstatusline ;
+        wizardstatusline:beside            -> cmdpercent wizardlog;
+          cmdpercent                         -> @icon ;
+          wizardlog                          -> @text="" ;
       
-    
       batchblock1 "batch block 1: prepare stackshot images in directory magick" -> cropline @text="convert options" contrastline sharpenline kuwaharaline brightnessline gammaline levelline stretchline wizardline applyallline;
         gammaline:beside                                      -> gamma gammamagick gammafuse gammaevaluate;
           gammacombo                                            -> @combow("auto","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
@@ -1991,17 +1980,27 @@ start "fusewizard" -> frameset;
             show_fuse_mean             -> @button="fuse.mean";
             show_fuse_median           -> @button="fuse.median";
             show_fuse_min              -> @button="fuse.min";
-          showresultline             -> @text="Directories" showresultline1 showresultline2 ;
-            showresultline1:beside     -> showstackshot showmagick ;
-              showstackshot              -> @button="stackshot";
-              showmagick                 -> @button="magick";
-            showresultline2:beside     -> showfuse showcompose showevaluate;
-              showfuse                   -> @button="fuse";
-              showcompose                -> @button="compose";
-              showevaluate               -> @button="evaluate";
+        showresultline             -> @text="Directories" showresultline1 showresultline2 ;
+          showresultline1:beside     -> showstackshot showmagick ;
+            showstackshot              -> @button="stackshot";
+            showmagick                 -> @button="magick";
+          showresultline2:beside     -> showfuse showcompose showevaluate;
+            showfuse                   -> @button="fuse";
+            showcompose                -> @button="compose";
+            showevaluate               -> @button="evaluate";
         showresultbottomline:beside  -> killviewnior opendirbutton;
           killviewnior                 -> @action("killall viewnior")="killall viewnior";
-          opendirbutton       -> @button="Open in file manager";
+          opendirbutton                -> @button="Open in file manager";
+    
+      deleteframe "Delete results" -> deleteline1 deleteline2;
+        deleteline1:beside -> deleteall deletemagick deletecache ;
+        deleteline2:beside -> deletefuse deletecompose deleteevaluate ;
+          deletecache        -> @button="cache" ;
+          deletemagick       -> @button="magick" ;
+          deletecompose      -> @button="compose" ;
+          deleteevaluate     -> @button="evaluate" ;
+          deletefuse         -> @button="fuse" ;
+          deleteall          -> @button="Delete all";
 '
 }
 
@@ -2023,75 +2022,48 @@ askkaptain() {
 }
 
 kaptain_update() {
-  local Stackdir Stackdirvalid Historyfile Cmdstatus
+  local Stackdir Cmdstatus
   Stackdir="$(storeinfo dump stackshotdir)"
   
   # update working directory
   sendkaptain "choosedir='$Stackdir'"
-    
-  Stackdirvalid="$(storeinfo dump stackshotdir_valid)"
   
-  case $Stackdirvalid in
-    yes|*)
-      # update delete buttons
-      [ -d "$Stackdir/magick" ]                       && sendkaptain "deletemagick='magick'"         || sendkaptain "deletemagick='-'"
-      [ -d "$Stackdir/evaluate" ]                     && sendkaptain "deleteevaluate='evaluate'"     || sendkaptain "deleteevaluate='-'"
-      [ -d "$Stackdir/compose" ]                      && sendkaptain "deletecompose='compose'"       || sendkaptain "deletecompose='-'"
-      [ -d "$Stackdir/fuse" ]                         && sendkaptain "deletefuse='fuse'"             || sendkaptain "deletefuse='-'"
-      check_dirglob "$Stackdir/*.bak $Stackdir/cache" && sendkaptain "deletecache='cache'"           || sendkaptain "deletecache='-'"
+  # update delete buttons
+  [ -d "$Stackdir/magick" ]                       && sendkaptain "deletemagick='magick'"         || sendkaptain "deletemagick='-'"
+  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "deleteevaluate='evaluate'"     || sendkaptain "deleteevaluate='-'"
+  [ -d "$Stackdir/compose" ]                      && sendkaptain "deletecompose='compose'"       || sendkaptain "deletecompose='-'"
+  [ -d "$Stackdir/fuse" ]                         && sendkaptain "deletefuse='fuse'"             || sendkaptain "deletefuse='-'"
+  check_dirglob "$Stackdir/*.bak $Stackdir/cache" && sendkaptain "deletecache='cache'"           || sendkaptain "deletecache='-'"
       
-      [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"   || sendkaptain "showstackshot='-'"
-      [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"         || sendkaptain "showmagick='-'"
-      [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"     || sendkaptain "showevaluate='-'"
-      [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"       || sendkaptain "showcompose='-'"
-      [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"             || sendkaptain "showfuse='-'"
+  [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"   || sendkaptain "showstackshot='-'"
+  [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"         || sendkaptain "showmagick='-'"
+  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"     || sendkaptain "showevaluate='-'"
+  [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"       || sendkaptain "showcompose='-'"
+  [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"             || sendkaptain "showfuse='-'"
       
-      check_fileglob "$Stackdir/evaluate/*.magick.*" && {
-        sendkaptain "show_magick_max='magick.max'" 
-        sendkaptain "show_magick_mean='magick.mean'" 
-        sendkaptain "show_magick_median='magick.median'" 
-        sendkaptain "show_magick_min='magick.min'" 
-      } || {
-        sendkaptain "show_magick_max='-'"
-        sendkaptain "show_magick_mean='-'"
-        sendkaptain "show_magick_median='-'"
-        sendkaptain "show_magick_min='-'"
-      }
+  check_fileglob "$Stackdir/evaluate/*.magick.*" && {
+    sendkaptain "show_magick_max='magick.max'" 
+    sendkaptain "show_magick_mean='magick.mean'" 
+    sendkaptain "show_magick_median='magick.median'" 
+    sendkaptain "show_magick_min='magick.min'" 
+  } || {
+    sendkaptain "show_magick_max='-'"
+    sendkaptain "show_magick_mean='-'"
+    sendkaptain "show_magick_median='-'"
+    sendkaptain "show_magick_min='-'"
+  }
       
-      check_fileglob "$Stackdir/evaluate/*.fuse.*" && {
-        sendkaptain "show_fuse_max='fuse.max'" 
-        sendkaptain "show_fuse_mean='fuse.mean'" 
-        sendkaptain "show_fuse_median='fuse.median'" 
-        sendkaptain "show_fuse_min='fuse.min'" 
-      } || {
-        sendkaptain "show_fuse_max='-'"
-        sendkaptain "show_fuse_mean='-'"
-        sendkaptain "show_fuse_median='-'"
-        sendkaptain "show_fuse_min='-'"
-      }
-
-    ;;
-    no|"")
-      failure "Directory does not contain ./stackshot: $Stackdir"
-      
-      # update delete buttons
-      sendkaptain "deletemagick='-'"
-      sendkaptain "deleteevaluate='-'"
-      sendkaptain "deletecompose='-'"
-      sendkaptain "deletefuse='-'"
-      sendkaptain "deletecache='-'"
-      
-      sendkaptain "show_magick_max='-'"
-      sendkaptain "show_magick_mean='-'"
-      sendkaptain "show_magick_median='-'"
-      sendkaptain "show_magick_min='-'"
-      
-      sendkaptain "show_fuse_max='-'"
-      sendkaptain "show_fuse_mean='-'"
-      sendkaptain "show_fuse_median='-'"
-      sendkaptain "show_fuse_min='-'"
-    ;;
-  esac
+  check_fileglob "$Stackdir/evaluate/*.fuse.*" && {
+    sendkaptain "show_fuse_max='fuse.max'" 
+    sendkaptain "show_fuse_mean='fuse.mean'" 
+    sendkaptain "show_fuse_median='fuse.median'" 
+    sendkaptain "show_fuse_min='fuse.min'" 
+  } || {
+    sendkaptain "show_fuse_max='-'"
+    sendkaptain "show_fuse_mean='-'"
+    sendkaptain "show_fuse_median='-'"
+    sendkaptain "show_fuse_min='-'"
+  }
   
   Cmdstatus="$(storeinfo dump status)"
   case $Cmdstatus in
@@ -2192,11 +2164,6 @@ parse_kaptainsignal() {
     choosedirguibutton)
       worknote "Generating GUI"
       Newstackdir="$(choose_stackshot "$Projecthome")"
-      check_stackdir "$Newstackdir"
-      kaptain_update
-    ;;
-    choosedirbutton)
-      Newstackdir="$(kdialog --getexistingdirectory "${Stackdir:-$Projecthome}")"
       check_stackdir "$Newstackdir"
       kaptain_update
     ;;
@@ -2436,7 +2403,7 @@ cropgeometry_interactive() {
   #   imagemagick
   #   kaptain (https://github.com/mviereck/kaptain)
 
-  local Kaptaingrammar Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
+  local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
   local Image Imagempc Imagewidth Imageheight
   local CropX CropY CropW CropH Cropgeometry
   local Rotate
@@ -2483,7 +2450,7 @@ cropgeometry_interactive() {
     CropH=$((Imageheight-1))
   }
   
-  Kaptaingrammar="$Cachedir/crop.kaptain.grammar"
+  Kaptaingrammarfile="$Cachedir/crop.kaptain.grammar"
   Kaptainstdinfifo="$Cachedir/crop.kaptain.stdin"
   Kaptainstdoutfifo="$Cachedir/crop.kaptain.stdout"
   mkfifo   $Kaptainstdinfifo
@@ -2536,8 +2503,8 @@ start 'Choose geometry' -> frameset ;
   buttonline:beside -> ok cancel ;
     ok                                     -> @button=' OK' ;
     cancel                                 -> @close='Cancel';
-" >> $Kaptaingrammar
-  kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+" >> $Kaptaingrammarfile
+  kaptain --stdio $Kaptaingrammarfile <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
 
   Refresh="yes"
   while ps -p $Kaptainpid >/dev/null; do
@@ -2636,7 +2603,7 @@ cmd() {
   for Arg in "$@"; do
     Command="$Command '$Arg'"
   done
-#  echo "$Command" >> $Commandstackfile
+#  echo "$Command" >> $Commandstackfifo
   echo "$Command" >&${FDcmd}
 }
 
@@ -2686,13 +2653,11 @@ stack_cmd() {
 
 parse_cmd() {
   local $Batchlocal
-  local Commandline Return= Historyfile=
+  local Commandline Return= 
 
   parse_batchoptions "$@" || return 1
   Commandline="$@"
-  
-  Historyfile="$(storeinfo dump history)"
-  
+    
   case "$Function" in
     deleteall)   myrm "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" ; Return=0 ;;
     deletecache) myrm "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
@@ -2729,7 +2694,7 @@ parse_cmd() {
 
   case $Return in
     0) 
-      [ "$Historyfile" ] && echo "$Commandline" >> "$Historyfile"
+      historyentry "$Commandline"
       return 0
     ;;
     *) return ${Return:-1} ;;
@@ -2747,8 +2712,8 @@ declare_variables() {
   Percentcachedir="$Wizardlocalshare/percent"
   Thumbnaildir="$Wizardlocalshare/thumbnails"
   
-#  Wizardthreads="$(nproc)"
-  Wizardthreads="3"
+  Wizardthreads="$(nproc)"
+#  Wizardthreads="3"
   Wizardthreads="${Wizardthreads:-1}"
   for i in $Wizardthreads; do
     Multicoreprocess[$i]=""
@@ -2759,15 +2724,15 @@ declare_variables() {
   Batchlocal="Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Functionmode Functionoption"
   Convert="convert -quality 100%"
 
-  Commandstackfile=$Wizardcache/commandstack
+  Commandstackfifo=$Wizardcache/commandstack
   
-  Wizardlogfile=$Wizardcache/wizard.log
-  Wizardlogfifo=$Wizardcache/wizard.log.fifo
+  Wizardlogfile=$Wizardcache/fusewizard.log
+  Wizardlogfifo=$Wizardcache/fusewizard.log.fifo
   
-  Wizardmessagefifo=$Wizardcache/wizard.message.fifo
-  Wizardmessagefile=$Wizardcache/wizard.message.log
+  Wizardmessagefile=$Wizardcache/fusewizard.message.log
+  Wizardmessagefifo=$Wizardcache/fusewizard.message.fifo
   
-  Kaptaingrammar=$Wizardcache/kaptain.grammar
+  Kaptaingrammarfile=$Wizardcache/kaptain.grammar
   Kaptainstdinfifo=$Wizardcache/kaptain.stdin 
   Kaptainstdoutfifo=$Wizardcache/kaptain.stdout
   Kaptainstdin=""
@@ -2775,10 +2740,7 @@ declare_variables() {
   
   Storeinfofile=$Wizardcache/store.info
   Storepidfile=$Wizardcache/store.pid
-  
     
-  Historyfile=""
-  
   Imgruler="$(command -v imgruler)"
   [ -z "$Imgruler" ] && Imgruler="$(dirname $0)/imgruler"
 }
@@ -2788,19 +2750,21 @@ create_cachefiles() {
   mkdir -p $Thumbnaildir
   mkdir -p $Percentcachedir
   
+  mkfifo   $Wizardlogfifo
+  :>       $Wizardlogfile
+
   mkfifo   $Kaptainstdinfifo
   exec  {Kaptainstdin}<>$Kaptainstdinfifo
   mkfifo   $Kaptainstdoutfifo
   exec  {Kaptainstdout}<>$Kaptainstdoutfifo
 
-  mkfifo   $Wizardlogfifo
-  
   mkfifo   $Wizardmessagefifo
   exec  {FDmessage}<>$Wizardmessagefifo
   :>       $Wizardmessagefile
   
-  mkfifo   $Commandstackfile
-  exec  {FDcmd}<>$Commandstackfile
+  mkfifo   $Commandstackfifo
+  exec  {FDcmd}<>$Commandstackfifo
+  
   :>       $Storeinfofile
   :>       $Storepidfile
 }
@@ -2816,6 +2780,7 @@ finish() {
 }
 
 main() {
+  local Kaptainpid Kaptainsignal
   trap finish EXIT
   
   # init
@@ -2825,31 +2790,27 @@ main() {
   storeinfo "projecthome=$Projecthome"
   storeinfo "stackshotdir=$Projecthome"
   storeinfo "gallerydir=$Gallerydir"
+  storeinfo "status=idle"
   
   # start kaptain
-  kaptaingrammar > $Kaptaingrammar
-  #nl -ba $Kaptaingrammar
-  kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  kaptaingrammar > $Kaptaingrammarfile
+  #nl -ba $Kaptaingrammarfile
+  kaptain --stdio $Kaptaingrammarfile <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
   echo $Kaptainpid >> $Storepidfile
   
-  showlog &
-  echo $! >> $Storepidfile
-  showmessages &
-  echo $! >> $Storepidfile
-  
+  # messages
+  showlog      & echo $! >> $Storepidfile
+  showmessages & echo $! >> $Storepidfile
   exec 1>$Wizardlogfifo 2>&1
+  stack_cmd    & echo $! >> $Storepidfile
   
-  stack_cmd &
-  echo $! >> $Storepidfile
-  
-  storeinfo "status=idle"
   kaptain_update
 
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
     read -t1 Kaptainsignal <&${Kaptainstdout}
     [ "$Kaptainsignal" ] && {
-      echo "Signal from kaptain: $Kaptainsignal"
+      #echo "Signal from kaptain: $Kaptainsignal"
       grep -q ":on"      <<< "$Kaptainsignal" && Kaptainsignal=""
       grep -q ":off"     <<< "$Kaptainsignal" && Kaptainsignal=""
       grep -q ":pressed" <<< "$Kaptainsignal" && {
@@ -3058,3 +3019,19 @@ align_ffmpeg_rotatemagick(){
     ;;
   esac
 }
+
+# ToDo:
+# general configuration:
+#  - cfg file
+#  - project directory
+#  - gallery directory
+# dependency check
+# cli support
+# documentation in all functions
+# Features:
+#  - choice of setting sets
+#  - checkbutton: "allow invalid directory structure"
+#  - moving max
+#  - stack video
+# Fix:
+#  - wrong failure-undo with magick -> evaluate, probably with other cross functions, too
