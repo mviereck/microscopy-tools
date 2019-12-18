@@ -459,7 +459,10 @@ showimage() {
       #sendkaptain "showimage('$Shrinkimage')=''" 
       #sendkaptain "showimagename='$(shortpath "$Image")'"
       #storeinfo   "showimage=$Image"
-      geeqie -t -r File:"$Image"
+      case "$(rev <<< "$Image" | cut -d. -f1)" in
+        fig|4pm) showvideo "$Image" ;;
+        *)       geeqie -t -r File:"$Image" ;;
+      esac
     ;;
 #    1) geeqie -t -r File:"$Imagelist" ;;
     *) viewnior           $Imagelist & ;;
@@ -467,7 +470,7 @@ showimage() {
 }
 
 showvideo() {
-  ffplay -loop 0 "${1:-}" & storepid $!
+  ffplay -window_title "$(basename "${1:-}")" -loglevel error -loop 0 "${1:-}" & storepid $!
 }
 
 showimagehalf() {
@@ -724,7 +727,7 @@ runbatch1() {
 runbatch2() {
   local Function Functionmode Functionoption
   local Iterate
-  for Function in whitebalance align_ais align_hugin align_vidstab1 align_vidstab2 align_vidstab3 ; do
+  for Function in whitebalance align_vidstab1 align_vidstab2 align_vidstab3 ; do
     askkaptain $Function > /dev/null && {
       getfunctionsettings
       Function="$(tr -c -d "a-z_" <<< "$Function")"  # remove 1 2 3 from align_vidstab
@@ -747,28 +750,6 @@ runbatch3() {
 }
 
 #### image sequence operations
-
-align_ais() {
-  local $Batchlocal
-  local Count Image Destinationfile Alignarray Return
-
-  parse_batchoptions "$@" || return 1
-
-  # -z? -s0? -m?
-  time align_image_stack -vv -l -d -i -x -y -s 0 -C --use-given-order -a "$Cachedir/align" $(fileglob "$Sourcedir/$Sourcefileglob") || return 1
-  Count="-1"
-  for Image in $(fileglob "$Cachedir/align*") ; do
-    Count=$((Count+1))
-    Alignarray[Count]="$Image"
-  done
-  Count="-1"
-  for Image in $(fileglob "$Sourcedir/$Sourcefileglob") ; do
-    Count=$((Count+1))
-    Destinationfile="$Destinationdir/$(basename "$Image")"
-    $Convert ${Alignarray[Count]} "$Destinationfile"
-    showimage "$Destinationfile"
-  done
-}
 
 align_vidstab() {
   local $Batchlocal
@@ -927,108 +908,6 @@ align_vidstab() {
   return 0    
 }
 
-align_hugin() {
-  # Align image stack with some panotools. Similar to align_image_stack
-  # Advantage: pto file with aligned control points can be reused for multiple similar stacks
-  # Usage:
-  #  align Sourceglob Destinationdir [Cachedir]
-  # Args:
-  #  Sourcedir         Path[+glob] to source image stack
-  #  Destinationdir    Path where to store aligned images
-  #  Cachedir          Cache folder will contain align.pto file with control points. Can be reused to skip control point calculation.
-  
-  local Ptofile
-  local Count Image Filearray Destinationfile
-  local Logfile
-  local Crop Cropx Cropy Cropsize
-  
-  
-  local $Batchlocal
-  local Imagewidth Imageheight
-
-  parse_batchoptions "$@" || return 1
-  
-  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
-  Ptofile="$Cachedir/align_PTO.pto"
-  
-  worknote "align_hugin: Aligning $Sourcedir/$Sourcefileglob"
-  
-  # Get image size. Assuming same size for all images.
-  Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
-  Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
-  
-  echo "########## pto_gen ##########"
-  worknote "align_hugin: Running pto_gen to create list of files"
-  cd "$Sourcedir"
-  pto_gen -o "$Ptofile.pto_gen.pto" -p 0 -f 40 --crop=0,${Imagewidth},0,${Imageheight} $Sourcefileglob || return 1
-  
-  sed -i '3 s/r:CROP//'                     "$Ptofile.pto_gen.pto"
-  sed -i '3 s/\bf[0-9]*\b/f0/'              "$Ptofile.pto_gen.pto"
-  sed -i "3 s/\bw[0-9]*\b/w${Imagewidth}/"  "$Ptofile.pto_gen.pto"
-  sed -i "3 s/\bh[0-9]*\b/h${Imageheight}/" "$Ptofile.pto_gen.pto"
-  sed -i "3 s/\bv[0-9]*\b/v40/"             "$Ptofile.pto_gen.pto"
-    
-#    pano_modify --projection=0 $Ptofile.pto_gen.pto
-#    pano_modify --canvas=${Imagewidth}x${Imageheight} $Ptofile.pto_gen.pto
-#    pano_modify --output-type=FUSEDSTACKS $Ptofile.pto_gen.pto
-
-  # find control points
-  echo "########## cpfind ##########"
-  worknote "align_hugin: Running cpfind to find control points for alignment. That will take a while."
-  cpfind -o "$Ptofile.cpfind.pto"  \
-        --fullscale \
-        --minmatches 4 \
-        --linearmatch \
-        --linearmatchlen 10 \
-        --ransacmode rpyv \
-        "$Ptofile.pto_gen.pto" || return 1
-#        --linearmatchlen $Count \
-
-  # clean up useless/wrong control points
-  echo "########## cpclean ##########"
-  worknote "align_hugin: Running cpclean to remove wrong control points"
-  cpclean -s -o "$Ptofile.cpclean.pto" --pairwise-checking "$Ptofile.cpfind.pto" || return 1
-
-#    pano_modify --crop=AUTO $Ptofile.cpclean.pto
-    
-  # calculate distortion of images to align control points
-  echo "########## autooptimiser ##########"
-  worknote "align_hugin: Running autooptimiser to transform control points into image distortion"
-  autooptimiser -p -o "$Ptofile" "$Ptofile.cpclean.pto" || return 1
-#    pano_modify --crop=AUTO $Ptofile
-    
-  # remove all pto files except the final one
-  rm $Ptofile.*.pto
-
-#  grep -q "Strange values may result!" < "$Logfile" && { ### FIXME
-#    failure "align did not find enough control points!
-#  Check out log file $Logfile
-#  Probably source images are distorted too much."
-#    return 1
-#  }
-
-  # distort images to align them
-  echo "########## nona ##########"
-  worknote "align_hugin: Running nona to transform images"
-  nona -o "$Cachedir/PTO_ALIGN" "$Ptofile" || return 1
-  
-  cd "$Destinationdir"
-  
-  # Crop images
-  worknote "align_hugin: Checking crop coordinates of common area of all aligned images"
-  evaluate -s "$Cachedir" -g "PTO_ALIGN*" -b "$Cachedir/align_PTO" -m "min" -o "tif"
-  Crop="$(trim_hard "$Cachedir/align_PTO.min.tif")"
-
-  Count=0
-  for Image in $(fileglob "$Cachedir/PTO_ALIGN*"); do
-    Count=$((Count +1))
-    Destinationfile="$(sed "${Count}q;d" <<< "$Imagelist")"
-    Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
-    $Convert -crop "$Crop" "$Image" "$Destinationfile"
-    showimage "$Destinationfile"
-  done
-}
-
 animatedgif() {
   # Generate animated GIF from stackshot.
   # Helps to visualize diferent layers and gives some 3D effect
@@ -1039,12 +918,14 @@ animatedgif() {
   # Staticlayer    Relative position of static layer that won't move. 0 means lowest layer, 1/2 means middle layer, 1 means top layer
   #
   local $Batchlocal
-  local Fusemode Distortion Delay Sequence
-  local Distortdir Distortimage Destinationfile Destinationfilebasename
+  local Fusemode Distortion Delay Sequence Staticlayer
+  local Distortdir Distortimage Destinationfile Destinationfilebasename Imagebasename
   local Imagewidth Imageheight Cropgeometry
   local Count Iteration Xpos Ypos
   local Image Imagelist
-  local Xpos Ypos Offset Distortion
+  local Xpos Ypos Offset Border 
+  local Position Positionlist Positioncount
+  local Sequence Sequence_circleleft Sequence_circleright Sequence_knot Sequence_smallknot
   
   parse_batchoptions "$@" || return 1
   
@@ -1052,6 +933,7 @@ animatedgif() {
   Distortion="${Functionoption:-10}"
   Delay="14"
   Staticlayer="1/5"
+  Raster="4"
   
   # Revert image list to work from bottom to top
   Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
@@ -1061,66 +943,120 @@ animatedgif() {
   # crop lost borders
   Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
   Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
-  Cropgeometry="$((Imagewidth - Distortion * 2 - 1))x$((Imageheight - Distortion * 2 - 1))+$Distortion+$Distortion"
+  Border="$((Distortion - Distortion * $Staticlayer))"  # wrong result if Staticlayer>1/2 ?
+  Cropgeometry="$((Imagewidth - Border * 2 - 1))x$((Imageheight - Border * 2 - 1))+$Border+$Border"
 
-  Destinationfile="${Destinationfile:-animated}"
-  Destinationfile="$Destinationdir/$Destinationfile.$Fusemode.$Distortion.gif"
+  Destinationfilebasename="${Destinationfile:-animated}"
   
   # offset factor, distortion between neighboured layers
-  Offset="$(awk "BEGIN {print $Distortion / $Imagenumber }")"
+  Offset="$(awk "BEGIN {print $Distortion / ( $Imagenumber * $Raster ) }")"
+  
+  # define flow of animation
+  # -3x-3 -3x-2 -3x-1  -3x0   -3x1  -3x2  -3x3
+  #
+  # -2x-3 -2x-2 -2x-1  -2x0   -2x1  -2x2  -2x3
+  #
+  # -1x-3 -1x-2 -1x-1  -1x0   -1x1  -1x2  -1x3
+  #
+  #  0x-3  0x-2  0x-1   0x0    0x1   0x2   0x3
+  #
+  #  1x-3  1x-2  1x-1   1x0    1x1   1x2   1x3
+  #
+  #  2x-3  2x-2  2x-1   2x0    2x1   2x2   2x3
+  #
+  #  3x-3  3x-2  3x-1   3x0    3x1   3x2   3x3
+  
+  Sequence_dagaz="dagaz
+             0x0  -1x1 -2x2 -3x3
+            -2x3  -1x3  0x3  1x3   2x3   3x3
+             2x2   1x1  0x0 -1x-1 -2x-2 -3x-3
+            -2x-3 -1x-3 0x-3 1x-3  2x-3  3x-3
+             2x-2  1x-1
+            "
+  Sequence_smallknot="knot_small
+            0x-1 -1x-1 -1x0  
+            0x0  1x0   1x1   0x1
+            0x0  0x-1  1x-1  1x0
+            0x0 -1x0  -1x1   0x1
+            "
+            
+  Sequence_knot="knot
+            0x0 -1x0 -2x0 -3x-1 -3x-2 -2x-3 -1x-3 0x-2 0x-1
+            0x0  0x1  0x2  1x3   2x3   3x2   3x1  2x0  1x0
+            0x0 -1x0 -2x0 -3x1  -3x2  -2x3  -1x3  0x2  0x1
+            0x0  0x-1 0x-2 1x-3  2x-3  3x-2  3x-1 2x0  1x0
+            "
+            
+  Sequence_circleleft="circle_left
+            -3x0 -3x1  -2x2  -1x3  0x3  1x3  2x2  3x1  3x0 3x-1 2x-2 1x-3 0x-3 -1x-3 -2x-2 -3x-1
+            "
+            
+  Sequence_circleright="circle_right
+            -3x0 -3x-1 -2x-2 -1x-3 0x-3 1x-3 2x-2 3x-1 3x0 3x1  2x2  1x3  0x3  -1x3  -2x2  -3x1
+            "
+            
+  for Position in $Sequence_dagaz $Sequence_smallknot $Sequence_knot $Sequence_circleleft $Sequence_circleright; do
+  echo $Position
+    Positionlist="$Positionlist
+$Position"
+  done
+  Positionlist="$(grep x <<< "$Positionlist")"
+  Positionlist="$(sort <<< "$Positionlist" | uniq)"
+  Positioncount="$(grep -c . <<< "$Positionlist")"
+  
+  echo "$Positionlist"
   
   # Distort images
   Iteration=0
-  for Xpos in -1 0 1; do
-    for Ypos in -1 0 1; do
-      worknote "animatedgif: Distorting images for position ${Xpos}x${Ypos}."
+  for Position in $Positionlist; do
+    Xpos="$(cut -dx -f1 <<< "$Position")"
+    Ypos="$(cut -dx -f2 <<< "$Position")"
+    worknote "animatedgif: Distorting images for position ${Xpos}x${Ypos}."
       
-      Distortdir="$Cachedir/distort.$Xpos.$Ypos"
+    Distortdir="$Cachedir/distort.$Position"
+    [ -d "$Distortdir" ] || {
       mkdir -p "$Distortdir"
       
       Count=-$((Imagenumber * $Staticlayer))  # negative start value causes movement of lowest layer
+      
       for Image in $Imagelist; do
         Count="$((Count +1))"
         Distortimage="$Distortdir/$(basename $Image)"
-        multicore "convert -roll +$(awk "BEGIN {print $Count * $Xpos * $Offset}")+$(awk "BEGIN {print $Count * $Ypos * $Offset}") $Image -crop $Cropgeometry $Distortimage" "$Distortimage"
+        multicore "convert -roll +$(awk "BEGIN {print $Count * $Xpos * $Offset}")+$(awk "BEGIN {print $Count * $Ypos * $Offset}") $Image -crop $Cropgeometry $Distortimage" "$Distortimage" || return 1
       done
-      
+
       Iteration=$((Iteration + 1))
-      showpercent $Iteration 20
-    done
+      showpercent $Iteration $((Positioncount*2 +5))
+    }
   done
-  multicore_wait
+  multicore_wait || return 1
   
   # fuse distorted images
-  for Xpos in -1 0 1; do
-    for Ypos in -1 0 1; do
-      Iteration=$((Iteration + 1))
-      Distortdir="$Cachedir/distort.$Xpos.$Ypos"
-      Destinationfilebasename="animate.$Xpos.$Ypos"
-      multicore "fuse -s $Distortdir -g '*' -d $Cachedir -b $Destinationfilebasename -m $Fusemode"      
-      showpercent $Iteration 20
+  for Position in $Positionlist; do
+    Iteration=$((Iteration + 1))
+    Distortdir="$Cachedir/distort.$Position"
+    Imagebasename="animate.$Position"
+    multicore "fuse -s $Distortdir -g '*' -d $Cachedir -b $Imagebasename -m $Fusemode" || return 1
+    showpercent $Iteration $((Positioncount*2 +5))
+  done
+  multicore_wait || return 1
+  
+  for Sequence in "$Sequence_dagaz" "$Sequence_smallknot" "$Sequence_knot" "$Sequence_circleleft" "$Sequence_circleright"; do
+    Iteration=$((Iteration + 1))
+    Sequencename="$(head -n1 <<< "$Sequence")"
+    Sequence="$(tail -n+2 <<< "$Sequence")"
+    Imagelist=""
+    for Position in $Sequence; do
+      Image="$(fileglob "$Cachedir/*.$Position.*")"
+      Imagelist="$Imagelist $Image"
     done
+    Destinationfile="$Destinationdir/$Destinationfilebasename.$Sequencename.$Fusemode.$Distortion.gif"
+
+    worknote "Generating $(basename $Destinationfile)."
+    multicore "convert -delay $Delay -loop 0 $Imagelist $Destinationfile" "$Destinationfile" || return 1
+    showpercent $Iteration $((Positioncount*2 +5))
   done
-  multicore_wait
-  
-  # define knot flow of animation
-  Sequence="0.0  0.-1  -1.-1  -1.0  
-            0.0  1.0   1.1    0.1
-            0.0  0.-1  1.-1   1.0
-            0.0  -1.0  -1.1   0.1"
-  Imagelist=""
-  for i in $Sequence; do
-    Image="$(fileglob "$Cachedir/*.$i.*")"
-    Imagelist="$Imagelist $Image"
-  done
-  
-  worknote "Generating $(basename $Destinationfile)."
-  set -x
-  convert -quality 100% -delay $Delay -loop 0 $Imagelist $Destinationfile
-  set +x
-  
-  showpercent 1 1
-  ffplay -loop 0 "$Destinationfile" & storepid $!
+  multicore_wait || return 1
 }
 
 compose() {
@@ -2003,7 +1939,7 @@ start "fusewizard" -> frameset;
           applyallfuse                                          -> @button="fuse" ;
           applyall:beside             "Apply all convert options"  -> "" ;
           
-      batchblock2 "batch block 2: post processing directory magick" -> meanbalanceline whitebalanceline align_aisline align_huginline align_vidstab1line align_vidstab2line align_vidstab3line ;
+      batchblock2 "batch block 2: post processing directory magick" -> meanbalanceline whitebalanceline align_vidstab1line align_vidstab2line align_vidstab3line ;
         meanbalanceline:beside                               -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
           meanbalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
           meanbalancemagick                                    -> @button="magick" ;
@@ -2024,12 +1960,6 @@ start "fusewizard" -> frameset;
           cropevaluate                                          -> @button="evaluate" ;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
-        align_aisline:beside                                  -> align_ais align_aisbutton ;
-          align_aisbutton                                       -> @button="magick" ;
-          align_ais:beside            "align with ais"          -> "on" | ! "";
-        align_huginline:beside                                -> align_hugin align_huginbutton ;
-          align_huginbutton                                     -> @button="magick" ;
-          align_hugin:beside          "align with hugin"        -> "on" | ! "";
         align_vidstab1line:beside                             -> align_vidstab1 align_vidstab1combo align_vidstab1button ;
           align_vidstab1modecombo:beside    "Shakiness:"        -> @combo("1","2","3","4","5","6","7","8","9","10")="10" ;
           align_vidstab1combo         "crop interactive"        -> "on" | "";
@@ -2073,7 +2003,7 @@ start "fusewizard" -> frameset;
           rulerfuse                                             -> @button="fuse" ;
           ruler:beside                "micrometer"              -> "" rulermodecombo rulercombo;
         animatedgifline:beside                                -> animatedgif animatedgifmagick;
-          animatedgifmodecombo:beside "Fuse mode:"              -> @combo("1","2","3");
+          animatedgifmodecombo:beside "Fuse mode:"              -> @combow("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20")="4";
           animatedgifcombo:beside     "Distortion:"             -> @combow("5","10","15","20","25","30","40","50")="25";
           animatedgifmagick                                     -> @button="magick" ;
           animatedgif:beside          "animated gif:"           -> "" animatedgifmodecombo animatedgifcombo @fill ;
@@ -2155,15 +2085,15 @@ kaptain_update() {
   [ -d "$Stackdir/video" ]                        && sendkaptain "deletevideo='video'"           || sendkaptain "deletevideo='-'"
   check_dirglob "$Stackdir/*.bak $Stackdir/cache" && sendkaptain "deletecache='cache'"           || sendkaptain "deletecache='-'"
       
-  [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"   || sendkaptain "showstackshot='-'"
-  [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"         || sendkaptain "showmagick='-'"
-  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"     || sendkaptain "showevaluate='-'"
-  [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"       || sendkaptain "showcompose='-'"
-  [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"             || sendkaptain "showfuse='-'"
+  [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"     || sendkaptain "showstackshot='-'"
+  [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"           || sendkaptain "showmagick='-'"
+  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"       || sendkaptain "showevaluate='-'"
+  [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"         || sendkaptain "showcompose='-'"
+  [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"               || sendkaptain "showfuse='-'"
   
   # animated gifs 
   for Line in $(fileglob "$Stackdir/video/*.gif"); do
-    Shortcut="$(rev <<< "$Line" | cut -d. -f1-3 | rev)"
+    Shortcut="$(rev <<< "$Line" | cut -d. -f1-4 | rev)"
     Comboline="$Comboline,'$Shortcut'"
   done
   Comboline="${Comboline#,}"
@@ -2354,12 +2284,6 @@ parse_kaptainsignal() {
       cmd -f "$Kaptainsignal" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
     ;;
     
-    align_aisbutton)
-      cmd -f align_ais -t "$Stackdir"
-    ;;
-    align_huginbutton)
-      cmd -f align_hugin -t "$Stackdir"
-    ;;
     align_vidstab?button)
       Iterate=$(echo $Kaptainsignal | tr -d -c "0-9")
       Functionmode="$(askkaptain "align_vidstab${Iterate}modecombo")"
@@ -2624,8 +2548,8 @@ start 'Choose geometry' -> frameset ;
       rotateapply       -> @button='apply';
       trim              -> @button='trim';
   stepsizeframe 'Step size' -> stepsize1 stepsize2;
-  stepsize1:beside  -> ss1 ss2 ss5 ss10 ;
-  stepsize2:beside  -> ss25 ss50 ss100 ss250;
+  stepsize1:beside  -> ss1  ss2   ss5   ss10  ss25 ;
+  stepsize2:beside  -> ss50 ss100 ss250 ss500 ss1000 ;
     ss1           -> @button='1';
     ss2           -> @button='2';
     ss5           -> @button='5';
@@ -2634,6 +2558,8 @@ start 'Choose geometry' -> frameset ;
     ss50          -> @button='50';
     ss100         -> @button='100';
     ss250         -> @button='250';
+    ss500         -> @button='500';
+    ss1000        -> @button='1000';
   geometryline:beside -> geometry geometryapply;
     geometry:beside  'Crop geometry:'      -> @string='$Cropgeometry';
     geometryapply                          -> @button='apply';
@@ -2799,15 +2725,7 @@ parse_cmd() {
     deleteall)   myrm "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" "$Targetdir/video" ; Return=0 ;;
     deletecache) myrm "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
     delete*)     myrm "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
-    
-    align_hugin)
-      batch_function -f align_hugin -t "$Targetdir"
-      Return=$?
-    ;;
-    align_ais)
-      batch_function -f align_ais -t "$Targetdir"
-      Return=$?
-    ;;
+   
     align_vidstab)
       batch_function -f align_vidstab -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
