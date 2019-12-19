@@ -917,8 +917,9 @@ animatedgif() {
   # Generate animated GIF from stackshot.
   # Helps to visualize diferent layers and gives some 3D effect
   #
-  # Fusemode       See fuse(). ($Functionmode)
+  # Rendermode     quick or smooth ($Functionmode)
   # Distortion     Distortion between lowest and highest layer. ($Functionoption)
+  # Fusemode       See fuse()
   # Delay          Delay between frames
   # Staticlayer    Relative position of static layer that won't move. 0 means lowest layer, 1/2 means middle layer, 1 means top layer
   #
@@ -934,10 +935,11 @@ animatedgif() {
   
   parse_batchoptions "$@" || return 1
   
-  Fusemode="${Functionmode:-1}"
-  Distortion="${Functionoption:-10}"
+  Rendermode="${Functionmode:-quick}"
+  Distortion="${Functionoption:-30}"
   Delay="10"
   Staticlayer="1/4"
+  Fusemode="4"
   
   # Position raster
   #
@@ -955,7 +957,6 @@ animatedgif() {
   #
   #  3x-3  3x-2  3x-1   3x0    3x1   3x2   3x3
 
-  Rendermode=smooth
   case $Rendermode in
     smooth)
       Sequencenumber="5"
@@ -1054,7 +1055,7 @@ $Position"
       done
 
       Iteration=$((Iteration + 1))
-      showpercent $Iteration $((Positionnumber*2 +5))
+      showpercent $Iteration $((Positionnumber*2 + Sequencenumber))
     }
   done
   multicore_wait || return 1
@@ -1065,7 +1066,7 @@ $Position"
     Distortdir="$Cachedir/distort.$Position"
     Imagebasename="animate.$Position"
     multicore "fuse -s $Distortdir -g '*' -d $Cachedir -b $Imagebasename -m $Fusemode" || return 1
-    showpercent $Iteration $((Positionnumber*2 +5))
+    showpercent $Iteration $((Positionnumber*2 + Sequencenumber))
   done
   multicore_wait || return 1
   
@@ -1080,7 +1081,7 @@ $Position"
 
     worknote "Generating $(basename $Destinationfile)."
     multicore "convert -delay $Delay -loop 0 $Imagelist $Destinationfile" "$Destinationfile" || return 1
-    showpercent $Iteration $((Positionnumber*2 +5))
+    showpercent $Iteration $((Positionnumber*2 + Sequencenumber))
   done
   multicore_wait || return 1
 }
@@ -2034,11 +2035,11 @@ start "fusewizard" -> frameset;
           rulerevaluate                                         -> @button="evaluate" ;
           rulerfuse                                             -> @button="fuse" ;
           ruler:beside                "micrometer"              -> "" rulermodecombo rulercombo;
-        animatedgifline:beside                                -> animatedgif animatedgifmagick;
-          animatedgifmodecombo:beside "Fuse mode:"              -> @combow("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20")="4";
+        animatedgifline:beside                                -> animatedgif animatedgifmodecombo animatedgifcombo animatedgifmagick;
+          animatedgifmodecombo:beside                           -> @combo("quick","smooth")="quick";
           animatedgifcombo:beside     "Distortion:"             -> @combow("20","30","40","50","60")="30";
           animatedgifmagick                                     -> @button="magick" ;
-          animatedgif:beside          "animated gif:"           -> "" animatedgifmodecombo animatedgifcombo @fill ;
+          animatedgif:beside          "animated gif:"           -> "" ;
         undoline:beside                                       -> undo undomagick undofuse undoevaluate;
           undomagick                                            -> @button="magick" ;
           undoevaluate                                          -> @button="evaluate" ;
@@ -2950,154 +2951,3 @@ finish
 # Fix:
 #  - wrong failure-undo with magick -> evaluate, probably with other cross functions, too -> fixed, CHECK
 #  ardustack - replace align_image_stack for median with vidstab
-
-
-animatedgif_bak() {
-  # Generate animated GIF from stackshot.
-  # Helps to visualize diferent layers and gives some 3D effect
-  #
-  # Fusemode       See fuse(). ($Functionmode)
-  # Distortion     Distortion between lowest and highest layer. ($Functionoption)
-  # Delay          Delay between frames
-  # Staticlayer    Relative position of static layer that won't move. 0 means lowest layer, 1/2 means middle layer, 1 means top layer
-  #
-  local $Batchlocal
-  local Fusemode Distortion Delay Sequence Staticlayer
-  local Distortdir Distortimage Destinationfile Destinationfilebasename Imagebasename
-  local Imagewidth Imageheight Cropgeometry
-  local Count Iteration Xpos Ypos
-  local Image Imagelist
-  local Xpos Ypos Offset Border 
-  local Position Positionlist Positionnumber
-  local Sequence Sequencename Sequencenumber
-  
-  parse_batchoptions "$@" || return 1
-  
-  Fusemode="${Functionmode:-1}"
-  Distortion="${Functionoption:-10}"
-  Delay="10"
-  Staticlayer="1/5"
-  Raster="4"
-  
-  # Revert image list to work from bottom to top
-  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
-  Imagelist="$(sort -V -r <<< "$Imagelist")"
-  Imagenumber="$(grep -c . <<< "$Imagelist")"
-  
-  # crop lost borders
-  Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
-  Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
-  Border="$((Distortion - Distortion * $Staticlayer))"  # wrong result if Staticlayer>1/2 ?
-#  Cropgeometry="$((Imagewidth - Border * 2 - 1))x$((Imageheight - Border * 2 - 1))+$Border+$Border"
-  Cropgeometry="$((Imagewidth - Border * 2 - 1))x$((Imageheight - Border * 2 - 1))"
-
-  Destinationfilebasename="${Destinationfile:-animated}"
-  
-  # offset factor, distortion between neighboured layers
-  Offset="$(awk "BEGIN {print $Distortion / ( $Imagenumber * $Raster ) }")"
-  
-  # Position raster
-  #
-  # -3x-3 -3x-2 -3x-1  -3x0   -3x1  -3x2  -3x3
-  #
-  # -2x-3 -2x-2 -2x-1  -2x0   -2x1  -2x2  -2x3
-  #
-  # -1x-3 -1x-2 -1x-1  -1x0   -1x1  -1x2  -1x3
-  #
-  #  0x-3  0x-2  0x-1   0x0    0x1   0x2   0x3
-  #
-  #  1x-3  1x-2  1x-1   1x0    1x1   1x2   1x3
-  #
-  #  2x-3  2x-2  2x-1   2x0    2x1   2x2   2x3
-  #
-  #  3x-3  3x-2  3x-1   3x0    3x1   3x2   3x3
-  
-  Sequencenumber="5"
-  
-  Sequencename[1]="knot_small"
-  Sequence[1]="0x0  0x-1 -1x-1 -1x0  
-               0x0  1x0   1x1   0x1
-               0x0  0x-1  1x-1  1x0
-               0x0 -1x0  -1x1   0x1"
-            
-  Sequencename[2]="dagaz"
-  Sequence[2]="0x0  -1x1 -2x2 -3x3
-              -2x3  -1x3  0x3  1x3   2x3   3x3
-               2x2   1x1  0x0 -1x-1 -2x-2 -3x-3
-              -2x-3 -1x-3 0x-3 1x-3  2x-3  3x-3
-               2x-2  1x-1"
-            
-  Sequencename[3]="knot"
-  Sequence[3]="0x0 -1x0 -2x0 -3x-1 -3x-2 -2x-3 -1x-3 0x-2 0x-1
-               0x0  0x1  0x2  1x3   2x3   3x2   3x1  2x0  1x0
-               0x0 -1x0 -2x0 -3x1  -3x2  -2x3  -1x3  0x2  0x1
-               0x0  0x-1 0x-2 1x-3  2x-3  3x-2  3x-1 2x0  1x0"
-            
-  Sequencename[4]="circle_left"
-  Sequence[4]="-3x0 -3x1  -2x2  -1x3  0x3  1x3  2x2  3x1  3x0 3x-1 2x-2 1x-3 0x-3 -1x-3 -2x-2 -3x-1"
-            
-  Sequencename[5]="circle_right"
-  Sequence[5]="-3x0 -3x-1 -2x-2 -1x-3 0x-3 1x-3 2x-2 3x-1 3x0 3x1  2x2  1x3  0x3  -1x3  -2x2  -3x1"
-  
-  for Sequencecount in $(seq $Sequencenumber); do
-    for Position in ${Sequence[$Sequencecount]}; do
-      Positionlist="$Positionlist
-$Position"
-    done
-  done
-  Positionlist="$(grep x <<< "$Positionlist")"
-  Positionlist="$(sort <<< "$Positionlist" | uniq)"
-  Positionnumber="$(grep -c . <<< "$Positionlist")"
-    
-  # Distort images
-  Iteration=0
-  for Position in $Positionlist; do
-    Xpos="$(cut -dx -f1 <<< "$Position")"
-    Ypos="$(cut -dx -f2 <<< "$Position")"
-    worknote "animatedgif: Distorting images for position ${Xpos}x${Ypos}."
-      
-    Distortdir="$Cachedir/distort.$Position"
-    [ -d "$Distortdir" ] || {
-      mkdir -p "$Distortdir"
-      
-      Count=-$((Imagenumber * $Staticlayer))  # negative start value causes movement of lowest layer
-      
-      for Image in $Imagelist; do
-        Count="$((Count +1))"
-        Distortimage="$Distortdir/$(basename $Image)"
-        multicore "convert $Image -gravity center -crop $Cropgeometry+$(awk "BEGIN {print $Count * $Xpos * $Offset}")+$(awk "BEGIN {print $Count * $Ypos * $Offset}") $Distortimage" "$Distortimage" || return 1
-      done
-
-      Iteration=$((Iteration + 1))
-      showpercent $Iteration $((Positionnumber*2 +5))
-    }
-  done
-  multicore_wait || return 1
-  
-  # fuse distorted images
-  for Position in $Positionlist; do
-    Iteration=$((Iteration + 1))
-    Distortdir="$Cachedir/distort.$Position"
-    Imagebasename="animate.$Position"
-    multicore "fuse -s $Distortdir -g '*' -d $Cachedir -b $Imagebasename -m $Fusemode" || return 1
-    showpercent $Iteration $((Positionnumber*2 +5))
-  done
-  multicore_wait || return 1
-  
-  for Sequence in "$Sequence_dagaz" "$Sequence_smallknot" "$Sequence_knot" "$Sequence_circleleft" "$Sequence_circleright"; do
-    Iteration=$((Iteration + 1))
-    Sequencename="$(head -n1 <<< "$Sequence")"
-    Sequence="$(tail -n+2 <<< "$Sequence")"
-    Imagelist=""
-    for Position in $Sequence; do
-      Image="$(fileglob "$Cachedir/*.$Position.*")"
-      Imagelist="$Imagelist $Image"
-    done
-    Destinationfile="$Destinationdir/$Destinationfilebasename.$Sequencename.$Fusemode.$Distortion.gif"
-
-    worknote "Generating $(basename $Destinationfile)."
-    multicore "convert -delay $Delay -loop 0 $Imagelist $Destinationfile" "$Destinationfile" || return 1
-    showpercent $Iteration $((Positionnumber*2 +5))
-  done
-  multicore_wait || return 1
-}
