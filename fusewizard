@@ -732,11 +732,19 @@ runbatch1() {
 runbatch2() {
   local Function Functionmode Functionoption
   local Iterate
-  for Function in whitebalance gamma_ align_vidstab1 align_vidstab2 align_vidstab3 ; do
+  for Function in whitebalance gamma_ align_vidstab; do
     askkaptain $Function > /dev/null && {
       getfunctionsettings
-      Function="$(tr -c -d "a-z_" <<< "$Function")"  # remove 1 2 3 from align_vidstab
-      cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+      case $Function in
+        align_vidstab)
+          cmd -f "$Function" -m "10"            -o "$Functionoption" -t "$Stackdir"
+          cmd -f "$Function" -m "5"             -o ""                -t "$Stackdir"
+          cmd -f "$Function" -m "1"             -o ""                -t "$Stackdir"
+        ;;
+        *)
+          cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+        ;;
+      esac
     }
   done
   return 0
@@ -937,7 +945,6 @@ animatedgif() {
   
   Rendermode="${Functionmode:-quick}"
   Distortion="${Functionoption:-30}"
-  Delay="10"
   Staticlayer="1/4"
   Fusemode="4"
   
@@ -957,10 +964,17 @@ animatedgif() {
   #
   #  3x-3  3x-2  3x-1   3x0    3x1   3x2   3x3
 
+      Sequencename[1]="knot_quick"
+      Sequence[1]="0x0  0x-1 -1x-1 -1x0  
+                   0x0  1x0   1x1   0x1
+                   0x0  0x-1  1x-1  1x0
+                   0x0 -1x0  -1x1   0x1"
+                   
   case $Rendermode in
     smooth)
       Sequencenumber="5"
       Raster="3"
+      Delay="10"
   
       Sequencename[1]="knot_small"
       Sequence[1]="0x0  0x-1 -1x-1 -1x0  
@@ -990,6 +1004,7 @@ animatedgif() {
     quick)
       Sequencenumber="3"
       Raster="1"
+      Delay="15"
     
       Sequencename[1]="knot_quick"
       Sequence[1]="0x0  0x-1 -1x-1 -1x0  
@@ -1016,7 +1031,6 @@ animatedgif() {
   Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
   Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
   Border="$((Distortion - Distortion * $Staticlayer))"  # wrong result if Staticlayer>1/2 ?
-#  Cropgeometry="$((Imagewidth - Border * 2 - 1))x$((Imageheight - Border * 2 - 1))+$Border+$Border"
   Cropgeometry="$((Imagewidth - Border * 2 - 1))x$((Imageheight - Border * 2 - 1))"
 
   Destinationfilebasename="${Destinationfile:-animated}"
@@ -1966,7 +1980,7 @@ start "fusewizard" -> frameset;
           applyallfuse                                          -> @button="fuse" ;
           applyall:beside             "Apply all convert options"  -> "" ;
           
-      batchblock2 "batch block 2: post processing directory magick" -> meanbalanceline whitebalanceline gamma_line align_vidstab1line align_vidstab2line align_vidstab3line ;
+      batchblock2 "batch block 2: post processing directory magick" -> meanbalanceline whitebalanceline align_vidstabline gamma_line;
         meanbalanceline:beside                               -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
           meanbalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
           meanbalancemagick                                    -> @button="magick" ;
@@ -1987,27 +2001,16 @@ start "fusewizard" -> frameset;
           cropevaluate                                          -> @button="evaluate" ;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
+        align_vidstabline:beside                              -> align_vidstab align_vidstabcombo align_vidstabbutton ;
+          align_vidstabcombo         "crop interactive"         -> "on" | ! "";
+          align_vidstabbutton                                   -> @button="magick" ;
+          align_vidstab:beside       "align"                    -> "on" | "";
         gamma_line:beside                                     -> gamma_ gamma_magick gamma_fuse gamma_evaluate;
           gamma_combo                                           -> @combow("auto","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9","1.2","1.3","1.4","1.5","2.0","3.0","4.0")="1.4" ;
           gamma_magick                                          -> @button="magick" ;
           gamma_evaluate                                        -> @button="evaluate" ;
           gamma_fuse                                            -> @button="fuse" ;
           gamma_:beside                "gamma"                  -> gamma_combo | "";
-        align_vidstab1line:beside                             -> align_vidstab1 align_vidstab1combo align_vidstab1button ;
-          align_vidstab1modecombo:beside    "Shakiness:"        -> @combo("1","2","3","4","5","6","7","8","9","10")="10" ;
-          align_vidstab1combo         "crop interactive"        -> "on" | "";
-          align_vidstab1button                                  -> @button="magick" ;
-          align_vidstab1:beside       "align with vidstab:"     -> align_vidstab1modecombo | "";
-        align_vidstab2line:beside                             -> align_vidstab2 align_vidstab2combo align_vidstab2button ;
-          align_vidstab2modecombo:beside    "Shakiness:"        -> @combo("1","2","3","4","5","6","7","8","9","10")="5" ;
-          align_vidstab2combo         "crop interactive"        -> "on" | ! "";
-          align_vidstab2button                                  -> @button="magick" ;
-          align_vidstab2:beside       "align with vidstab:"     -> align_vidstab2modecombo | "";
-        align_vidstab3line:beside                             -> align_vidstab3 align_vidstab3combo align_vidstab3button ;
-          align_vidstab3modecombo:beside    "Shakiness:"        -> @combo("1","2","3","4","5","6","7","8","9","10")="1" ;
-          align_vidstab3combo         "crop interactive"        -> "on" | ! "";
-          align_vidstab3button                                  -> @button="magick" ;
-          align_vidstab3:beside       "align with vidstab:"     -> align_vidstab3modecombo | "";
         
       batchblock3 "batch block 3: combine stackshot images" -> fuse evaluateline sharpen_evaluate compose;
         fuse:beside                   "fuse"                    -> @button="magick" "on" | "";
@@ -2039,7 +2042,7 @@ start "fusewizard" -> frameset;
           animatedgifmodecombo:beside                           -> @combo("quick","smooth")="quick";
           animatedgifcombo:beside     "Distortion:"             -> @combow("20","30","40","50","60")="30";
           animatedgifmagick                                     -> @button="magick" ;
-          animatedgif:beside          "animated gif:"           -> "" ;
+          animatedgif:beside          "animated gif"            -> "" ;
         undoline:beside                                       -> undo undomagick undofuse undoevaluate;
           undomagick                                            -> @button="magick" ;
           undoevaluate                                          -> @button="evaluate" ;
@@ -2248,7 +2251,6 @@ parse_kaptainsignal() {
   local Kaptainsignal
   local Command Argument Functionmode Functionoption Stackdir Newstackdir Projecthome
   local Image
-  local Iterate
   
   Kaptainsignal="${1:-}"
   Stackdir="$(storeinfo dump stackshotdir)"
@@ -2318,11 +2320,11 @@ parse_kaptainsignal() {
       cmd -f "$Kaptainsignal" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
     ;;
     
-    align_vidstab?button)
-      Iterate=$(echo $Kaptainsignal | tr -d -c "0-9")
-      Functionmode="$(askkaptain "align_vidstab${Iterate}modecombo")"
-      Functionoption="$(askkaptain "align_vidstab${Iterate}combo")"
-      cmd -f align_vidstab -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+    align_vidstabbutton)
+      Functionoption="$(askkaptain "align_vidstabcombo")"
+      cmd -f align_vidstab -m "10" -o "$Functionoption" -t "$Stackdir"
+      cmd -f align_vidstab -m "5"  -o ""                -t "$Stackdir"
+      cmd -f align_vidstab -m "1"  -o ""                -t "$Stackdir"
     ;;
     
     runbatch1) 
