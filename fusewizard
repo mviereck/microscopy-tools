@@ -6,6 +6,10 @@ note() {
   echo "note: $(shortpath "$*")"    >> $Wizardmessagefifo
 }
 
+verbose() {
+  echo "$*"
+}
+
 worknote() {
   echo "@work: $(shortpath "$*")"   >> $Wizardmessagefifo
 }
@@ -136,7 +140,7 @@ myrm() {
   local Line
   for Line in "$@" ; do
     [ -e "$Line" ] && {
-      worknote "rm: deleting $Line"
+      verbose "rm: deleting $Line"
       rm -rf $Line
     }
   done
@@ -151,7 +155,7 @@ mymv() {
     failure "mv: Target is not a directory: ${2:-}"
     return 1
   }
-  worknote "mv: moving ${1:-} to ${2:-}"
+  verbose "mv: moving ${1:-} to ${2:-}"
   mv -f $(fileglob "${1:-}") "${2:-}"
 }
 
@@ -164,7 +168,7 @@ mycp() {
     failure "cp: Target is not a directory: ${2:-}"
     return 1
   }
-  worknote "cp: copy ${1:-} to ${2:-}"
+  verbose "cp: copy ${1:-} to ${2:-}"
   cp $(fileglob "${1:-}") "${2:-}"
 }
 
@@ -328,7 +332,8 @@ setup_workdir() {
   grep -q -- "fuse" <<< "$Function"      && Targetnewdir="$Targetfusedir"
   grep -q -- "compose" <<< "$Function"   && Targetnewdir="$Targetcomposedir"
   grep -q -- "evaluate" <<< "$Function"  && Targetnewdir="$Targetevaluatedir" 
-  grep -q -- "animatedgif" <<< "$Function"  && Targetnewdir="$Targetvideodir" 
+  grep -q -- "animation" <<< "$Function" && Targetnewdir="$Targetvideodir" 
+  grep -q -- "video" <<< "$Function"     && Targetnewdir="$Targetvideodir" 
   [ "$Targetnewdir" ] || Targetnewdir="$Targetmagickdir"
   
   [ "$Targetnewdir" = "$Targetmagickdir" ] && {
@@ -341,8 +346,10 @@ setup_workdir() {
   # backup for undo, serving also as source for batch operations
   case $Function in
     undo*) ;;
-    evaluate*) ;;
-    animatedgif*) ;;
+    evaluate*|animation*|video*) 
+      mkdir -p $Targetprevdir
+      check_fileglob "$Targetnewdir/*" && mycp "$Targetnewdir/*" "$Targetprevdir/" 
+    ;;
     *)
       mkdir -p $Targetprevdir
       check_fileglob "$Targetnewdir/*" && mymv "$Targetnewdir/*" "$Targetprevdir/"
@@ -393,7 +400,7 @@ setup_workdir() {
       Destinationdir="$Targetnewdir"
     ;;
     
-    animatedgif)
+    animation|video)
       Sourcedir="$Targetmagickdir"
       Destinationdir="$Targetnewdir"
       Destinationfile="$Projectname.$(basename "$Targetdir")"
@@ -631,7 +638,7 @@ batch_function() {
   } || {
     failure "ERROR in $Function $Functionmode $Functionoption: $(basename "$Sourcedir") -> $(basename "$Destinationdir")"
     case $Function in
-      animatedgif) ;;
+      animation) ;;
       compose|evaluate|fuse) undo -s "$Destinationdir.bak" -d "$Destinationdir" -c "$Cachedir" ;;
       *)                     undo -s "$Sourcedir"          -d "$Destinationdir" -c "$Cachedir" ;;
     esac
@@ -921,7 +928,7 @@ align_vidstab() {
   return 0    
 }
 
-animatedgif() {
+animation() {
   # Generate animated GIF from stackshot.
   # Helps to visualize diferent layers and gives some 3D effect
   #
@@ -930,14 +937,14 @@ animatedgif() {
   # Fusemode       See fuse()
   # Delay          Delay between frames
   # Staticlayer    Relative position of static layer that won't move. 0 means lowest layer, 1/2 means middle layer, 1 means top layer
+  # Format         File format
   #
   local $Batchlocal
-  local Fusemode Distortion Delay Sequence Staticlayer
+  local Fusemode Distortion Delay Sequence Staticlayer Format
   local Distortdir Distortimage Destinationfile Destinationfilebasename Imagebasename
-  local Imagewidth Imageheight Cropgeometry
-  local Count Iteration Xpos Ypos
+  local Imagewidth Imageheight Cropgeometry Xpos Ypos Offset Border
+  local Count Iteration
   local Image Imagelist
-  local Xpos Ypos Offset Border 
   local Position Positionlist Positionnumber
   local Sequence Sequencename Sequencenumber
   
@@ -947,6 +954,7 @@ animatedgif() {
   Distortion="${Functionoption:-30}"
   Staticlayer="1/4"
   Fusemode="4"
+  Format="mp4"
   
   # Position raster
   #
@@ -964,17 +972,11 @@ animatedgif() {
   #
   #  3x-3  3x-2  3x-1   3x0    3x1   3x2   3x3
 
-      Sequencename[1]="knot_quick"
-      Sequence[1]="0x0  0x-1 -1x-1 -1x0  
-                   0x0  1x0   1x1   0x1
-                   0x0  0x-1  1x-1  1x0
-                   0x0 -1x0  -1x1   0x1"
-                   
   case $Rendermode in
     smooth)
       Sequencenumber="5"
       Raster="3"
-      Delay="10"
+      Delay="7"
   
       Sequencename[1]="knot_small"
       Sequence[1]="0x0  0x-1 -1x-1 -1x0  
@@ -1004,7 +1006,7 @@ animatedgif() {
     quick)
       Sequencenumber="3"
       Raster="1"
-      Delay="15"
+      Delay="10"
     
       Sequencename[1]="knot_quick"
       Sequence[1]="0x0  0x-1 -1x-1 -1x0  
@@ -1033,7 +1035,7 @@ animatedgif() {
   Border="$((Distortion - Distortion * $Staticlayer))"  # wrong result if Staticlayer>1/2 ?
   Cropgeometry="$((Imagewidth - Border * 2 - 1))x$((Imageheight - Border * 2 - 1))"
 
-  Destinationfilebasename="${Destinationfile:-animated}"
+  Destinationfilebasename="${Destinationfile:-animation}"
   
   # offset factor, distortion between neighboured layers
   Offset="$(awk "BEGIN {print $Distortion / ( $Imagenumber * $Raster ) }")"
@@ -1054,7 +1056,7 @@ $Position"
   for Position in $Positionlist; do
     Xpos="$(cut -dx -f1 <<< "$Position")"
     Ypos="$(cut -dx -f2 <<< "$Position")"
-    worknote "animatedgif: Distorting images for position ${Xpos}x${Ypos}."
+    worknote "animation: Distorting images for position ${Xpos}x${Ypos}."
       
     Distortdir="$Cachedir/distort.$Position"
     [ -d "$Distortdir" ] || {
@@ -1078,7 +1080,7 @@ $Position"
   for Position in $Positionlist; do
     Iteration=$((Iteration + 1))
     Distortdir="$Cachedir/distort.$Position"
-    Imagebasename="animate.$Position"
+    Imagebasename="animation.$Position"
     multicore "fuse -s $Distortdir -g '*' -d $Cachedir -b $Imagebasename -m $Fusemode" || return 1
     showpercent $Iteration $((Positionnumber*2 + Sequencenumber))
   done
@@ -1091,10 +1093,11 @@ $Position"
       Image="$(fileglob "$Cachedir/*.$Position.*")"
       Imagelist="$Imagelist $Image"
     done
-    Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$Fusemode.$Distortion.gif"
+    Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$Fusemode.$Distortion.$Format"
 
     worknote "Generating $(basename $Destinationfile)."
-    multicore "convert -delay $Delay -loop 0 $Imagelist $Destinationfile" "$Destinationfile" || return 1
+    multicore "convert -delay $Delay -loop 0 $Imagelist $Destinationfile" "$Destinationfile"  || return 1
+    
     showpercent $Iteration $((Positionnumber*2 + Sequencenumber))
   done
   multicore_wait || return 1
@@ -1528,6 +1531,35 @@ undo() {
   mymv "$Undocache/*"      "$Destinationdir"
   
   myrm "$Undocache"
+}
+
+video() {
+  # Generate video of stackshot showing focus changes
+  local $Batchlocal
+  local Imagelist
+  local Delay Format
+  
+  parse_batchoptions "$@" || return 1
+
+  Functionmode="${Functionmode:-down}"
+  Delay="${Functionoption:-10}"
+  Format="mp4"
+  
+  Destinationfile="$Destinationdir/$Destinationfile.focus.$Functionmode.$Delay.$Format"
+  
+  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
+  case $Functionmode in
+    in) Imagelist="$(tac <<< "$Imagelist")";;
+    out) ;;
+    in_and_out) Imagelist="$Imagelist
+$(tac <<< "$Imagelist")"
+    ;;
+  esac
+  
+  showpercent 20 100
+  convert -delay $Delay $Imagelist $Destinationfile
+  showpercent 100 100
+  showimage $Destinationfile
 }
 
 whitebalance() {
@@ -1981,12 +2013,12 @@ start "fusewizard" -> frameset;
           applyall:beside             "Apply all convert options"  -> "" ;
           
       batchblock2 "batch block 2: post processing directory magick" -> meanbalanceline whitebalanceline align_vidstabline gamma_line;
-        meanbalanceline:beside                               -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
-          meanbalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
-          meanbalancemagick                                    -> @button="magick" ;
-          meanbalanceevaluate                                  -> @button="evaluate" ;
-          meanbalancefuse                                      -> @button="fuse" ;
-          meanbalance:beside         "meanbalance"            ->  "on"  | "";
+        meanbalanceline:beside                                -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
+          meanbalancemodecombo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
+          meanbalancemagick                                     -> @button="magick" ;
+          meanbalanceevaluate                                   -> @button="evaluate" ;
+          meanbalancefuse                                       -> @button="fuse" ;
+          meanbalance:beside          "meanbalance"             ->  "on"  | "";
         whitebalanceline:beside                               -> whitebalance whitebalancemodecombo whitebalancecombo whitebalancemagick whitebalancefuse whitebalanceevaluate;
           whitebalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
           whitebalancecombo                                     -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#999999" ;
@@ -2002,9 +2034,9 @@ start "fusewizard" -> frameset;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
         align_vidstabline:beside                              -> align_vidstab align_vidstabcombo align_vidstabbutton ;
-          align_vidstabcombo         "crop interactive"         -> "on" | ! "";
+          align_vidstabcombo          "crop interactive"        -> "on" | ! "";
           align_vidstabbutton                                   -> @button="magick" ;
-          align_vidstab:beside       "align"                    -> "on" | "";
+          align_vidstab:beside        "align"                   -> "on" | "";
         gamma_line:beside                                     -> gamma_ gamma_magick gamma_fuse gamma_evaluate;
           gamma_combo                                           -> @combow("auto","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9","1.2","1.3","1.4","1.5","2.0","3.0","4.0")="1.4" ;
           gamma_magick                                          -> @button="magick" ;
@@ -2030,7 +2062,7 @@ start "fusewizard" -> frameset;
           runbatchprocessing                                    -> @button="Run selected batch blocks";
           cmdbreak                                              -> @button="break" ;
         
-      specialframe "Special operations" -> rulerline animatedgifline undoline ;
+      specialframe "Special operations" -> rulerline animationline videoline undoline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
           rulermodecombo                                        -> @combo("100c","100p","100z","40c","40p","40z","20c","20p","20z","10c","10p","10z")="100z" ;
           rulercombo:beside           "Title:"                  -> @string ;
@@ -2038,31 +2070,35 @@ start "fusewizard" -> frameset;
           rulerevaluate                                         -> @button="evaluate" ;
           rulerfuse                                             -> @button="fuse" ;
           ruler:beside                "micrometer"              -> "" rulermodecombo rulercombo;
-        animatedgifline:beside                                -> animatedgif animatedgifmodecombo animatedgifcombo animatedgifmagick;
-          animatedgifmodecombo:beside                           -> @combo("quick","smooth")="quick";
-          animatedgifcombo:beside     "Distortion:"             -> @combow("20","30","40","50","60")="30";
-          animatedgifmagick                                     -> @button="magick" ;
-          animatedgif:beside          "animated gif"            -> "" ;
+        animationline:beside                                  -> animation animationmodecombo animationcombo animationmagick;
+          animationmodecombo:beside                             -> @combo("quick","smooth")="quick";
+          animationcombo:beside       "Distortion:"             -> @combow("20","30","40","50","60")="30";
+          animationmagick                                       -> @button="magick" ;
+          animation:beside            "animated video"          -> "" ;
+        videoline:beside                                      -> video videomodecombo videocombo videomagick;
+          videomodecombo:beside                                 -> @combo("in","out","in_and_out")="in";
+          videocombo:beside           "Delay:"                  -> @combow("0","1","2","3","4","5","6","7","8","9","10")="2";
+          videomagick                                           -> @button="magick" ;
+          video:beside                "focus video"             -> "" ;
         undoline:beside                                       -> undo undomagick undofuse undoevaluate;
           undomagick                                            -> @button="magick" ;
           undoevaluate                                          -> @button="evaluate" ;
           undofuse                                              -> @button="fuse" ;
           undo                        "undo last step"          -> "" ;
           
-      showresultframe "Show results" -> showimagebuttons showresultline @fill showresultbottomline;
+      showresultframe "Show results" -> showimagebuttons show_video showresultline @fill showresultbottomline;
         showimagebuttons:beside    -> showimageeval showimagefuse ;
-          showimageeval              -> show_magick_max show_magick_mean show_magick_median show_magick_min show_video;
+          showimageeval              -> show_magick_max show_magick_mean show_magick_median show_magick_min ;
             show_magick_max            -> @button="magick.max";
             show_magick_mean           -> @button="magick.mean";
             show_magick_median         -> @button="magick.median";
             show_magick_min            -> @button="magick.min";
-            show_video                 -> @combo("-");
-          showimagefuse              -> show_fuse_max   show_fuse_mean   show_fuse_median   show_fuse_min show_animatedgif;
+          showimagefuse              -> show_fuse_max   show_fuse_mean   show_fuse_median   show_fuse_min ;
             show_fuse_max              -> @button="fuse.max";
             show_fuse_mean             -> @button="fuse.mean";
             show_fuse_median           -> @button="fuse.median";
             show_fuse_min              -> @button="fuse.min";
-            show_animatedgif           -> @combo("-");
+        show_video                 -> @combo("-");
         showresultline             -> @text="Directories" showresultline1 showresultline2 ;
           showresultline1:beside     -> showstackshot showmagick ;
             showstackshot              -> @button="stackshot";
@@ -2120,31 +2156,24 @@ kaptain_update() {
   [ -d "$Stackdir/fuse" ]                         && sendkaptain "deletefuse='fuse'"             || sendkaptain "deletefuse='-'"
   [ -d "$Stackdir/video" ]                        && sendkaptain "deletevideo='video'"           || sendkaptain "deletevideo='-'"
   check_dirglob "$Stackdir/*.bak $Stackdir/cache" && sendkaptain "deletecache='cache'"           || sendkaptain "deletecache='-'"
-      
+  
+  # show directory buttons
   [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"     || sendkaptain "showstackshot='-'"
   [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"           || sendkaptain "showmagick='-'"
   [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"       || sendkaptain "showevaluate='-'"
   [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"         || sendkaptain "showcompose='-'"
   [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"               || sendkaptain "showfuse='-'"
   
-  # animated gifs 
-  for Line in $(fileglob "$Stackdir/video/*.gif"); do
+  # videos
+  for Line in $(fileglob "$Stackdir/video/*.mp4") $(fileglob "$Stackdir/video/*.gif"); do
     Shortcut="$(rev <<< "$Line" | cut -d. -f1-4 | rev)"
     Comboline="$Comboline,'$Shortcut'"
   done
   Comboline="${Comboline#,}"
   [ -z "$Comboline" ] && Comboline="'-'"
-  sendkaptain "show_animatedgif($Comboline)=''"
+  sendkaptain "show_video($Comboline)=''"
   
-  # videos
-  for Line in $(fileglob "$Stackdir/video/*.mp*"); do
-    Shortcut="$(rev <<< "$Line" | cut -d. -f1-3 | rev)"
-    Comboline="$Comboline,'$Shortcut'"
-  done
-  Comboline="${Comboline#,}"
-  [ -z "$Comboline" ] && Comboline="'-'"
-  sendkaptain "show_animatedgif($Comboline)=''"
-      
+  # evaluate reults
   check_fileglob "$Stackdir/evaluate/*.magick.*" && {
     sendkaptain "show_magick_max='magick.max'" 
     sendkaptain "show_magick_mean='magick.mean'" 
@@ -2276,7 +2305,7 @@ parse_kaptainsignal() {
     delete*) 
       cmd -f $Kaptainsignal -t "$Stackdir"
     ;;
-    show_animatedgif*|show_video*)
+    show_video*)
       Image="$(echo "$Kaptainsignal" | cut -d: -f2-)"
       Image="$Stackdir/video/*.$Image"
       showvideo "$(fileglob "$Image")"
@@ -2766,7 +2795,7 @@ parse_cmd() {
       batch_function -f align_vidstab -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
     ;;
-    animatedgif*|brightness*|contrast*|crop*|gamma*|kuwahara*|level*|prepare*|sharpen*|stretch*|undo*|whitebalance*|ruler*|wizard*)
+    animation*|brightness*|contrast*|crop*|gamma*|kuwahara*|level*|prepare*|sharpen*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
       batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
