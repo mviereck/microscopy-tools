@@ -1557,7 +1557,7 @@ $(tac <<< "$Imagelist")"
   esac
   
   showpercent 20 100
-  convert -delay $Delay $Imagelist $Destinationfile
+  convert -delay $Delay -loop 0 $Imagelist $Destinationfile
   showpercent 100 100
   showimage $Destinationfile
 }

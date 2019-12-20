@@ -86,8 +86,12 @@ Dependencies:
  - geeqie
  - gphoto2
 
-## Example
+## Examples
 
-Image of pollen. Generated with the tools from this repository and a [microscope from Hund/Wetzlar](https://www.hund.de/en/). Camera Canon EOS 1000d. Stackshot result of 69 single captures with slightly different focus.
+Image of pollen. Generated with the tools from this repository and a [microscope from Hund/Wetzlar](https://www.hund.de/en/). Camera Canon EOS 1000d. Stackshot result of 69 single captures with slightly different focus:
 
 ![screenshot](example.jpg)
+
+Animated video of the top of a hemp flower hair:
+
+![screenshot](animate.gif)
