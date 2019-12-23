@@ -935,16 +935,16 @@ animation() {
   # Rendermode     quick or smooth
   # Distortion     Distortion between lowest and highest layer.
   # Fusemode       See fuse()
-  # Delay          Delay between frames
+  # Framerate          Framerate between frames
   # Staticlayer    Relative position of static layer that won't move. 0 means lowest layer, 1/2 means middle layer, 1 means top layer
   # Format         File format
   #
   local $Batchlocal
-  local Fusemode Distortion Delay Sequence Staticlayer Format
-  local Distortdir Distortimage Fusedir Destinationfile Destinationfilebasename Imagebasename
+  local Fusemode Distortion Framerate Sequence Staticlayer Format
+  local Distortdir Distortimage Fusedir Mpcdir Destinationfile Destinationfilebasename Imagebasename
   local Imagewidth Imageheight Cropgeometry Xpos Ypos Offset Border
-  local Count Iteration
-  local Image Imagelist
+  local Count Iteration=0 Iterationnumber
+  local Image Imagelist Imagelistfile
   local Position Positionlist Positionnumber
   local Sequence Sequencename Sequencenumber
   
@@ -982,79 +982,97 @@ animation() {
   #
   #  5x-5  5x-4  5x-3  5x-2  5x-1   5x0    5x1   5x2   5x3   5x4   5x5
 
-
   case $Rendermode in
     smooth)
-      Sequencenumber="5"
       Raster="3"
-      Delay="7"
+      Framerate="12"
+      Sequencenumber="5"
       
       Sequencename[1]="eight_small"
       Sequence[1]="0x0  -1x0  -1x-1  0x-1  1x-1  1x0
-                   0x0  -1x0  -1x1   0x1   1x1   1x0"
+                   0x0  -1x0  -1x1   0x1   1x1   1x0
+                   0x0"
                    
       Sequencename[2]="dagaz"
       Sequence[2]="0x0  -1x1 -2x2 -3x3
                   -2x3  -1x3  0x3  1x3   2x3   3x3
                    2x2   1x1  0x0 -1x-1 -2x-2 -3x-3
                   -2x-3 -1x-3 0x-3 1x-3  2x-3  3x-3
-                   2x-2  1x-1"
+                   2x-2  1x-1
+                   0x0"
             
       Sequencename[3]="circle_left"
-      Sequence[3]="-3x0 -3x1  -2x2  -1x3  0x3  1x3  2x2  3x1  3x0 3x-1 2x-2 1x-3 0x-3 -1x-3 -2x-2 -3x-1"
+      Sequence[3]="-3x0 -3x1  -2x2  -1x3  0x3  1x3  2x2  3x1  3x0 3x-1 2x-2 1x-3 0x-3 -1x-3 -2x-2 -3x-1
+                   -3x0"
             
       Sequencename[4]="circle_right"
-      Sequence[4]="-3x0 -3x-1 -2x-2 -1x-3 0x-3 1x-3 2x-2 3x-1 3x0 3x1  2x2  1x3  0x3  -1x3  -2x2  -3x1"
+      Sequence[4]="-3x0 -3x-1 -2x-2 -1x-3 0x-3 1x-3 2x-2 3x-1 3x0 3x1  2x2  1x3  0x3  -1x3  -2x2  -3x1
+                   -3x0"
       
       Sequencename[5]="eight"
       Sequence[5]="0x0  -1x0  -2x0  -3x-1  -3x-2  -2x-3  -1x-3  0x-3  1x-3  2x-3  3x-2  3x-1  2x0  1x0
-                   0x0  -1x0  -2x0  -3x1   -3x2   -2x3   -1x3   0x3   1x3   2x3   3x2   3x1   2x0  1x0"
+                   0x0  -1x0  -2x0  -3x1   -3x2   -2x3   -1x3   0x3   1x3   2x3   3x2   3x1   2x0  1x0
+                   0x0"
             
       #disabled
       Sequencename[6]="knot"
       Sequence[6]="0x0 -1x0 -2x0 -3x-1 -3x-2 -2x-3 -1x-3 0x-2 0x-1
                    0x0  0x1  0x2  1x3   2x3   3x2   3x1  2x0  1x0
                    0x0 -1x0 -2x0 -3x1  -3x2  -2x3  -1x3  0x2  0x1
-                   0x0  0x-1 0x-2 1x-3  2x-3  3x-2  3x-1 2x0  1x0"
+                   0x0  0x-1 0x-2 1x-3  2x-3  3x-2  3x-1 2x0  1x0
+                   0x0"
   
       Sequencename[7]="knot_small"
       Sequence[7]="0x0  0x-1 -1x-1 -1x0  
                    0x0  1x0   1x1   0x1
                    0x0  0x-1  1x-1  1x0
-                   0x0 -1x0  -1x1   0x1"
+                   0x0 -1x0  -1x1   0x1
+                   0x0"
     ;;
     quick)
-      Sequencenumber="3"
       Raster="1"
-      Delay="10"
+      Framerate="6"
+      Sequencenumber="3"
 
       Sequencename[1]="eight_quick"
       Sequence[1]="0x0  -1x0  -1x-1  0x-1  1x-1  1x0
-                   0x0  -1x0  -1x1   0x1   1x1   1x0"
+                   0x0  -1x0  -1x1   0x1   1x1   1x0
+                   0x0"
                    
       Sequencename[2]="dagaz_quick"
-      Sequence[2]="0x0  -1x-1 -1x0 -1x1 0x0 1x-1 1x0 1x1"
+      Sequence[2]="0x0  -1x-1 -1x0 -1x1 0x0 1x-1 1x0 1x1
+                   0x0"
       
-      Sequencename[3]="circle_quick"
-      Sequence[3]="-1x-1 -1x0 -1x1 0x1 1x1 1x0 1x-1 0x-1"
+      Sequencename[3]="square_quick"
+      Sequence[3]="-1x-1  -1x0  -1x1  0x1  1x1  1x0  1x-1  0x-1  
+                   -1x-1"
       
       #disabled
       Sequencename[4]="knot_quick"
       Sequence[4]="0x0  0x-1 -1x-1 -1x0  
                    0x0  1x0   1x1   0x1
                    0x0  0x-1  1x-1  1x0
-                   0x0 -1x0  -1x1   0x1"
+                   0x0 -1x0  -1x1   0x1
+                   0x0"
     ;;
   esac
-  
-  
-  
+    
+  # convert to mpc for faster access
+  Mpcdir=$Cachedir/mpc
+  mkdir -p "$Mpcdir"
+  worknote "animation: Converting images to mpc"
+  showpercent 1 100
+  for Image in $(fileglob "$Sourcedir/$Sourcefileglob"); do
+    multicore "convert $Image $Mpcdir/$(basename $Image).mpc" || return 1
+  done
+  multicore_wait || return 1
+
   # Revert image list to work from bottom to top
-  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
+  Imagelist="$(fileglob "$Mpcdir/*.mpc")"
   Imagelist="$(sort -V -r <<< "$Imagelist")"
   Imagenumber="$(grep -c . <<< "$Imagelist")"
   
-  # crop lost borders
+  # calculate lost borders
   Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
   Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
   Border="$((Distortion - Distortion * $Staticlayer))"  # wrong result if Staticlayer>1/2 ?
@@ -1065,7 +1083,7 @@ animation() {
   # offset factor, distortion between neighboured layers
   Offset="$(awk "BEGIN {print $Distortion / ( $Imagenumber * $Raster ) }")"
   
-  
+  # get list of needed positions
   for Sequencecount in $(seq $Sequencenumber); do
     for Position in ${Sequence[$Sequencecount]}; do
       Positionlist="$Positionlist
@@ -1075,14 +1093,14 @@ $Position"
   Positionlist="$(grep x <<< "$Positionlist")"
   Positionlist="$(sort <<< "$Positionlist" | uniq)"
   Positionnumber="$(grep -c . <<< "$Positionlist")"
+  
+  Iterationnumber=$((Positionnumber*3 + Sequencenumber))
     
   # Distort images
-  Iteration=0
   for Position in $Positionlist; do
     Xpos="$(cut -dx -f1 <<< "$Position")"
     Ypos="$(cut -dx -f2 <<< "$Position")"
     worknote "animation: Distorting images for position ${Xpos}x${Ypos}."
-      
     Distortdir="$Cachedir/distort.$Position"
     [ -d "$Distortdir" ] || {
       mkdir -p "$Distortdir"
@@ -1092,15 +1110,16 @@ $Position"
       for Image in $Imagelist; do
         Count="$((Count +1))"
         Distortimage="$Distortdir/$(basename $Image)"
-        multicore "convert $Image -gravity center -crop $Cropgeometry+$(awk "BEGIN {print $Count * $Xpos * $Offset}")+$(awk "BEGIN {print $Count * $Ypos * $Offset}") $Distortimage" "$Distortimage" #|| return 1
+        Distortimage="${Distortimage%.mpc}"
+        multicore "convert $Image -gravity center -crop $Cropgeometry+$(awk "BEGIN {print $Count * $Xpos * $Offset}")+$(awk "BEGIN {print $Count * $Ypos * $Offset}") $Distortimage" "$Distortimage" || return 1
       done
 
       Iteration=$((Iteration + 1))
-      showpercent $Iteration $((Positionnumber*3 + Sequencenumber))
+      showpercent $Iteration $Iterationnumber
     }
   done
   multicore_wait || return 1
-  
+
   # fuse distorted images
   for Position in $Positionlist; do
     Iteration=$((Iteration + 1))
@@ -1109,38 +1128,40 @@ $Position"
     mkdir -p "$Fusedir"
     Imagebasename="animation.$Position"
     case $Fusemode in
-      all)          fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode  #|| return 1 
-      ;;
-      *) multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode" #|| return 1 
-      ;;
+      all)          fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode  || return 1 ;;
+      *) multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode" || return 1 ;;
     esac
-    showpercent $Iteration $((Positionnumber*3 + Sequencenumber))
+    showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
-  
+
   for Position in $Positionlist; do
     Iteration=$((Iteration + 1))
     Fusedir="$Cachedir/fuse.$Position"
     Destinationfile="$Cachedir/animation.$Position.median.jpg"
-    worknote "animate: Generating $(basename $Destinationfile)"
+    worknote "animation: Generating $(basename $Destinationfile)"
     multicore "convert $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
-    showpercent $Iteration $((Positionnumber*3 + Sequencenumber))
+    showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
-  
+
   for Count in $(seq $Sequencenumber); do
     Iteration=$((Iteration + 1))
     Imagelist=""
+    Imagelistfile="$Cachedir/imagelist.${Sequencename[$Count]}"
+    :> $Imagelistfile
     for Position in ${Sequence[$Count]}; do
       Image="$(fileglob "$Cachedir/*.$Position.median.*")"
       Imagelist="$Imagelist $Image"
+      echo "file '$Image'" >> "$Imagelistfile"
     done
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$Fusemode.$Distortion.$Format"
 
-    worknote "animate: Generating $(basename $Destinationfile)."
-    multicore "convert -delay $Delay -loop 0 $Imagelist $Destinationfile" "$Destinationfile"  || return 1
-    
-    showpercent $Iteration $((Positionnumber*3 + Sequencenumber))
+    worknote "animation: Generating $(basename $Destinationfile)."
+    #multicore "convert -delay $Framerate -loop 0 $Imagelist $Destinationfile" "$Destinationfile"  || return 1
+    multicore "ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile $Destinationfile" "$Destinationfile"  || return 1
+
+    showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
 }
@@ -1364,7 +1385,7 @@ fuse() {
       Contrastwindowsize="23"
       Saturationweight="0.1"
     ;;
-   x9)
+   9)
       Contrastedgescale="0.8:2000%:300%"
       #Contrastmincurvature="+8.0%"
     ;;
@@ -1578,16 +1599,17 @@ undo() {
 video() {
   # Generate video of stackshot showing focus changes
   local $Batchlocal
-  local Imagelist
-  local Delay Format
+  local Image Imagelist Imagelistfile
+  local Framerate Format
   
   parse_batchoptions "$@" || return 1
 
   Functionmode="${Functionmode:-down}"
-  Delay="${Functionoption:-10}"
+  Framerate="${Functionoption:-10}"
   Format="mp4"
   
-  Destinationfile="$Destinationdir/$Destinationfile.focus.$Functionmode.$Delay.$Format"
+  Destinationfile="$Destinationdir/$Destinationfile.focus.$Functionmode.$Framerate.$Format"
+  Imagelistfile="$Cachedir/imagelist"
   
   Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
   case $Functionmode in
@@ -1598,8 +1620,14 @@ $(tac <<< "$Imagelist")"
     ;;
   esac
   
+  :> "$Imagelistfile"
+  for Image in $Imagelist; do
+    echo "file '$Image'" >> $Imagelistfile
+  done
+  
   showpercent 20 100
-  convert -delay $Delay -loop 0 $Imagelist $Destinationfile
+  #convert -delay $Framerate -loop 0 $Imagelist $Destinationfile
+  ffmpeg -y -r $Framerate -f concat -safe 0 -i $Imagelistfile $Destinationfile
   showpercent 100 100
   showimage $Destinationfile
 }
@@ -1989,9 +2017,10 @@ start "fusewizard" -> frameset;
         batchframeright:framed             -> batchblock3 runbatchframe showresultframe deleteframe;
     bottomframe                        -> dirframe statusframe ;
     
-      dirframe:beside                    -> choosedirguibutton choosedir refreshbutton ;
+      dirframe:beside                    -> choosedirguibutton choosedir opendirbutton refreshbutton;
         choosedirguibutton                 -> @button="Stackshot directory:" ;
         choosedir                          -> @directory="'$Projecthome'" ;
+        opendirbutton                      -> @button="FM";
         refreshbutton                      -> @button="refresh" ;
     
       statusframe                        -> wizardstatusline ;
@@ -2104,7 +2133,7 @@ start "fusewizard" -> frameset;
           runbatchprocessing                                    -> @button="Run selected batch blocks";
           cmdbreak                                              -> @button="break" ;
         
-      specialframe "Special operations" -> rulerline animationline videoline undoline ;
+      specialframe "Special operations" -> rulerline videoline animationline undoline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
           rulermodecombo                                        -> @combo("100c","100p","100z","40c","40p","40z","20c","20p","20z","10c","10p","10z")="100z" ;
           rulercombo:beside           "Title:"                  -> @string ;
@@ -2120,7 +2149,7 @@ start "fusewizard" -> frameset;
           animation:beside            "animated video"          -> "" ;
         videoline:beside                                      -> video videomodecombo videocombo videomagick;
           videomodecombo:beside                                 -> @combo("in","out","in_and_out")="in_and_out";
-          videocombo:beside           "Delay:"                  -> @combow("0","1","2","3","4","5","6","7","8","9","10")="2";
+          videocombo:beside           "Framerate:"              -> @combow("2","3","4","5","7","10","15","20","25","30")="10";
           videomagick                                           -> @button="magick" ;
           video:beside                "focus video"             -> "" ;
         undoline:beside                                       -> undo undomagick undofuse undoevaluate;
@@ -2150,9 +2179,8 @@ start "fusewizard" -> frameset;
             showfuse                   -> @button="fuse";
             showcompose                -> @button="compose";
             showevaluate               -> @button="evaluate";
-        showresultbottomline:beside  -> killviewnior opendirbutton;
-          killviewnior                 -> @action("killall viewnior")="killall viewnior";
-          opendirbutton                -> @button="Open in file manager";
+        showresultbottomline:beside  -> killviewnior ;
+          killviewnior                 -> @action("killall viewnior ffplay")="killall viewnior ffplay";
     
       deleteframe "Delete results" -> deleteline1 deleteline2 deleteall ;
         deleteline1:beside -> deletevideo deletemagick deletecache ;
@@ -2193,19 +2221,19 @@ kaptain_update() {
   sendkaptain "choosedir='$Stackdir'"
   
   # update delete buttons
-  [ -d "$Stackdir/magick" ]                       && sendkaptain "deletemagick='magick'"         || sendkaptain "deletemagick='-'"
-  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "deleteevaluate='evaluate'"     || sendkaptain "deleteevaluate='-'"
-  [ -d "$Stackdir/compose" ]                      && sendkaptain "deletecompose='compose'"       || sendkaptain "deletecompose='-'"
-  [ -d "$Stackdir/fuse" ]                         && sendkaptain "deletefuse='fuse'"             || sendkaptain "deletefuse='-'"
-  [ -d "$Stackdir/video" ]                        && sendkaptain "deletevideo='video'"           || sendkaptain "deletevideo='-'"
-  check_dirglob "$Stackdir/*.bak $Stackdir/cache" && sendkaptain "deletecache='cache'"           || sendkaptain "deletecache='-'"
+  [ -d "$Stackdir/magick" ]                       && sendkaptain "deletemagick='!magick'"         || sendkaptain "deletemagick='-'"
+  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "deleteevaluate='!evaluate'"     || sendkaptain "deleteevaluate='-'"
+  [ -d "$Stackdir/compose" ]                      && sendkaptain "deletecompose='!compose'"       || sendkaptain "deletecompose='-'"
+  [ -d "$Stackdir/fuse" ]                         && sendkaptain "deletefuse='!fuse'"             || sendkaptain "deletefuse='-'"
+  [ -d "$Stackdir/video" ]                        && sendkaptain "deletevideo='!video'"           || sendkaptain "deletevideo='-'"
+  check_dirglob "$Stackdir/*.bak $Stackdir/cache" && sendkaptain "deletecache='cache'"            || sendkaptain "deletecache='-'"
   
   # show directory buttons
-  [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"     || sendkaptain "showstackshot='-'"
-  [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"           || sendkaptain "showmagick='-'"
-  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"       || sendkaptain "showevaluate='-'"
-  [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"         || sendkaptain "showcompose='-'"
-  [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"               || sendkaptain "showfuse='-'"
+  [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"      || sendkaptain "showstackshot='-'"
+  [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"            || sendkaptain "showmagick='-'"
+  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"        || sendkaptain "showevaluate='-'"
+  [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"          || sendkaptain "showcompose='-'"
+  [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"                || sendkaptain "showfuse='-'"
   
   # videos
   for Line in $(fileglob "$Stackdir/video/*.mp4") $(fileglob "$Stackdir/video/*.gif"); do
