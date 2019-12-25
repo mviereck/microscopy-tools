@@ -92,6 +92,10 @@ Image of pollen. Generated with the tools from this repository and a [microscope
 
 ![screenshot](example.jpg)
 
-Animated video of the top of a hemp flower hair:
+Overview of source stack of fused pollen image above:
+
+![screenshot](sourcetable.jpg)
+
+Animated video of the top of a hemp flower hair, generated from 108 single captures in dark-field microscopy:
 
 ![screenshot](animate.gif)
