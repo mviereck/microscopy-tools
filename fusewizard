@@ -1,4 +1,7 @@
 #! /bin/bash
+#
+# fusewizard - generate sharp aligned images from stackshots
+#
 
 #### Messages, Log
 
@@ -96,10 +99,10 @@ shortpath() {
 
 checkvar() {
   local Arg
-  
+
   Arg="${1:-}"
   [ "$(cut -c1 <<< "$Arg")" = "-" ] && shift || Arg=""
-  
+
   [ -z "${3:-}" ] && {
     failure "${1:-}: Variable ${2:-} is empty."
     return 1
@@ -175,29 +178,30 @@ mycp() {
 check_fileglob() {
   # check whether files exist for glob $1
   #[ -d "$1" ] && return 1
-  [ -n "$(find ${1:-} -maxdepth 0 -type f -print -quit 2>/dev/null)" ]
+  [ -n "$(eval find ${1:-} -maxdepth 0 -type f -print -quit 2>/dev/null)" ]
 }
 
 check_dirglob() {
   # check whether directories exist for glob $1
   [ -f "${1:-}" ] && return 1
-  [ -n "$(find ${1:-} -maxdepth 0 -type d -print -quit 2>/dev/null)" ]
+  [ -n "$(eval find ${1:-} -maxdepth 0 -type d -print -quit 2>/dev/null)" ]
 }
 
 fileglob() {
   # echos files only for glob $1
-  local Path Glob Filelist
+  #local Path Glob 
+  local Filelist
   
-  [ -d "${1:-}" ] && {
-    Path="${1:-}"
-    Glob="*"
-  } || {
-    Path="$(dirname  "${1:-}")"
-    Glob="$(basename "${1:-}")"
-  }
-  Path="$(realpath "$Path")"
+  #[ -d "${1:-}" ] && {
+  #  Path="${1:-}"
+  #  Glob="*"
+  #} || {
+  #  Path="$(dirname  "${1:-}")"
+  #  Glob="$(basename "${1:-}")"
+  #}
+  #Path="$(realpath "$Path")"
   
-  Filelist="$(find ${1:-} -maxdepth 0 -type f 2>/dev/null)"
+  Filelist="$(eval find ${1:-} -maxdepth 0 -type f 2>/dev/null)"
   Filelist="$(sort -V <<< "$Filelist")"
   
   [ "$Filelist" ] && echo "$Filelist" || return 1
@@ -290,20 +294,15 @@ setup_workdir() {
   # Use local in calling function:
   #   local Sourcedir Sourcefileglob Destinationdir Destinationfile Targetptofile Targetcachedir Sourcedirchecklist
 
-  local Targetdir Targetstackshotdir Targetnewdir Targetprevdir 
+  local Targetstackshotdir Targetnewdir Targetprevdir 
   local Targetmagickdir Targetfusedir Targetevaluatedir Targetcomposedir Targetcachedir
   local Projectname
-  
+
   Function="${1:-}"
   Targetdir="${2:-}"
+  Sourcefileglob="${3:-*}"
+  
   Function="${Function%magick}"
-
-  # Check if a glob like * is given
-  check_fileglob "$Targetdir" && {
-    Sourcefileglob="$(basename "$Targetdir")"
-    Targetdir="$(dirname "$Targetdir")"
-  }
-  Sourcefileglob="${Sourcefileglob:-"*"}"
   Destinationdir=""
   Destinationfile=""
 
@@ -313,7 +312,6 @@ setup_workdir() {
   Wrong Target: $Targetdir"
     return 1
   }
-  
   Projectname="$(storeinfo dump projectname)"
   
   [ -d "$Targetdir/stackshot" ]          && Targetstackshotdir="$Targetdir/stackshot" || Targetstackshotdir="$Targetdir"
@@ -346,7 +344,7 @@ setup_workdir() {
   # backup for undo, serving also as source for batch operations
   case $Function in
     undo*) ;;
-    evaluate*|animation*|video*) 
+    evaluate*|animation*|video*|fuse*)
       mkdir -p $Targetprevdir
       check_fileglob "$Targetnewdir/*" && mycp "$Targetnewdir/*" "$Targetprevdir/" 
     ;;
@@ -354,17 +352,6 @@ setup_workdir() {
       mkdir -p $Targetprevdir
       check_fileglob "$Targetnewdir/*" && mymv "$Targetnewdir/*" "$Targetprevdir/"
     ;;
-    
-    #align*|brightness*|sharpen*|level*|contrast*|crop*|gamma*|stretch*|kuwahara*|prepare*|wizard*|whitebalance*)
-    #  mkdir -p $Targetprevdir
-    #  mymv "$Targetnewdir/*" "$Targetprevdir/"
-    #;;
-    #evaluate*|compose*|fuse)
-    #  [ -e "$Targetnewdir" ] && {
-    #    mkdir -p $Targetprevdir
-    #    mymv "$Targetnewdir/*" "$Targetprevdir/"
-    #  }
-    #;;
   esac
 
   case $Function in
@@ -454,10 +441,14 @@ showimage() {
   Imagelist="$(fileglob "${1:-}")" >&2
   case $(grep -c . <<< "$Imagelist") in
     0) 
-      failure "showimage: Not found: ${1:-}" 
+      failure "showimage: Not found: ${1:-}"
+      Image="$(storeinfo dump notfoundimage)"
+      [ -e "$Image" ] || convert -size 300x200 xc:red -fill black -pointsize 20 -gravity center -draw "text 0,0 'image not found'" "$Image"
+      geeqie -t -r File:"$Image"
       #sendkaptain "showimage('')=''" 
       #sendkaptain "showimagename=''"
       storeinfo drop showimage
+      return 1
     ;;
     1) 
       Image="$Imagelist"
@@ -474,6 +465,7 @@ showimage() {
 #    1) geeqie -t -r File:"$Imagelist" ;;
     *) viewnior           $Imagelist & ;;
   esac
+  return 0
 }
 
 showvideo() {
@@ -567,7 +559,7 @@ batch_function() {
   local $Batchlocal
   local Sourcedirchecklist Return=0
   local Gallerydir
-    
+    echo "$*"
   parse_batchoptions "$@"  || return 1
   storeinfo test stackshotdir_valid || return 1
   
@@ -576,7 +568,7 @@ batch_function() {
   
   ifcmdbreak && return 1
   
-  setup_workdir "$Function" "$Targetdir" || {
+  setup_workdir "$Function" "$Targetdir" "$Sourcefileglob" || {
     failure "batch $Function: no source found in $Targetdir
     $@"
     return 1
@@ -584,7 +576,7 @@ batch_function() {
   cd "$Targetdir"
   
   case $Function in
-    compose|evaluate|fuse) ;;
+    compose|fuse|evaluate) ;;
     *)
       Function="${Function%magick}"
       Function="${Function%compose}"
@@ -601,8 +593,8 @@ batch_function() {
     ;;
   esac
   
-  checkvar           -D $Function Sourcedir      "$Sourcedir"        || return 1
-  checkvar           -d $Function Destinationdir "$Destinationdir"   || return 1
+  checkvar           -D "$Function" Sourcedir      "$Sourcedir"        || return 1
+  checkvar           -d "$Function" Destinationdir "$Destinationdir"   || return 1
   case $Function in
     undo|compose) ;;
     *) checkvar         $Function Sourcefileglob "$Sourcefileglob"   || return 1 ;;
@@ -721,8 +713,8 @@ getbatch1() {
 }
 
 getfunctionsettings() {
-  Functionmode="$(askkaptain ${Function}modecombo)"
-  Functionoption="$(askkaptain ${Function}combo)"
+  Functionmode="$(askkaptain -c ${Function}modecombo)"
+  Functionoption="$(askkaptain -c ${Function}combo)"
 }
 
 runbatch1() {
@@ -739,8 +731,8 @@ runbatch1() {
 runbatch2() {
   local Function Functionmode Functionoption
   local Iterate
-  for Function in whitebalance gamma_ align_vidstab; do
-    askkaptain $Function > /dev/null && {
+  for Function in whitebalance align_vidstab gamma_ ; do
+    askkaptain -c $Function > /dev/null && {
       getfunctionsettings
       case $Function in
         align_vidstab)
@@ -758,11 +750,12 @@ runbatch2() {
 }
 
 runbatch3() {
-  askkaptain fuse >/dev/null             && cmd -f fuse -m all -t "$Stackdir"
-  askkaptain evaluate >/dev/null         && {
-    cmd -f evaluate     -m all -t "$Stackdir"
-    cmd -f evaluatefuse -m all -t "$Stackdir"
-  }  
+  askkaptain evaluate1 >/dev/null        && cmd -f evaluate -m all -t "$Stackdir"
+  askkaptain fuse >/dev/null             && cmd -f fuse -m $(askkaptain fusemodecombo) -t "$Stackdir"
+  askkaptain evaluate2 >/dev/null &&  {
+    Functionoption=$(askkaptain evaluatecombo)
+    cmd -f evaluatefuse -m all -t "$Stackdir" -g "$(fuse_glob $Functionoption)"
+  }
   askkaptain sharpen_evaluate >/dev/null && cmd -f sharpenevaluate -o 3x1 -t "$Stackdir"
   askkaptain compose >/dev/null          && cmd -f compose -t "$Stackdir"
   
@@ -1031,7 +1024,7 @@ animation() {
     ;;
     quick)
       Raster="1"
-      Framerate="6"
+      Framerate="4"
       Sequencenumber="3"
 
       Sequencename[1]="eight_quick"
@@ -1330,226 +1323,57 @@ evaluate() {
 fuse() {
   # fuse stackshot of images with enfuse
   
-  local $Batchlocal
+  local $Batchlocal 
   local Destinationfilebasename
-  local Exposureweight Saturationweight Contrastweight
-  local Contrastedgescale Contrastmincurvature Contrastwindowsize
-  local Grayprojector
+  local Modelist Modenumber Count
   
   parse_batchoptions "$@" || return 1
   
   Destinationfilebasename="${Destinationfile:-fuse}"
   Functionmode="${Functionmode:-1}"
- 
-  # Predefined parameter sets
-  Exposureweight=0.0
-  Saturationweight=0.0
-  Contrastweight=1.0
-  Contrastedgescale=0
-  Contrastmincurvature=""
-  Contrastwindowsize="3"
-  Grayprojector="luminance"
   
   case $Functionmode in
-    all)
-      for Functionmode in $(seq 50); do
-        multicore "fuse -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Functionmode'" || return 1
-        showpercent "$Functionmode" "50"
+    all|set*)
+      convert $(fileglob "$Sourcedir/$Sourcefileglob") "$Cachedir/layer.tif"
+      case $Functionmode in
+        all) 
+          Modelist="$(seq $Fusemodenumber)" 
+        ;;
+        set*)  
+          for Count in $(seq $Fusemodenumber); do
+            [ "$(fuse_getvalue $Count $Functionmode value)" ] && Modelist="$Modelist $Count"
+          done
+        ;;
+      esac
+      Modenumber="$(wc -w <<< "$Modelist")"
+      Count=0
+      for Functionmode in $Modelist; do
+        Count="$((Count+1))"
+        multicore "fuse -s '$Cachedir' -g 'layer.tif' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Functionmode'" || return 1
+        showpercent "$Count" "$Modenumber"
       done
       multicore_wait || return 1
       return 0
     ;;
-    1)
-    ;;
-    2)
-      Saturationweight="0.1"
-    ;;
-    3)
-      Contrastwindowsize="7"
-    ;;
-    4)
-      Contrastwindowsize="7"
-      Saturationweight="0.1"
-    ;;
-    5) 
-      Contrastwindowsize="15"
-    ;;
-    6) 
-      Contrastwindowsize="15"
-      Saturationweight="0.1"
-    ;;
-    7) 
-      Contrastwindowsize="23"
-    ;;
-    8) 
-      Contrastwindowsize="23"
-      Saturationweight="0.1"
-    ;;
-   9)
-      Contrastedgescale="0.8:2000%:300%"
-      #Contrastmincurvature="+8.0%"
-    ;;
-   x10)
-      Contrastedgescale="0.8:500%:500%"
-      #Contrastmincurvature="+8.0%"
-    ;;
-   x11)
-      Contrastedgescale="1.2:16:4"
-      #Contrastmincurvature="+5.0%"
-    ;;
-   x12)
-      Contrastedgescale="1.2:8:4"
-      #Contrastmincurvature="+5.0%"
-      #Saturationweight="0.1"
-    ;;
-   x13)
-      Contrastedgescale="1.6:16:4"
-      #Contrastmincurvature="+3.0%"
-    ;;
-   x14)
-      Contrastedgescale="1.6:8:4"
-      #Contrastmincurvature="+3.0%"
-      #Saturationweight="0.1"
-    ;;
-    15)
-      Contrastedgescale="1.6:16:10"
-      #Contrastmincurvature="+6.0%"
-    ;;
-    16)
-      Contrastedgescale="1.6:8:10"
-      #Contrastmincurvature="+8.0%"
-      #Saturationweight="0.1"
-    ;;
-    17)
-      Contrastedgescale="2.0:500%:500%"
-      #Contrastmincurvature="+2.0%"
-    ;;
-   x18)
-      Contrastwindowsize="15"
-      Contrastedgescale="1.2:16:4"
-      Contrastmincurvature="+8.01%"
-    ;;
-   x19)
-      Contrastwindowsize="23"
-      Contrastedgescale="1.2:16:4"
-      Contrastmincurvature="+8.01%"
-    ;;
-    20)
-      Contrastedgescale="3.0:4:4"
-    ;;
-    
-    
-    ###############
-    22x) #*
-      Contrastwindowsize="23"
-      Contrastedgescale="2.5:8:4"
-      Contrastmincurvature="+8.01%"
-    ;;
-    
-    23x) #*
-      Contrastwindowsize="23"
-      Contrastedgescale="2.5:4:2"
-      Contrastmincurvature="+8.01%"
-    ;;
-    
-    
-    
-    20x)
-      Contrastwindowsize="23"
-      Contrastedgescale="1.2:24:8"
-    ;;
-    21x)
-      Contrastwindowsize="23"
-      Contrastedgescale="0.5:36:24"
-      Contrastmincurvature="+8.01%"
-    ;;
-    27x) #*
-      Contrastwindowsize="15"
-      Contrastedgescale="2.5:4:2"
-      Contrastmincurvature="+8.01%"
-    ;;
-    
-    
-    xxx7)
-      Contrastedgescale="0.3:1000%:300%"
-      Contrastmincurvature="+0.3%"
-    ;;
-    xxx8)
-      Contrastedgescale="0.3:1000%:300%"
-      Contrastmincurvature="+0.3%"
-      Saturationweight="0.1"
-    ;;
-    
-    
-    
-    
-    x11)
-      Grayprojector="l-star"
-    ;;
-    x12) 
-      Contrastwindowsize="7"
-      Grayprojector="l-star"
-    ;;
-    x13)
-      Grayprojector="l-star"
-      Contrastedgescale="0.3:1000%:300%"
-      Contrastmincurvature="+0.3%"
-      Grayprojector="l-star"
-    ;;
-    x14)
-      Contrastedgescale="0.8:2000%:300%"
-      Grayprojector="l-star"
-    ;;
-    x15)
-      Contrastedgescale="1.2:16:4"
-      Contrastmincurvature="+8.0%"
-      Grayprojector="l-star"
-    ;;
-    x16)
-      Contrastedgescale="1.6:16:4"
-      Contrastmincurvature="+4.0%"
-      Grayprojector="l-star"
-    ;;
-    x17)
-      Contrastedgescale="1.6:16:4"
-      Saturationweight="0.1"
-      Contrastmincurvature="+5.0%"
-      Grayprojector="l-star"
-    ;;
-    x18)
-      Contrastedgescale="1.6:16:10"
-      Saturationweight="0.1"
-      Contrastmincurvature="+10.0%"
-      Grayprojector="l-star"
-    ;;
-    *) return 0 ;;
   esac
 
-  Destinationfile="$Destinationdir/$Destinationfilebasename.fuse$(printf %02d $Functionmode).jpg"
-  #check_destinationfile "$Destinationfile" "fuse" || return 1
+  Destinationfile="$Destinationdir/$Destinationfilebasename.$(fuse_getname $Functionmode shortcut).jpg"
   worknote "fuse $Functionmode: Creating $(basename "$Destinationfile")"
   
-  Enfuseoptions="
-      --exposure-weight=$Exposureweight \
-      --saturation-weight=$Saturationweight \
-      --contrast-weight=$Contrastweight \
-      --hard-mask \
-      \
-      --contrast-edge-scale=$Contrastedgescale \
-      --contrast-window-size=$Contrastwindowsize \
-      \
-      --gray-projector=$Grayprojector"
-  [ "$Contrastmincurvature" ] && Enfuseoptions="$Enfuseoptions \
-      --contrast-min-curvature=$Contrastmincurvature"
+  # Collect options
+  Enfuseoptions=""
+  for Line in $Fuseoptions; do
+    Enfuseoptions="$Enfuseoptions $(fuse_getvalue $Functionmode $Line option)"
+  done
   
-  # Fusing here
-  enfuse $Enfuseoptions \
-         --output="$Destinationfile" \
-         $(fileglob "$Sourcedir/$Sourcefileglob") \
-         2>&1 | grep -v "does not have an alpha channel" | grep -v "assuming all pixels should contribute" | grep -v "loading next image" || {
-    failure "fuse $Functionmode failed"
-    return 1
-  }
+  # Fuse
+  { enfuse $Enfuseoptions \
+           --output="$Destinationfile" \
+           $(fileglob "$Sourcedir/$Sourcefileglob") 2>&1 || {
+      failure "fuse $Functionmode failed"
+      return 1
+    } 
+  } | grep -v -E 'assuming all pixels should contribute|alpha channel|loading next image|no usable resolution found'
         
   # Write enfuse options into EXIF data of image
   exiv2 -M"set Exif.Photo.UserComment Comment charset=Ascii enfuse $(echo $Enfuseoptions)" "$Destinationfile" 
@@ -1927,6 +1751,285 @@ $Permillebottom" | sort -n | head -n1)
   return ${Return:-0}
 }
 
+#### fuse helpers
+
+fuse_declare() {
+  # declare default fuse mode values
+  local Count
+  
+  Fusemodenumber=20
+  Fusesetnumber=3
+  Fuseoptions="exposureweight saturationweight contrastweight entropyweight blendmask grayprojector levels contrastwindowsize contrastmincurvature contrastedgescale"
+  Fusearguments="$Fuseoptions lcescale lcefactor"
+  Fusemodecombo="'all','set$(seq -s "','set" $Fusesetnumber)','$(seq -s "','" $Fusemodenumber)'"
+  
+  # set1
+  for Count in 1 2 3 4 5 6 7 8 9 15 16 17 20 ; do
+    fuse_storevalue $Count set1 !
+  done
+  # set2
+  for Count in 1 2 3 ; do
+    fuse_storevalue $Count set2 !
+  done
+  # set3
+  for Count in 4 5 6 ; do
+    fuse_storevalue $Count set3 !
+  done
+  
+  # Default Fuse modes
+  # 1)
+  # 2)
+  fuse_storevalue 2 saturationweight 0.1
+  # 3)
+  fuse_storevalue 3 contrastwindowsize 7
+  # 4)
+  fuse_storevalue 4 contrastwindowsize 7
+  fuse_storevalue 4 saturationweight 0.1
+  # 5) 
+  fuse_storevalue 5 contrastwindowsize 15
+  # 6)
+  fuse_storevalue 6 contrastwindowsize 15
+  fuse_storevalue 6 saturationweight 0.1
+  # 7) 
+  fuse_storevalue 7 contrastwindowsize 23
+  # 8)
+  fuse_storevalue 8 contrastwindowsize 23
+  fuse_storevalue 8 saturationweight 0.1
+  # 9)
+  fuse_storevalue 9 contrastedgescale 0.8
+  fuse_storevalue 9 lcescale 16
+  fuse_storevalue 9 lcefactor 7
+  # Contrastedgescale="0.8:2000%:300%"
+  ##Contrastmincurvature="+8.0%"
+  # 10)
+  fuse_storevalue 10 contrastedgescale 0.8
+  fuse_storevalue 10 lcescale 4
+  fuse_storevalue 10 lcefactor 25
+  #Contrastedgescale="0.8:500%:500%"
+  ##Contrastmincurvature="+8.0%"
+  # 11)
+  fuse_storevalue 11 contrastedgescale 1.2
+  fuse_storevalue 11 lcescale 16
+  fuse_storevalue 11 lcefactor 4
+  ##Contrastmincurvature="+5.0%"
+  # 12)
+  fuse_storevalue 12 contrastedgescale 1.2
+  fuse_storevalue 12 lcescale 8
+  fuse_storevalue 12 lcefactor 4
+  ##Contrastmincurvature="+5.0%"
+  ##Saturationweight="0.1"
+  # 13)
+  fuse_storevalue 13 contrastedgescale 1.6
+  fuse_storevalue 13 lcescale 16
+  fuse_storevalue 13 lcefactor 4
+  ##Contrastmincurvature="+3.0%"
+  # 14)
+  fuse_storevalue 14 contrastedgescale 1.6
+  fuse_storevalue 14 lcescale 8
+  fuse_storevalue 14 lcefactor 4
+  ##Contrastmincurvature="+3.0%"
+  ##Saturationweight="0.1"
+  # 15)
+  fuse_storevalue 15 contrastedgescale 1.6
+  fuse_storevalue 15 lcescale 16
+  fuse_storevalue 15 lcefactor 10
+  ##Contrastmincurvature="+6.0%"
+  # 16)
+  fuse_storevalue 16 contrastedgescale 1.6
+  fuse_storevalue 16 lcescale 8
+  fuse_storevalue 16 lcefactor 10
+  ##Contrastmincurvature="+8.0%"
+  ##Saturationweight="0.1"
+  # 17)
+  fuse_storevalue 17 contrastedgescale 2.0
+  fuse_storevalue 17 lcescale 10
+  fuse_storevalue 17 lcefactor 25
+  ##Contrastedgescale="2.0:500%:500%"
+  ##Contrastmincurvature="+2.0%"
+  # 18)
+  fuse_storevalue 18 contrastedgescale 1.2
+  fuse_storevalue 18 lcescale 16
+  fuse_storevalue 18 lcefactor 4
+  fuse_storevalue 18 contrastwindowsize 9
+  fuse_storevalue 18 contrastmincurvature 8
+  # 19)
+  fuse_storevalue 19 contrastedgescale 1.2
+  fuse_storevalue 19 lcescale 16
+  fuse_storevalue 19 lcefactor 4
+  fuse_storevalue 19 contrastwindowsize 23
+  fuse_storevalue 19 contrastmincurvature 8
+  # 20)
+  fuse_storevalue 20 contrastedgescale 3.0
+  fuse_storevalue 20 lcescale 4
+  fuse_storevalue 20 lcefactor 4
+}
+
+fuse_getname() {
+  local Number Mode
+  local Line Value Name
+
+  Number="${1:-}"
+  Mode="${2:-}"
+  
+  case $Mode in
+    option)
+      for Line in $Fuseoptions; do
+        Value="$(fuse_getvalue $Number $Line value)"
+        [ "$Value" = "$(fuse_defaultvalue $Line)" ] || {
+          case $Line in
+            exposureweight)       Name="$Name exp$Value" ;;
+            saturationweight)     Name="$Name sat$Value" ;;
+            contrastweight)       Name="$Name cont$Value" ;;
+            entropyweight)        Name="$Name ent$Value" ;;
+            blendmask)            Name="$Name $(tr -d "-" <<< ${Value%mask})" ;;
+            grayprojector)        Name="$Name $Value" ;;
+            levels)               Name="$Name lev$Value" ;;
+            contrastwindowsize)   Name="$Name cws$Value" ;;
+            contrastmincurvature) Name="$Name curv$Value" ;;
+            contrastedgescale)    Name="$Name $(fuse_getvalue $Number $Line option | cut -d= -f2)" ;;
+          esac
+        }
+      done
+      [ -z "$Name" ] && Name="default"
+    ;;
+    shortcut)
+      echo "fuse$(printf %02d "$Number")"
+    ;;
+  esac
+  echo  "$Name"
+}
+
+fuse_defaultvalue() {
+  # define default enfuse settings
+  local Entry
+  Entry="${1:-}"
+  Entry="$(tr -d "-" <<< "$Entry")"
+  case "${1:-}" in
+    exposureweight)       echo "0" ;;
+    saturationweight)     echo "0" ;;
+    contrastweight)       echo "1" ;;
+    entropyweight)        echo "0" ;;
+    blendmask)            echo "--hard-mask" ;;
+    grayprojector)        echo "luminance" ;;
+    levels)               echo "" ;;
+    contrastwindowsize)   echo "5" ;;
+    contrastmincurvature) echo "" ;;
+    contrastedgescale)    echo "" ;;
+    lcescale)             echo "" ;;
+    lcefactor)            echo "" ;;
+    set*)                 echo "" ;;
+  esac
+}
+
+fuse_getvalue() {
+  local Number Entry Mode Entryoption Value Combovalues Combo
+  Number="${1:-}"
+  Entry="${2:-}"
+  Mode="${3:-}"
+  
+  Entry="$(tr -d "-" <<< "$Entry")"
+  case $Entry in
+    exposureweight)       Entryoption="--exposure-weight" ;;
+    saturationweight)     Entryoption="--saturation-weight" ;;
+    contrastweight)       Entryoption="--contrast-weight" ;;
+    entropyweight)        Entryoption="--entropy-weight" ;;
+    grayprojector)        Entryoption="--gray-projector" ;;
+    levels)               Entryoption="--levels" ;;
+    contrastwindowsize)   Entryoption="--contrast-window-size" ;;
+    contrastmincurvature) Entryoption="--contrast-min-curvature" ;;
+    contrastedgescale)    Entryoption="--contrast-edge-scale" ;;
+  esac
+  
+  case $Entry in
+    exposureweight|saturationweight|contrastweight|entropyweight) Combovalues="empty 0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1" ;;
+    blendmask)            Combovalues="--hard-mask --soft-mask" ;;
+    grayprojector)        Combovalues="anti-value average l-star lightness luminance pl-star value" ;;
+    levels)               Combovalues="empty $(seq 29)" ;;
+    contrastwindowsize)   Combovalues="empty 3 5 7 9 11 13 15 17 19 21 23 25 27 29" ;;
+    contrastmincurvature) Combovalues="empty 0 0.1 0.5 1 2 3 5 7.5 8 10" ;;
+    contrastedgescale)    Combovalues="empty 0 0.1 0.2 0.3 0.4 0.5 0.8 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0" ;;
+    lcescale)             Combovalues="empty 0 2 4 6 8 10 15 16 20 25" ;;
+    lcefactor)            Combovalues="empty 0 2 4 6 7 8 10 12 25" ;;
+  esac
+  
+  
+  Value="$(grep "^$Number:$Entry:" $Storefusefile | cut -d: -f3)"
+  [ -z "$Value" ] && Value="$(fuse_defaultvalue "$Entry")"
+  
+  case $Mode in
+    value)     
+      echo "$Value" 
+    ;;
+    
+    option)
+      [ -z "$Value" ] && echo "" && return 0
+      case $Entry in
+        blendmask)
+          echo "$Value"
+        ;;
+        contrastedgescale)
+          Lcescale=$(fuse_getvalue  $Number lcescale value)
+          Lcefactor=$(fuse_getvalue $Number lcefactor value)
+          case $Lcescale in
+            "") 
+              echo "$Entryoption=$Value" 
+            ;;
+            *)
+              case $Lcefactor in
+                "") echo "$Entryoption=$Value:$Lcescale" ;;
+                *)  echo "$Entryoption=$Value:$Lcescale:$Lcefactor" ;;
+              esac
+            ;;
+          esac
+        ;;
+        lcescale|lcefactor) echo "" ;;
+        *) 
+          echo "$Entryoption=$Value" 
+        ;;
+      esac
+    ;;
+    
+    kaptain)
+      for Line in $Combovalues; do
+        Combo="$Combo,'$Line'"
+      done
+      Combo="${Combo#,}"
+      Combo="$(sed 's/empty//' <<< "$Combo")"
+      echo "${Entry}(${Combo})='${Value}'"
+    ;;
+  esac
+}
+
+fuse_storevalue() {
+  local Number Entry Value Content
+  
+  Number="${1:-}"
+  Entry="${2:-}"
+  Value="${3:-}"
+  
+  Entry="$(tr -d "-" <<< "$Entry")"
+  Content="$(sed "/^$Number:$Entry:/d" $Storefusefile)"
+  [ "$Value" = "$(fuse_defaultvalue "$Entry")" ] && Line="" || Line="$Number:$Entry:$Value"
+  [ "$Line" ] && Content="$(sort -V <<< "$Content
+$Line")"
+  echo "$Content" > $Storefusefile
+  return 0
+}
+
+fuse_glob() {
+  local Count Glob
+  case "${1:-}" in
+    all) echo "*" ;;
+    set*) 
+      for Count in $(seq $Fusemodenumber); do
+        [ "$(fuse_getvalue $Count ${1:-} value)" ] && Glob="${Glob},*$(fuse_getname $Count shortcut)*"
+      done
+      echo "{${Glob}}"
+    ;;
+    *) echo "*$(fuse_getname ${1:-} shortcut)*"
+  esac
+}
+
 #### run commands on all CPUs
 
 multicore() {
@@ -2115,12 +2218,19 @@ start "fusewizard" -> frameset;
           gamma_fuse                                            -> @button="fuse" ;
           gamma_:beside                "gamma"                  -> gamma_combo | "";
         
-      batchblock3 "batch block 3: combine stackshot images" -> fuse evaluateline sharpen_evaluate compose;
-        fuse:beside                   "fuse"                    -> @button="magick" "on" | "";
-        evaluateline:beside                                     -> evaluate evaluatemagick evaluatefuse;
+      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose;
+        fuseline:beside                                       -> fuse fuseconfig @fill fusemodecombo fusemagick;
+          fuseconfig                                            -> @button="fuse" ;
+          fusemodecombo                                         -> @combo('$Fusemodecombo')="set1" ;
+          fusemagick                                            -> @button="magick";
+          fuse:beside                                           -> "on" | "" ;
+        evaluateline1:beside                                    -> evaluate1 evaluatemagick ;
           evaluatemagick                                        -> @button="magick" ;
+          evaluate1:beside            "evaluate"                -> "on" | "";
+        evaluateline2:beside                                    -> evaluate2 evaluatecombo evaluatefuse;
           evaluatefuse                                          -> @button="fuse" ;
-          evaluate:beside             "evaluate"                -> "on" | "";
+          evaluatecombo                                         -> @combo('$Fusemodecombo')="all" ;
+          evaluate2:beside            "evaluate"                -> "on" | "";
         sharpen_evaluate:beside       "sharpen 3x1"             -> @button="evaluate" "on" | "";
         compose:beside                "compose"                 -> @button="evaluate" "on" | "";
 
@@ -2144,7 +2254,7 @@ start "fusewizard" -> frameset;
         animationline:beside                                  -> animation animationmodecombo animationfusecombo animationcombo animationmagick;
           animationmodecombo:beside                             -> @combo("quick","smooth")="quick";
           animationcombo:beside       "Distortion:"             -> @combow("20","30","40","50","60")="30";
-          animationfusecombo:beside   "fuse:"                   -> @combow("all","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20")="4";
+          animationfusecombo:beside   "fuse:"                   -> @combow('$Fusemodecombo')="set2";
           animationmagick                                       -> @button="magick" ;
           animation:beside            "animated video"          -> "" ;
         videoline:beside                                      -> video videomodecombo videocombo videomagick;
@@ -2204,7 +2314,11 @@ sendkaptain() {
 askkaptain() {
   # ask kaptain for value of $1
   local Answer
-  kaptaingrammar | grep -q "${1:-}" || return 1
+  [ "${1:-}" = "-c" ] && {
+    # check if entry if present at all
+    shift
+    kaptaingrammar | grep -q "${1:-}" || return 1
+  }
   sendkaptain "${1:-}?"
   read Answer <&${Kaptainstdout}
   [ -z "$Answer" ] && return 1
@@ -2390,8 +2504,19 @@ parse_kaptainsignal() {
       showimage "$Stackdir/${Kaptainsignal#show}/*"
     ;;
     
-    evaluate*|compose|fuse)
+    fuseconfig)
+      fuse_config
+    ;;
+    fuse*)
+      Functionmode=$(askkaptain fusemodecombo)
+      cmd -f $Kaptainsignal -t $Stackdir -m $Functionmode    
+    ;;
+    evaluatemagick|compose)
       cmd -f $Kaptainsignal -t $Stackdir
+    ;;
+    evaluatefuse)
+      Functionoption=$(askkaptain evaluatecombo)
+      cmd -f $Kaptainsignal -t "$Stackdir" -g "$(fuse_glob $Functionoption)"
     ;;
     sharpen_evaluate)
       cmd -f sharpenevaluate -o 3x1 -t "$Stackdir"
@@ -2403,8 +2528,8 @@ parse_kaptainsignal() {
       Command="${Command%evaluate}"
       Command="${Command%evaluate}"
       Command="${Command%fuse}"
-      Functionmode="$(askkaptain "${Command}modecombo")"
-      Functionoption="$(askkaptain "${Command}combo")"
+      Functionmode="$(askkaptain -c "${Command}modecombo")"
+      Functionoption="$(askkaptain -c "${Command}combo")"
       case "$Command" in
         applyall) 
           Functionoption="$(getbatch1)"
@@ -2541,52 +2666,163 @@ $Entrylist
   realpath "$Dir"
 }
 
-choose_fuseimages() {
+fuse_config() {
+  
+  local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
+  local Cachedir Stackdir
+  local Count Setcount Line Image Imagelist Commentfile Button Argument Currentfuse=1 Refresh
+  local Comment Commentfile
+  local Formatline Formatlist Fusetoworkonlist Fusetoworkonline Setline Setlist Setcount
+  
+  Stackdir="$(storeinfo dump stackshotdir)"
+  Cachedir="$(storeinfo dump cache)"
+  Commentfile="$Cachedir/exivcomment"
 
-  Wizardcache=/tmp
-  Imagelist=""
-  Entrylist=""
-  Entryline=""
-  Sourcedir=/home/lauscher/Bilder/ardustack/test/fuse
-  Count=0
-  for Image in $Sourcedir/*; do
-    Count=$((Count+1))
-    Imagelist="$Imagelist
-$Image"
-    Entryline="$Entryline image$Count"
-    Entrylist="$Entrylist
-    image$Count:beside '$Count' -> @button('$Image')='$(basename $Image)' '$(basename $Image)' | '' ;"
+  # prepare kaptain files and fifos
+  Kaptaingrammarfile="$Cachedir/fuse.kaptain.grammar"
+  Kaptainstdinfifo="$Cachedir/fuse.kaptain.stdin"
+  Kaptainstdoutfifo="$Cachedir/fuse.kaptain.stdout"
+  mkfifo   $Kaptainstdinfifo
+  mkfifo   $Kaptainstdoutfifo
+  exec  {Kaptainstdin}<>$Kaptainstdinfifo
+  exec  {Kaptainstdout}<>$Kaptainstdoutfifo
+  
+  worknote "Preparing fuse GUI"
+  
+  # Prepare left columns of GUI
+  Formatline="formatline ' ' -> "
+  Fusetoworkonline="fusetoworkon 'all' -> "
+  for Setcount in $(seq $Fusesetnumber); do
+    Setline[$Setcount]="set${Setcount} 'set${Setcount}' -> "
   done
+  for Count in $(seq $Fusemodenumber); do
+    Formatline="$Formatline format$Count"
+    Formatlist="$Formatlist
+      format$Count -> @text=''; "
+    
+    Fusetoworkonline="$Fusetoworkonline fuse${Count} |"
+    Fusetoworkonlist="$Fusetoworkonlist
+      fuse${Count}:beside '$(fuse_getname $Count shortcut)' -> @string='$(fuse_getname $Count option)' ;"
+    
+    for Setcount in $(seq $Fusesetnumber); do
+      Setline[$Setcount]="${Setline[$Setcount]} set${Setcount}_${Count}"
+      Setlist[$Setcount]="${Setlist[$Setcount]}
+        set${Setcount}_${Count}:beside -> @ | $(fuse_getvalue $Count set${Setcount} value) '' ;"
+    done
+  done
+  Formatline="$Formatline ;"
+  Fusetoworkonline="${Fusetoworkonline%"|"} ;"
+  for Setcount in $(seq $Fusesetnumber); do
+    Setline[$Setcount]="${Setline[$Setcount]} ;"
+  done
+  
+  # grammar
   echo "#! /usr/bin/kaptain
 start -> frameset;
-  frameset:beside:framed -> framelist framepreview frameexiv;
-    framelist    -> list;
-    framepreview -> @icon('/home/lauscher/Bilder/ardustack/test/fuse/np.test.fuse06.jpg');
-    frameexiv     -> exiv;
-  exiv -> @text='' ;
-  list -> $Entryline ;
-$Entrylist" > $Wizardcache/test.kaptn
-  cat $Wizardcache/test.kaptn
+  frameset:beside:framed -> formatline fusetoworkon $(for Setcount in $(seq $Fusesetnumber); do echo set$Setcount; done) fusesettings;
+    $Formatline
+      $Formatlist
+    
+    $Fusetoworkonline
+      $Fusetoworkonlist
+      
+    $(for Setcount in $(seq $Fusesetnumber); do echo "
+    ${Setline[$Setcount]}
+      ${Setlist[$Setcount]}"
+      done)
+      
+    fusesettings 'enfuse options' -> exposureweight saturationweight contrastweight entropyweight blendmask grayprojector text2 levels contrastwindowsize contrastmincurvature contrastedgescaleline exivcomment run @fill;
+    
+      exposureweight:beside        '--exposure-weight'            -> @combo('')='';
+      saturationweight:beside      '--saturation-weight'          -> @combo('')='';
+      contrastweight:beside        '--contrast-weight'            -> @combo('')='';
+      entropyweight:beside         '--entropy-weight'             -> @combo('')='';
+
+      blendmask:beside                                            -> @combo('')='' ;
+      grayprojector:beside         '--gray-projector'             -> @combo('')='';
+      levels:beside                '--levels'                     -> @combo('')='';
+      
+      text2 -> @text='Following options are most of interest to change.' ;
+      contrastwindowsize:beside    '--contrast-window-size'       -> @combow('')='';
+      contrastmincurvature:beside  '--contrast-min-curvature (%)' -> @combow('')='' ;
+      contrastedgescaleline:beside '--contrast-edge-scale'        -> contrastedgescale lcescale lcefactor ;
+        contrastedgescale                                           -> @combow('')='';
+        lcescale                                                    -> @combow('')='';
+        lcefactor                                                   -> @combow('')='';
+      run                                                         -> @button='Run enfuse' ;
+      
+      exivcomment                                                 -> @text='' ;
+        
+" > $Kaptaingrammarfile
   
-  rm $Wizardcache/test.fifo
-  rm $Wizardcache/test11.fifo
-  mkfifo $Wizardcache/test.fifo
-  mkfifo $Wizardcache/test11.fifo
-  exec {FDin}<>$Wizardcache/test.fifo
-  exec {FDout}<>$Wizardcache/test11.fifo
+  nl -ba $Kaptaingrammarfile
   
-  kaptain --stdio $Wizardcache/test.kaptn <&${FDin} >&${FDout} &
-  Kaptainpid=$!
-  
+  kaptain --stdio $Kaptaingrammarfile <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  storepid $Kaptainpid
+  for Count in $(seq 50); do
+    read -t1 Line <&${Kaptainstdout}
+    [ -z "$Line" ] && break
+  done
+
+  Refresh="yes"
   while ps -p $Kaptainpid >/dev/null; do
-    read -t1 Kaptainsignal <&${FDout}
-    echo "Signal: $Kaptainsignal"
-    Exiftext=""
-    for Exifline in enfuse --exposure-weight=0.0  --saturation-weight=0.0  --contrast-weight=1.0  --hard-mask  --contrast-edge-scale=0  --contrast-window-size=3 --gray-projector=luminance ;do
-      Exiftext="$Exiftext \n $Exifline"
-    done
-    echo "exiv=\"$Exiftext\"" >&${FDin}
-  done 
+    [ "$Refresh" = "yes" ] && {
+      Refresh=""
+      
+      # show current settings
+      for Line in $Fusearguments; do
+        sendkaptain "$(fuse_getvalue $Currentfuse $Line kaptain)"
+      done
+      
+      # Read and show exiv comment (contains enfuse options)
+      Image="$(fileglob "$Stackdir/fuse/*$(fuse_getname $Currentfuse shortcut)*")"
+      showimage "$Image" && Comment="$(exiv2 "$Image" | grep comment | cut -d: -f2-)" || Comment=""
+      :> $Commentfile
+      [ -e "$Image" ] && echo "$(basename $Image) was generated with:
+        " >> "$Commentfile"
+      for Line in $Comment; do
+        echo "$Line" >> $Commentfile
+      done
+      sendkaptain "exivcomment=\`tail -n+1 $Commentfile\`"
+
+      Imagelist="$(fileglob "$Stackdir/fuse/*fuse*")"
+      for Count in $(seq $Fusemodenumber); do
+        grep -q "\.$(fuse_getname $Count shortcut)\." <<< "$Imagelist" && sendkaptain "format$Count='x'" || sendkaptain "format$Count=' '"
+      done
+    }
+    
+    read -t1 Kaptainsignal <&${Kaptainstdout}
+    
+    [ "$Kaptainsignal" ] && {
+      echo $Kaptainsignal
+      
+      Button="$(cut -d: -f1 <<< "$Kaptainsignal")"
+      Argument="$(cut -d: -f2 <<< "$Kaptainsignal")"
+      case $Button in
+        fuse*)
+          Currentfuse="${Kaptainsignal#fuse}"
+          Currentfuse="${Currentfuse%:selected}"
+          Refresh="yes"
+        ;;
+        run)
+          cmd -f fuse -m "$Currentfuse" -t "$Stackdir"
+        ;;
+        set*)
+          case $Argument in
+            on)  fuse_storevalue $(cut -d_ -f2 <<< "$Button") $(cut -d_ -f1 <<< "$Button") "!" ;;
+            off) fuse_storevalue $(cut -d_ -f2 <<< "$Button") $(cut -d_ -f1 <<< "$Button") ""  ;;
+          esac
+        ;;
+        *)
+          fuse_storevalue $Currentfuse $Button $Argument
+          sendkaptain "fuse$Currentfuse='$(fuse_getname $Currentfuse option)'"
+        ;;
+      esac
+    }
+  done
+  
+  exec {Kaptainstdin}>&- {Kaptainstdout}>&-
+  ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
 
 }
 
@@ -2873,8 +3109,8 @@ parse_cmd() {
       batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
     ;;
-    evaluate*|compose*|fuse)
-      batch_function -f $Function -m "${Functionmode:-all}" -t "$Targetdir"
+    evaluate*|compose*|fuse*)
+      batch_function -f $Function -m "${Functionmode:-all}" -t "$Targetdir" -g "$Sourcefileglob"
       Return=$?
     ;;
     showimage)
@@ -2998,7 +3234,16 @@ main() {
   storeinfo "stackshotdir=$Projecthome"
   storeinfo "gallerydir=$Gallerydir"
   storeinfo "status=idle"
+  storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
+#  storeinfo "fusesettings=$Wizardlocalshare/fusesettings"
+  storeinfo "fusesettings=$Wizardcache/fusesettings"
+
   
+  Storefusefile=$Wizardcache/fuse_storevalue
+  touch $Storefusefile
+  
+  fuse_declare
+
   # start kaptain
   kaptaingrammar > $Kaptaingrammarfile
   #nl -ba $Kaptaingrammarfile
@@ -3047,11 +3292,7 @@ finish
 # documentation in all functions
 # Features:
 #  - choice of setting sets
-#  - config of fuse settings
 #  - checkbutton: "allow invalid directory structure"
-#  - stack video
 #  - clean entire project home: cache, backup, magick (note in history)
-#  - find all gifs
 # Fix:
-#  - wrong failure-undo with magick -> evaluate, probably with other cross functions, too -> fixed, CHECK
 #  ardustack - replace align_image_stack for median with vidstab
