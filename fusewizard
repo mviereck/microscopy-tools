@@ -2230,7 +2230,7 @@ start "fusewizard" -> frameset;
           gamma_magick                                          -> @button="magick" ;
           gamma_evaluate                                        -> @button="evaluate" ;
           gamma_fuse                                            -> @button="fuse" ;
-          gamma_:beside                "gamma"                  -> gamma_combo | "";
+          gamma_:beside                "gamma"                  -> gamma_combo | ! "";
         
       batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose;
         fuseline:beside                                       -> fuse fuseconfig @fill fusemodecombo fusemagick;
@@ -2457,7 +2457,6 @@ parse_kaptainsignal() {
       storeinfo "cmdbreak=yes"
     ;;
     choosedirguibutton)
-      worknote "Generating GUI"
       Newstackdir="$(choose_stackshot "$Projecthome")"
       check_stackdir "$Newstackdir"
       kaptain_update
@@ -2627,7 +2626,7 @@ $Projectline ;"
     
     # add stackshot
     Entrylist="$Entrylist
-  stackshot$Count:beside '{$Destinationfile}$Dir' -> @dump('$Dir')='Choose this stackshot' @close='Cancel';"
+  stackshot$Count:beside '{$Destinationfile}$Dir' -> @dump('$Dir')='Choose this stackshot' @close='close';"
   
     # add image to montage list
     Projectimages="$Projectimages
@@ -2789,8 +2788,9 @@ start 'enfuse settings' -> frameset;
           Md5sum_old="$Md5sum"
           Md5sum="$(ls --full-time $Stackdir/magick/* | md5sum)"
           [ "$Md5sum" != "$Md5sum_old" ] && convert "$(fileglob "$Stackdir/magick/*")" $Tiflayer
-          fuse -s "$Stackdir/magick" -g "*" -m "$Currentfuse"
+          #fuse -s "$Stackdir/magick" -g "*" -m "$Currentfuse "
           sendkaptain "run='*** BUSY ***'"
+          parse_cmd -f fuse -m "$Currentfuse" -t "$Stackdir"
           Refresh="yes"
           sendkaptain "run='Run enfuse'"
         ;;
