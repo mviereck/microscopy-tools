@@ -456,10 +456,14 @@ showimage() {
       #convert "$Image" -scale 800x800\> "$Shrinkimage" 
       #sendkaptain "showimage('$Shrinkimage')=''" 
       #sendkaptain "showimagename='$(shortpath "$Image")'"
-      #storeinfo   "showimage=$Image"
       case "$(rev <<< "$Image" | cut -d. -f1)" in
-        fig|4pm) showvideo "$Image" ;;
-        *)       geeqie -t -r File:"$Image" ;;
+        fig|4pm) 
+          showvideo "$Image" 
+        ;;
+        *)       
+          geeqie -t -r File:"$Image" 
+          storeinfo   "showimage=$Image"
+        ;;
       esac
     ;;
 #    1) geeqie -t -r File:"$Imagelist" ;;
@@ -498,7 +502,7 @@ showimagediff() {
   showimage "$Cacheimage"
 }
 
-showimage_gui() {
+showimage_guiXXX() {
 
   local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal
   local Image
@@ -1114,23 +1118,28 @@ $Position"
   multicore_wait || return 1
 
   # fuse distorted images
+  Showpercentfunc="$(declare -f showpercent)"
   for Position in $Positionlist; do
     Iteration=$((Iteration + 1))
     Distortdir="$Cachedir/distort.$Position"
-    Fusedir="$Cachedir/fuse.$Position"
+    Distortcachedir="$Cachedir/distort.$Position/layered"
+    mkdir -p $Distortcachedir
+    Fusedir="$Distortdir/fuse"
     mkdir -p "$Fusedir"
     Imagebasename="animation.$Position"
     case $Fusemode in
-      all)          fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode  || return 1 ;;
-      *) multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode" || return 1 ;;
+      all|set*) ( showpercent() { : ; } ; fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode -c $Distortcachedir ) || return 1 ;; ### FIXME does return on failure work?
+      *)                       multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode -c $Distortcachedir"  || return 1 ;;
     esac
     showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
 
+  # Calculate median of fuse images
   for Position in $Positionlist; do
     Iteration=$((Iteration + 1))
-    Fusedir="$Cachedir/fuse.$Position"
+    Distortdir="$Cachedir/distort.$Position"
+    Fusedir="$Distortdir/fuse"
     Destinationfile="$Cachedir/animation.$Position.median.jpg"
     worknote "animation: Generating $(basename $Destinationfile)"
     multicore "convert $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
@@ -1138,6 +1147,7 @@ $Position"
   done
   multicore_wait || return 1
 
+  # Generate videos
   for Count in $(seq $Sequencenumber); do
     Iteration=$((Iteration + 1))
     Imagelist=""
@@ -1148,7 +1158,7 @@ $Position"
       Imagelist="$Imagelist $Image"
       echo "file '$Image'" >> "$Imagelistfile"
     done
-    Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$Fusemode.$Distortion.$Format"
+    Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$(fuse_getname $Fusemode).$Distortion.$Format"
 
     worknote "animation: Generating $(basename $Destinationfile)."
     #multicore "convert -delay $Framerate -loop 0 $Imagelist $Destinationfile" "$Destinationfile"  || return 1
@@ -1334,7 +1344,7 @@ fuse() {
   
   case $Functionmode in
     all|set*)
-      convert $(fileglob "$Sourcedir/$Sourcefileglob") "$Cachedir/layer.tif"
+      convert $(fileglob "$Sourcedir/$Sourcefileglob") "$Cachedir/layer.tif" || return 1
       case $Functionmode in
         all) 
           Modelist="$(seq $Fusemodenumber)" 
@@ -1365,6 +1375,7 @@ fuse() {
   for Line in $Fuseoptions; do
     Enfuseoptions="$Enfuseoptions $(fuse_getvalue $Functionmode $Line option)"
   done
+  verbose "fuse $Functionmode: $Enfuseoptions"
   
   # Fuse
   { enfuse $Enfuseoptions \
@@ -1757,8 +1768,9 @@ fuse_declare() {
   # declare default fuse mode values
   local Count
   
-  Fusemodenumber=20
-  Fusesetnumber=3
+  Fusemodenumber=25
+  Fusesetnumber=5
+  
   Fuseoptions="exposureweight saturationweight contrastweight entropyweight blendmask grayprojector levels contrastwindowsize contrastmincurvature contrastedgescale"
   Fusearguments="$Fuseoptions lcescale lcefactor"
   Fusemodecombo="'all','set$(seq -s "','set" $Fusesetnumber)','$(seq -s "','" $Fusemodenumber)'"
@@ -1886,14 +1898,17 @@ fuse_getname() {
             levels)               Name="$Name lev$Value" ;;
             contrastwindowsize)   Name="$Name cws$Value" ;;
             contrastmincurvature) Name="$Name curv$Value" ;;
-            contrastedgescale)    Name="$Name $(fuse_getvalue $Number $Line option | cut -d= -f2)" ;;
+            contrastedgescale)    Name="$Name edge$(fuse_getvalue $Number $Line option | cut -d= -f2)" ;;
           esac
         }
       done
       [ -z "$Name" ] && Name="default"
     ;;
     shortcut)
-      echo "fuse$(printf %02d "$Number")"
+      case $Number in
+        all|set*) echo "$Number" ;;
+        *)        echo "fuse$(printf %02d "$Number")" ;;
+      esac
     ;;
   esac
   echo  "$Name"
@@ -2117,13 +2132,12 @@ start "fusewizard" -> frameset;
     topframe                           -> batchoptionframe ;
       batchoptionframe:beside            -> batchframeleft  batchframeright;
         batchframeleft:framed              -> batchblock1 batchblock2 specialframe;
-        batchframeright:framed             -> batchblock3 runbatchframe showresultframe deleteframe;
+        batchframeright:framed             -> batchblock3 runbatchframe showresultframe @fill deleteframe;
     bottomframe                        -> dirframe statusframe ;
     
-      dirframe:beside                    -> choosedirguibutton choosedir opendirbutton refreshbutton;
+      dirframe:beside                    -> choosedirguibutton choosedir refreshbutton;
         choosedirguibutton                 -> @button="Stackshot directory:" ;
         choosedir                          -> @directory="'$Projecthome'" ;
-        opendirbutton                      -> @button="FM";
         refreshbutton                      -> @button="refresh" ;
     
       statusframe                        -> wizardstatusline ;
@@ -2268,41 +2282,25 @@ start "fusewizard" -> frameset;
           undofuse                                              -> @button="fuse" ;
           undo                        "undo last step"          -> "" ;
           
-      showresultframe "Show results" -> showimagebuttons show_video showresultline @fill showresultbottomline;
-        showimagebuttons:beside    -> showimageeval showimagefuse ;
-          showimageeval              -> show_magick_max show_magick_mean show_magick_median show_magick_min ;
-            show_magick_max            -> @button="magick.max";
-            show_magick_mean           -> @button="magick.mean";
-            show_magick_median         -> @button="magick.median";
-            show_magick_min            -> @button="magick.min";
-          showimagefuse              -> show_fuse_max   show_fuse_mean   show_fuse_median   show_fuse_min ;
-            show_fuse_max              -> @button="fuse.max";
-            show_fuse_mean             -> @button="fuse.mean";
-            show_fuse_median           -> @button="fuse.median";
-            show_fuse_min              -> @button="fuse.min";
-        show_video                 -> @combo("-");
-        showresultline             -> @text="Directories" showresultline1 showresultline2 ;
-          showresultline1:beside     -> showstackshot showmagick ;
-            showstackshot              -> @button="stackshot";
-            showmagick                 -> @button="magick";
-          showresultline2:beside     -> showfuse showcompose showevaluate;
-            showfuse                   -> @button="fuse";
-            showcompose                -> @button="compose";
-            showevaluate               -> @button="evaluate";
-        showresultbottomline:beside  -> killviewnior ;
-          killviewnior                 -> @action("killall viewnior ffplay")="killall viewnior ffplay";
+      showresultframe "Show results"                        -> showimagebuttons show_video showdirline;
+        showimagebuttons:beside                               -> showimagemagickeval showimagefuseeval ;
+          showimagemagickeval                                 -> @combo("magick.max","magick.mean","magick.median","magick.min")="magick.max" ;
+          showimagefuseeval                                   -> @combo("fuse.max","fuse.mean","fuse.median","fuse.min")="fuse.median" ;
+        show_video                                          -> @combo("-");
+        showdirline                                         -> @text="Directories" showdirline1 showdirline2 ;
+          showdirline1:beside                                 -> opendirbutton showstackshot showmagick ;
+            opendirbutton                                       -> @button="FM";
+            showstackshot                                       -> @button="stackshot";
+            showmagick                                          -> @button="magick";
+          showdirline2:beside                                 -> showfuse showcompose showevaluate;
+            showfuse                                            -> @button="fuse";
+            showcompose                                         -> @button="compose";
+            showevaluate                                        -> @button="evaluate";
     
-      deleteframe "Delete results" -> deleteline1 deleteline2 deleteall ;
-        deleteline1:beside -> deletevideo deletemagick deletecache ;
-        deleteline2:beside -> deletefuse deletecompose deleteevaluate ;
-          deletecache        -> @button="cache" ;
-          deletemagick       -> @button="magick" ;
-          deletevideo        -> @button="video" ;
-          deletecompose      -> @button="compose" ;
-          deleteevaluate     -> @button="evaluate" ;
-          deletefuse         -> @button="fuse" ;
-          deleteall          -> @button="Delete all";
-'
+      deleteframe                  "Delete results"         -> delete killviewnior ;
+        delete:beside                 "DELETE"                -> @combo("cache","evaluate","magick","compose","video","fuse","all")="cache" ;
+        killviewnior                                          -> @action("killall viewnior ffplay")="killall viewnior ffplay";
+  '
 }
 
 sendkaptain() {
@@ -2334,14 +2332,6 @@ kaptain_update() {
   # update working directory
   sendkaptain "choosedir='$Stackdir'"
   
-  # update delete buttons
-  [ -d "$Stackdir/magick" ]                       && sendkaptain "deletemagick='!magick'"         || sendkaptain "deletemagick='-'"
-  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "deleteevaluate='!evaluate'"     || sendkaptain "deleteevaluate='-'"
-  [ -d "$Stackdir/compose" ]                      && sendkaptain "deletecompose='!compose'"       || sendkaptain "deletecompose='-'"
-  [ -d "$Stackdir/fuse" ]                         && sendkaptain "deletefuse='!fuse'"             || sendkaptain "deletefuse='-'"
-  [ -d "$Stackdir/video" ]                        && sendkaptain "deletevideo='!video'"           || sendkaptain "deletevideo='-'"
-  check_dirglob "$Stackdir/*.bak $Stackdir/cache" && sendkaptain "deletecache='cache'"            || sendkaptain "deletecache='-'"
-  
   # show directory buttons
   [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"      || sendkaptain "showstackshot='-'"
   [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"            || sendkaptain "showmagick='-'"
@@ -2350,6 +2340,7 @@ kaptain_update() {
   [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"                || sendkaptain "showfuse='-'"
   
   # videos
+  Comboline=""
   for Line in $(fileglob "$Stackdir/video/*.mp4") $(fileglob "$Stackdir/video/*.gif"); do
     Shortcut="$(rev <<< "$Line" | cut -d. -f1-4 | rev)"
     Comboline="$Comboline,'$Shortcut'"
@@ -2360,27 +2351,14 @@ kaptain_update() {
   
   # evaluate reults
   check_fileglob "$Stackdir/evaluate/*.magick.*" && {
-    sendkaptain "show_magick_max='magick.max'" 
-    sendkaptain "show_magick_mean='magick.mean'" 
-    sendkaptain "show_magick_median='magick.median'" 
-    sendkaptain "show_magick_min='magick.min'" 
+    sendkaptain 'showimagemagickeval("magick.max","magick.mean","magick.median","magick.min")="magick.max"'
   } || {
-    sendkaptain "show_magick_max='-'"
-    sendkaptain "show_magick_mean='-'"
-    sendkaptain "show_magick_median='-'"
-    sendkaptain "show_magick_min='-'"
+    sendkaptain 'showimagemagickeval("-")="-"'
   }
-      
   check_fileglob "$Stackdir/evaluate/*.fuse.*" && {
-    sendkaptain "show_fuse_max='fuse.max'" 
-    sendkaptain "show_fuse_mean='fuse.mean'" 
-    sendkaptain "show_fuse_median='fuse.median'" 
-    sendkaptain "show_fuse_min='fuse.min'" 
+    sendkaptain 'showimagefuseeval("fuse.max","fuse.mean","fuse.median","fuse.min")="fuse.median"'
   } || {
-    sendkaptain "show_fuse_max='-'"
-    sendkaptain "show_fuse_mean='-'"
-    sendkaptain "show_fuse_median='-'"
-    sendkaptain "show_fuse_min='-'"
+    sendkaptain 'showimagefuseeval("-")="-"'
   }
   
   Cmdstatus="$(storeinfo dump status)"
@@ -2400,7 +2378,7 @@ kaptain_update_preview() {
     storeinfo drop showimage
     return 0
   }
-  
+
   Stackdir="$(storeinfo dump stackshotdir)"
   
   # check if an image of current stackdir is shown
@@ -2485,27 +2463,26 @@ parse_kaptainsignal() {
       kaptain_update
     ;;
     opendirbutton)
-      thunar "${Stackdir:-$Projecthome}" &
+      xdg-open "${Stackdir:-$Projecthome}" &
     ;;
     delete*) 
-      cmd -f $Kaptainsignal -t "$Stackdir"
+      cmd -f $(tr -d ":" <<< "$Kaptainsignal") -t "$Stackdir"
     ;;
     show_video*)
       Image="$(echo "$Kaptainsignal" | cut -d: -f2-)"
-      Image="$Stackdir/video/*.$Image"
-      showvideo "$(fileglob "$Image")"
-    ;;
-    show_*)
-      Image="$(echo "$Kaptainsignal" | cut -d_ -f2- | tr _ . )"
-      Image="$Stackdir/evaluate/*.$Image.*"
+      Image="$Stackdir/video/*.$Image*"
       showimage "$(fileglob "$Image")"
+    ;;
+    showimage*)
+      Image="$(cut -d: -f2 <<< "$Kaptainsignal")"
+      showimage "$(fileglob "$Stackdir/evaluate/*$Image*")"
     ;;
     show*)
       showimage "$Stackdir/${Kaptainsignal#show}/*"
     ;;
     
     fuseconfig)
-      fuse_config
+      fuse_config &
     ;;
     fuse*)
       Functionmode=$(askkaptain fusemodecombo)
@@ -2669,14 +2646,15 @@ $Entrylist
 fuse_config() {
   
   local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
-  local Cachedir Stackdir
+  local Cachedir Stackdir Tiflayer
   local Count Setcount Line Image Imagelist Commentfile Button Argument Currentfuse=1 Refresh
   local Comment Commentfile
   local Formatline Formatlist Fusetoworkonlist Fusetoworkonline Setline Setlist Setcount
+  local Md5sum Md5sum_old
   
-  Stackdir="$(storeinfo dump stackshotdir)"
   Cachedir="$(storeinfo dump cache)"
   Commentfile="$Cachedir/exivcomment"
+  Tiflayer="$Cachedir/layer.tif"
 
   # prepare kaptain files and fifos
   Kaptaingrammarfile="$Cachedir/fuse.kaptain.grammar"
@@ -2718,7 +2696,7 @@ fuse_config() {
   
   # grammar
   echo "#! /usr/bin/kaptain
-start -> frameset;
+start 'enfuse settings' -> frameset;
   frameset:beside:framed -> formatline fusetoworkon $(for Setcount in $(seq $Fusesetnumber); do echo set$Setcount; done) fusesettings;
     $Formatline
       $Formatlist
@@ -2768,11 +2746,7 @@ start -> frameset;
   while ps -p $Kaptainpid >/dev/null; do
     [ "$Refresh" = "yes" ] && {
       Refresh=""
-      
-      # show current settings
-      for Line in $Fusearguments; do
-        sendkaptain "$(fuse_getvalue $Currentfuse $Line kaptain)"
-      done
+      Stackdir="$(storeinfo dump stackshotdir)"
       
       # Read and show exiv comment (contains enfuse options)
       Image="$(fileglob "$Stackdir/fuse/*$(fuse_getname $Currentfuse shortcut)*")"
@@ -2784,10 +2758,16 @@ start -> frameset;
         echo "$Line" >> $Commentfile
       done
       sendkaptain "exivcomment=\`tail -n+1 $Commentfile\`"
-
+      
+      # mark existing images
       Imagelist="$(fileglob "$Stackdir/fuse/*fuse*")"
       for Count in $(seq $Fusemodenumber); do
         grep -q "\.$(fuse_getname $Count shortcut)\." <<< "$Imagelist" && sendkaptain "format$Count='x'" || sendkaptain "format$Count=' '"
+      done
+      
+      # show current settings
+      for Line in $Fusearguments; do
+        sendkaptain "$(fuse_getvalue $Currentfuse $Line kaptain)"
       done
     }
     
@@ -2805,7 +2785,14 @@ start -> frameset;
           Refresh="yes"
         ;;
         run)
-          cmd -f fuse -m "$Currentfuse" -t "$Stackdir"
+          #cmd -f fuse -m "$Currentfuse" -t "$Stackdir"
+          Md5sum_old="$Md5sum"
+          Md5sum="$(ls --full-time $Stackdir/magick/* | md5sum)"
+          [ "$Md5sum" != "$Md5sum_old" ] && convert "$(fileglob "$Stackdir/magick/*")" $Tiflayer
+          fuse -s "$Stackdir/magick" -g "*" -m "$Currentfuse"
+          sendkaptain "run='*** BUSY ***'"
+          Refresh="yes"
+          sendkaptain "run='Run enfuse'"
         ;;
         set*)
           case $Argument in
@@ -3065,12 +3052,13 @@ stack_cmd() {
       showpercent "0" "100"
       storeinfo "status=work"
       
-      parse_cmd "$@" &
-      Commandpid=$!
-      storeinfo "cmdpid=$Commandpid"
-      wait $Commandpid
+      parse_cmd "$@"
+      #parse_cmd "$@" &
+      #Commandpid=$!
+      #storeinfo "cmdpid=$Commandpid"
+      #wait $Commandpid
       Return=$?
-      storeinfo drop cmdpid
+      #storeinfo drop cmdpid
       
       case $Return in
         0)
@@ -3172,6 +3160,7 @@ declare_variables() {
   
   Storeinfofile=$Wizardcache/store.info
   Storepidfile=$Wizardcache/store.pid
+  Storefusefile=$Wizardlocalshare/fuse_storevalue
     
   Imgruler="$(command -v imgruler)"
   [ -z "$Imgruler" ] && Imgruler="$(dirname $0)/imgruler"
@@ -3199,6 +3188,8 @@ create_cachefiles() {
   
   :>       $Storeinfofile
   :>       $Storepidfile
+  
+  touch    $Storefusefile
 }
 
 check_dependencies() {
@@ -3235,12 +3226,6 @@ main() {
   storeinfo "gallerydir=$Gallerydir"
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
-#  storeinfo "fusesettings=$Wizardlocalshare/fusesettings"
-  storeinfo "fusesettings=$Wizardcache/fusesettings"
-
-  
-  Storefusefile=$Wizardcache/fuse_storevalue
-  touch $Storefusefile
   
   fuse_declare
 
@@ -3267,6 +3252,7 @@ main() {
       echo "Signal from kaptain: $Kaptainsignal"
       grep -q ":on"      <<< "$Kaptainsignal" && Kaptainsignal=""
       grep -q ":off"     <<< "$Kaptainsignal" && Kaptainsignal=""
+      grep -q "combo"    <<< "$Kaptainsignal" && Kaptainsignal=""
       grep -q ":pressed" <<< "$Kaptainsignal" && {
         Stackdir="$(askkaptain choosedir)"
         [ "$Stackdir" != "$(storeinfo dump stackshotdir)" ] && {
