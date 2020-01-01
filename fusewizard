@@ -3,6 +3,8 @@
 # fusewizard - generate sharp aligned images from stackshots
 #
 
+Version="0.1"
+
 #### Messages, Log
 
 note() {
@@ -151,7 +153,7 @@ myrm() {
 
 mymv() {
   check_fileglob "${1:-}" || {
-    failure "mv: Source is empty: ${1:-}"
+    verbose "mv: Source is empty: ${1:-}"
     return 1
   }
   [ -d "${2:-}" ] || {
@@ -164,7 +166,7 @@ mymv() {
 
 mycp() {
   check_fileglob "${1:-}" || {
-    failure "cp: Source is empty: ${1:-}"
+    verbose "cp: Source is empty: ${1:-}"
     return 1
   }
   [ -d "${2:-}" ] || {
@@ -456,8 +458,8 @@ showimage() {
       #convert "$Image" -scale 800x800\> "$Shrinkimage" 
       #sendkaptain "showimage('$Shrinkimage')=''" 
       #sendkaptain "showimagename='$(shortpath "$Image")'"
-      case "$(rev <<< "$Image" | cut -d. -f1)" in
-        fig|4pm) 
+      case "$(rev <<< "$Image" | cut -d. -f1 | rev)" in
+        gif|mp4|webm) 
           showvideo "$Image" 
         ;;
         *)       
@@ -559,14 +561,17 @@ start 'View image stack' -> image directoryline resultline;
 
 batch_function() {
   # Apply image processing function $1 on all possible source dirs in target directory $2, options in $3
-  
+
   local $Batchlocal
   local Sourcedirchecklist Return=0
   local Gallerydir
-    echo "$*"
-  parse_batchoptions "$@"  || return 1
-  storeinfo test stackshotdir_valid || return 1
-  
+
+  parse_batchoptions "$@"                  || return 1
+  storeinfo test stackshotdir_valid        || {
+    failure "batch_function(): Invalid directory: $(storeinfo dump stackshotdir)"  
+    return 1
+  }
+
   checkvar -d batch Targetdir "$Targetdir" || return 1
   checkvar    batch Function  "$Function"  || return 1
   
@@ -621,6 +626,7 @@ batch_function() {
   storeinfo "cmd_destination=$Destinationdir"
   storeinfo "cmd_cache=$Cachedir"
   cd "$Cachedir"
+  verbose "batch_function(): $Function -m '$Functionmode' -o '$Functionoption' -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfile' -c '$Cachedir'"
   $Function -m "$Functionmode" -o "$Functionoption" -s "$Sourcedir" -g "$Sourcefileglob" -d "$Destinationdir" -b "$Destinationfile" -c "$Cachedir"
   Return=$?
   cd "$Targetdir"
@@ -641,6 +647,7 @@ batch_function() {
   }
   
   [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluate" ] && {
+    storeinfo "refreshgui_selector=yes"
     ls $Destinationdir/*fuse.median* >/dev/null 2>&1 && {
       [ -d "$Destinationdir/../stackshot" ] && {
         # link fuse.median result into parent directory
@@ -653,7 +660,9 @@ batch_function() {
       [ -d "$Gallerydir" ] && ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Gallerydir"
     }
   }
-  
+  verbose "batch_function: $Function: return $Return"
+  [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "fuse" ] && storeinfo "refreshgui_fuse=yes"
+
   return $Return
 }
 
@@ -681,9 +690,11 @@ parse_batchoptions() {
       -m) Functionmode="${2:-}" ;;
       -o) Functionoption="${2:-}" ;;
       --) ;;
-      *) failure "Unbekannte Option ${1:-} ($Function)" ;;
+      *) 
+        failure "Unbekannte Option ${1:-} ($Function)" 
+        return 1
+      ;;
     esac
-    #[ "${1:-}" != "--" ] && [ -z "${2:-}" ] && failure "Option ${1:-} has no argument ($Function)" && return 1
     shift
     shift
   done
@@ -937,7 +948,7 @@ animation() {
   # Format         File format
   #
   local $Batchlocal
-  local Fusemode Distortion Framerate Sequence Staticlayer Format
+  local Fusemode Distortion Framerate Sequence Staticlayer Format Appendfirstframe
   local Distortdir Distortimage Fusedir Mpcdir Destinationfile Destinationfilebasename Imagebasename
   local Imagewidth Imageheight Cropgeometry Xpos Ypos Offset Border
   local Count Iteration=0 Iterationnumber
@@ -951,9 +962,10 @@ animation() {
   Fusemode="$(cut -s -d: -f2 <<<"$Functionmode")"
   Rendermode="${Rendermode:-quick}"
   Fusemode="${Fusemode:-4}"
-  Distortion="${Functionoption:-30}"
+  Distortion="${Functionoption:-25}"
   Staticlayer="1/4"
-  Format="mp4"
+  Format="webm"
+  Appendfirstframe="no"
   
   # Position raster
   #
@@ -982,49 +994,42 @@ animation() {
   case $Rendermode in
     smooth)
       Raster="3"
-      Framerate="12"
-      Sequencenumber="5"
-      
-      Sequencename[1]="eight_small"
-      Sequence[1]="0x0  -1x0  -1x-1  0x-1  1x-1  1x0
-                   0x0  -1x0  -1x1   0x1   1x1   1x0
-                   0x0"
+      Framerate="8"
+      Sequencenumber="3"
                    
-      Sequencename[2]="dagaz"
-      Sequence[2]="0x0  -1x1 -2x2 -3x3
+      Sequencename[1]="dagaz"
+      Sequence[1]="0x0  -1x1 -2x2 -3x3
                   -2x3  -1x3  0x3  1x3   2x3   3x3
                    2x2   1x1  0x0 -1x-1 -2x-2 -3x-3
                   -2x-3 -1x-3 0x-3 1x-3  2x-3  3x-3
-                   2x-2  1x-1
-                   0x0"
+                   2x-2  1x-1"
             
-      Sequencename[3]="circle_left"
-      Sequence[3]="-3x0 -3x1  -2x2  -1x3  0x3  1x3  2x2  3x1  3x0 3x-1 2x-2 1x-3 0x-3 -1x-3 -2x-2 -3x-1
-                   -3x0"
+      Sequencename[2]="circle_left"
+      Sequence[2]="-3x0 -3x1  -2x2  -1x3  0x3  1x3  2x2  3x1  3x0 3x-1 2x-2 1x-3 0x-3 -1x-3 -2x-2 -3x-1"
             
-      Sequencename[4]="circle_right"
-      Sequence[4]="-3x0 -3x-1 -2x-2 -1x-3 0x-3 1x-3 2x-2 3x-1 3x0 3x1  2x2  1x3  0x3  -1x3  -2x2  -3x1
-                   -3x0"
+      Sequencename[3]="circle_right"
+      Sequence[3]="-3x0 -3x-1 -2x-2 -1x-3 0x-3 1x-3 2x-2 3x-1 3x0 3x1  2x2  1x3  0x3  -1x3  -2x2  -3x1"
+      
+      #disabled
+      Sequencename[4]="eight_small"
+      Sequence[4]="0x0  -1x0  -1x-1  0x-1  1x-1  1x0
+                   0x0  -1x0  -1x1   0x1   1x1   1x0"
       
       Sequencename[5]="eight"
       Sequence[5]="0x0  -1x0  -2x0  -3x-1  -3x-2  -2x-3  -1x-3  0x-3  1x-3  2x-3  3x-2  3x-1  2x0  1x0
-                   0x0  -1x0  -2x0  -3x1   -3x2   -2x3   -1x3   0x3   1x3   2x3   3x2   3x1   2x0  1x0
-                   0x0"
+                   0x0  -1x0  -2x0  -3x1   -3x2   -2x3   -1x3   0x3   1x3   2x3   3x2   3x1   2x0  1x0"
             
-      #disabled
       Sequencename[6]="knot"
       Sequence[6]="0x0 -1x0 -2x0 -3x-1 -3x-2 -2x-3 -1x-3 0x-2 0x-1
                    0x0  0x1  0x2  1x3   2x3   3x2   3x1  2x0  1x0
                    0x0 -1x0 -2x0 -3x1  -3x2  -2x3  -1x3  0x2  0x1
-                   0x0  0x-1 0x-2 1x-3  2x-3  3x-2  3x-1 2x0  1x0
-                   0x0"
+                   0x0  0x-1 0x-2 1x-3  2x-3  3x-2  3x-1 2x0  1x0"
   
       Sequencename[7]="knot_small"
       Sequence[7]="0x0  0x-1 -1x-1 -1x0  
                    0x0  1x0   1x1   0x1
                    0x0  0x-1  1x-1  1x0
-                   0x0 -1x0  -1x1   0x1
-                   0x0"
+                   0x0 -1x0  -1x1   0x1"
     ;;
     quick)
       Raster="1"
@@ -1033,24 +1038,20 @@ animation() {
 
       Sequencename[1]="eight_quick"
       Sequence[1]="0x0  -1x0  -1x-1  0x-1  1x-1  1x0
-                   0x0  -1x0  -1x1   0x1   1x1   1x0
-                   0x0"
+                   0x0  -1x0  -1x1   0x1   1x1   1x0"
                    
       Sequencename[2]="dagaz_quick"
-      Sequence[2]="0x0  -1x-1 -1x0 -1x1 0x0 1x-1 1x0 1x1
-                   0x0"
+      Sequence[2]="0x0  -1x-1 -1x0 -1x1 0x0 1x-1 1x0 1x1"
       
       Sequencename[3]="square_quick"
-      Sequence[3]="-1x-1  -1x0  -1x1  0x1  1x1  1x0  1x-1  0x-1  
-                   -1x-1"
+      Sequence[3]="-1x-1  -1x0  -1x1  0x1  1x1  1x0  1x-1  0x-1"
       
       #disabled
       Sequencename[4]="knot_quick"
       Sequence[4]="0x0  0x-1 -1x-1 -1x0  
                    0x0  1x0   1x1   0x1
                    0x0  0x-1  1x-1  1x0
-                   0x0 -1x0  -1x1   0x1
-                   0x0"
+                   0x0 -1x0  -1x1   0x1"
     ;;
   esac
     
@@ -1116,6 +1117,27 @@ $Position"
     }
   done
   multicore_wait || return 1
+  
+  # EXPERIMENTAL cubic
+  Degree=$((-180*Distortion/Imagewidth))
+  for Position in $Positionlist; do
+    Xpos="$(cut -dx -f1 <<< "$Position")"
+    Ypos="$(cut -dx -f2 <<< "$Position")"
+#    worknote "animation: perpective images for position ${Xpos}x${Ypos}."
+    Distortdir="$Cachedir/distort.$Position"
+      mkdir -p "$Distortdir"
+      
+      Count=-$((Imagenumber * $Staticlayer))  # negative start value causes movement of lowest layer
+      for Image in $Imagelist; do
+        Count="$((Count +1))"
+        Distortimage="$Distortdir/$(basename $Image)"
+        Distortimage="${Distortimage%.mpc}"
+#        multicore "/home/lauscher/bin/rotate3D $((Degree*Xpos/Raster)),$((Degree*Ypos/Raster)),0 $Distortimage $Distortimage" "$Distortimage"
+      done
+#      Iteration=$((Iteration + 1))
+#      showpercent $Iteration $Iterationnumber
+  done
+  multicore_wait || return 1
 
   # fuse distorted images
   Showpercentfunc="$(declare -f showpercent)"
@@ -1128,7 +1150,7 @@ $Position"
     mkdir -p "$Fusedir"
     Imagebasename="animation.$Position"
     case $Fusemode in
-      all|set*) ( showpercent() { : ; } ; fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode -c $Distortcachedir ) || return 1 ;; ### FIXME does return on failure work?
+      all|set*) ( showpercent() { : ; } ; fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode -c $Distortcachedir ) || return 1 ;; 
       *)                       multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode -c $Distortcachedir"  || return 1 ;;
     esac
     showpercent $Iteration $Iterationnumber
@@ -1142,6 +1164,7 @@ $Position"
     Fusedir="$Distortdir/fuse"
     Destinationfile="$Cachedir/animation.$Position.median.jpg"
     worknote "animation: Generating $(basename $Destinationfile)"
+    #multicore "convert $Fusedir/* -evaluate-sequence median -gravity center -stroke black -fill black -pointsize 24 -draw 'text 0,0 \"$Position\"' $Destinationfile" "$Destinationfile" || return 1
     multicore "convert $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
     showpercent $Iteration $Iterationnumber
   done
@@ -1153,17 +1176,24 @@ $Position"
     Imagelist=""
     Imagelistfile="$Cachedir/imagelist.${Sequencename[$Count]}"
     :> $Imagelistfile
+    [ "$Appendfirstframe" = "yes" ] && Sequence[$Count]="${Sequence[$Count]} $(cut -d' ' -f1 <<< "${Sequence[$Count]}")"
     for Position in ${Sequence[$Count]}; do
       Image="$(fileglob "$Cachedir/*.$Position.median.*")"
       Imagelist="$Imagelist $Image"
       echo "file '$Image'" >> "$Imagelistfile"
     done
-    Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$(fuse_getname $Fusemode).$Distortion.$Format"
+    Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$(fuse_getname $Fusemode shortcut).$Distortion.$Format"
 
     worknote "animation: Generating $(basename $Destinationfile)."
     #multicore "convert -delay $Framerate -loop 0 $Imagelist $Destinationfile" "$Destinationfile"  || return 1
-    multicore "ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile $Destinationfile" "$Destinationfile"  || return 1
+    #multicore "ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile $Destinationfile" "$Destinationfile"  || return 1
 
+#    multicore "ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -b:v 4M -pass 1 -an -f webm /dev/null && \
+#               ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -b:v 4M -pass 2 -c:a libopus output.webm $Destinationfile" "$Destinationfile"  || return 1
+
+    multicore "ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1
+    
+    
     showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
@@ -1335,53 +1365,57 @@ fuse() {
   
   local $Batchlocal 
   local Destinationfilebasename
-  local Modelist Modenumber Count
+  local Fusemode Modelist Modenumber Count
   
   parse_batchoptions "$@" || return 1
   
   Destinationfilebasename="${Destinationfile:-fuse}"
-  Functionmode="${Functionmode:-1}"
+  Fusemode="${Functionmode:-1}"
   
-  case $Functionmode in
+  case $Fusemode in
     all|set*)
       convert $(fileglob "$Sourcedir/$Sourcefileglob") "$Cachedir/layer.tif" || return 1
-      case $Functionmode in
+      case $Fusemode in
         all) 
           Modelist="$(seq $Fusemodenumber)" 
         ;;
         set*)  
           for Count in $(seq $Fusemodenumber); do
-            [ "$(fuse_getvalue $Count $Functionmode value)" ] && Modelist="$Modelist $Count"
+            [ "$(fuse_getvalue $Count $Fusemode value)" ] && Modelist="$Modelist $Count"
           done
         ;;
       esac
       Modenumber="$(wc -w <<< "$Modelist")"
       Count=0
-      for Functionmode in $Modelist; do
+      for Fusemode in $Modelist; do
         Count="$((Count+1))"
-        multicore "fuse -s '$Cachedir' -g 'layer.tif' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Functionmode'" || return 1
+        multicore "fuse -s '$Cachedir' -g 'layer.tif' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Fusemode'" || return 1
         showpercent "$Count" "$Modenumber"
       done
       multicore_wait || return 1
       return 0
     ;;
+    fuse*)
+      Fusemode="${Fusemode#fuse}"
+      Fusemode="${Fusemode#0}"
+    ;;
   esac
 
-  Destinationfile="$Destinationdir/$Destinationfilebasename.$(fuse_getname $Functionmode shortcut).jpg"
-  worknote "fuse $Functionmode: Creating $(basename "$Destinationfile")"
+  Destinationfile="$Destinationdir/$Destinationfilebasename.$(fuse_getname $Fusemode shortcut).jpg"
+  worknote "fuse $Fusemode: Creating $(basename "$Destinationfile")"
   
   # Collect options
   Enfuseoptions=""
   for Line in $Fuseoptions; do
-    Enfuseoptions="$Enfuseoptions $(fuse_getvalue $Functionmode $Line option)"
+    Enfuseoptions="$Enfuseoptions $(fuse_getvalue $Fusemode $Line option)"
   done
-  verbose "fuse $Functionmode: $Enfuseoptions"
+  verbose "fuse $Fusemode: $Enfuseoptions"
   
   # Fuse
   { enfuse $Enfuseoptions \
            --output="$Destinationfile" \
            $(fileglob "$Sourcedir/$Sourcefileglob") 2>&1 || {
-      failure "fuse $Functionmode failed"
+      failure "fuse $Fusemode failed"
       return 1
     } 
   } | grep -v -E 'assuming all pixels should contribute|alpha channel|loading next image|no usable resolution found'
@@ -1389,7 +1423,7 @@ fuse() {
   # Write enfuse options into EXIF data of image
   exiv2 -M"set Exif.Photo.UserComment Comment charset=Ascii enfuse $(echo $Enfuseoptions)" "$Destinationfile" 
 
-  #note "fuse $Functionmode is ready: ${Destinationfile}"
+  #note "fuse $Fusemode is ready: ${Destinationfile}"
   showimage "$Destinationfile"
   return 0
 }
@@ -1556,7 +1590,7 @@ wizard() {
   
   local $Batchlocal
   local Image Destinationfile Imagelist
-  
+
   parse_batchoptions "$@" || return 1
   
   Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
@@ -1773,7 +1807,11 @@ fuse_declare() {
   
   Fuseoptions="exposureweight saturationweight contrastweight entropyweight blendmask grayprojector levels contrastwindowsize contrastmincurvature contrastedgescale"
   Fusearguments="$Fuseoptions lcescale lcefactor"
-  Fusemodecombo="'all','set$(seq -s "','set" $Fusesetnumber)','$(seq -s "','" $Fusemodenumber)'"
+#  Fusemodecombo="'all','set$(seq -s "','set" $Fusesetnumber)','$(seq -s "','" $Fusemodenumber)'"
+  Fusemodecombo="'all','set$(seq -s "','set" $Fusesetnumber)'"
+  for Count in $(seq $Fusemodenumber); do
+    Fusemodecombo="$Fusemodecombo,'$(fuse_getname $Count shortcut)'"
+  done
   
   # set1
   for Count in 1 2 3 4 5 6 7 8 9 15 16 17 20 ; do
@@ -1904,10 +1942,14 @@ fuse_getname() {
       done
       [ -z "$Name" ] && Name="default"
     ;;
-    shortcut)
+    shortcut|"")
       case $Number in
         all|set*) echo "$Number" ;;
-        *)        echo "fuse$(printf %02d "$Number")" ;;
+        *)
+          Number="${Number#fuse}"
+          Number="${Number#0}"
+          echo "fuse$(printf %02d "$Number")" 
+        ;;
       esac
     ;;
   esac
@@ -2054,6 +2096,7 @@ multicore() {
   # Run multicore_wait afterwards to wait for the last processes to finish.
   
   local Process
+  local Mem_free
     
   [ "$Multicoreprocesscount" = $Wizardthreads ] && {
     for Process in $(seq $Wizardthreads); do
@@ -2074,7 +2117,21 @@ multicore() {
     multicore_break
     return 1
   }
-        
+  
+  Mem_free="$(free | grep "Mem:" | awk '{print $7}')"
+  [ "$Mem_free" -lt "$Multicore_minram" ] && {
+    note "multicore(): WARNING: Free memory less than $Multicore_minram. Will wait until enough memory is available."
+    while :; do
+      ifcmdbreak && {
+        multicore_break
+        return 1
+      }
+      sleep 5
+      Mem_free="$(free | grep "Mem:" | awk '{print $7}')"
+      [ "$Mem_free" -lt "$Multicore_minram" ] && break     
+    done
+  }
+  
   Multicoreprocesscount=$((Multicoreprocesscount +1))
 
   #echo "${1:-} "
@@ -2104,7 +2161,7 @@ multicore_wait() {
 }
 
 multicore_waitprocess() {
-  while sleep 0.05 ; do
+  while sleep 0.2 ; do
     ps -p "${1:-}" >/dev/null || break
     ifcmdbreak && return 1
   done
@@ -2118,6 +2175,8 @@ multicore_break() {
     [ "${Multicoreprocess[$Process]}" ] && {
       kill "${Multicoreprocess[$Process]}"
       wait "${Multicoreprocess[$Process]}"
+      Multicoreprocess[$Process]=""
+      Multicoreimage[$Process]=""
     }
   done
 }
@@ -2127,7 +2186,7 @@ multicore_break() {
 kaptaingrammar() {
   echo '#! /usr/bin/kaptain
 
-start "fusewizard" -> frameset;
+start "fusewizard '$Version'" -> frameset;
   frameset:framed                    -> topframe bottomframe;
     topframe                           -> batchoptionframe ;
       batchoptionframe:beside            -> batchframeleft  batchframeright;
@@ -2267,8 +2326,8 @@ start "fusewizard" -> frameset;
           ruler:beside                "micrometer"              -> "" rulermodecombo rulercombo;
         animationline:beside                                  -> animation animationmodecombo animationfusecombo animationcombo animationmagick;
           animationmodecombo:beside                             -> @combo("quick","smooth")="quick";
-          animationcombo:beside       "Distortion:"             -> @combow("20","30","40","50","60")="30";
-          animationfusecombo:beside   "fuse:"                   -> @combow('$Fusemodecombo')="set2";
+          animationcombo:beside       "Distortion:"             -> @combow("15","20","25","30","40","50","75","100","150")="30";
+          animationfusecombo:beside   "fuse:"                   -> @combow('$Fusemodecombo')="fuse18";
           animationmagick                                       -> @button="magick" ;
           animation:beside            "animated video"          -> "" ;
         videoline:beside                                      -> video videomodecombo videocombo videomagick;
@@ -2341,7 +2400,7 @@ kaptain_update() {
   
   # videos
   Comboline=""
-  for Line in $(fileglob "$Stackdir/video/*.mp4") $(fileglob "$Stackdir/video/*.gif"); do
+  for Line in $(fileglob "$Stackdir/video/*.mp4") $(fileglob "$Stackdir/video/*.gif") $(fileglob "$Stackdir/video/*.webm"); do
     Shortcut="$(rev <<< "$Line" | cut -d. -f1-4 | rev)"
     Comboline="$Comboline,'$Shortcut'"
   done
@@ -2423,7 +2482,7 @@ showpercent() {
   
   case "$Part" in
     idle) Percentimage="p_idle.png" ;;
-    ERROR) Percentimage="p_error.png" ;;
+    error) Percentimage="p_error.png" ;;
     *)
       Percent="$(( 100 * Part / Full ))"
       Percentimage="p_$Percent.png" 
@@ -2432,8 +2491,8 @@ showpercent() {
   Percentimage="$Percentcachedir/$Percentimage"
 
   [ -e "$Percentimage" ] || case "$Part" in
-    idle)  convert -size 100x20 xc:transparent -fill black -pointsize 20 -draw "text 40,18 'idle'"   "$Percentimage" ;;
-    error) convert -size 100x20 xc:transparent -fill red   -pointsize 20 -draw "text 40,18 'ERROR'"  "$Percentimage" ;;
+    idle)  convert -size 100x20 xc:transparent -fill black -pointsize 20 -gravity center -draw "text 0,0 'idle'"   "$Percentimage" ;;
+    error) convert -size 100x20 xc:transparent -fill red   -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"  "$Percentimage" ;;
     *)     convert -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
   esac
   sendkaptain "cmdpercent('$Percentimage')=''"
@@ -2450,16 +2509,16 @@ parse_kaptainsignal() {
   
   case $Kaptainsignal in
     refreshbutton) 
-      kaptain_update
+      #kaptain_update
+      storeinfo drop showimage
+      storeinfo "refreshgui_main=yes"
     ;;
     cmdbreak)
       worknote "Sending BREAK to current action"
       storeinfo "cmdbreak=yes"
     ;;
     choosedirguibutton)
-      Newstackdir="$(choose_stackshot "$Projecthome")"
-      check_stackdir "$Newstackdir"
-      kaptain_update
+      stackshot_selector &
     ;;
     opendirbutton)
       xdg-open "${Stackdir:-$Projecthome}" &
@@ -2556,17 +2615,29 @@ parse_kaptainsignal() {
 
 ## sub GUIs
 
-choose_stackshot() {
+stackshot_selector() {
   # GUI to choose stackshot. Preview of median images. Sorted by project dirs.
-  local Dirlist Imagelist
+  local Button Argument
+  local Dirlist Imagelist Dirarray
   local Allprojects Entrylist Projectimages Projectline
-  local Projecthome Projectdir Oldprojectdir
+  local Projecthome Projectdir Oldprojectdir Cachedir
   local Count Dircount Dir Image
-  local FDin FDout
+  local Refresh 
+  local Windowwidth Windowheight Windowxpos Windowypos
   
+  Cachedir="$(storeinfo dump cache)"
+
   Projecthome="$(storeinfo dump projecthome)"
   Projecthome="${1:-$Projecthome}"
   cd "$Projecthome"
+  
+  # check for running instance, raise window if yes
+  storeinfo test stackshot_selector && {
+    note "stackshot_selector is already running."
+    xdotool search --name "stackshot selector" windowraise
+    return
+  }
+  storeinfo "stackshot_selector=running"
   
   # generate empty X image for unfused stackshots
   Emptyimage=$Thumbnaildir/empty.png
@@ -2586,13 +2657,19 @@ $Image"
   for Dir in $Dirlist EOL ; do
     Count=$((Count +1))
     showpercent "$Count" "$Dircount"
+    Dirarray[$Count]="$Projecthome/$(cut -d/ -f2- <<< "$Dir")"
     
     # generate thumbnail. Check existing thumbnail with md5
     Image="$(sed "${Count}q;d" <<< "$Imagelist")"
     Image="${Image:-$Emptyimage}"
-    Md5="$(md5sum "$Image" | cut -d' ' -f1)"
+    #Md5="$(md5sum "$Image" | cut -d' ' -f1)"
+    Md5="$(md5sum <<< "$(ls --full-time "$Image")" | cut -d' ' -f1)"
     Destinationfile=$Thumbnaildir/$(basename "$Image").$Md5.png
-    [ -e "$Destinationfile" ] || convert "$Image" -resize 256x256 "$Destinationfile"
+    #[ -e "$Destinationfile" ] || convert "$Image" -resize 256x256 "$Destinationfile"
+    [ -e "$Destinationfile" ] || {
+      convert "$Image" -scale 256x256 "$Destinationfile"
+      ### FIXME delete old thumbnail
+    }
     
     # Check current project dir
     Projectdir="$(dirname $Dir)"
@@ -2626,27 +2703,87 @@ $Projectline ;"
     
     # add stackshot
     Entrylist="$Entrylist
-  stackshot$Count:beside '{$Destinationfile}$Dir' -> @dump('$Dir')='Choose this stackshot' @close='close';"
+  stackshot$Count:beside '{$Destinationfile}$Dir' -> @button='Choose this stackshot';"
   
     # add image to montage list
     Projectimages="$Projectimages
 $Image"
   done
-
+  showpercent idle
+ 
+  local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
+  # prepare kaptain files and fifos
+  Kaptaingrammarfile="$Cachedir/selector.kaptain.grammar"
+  Kaptainstdinfifo="$Cachedir/selector.kaptain.stdin"
+  Kaptainstdoutfifo="$Cachedir/selector.kaptain.stdout"
+  mkfifo   $Kaptainstdinfifo
+  mkfifo   $Kaptainstdoutfifo
+  exec  {Kaptainstdin}<>$Kaptainstdinfifo
+  exec  {Kaptainstdout}<>$Kaptainstdoutfifo
+  
   echo "#! /usr/bin/kaptain
-start 'Choose a stackshot' -> frame1;
+start 'fusewizard stackshot selector' -> frame1 frame2;
   frame1:tree -> $Allprojects ;
 $Entrylist
-" > $Thumbnaildir/choose_stackshot.kaptain
-  Dir="$(kaptain $Thumbnaildir/choose_stackshot.kaptain)"
-  realpath "$Dir"
+  frame2:beside -> refresh windowpos close ;
+    refresh     -> @button='Reload GUI' ;
+    windowpos   -> @button='Reset window geometry' ;
+    close       -> @button='Close' ;
+
+" > $Kaptaingrammarfile
+
+  kaptain --stdio $Kaptaingrammarfile <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  storepid $Kaptainpid
+  for Count in $(seq 50); do
+    read -t1 Line <&${Kaptainstdout}
+    [ -z "$Line" ] && break
+  done
+    
+  while ps -p $Kaptainpid >/dev/null; do
+    read -t1 Kaptainsignal <&${Kaptainstdout}
+    [ "$Kaptainsignal" ] && {
+      echo $Kaptainsignal
+      Button="$(cut -d: -f1 <<< "$Kaptainsignal")"
+      Argument="$(cut -s -d: -f2- <<< "$Kaptainsignal")"
+      case $Button in
+        stackshot*)
+          Count="${Button#stackshot}"
+          Dir="${Dirarray[$Count]}"
+          storeinfo "stackshotdir=$Dir"
+          check_stackdir
+          storeinfo "refreshgui_main=yes"
+          storeinfo "refreshgui_fuse=yes"
+        ;;
+        windowpos)
+          # check width of main window
+          Windowgeometry="$(xdotool search --name "fusewizard $Version" getwindowgeometry)"
+          Windowwidth="$(grep  Geometry <<< "$Windowgeometry" | rev | cut -d' ' -f1 | rev | cut -dx -f1)"
+          Windowheight="$(grep Geometry <<< "$Windowgeometry"  | rev | cut -d' ' -f1 | rev | cut -dx -f2)"
+          Windowxpos="$(grep   Position <<< "$Windowgeometry"| cut -d: -f2 | cut -d' ' -f2 | cut -d, -f1)"
+          Windowypos="$(grep   Position <<< "$Windowgeometry"| cut -d: -f2 | cut -d' ' -f2 | cut -d, -f2)"
+          xdotool search --sync --name "stackshot selector" windowsize $Windowwidth $Windowheight windowmove $Windowxpos $Windowypos
+        ;;
+        close) 
+          break 
+        ;;
+        refresh) 
+          Refresh="yes" 
+          break
+        ;;
+      esac
+    }
+  done
+  ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
+  rm $Kaptainstdinfifo $Kaptainstdoutfifo
+  storeinfo drop stackshot_selector
+  [ "$Refresh" = "yes" ] && stackshot_selector
 }
 
 fuse_config() {
   
   local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
   local Cachedir Stackdir Tiflayer
-  local Count Setcount Line Image Imagelist Commentfile Button Argument Currentfuse=1 Refresh
+  local Count Setcount Line Image Imagelist Commentfile Button Argument Currentfuse=1
   local Comment Commentfile
   local Formatline Formatlist Fusetoworkonlist Fusetoworkonline Setline Setlist Setcount
   local Md5sum Md5sum_old
@@ -2654,6 +2791,13 @@ fuse_config() {
   Cachedir="$(storeinfo dump cache)"
   Commentfile="$Cachedir/exivcomment"
   Tiflayer="$Cachedir/layer.tif"
+  
+  storeinfo test fuse_config && {
+    note "fuse_config is already running."
+    xdotool search --name "enfuse settings" windowraise
+    return 1
+  }
+  storeinfo "fuse_config=running"
 
   # prepare kaptain files and fifos
   Kaptaingrammarfile="$Cachedir/fuse.kaptain.grammar"
@@ -2695,7 +2839,7 @@ fuse_config() {
   
   # grammar
   echo "#! /usr/bin/kaptain
-start 'enfuse settings' -> frameset;
+start 'fusewizard enfuse settings' -> frameset;
   frameset:beside:framed -> formatline fusetoworkon $(for Setcount in $(seq $Fusesetnumber); do echo set$Setcount; done) fusesettings;
     $Formatline
       $Formatlist
@@ -2708,7 +2852,7 @@ start 'enfuse settings' -> frameset;
       ${Setlist[$Setcount]}"
       done)
       
-    fusesettings 'enfuse options' -> exposureweight saturationweight contrastweight entropyweight blendmask grayprojector text2 levels contrastwindowsize contrastmincurvature contrastedgescaleline exivcomment run @fill;
+    fusesettings 'enfuse options' -> exposureweight saturationweight contrastweight entropyweight blendmask grayprojector text2 levels contrastwindowsize contrastmincurvature contrastedgescaleline exivcomment run work @fill;
     
       exposureweight:beside        '--exposure-weight'            -> @combo('')='';
       saturationweight:beside      '--saturation-weight'          -> @combo('')='';
@@ -2727,6 +2871,7 @@ start 'enfuse settings' -> frameset;
         lcescale                                                    -> @combow('')='';
         lcefactor                                                   -> @combow('')='';
       run                                                         -> @button='Run enfuse' ;
+      work                                                        -> @text='' ;
       
       exivcomment                                                 -> @text='' ;
         
@@ -2741,11 +2886,13 @@ start 'enfuse settings' -> frameset;
     [ -z "$Line" ] && break
   done
 
-  Refresh="yes"
+  storeinfo "refreshgui_fuse=yes"
   while ps -p $Kaptainpid >/dev/null; do
-    [ "$Refresh" = "yes" ] && {
-      Refresh=""
+    storeinfo test refreshgui_fuse && {
+      storeinfo drop refreshgui_fuse
+      Projectname="$(storeinfo dump projectname)"
       Stackdir="$(storeinfo dump stackshotdir)"
+      Fusebasename="$Projectname.$(basename $Stackdir)"
       
       # Read and show exiv comment (contains enfuse options)
       Image="$(fileglob "$Stackdir/fuse/*$(fuse_getname $Currentfuse shortcut)*")"
@@ -2781,18 +2928,18 @@ start 'enfuse settings' -> frameset;
         fuse*)
           Currentfuse="${Kaptainsignal#fuse}"
           Currentfuse="${Currentfuse%:selected}"
-          Refresh="yes"
+          storeinfo "refreshgui_fuse=yes"
         ;;
         run)
           #cmd -f fuse -m "$Currentfuse" -t "$Stackdir"
           Md5sum_old="$Md5sum"
           Md5sum="$(ls --full-time $Stackdir/magick/* | md5sum)"
-          [ "$Md5sum" != "$Md5sum_old" ] && convert "$(fileglob "$Stackdir/magick/*")" $Tiflayer
+          [ "$Md5sum" != "$Md5sum_old" ] && convert "$(fileglob "$Stackdir/magick/*")" $Tiflayer ### FIXME use Tiflayer
           #fuse -s "$Stackdir/magick" -g "*" -m "$Currentfuse "
           sendkaptain "run='*** BUSY ***'"
           parse_cmd -f fuse -m "$Currentfuse" -t "$Stackdir"
-          Refresh="yes"
           sendkaptain "run='Run enfuse'"
+          storeinfo "refreshgui_fuse=yes"
         ;;
         set*)
           case $Argument in
@@ -2810,7 +2957,7 @@ start 'enfuse settings' -> frameset;
   
   exec {Kaptainstdin}>&- {Kaptainstdout}>&-
   ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
-
+  storeinfo drop fuse_config
 }
 
 cropgeometry_interactive() {
@@ -3053,12 +3200,7 @@ stack_cmd() {
       storeinfo "status=work"
       
       parse_cmd "$@"
-      #parse_cmd "$@" &
-      #Commandpid=$!
-      #storeinfo "cmdpid=$Commandpid"
-      #wait $Commandpid
       Return=$?
-      #storeinfo drop cmdpid
       
       case $Return in
         0)
@@ -3080,6 +3222,7 @@ parse_cmd() {
   local $Batchlocal
   local Commandline Return= 
 
+  verbose "parse_cmd(): $*"
   parse_batchoptions "$@" || return 1
   Commandline="$@"
     
@@ -3105,9 +3248,13 @@ parse_cmd() {
       showimage "$Sourcedir/$Sourcefileglob"
       Return=0
     ;;
+    *)
+      failure "parse_cmd(): Unknown function: $Function"
+    ;;
   esac
  
-  kaptain_update
+  #kaptain_update
+  storeinfo "refreshgui_main=yes"
 
   case $Return in
     0) 
@@ -3140,6 +3287,7 @@ declare_variables() {
     Multicoreimage[$i]=""
   done
   Multicoreprocesscount=0
+  Multicore_minram=1000000
   
   Batchlocal="Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Functionmode Functionoption"
   Convert="convert -quality 100%"
@@ -3243,10 +3391,15 @@ main() {
   
   check_dependencies
   
-  kaptain_update
+#  kaptain_update
+  storeinfo "refreshgui_main=yes"
 
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
+    storeinfo test refreshgui_main && {
+      storeinfo drop refreshgui_main
+      kaptain_update
+    }
     read -t1 Kaptainsignal <&${Kaptainstdout}
     [ "$Kaptainsignal" ] && {
       echo "Signal from kaptain: $Kaptainsignal"
@@ -3257,7 +3410,9 @@ main() {
         Stackdir="$(askkaptain choosedir)"
         [ "$Stackdir" != "$(storeinfo dump stackshotdir)" ] && {
           check_stackdir "$Stackdir"
-          kaptain_update
+          storeinfo "refreshgui_main=yes"
+          storeinfo "refreshgui_fuse=yes"
+          #kaptain_update
         }
       }
       Kaptainsignal="${Kaptainsignal%:pressed}"
@@ -3270,15 +3425,16 @@ main "$@"
 finish
 
 ##### ToDo ####
+# memory check for multicore fuse
 # configuration dialog:
 #  - project directory
 #  - gallery directory
 #  - number of threads
+#  - checkbutton: "allow invalid directory structure"
+# storepid(): store name, too, check in finish()
 # cli support
 # documentation in all functions
 # Features:
-#  - choice of setting sets
-#  - checkbutton: "allow invalid directory structure"
 #  - clean entire project home: cache, backup, magick (note in history)
 # Fix:
 #  ardustack - replace align_image_stack for median with vidstab
