@@ -646,6 +646,8 @@ batch_function() {
     esac
   }
   
+  storeinfo test rmcache && rm -R "$Cachedir"
+  
   [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluate" ] && {
     storeinfo "refreshgui_selector=yes"
     ls $Destinationdir/*fuse.median* >/dev/null 2>&1 && {
@@ -1365,12 +1367,13 @@ fuse() {
   
   local $Batchlocal 
   local Destinationfilebasename
-  local Fusemode Modelist Modenumber Count
+  local Fusemode Fuseoption Modelist Modenumber Count
   
   parse_batchoptions "$@" || return 1
   
   Destinationfilebasename="${Destinationfile:-fuse}"
   Fusemode="${Functionmode:-1}"
+  Fuseoption="${Functionoption:-}"
   
   case $Fusemode in
     all|set*)
@@ -1400,10 +1403,19 @@ fuse() {
       Fusemode="${Fusemode#0}"
     ;;
   esac
-
-  Destinationfile="$Destinationdir/$Destinationfilebasename.$(fuse_getname $Fusemode shortcut).jpg"
-  worknote "fuse $Fusemode: Creating $(basename "$Destinationfile")"
   
+  Destinationfile="$Destinationdir/$Destinationfilebasename.$(fuse_getname $Fusemode shortcut).jpg"
+  case $Fuseoption in
+    skip)
+      [ -e "$Destinationfile" ] && {
+        note "fuse: Skipping $Fusemode: already exists: $(basename $Destinationfile)"
+        showimage "$Destinationfile"
+        return 0
+      }
+    ;;
+  esac
+  worknote "fuse $Fusemode: Creating $(basename "$Destinationfile")"
+
   # Collect options
   Enfuseoptions=""
   for Line in $Fuseoptions; do
@@ -2357,7 +2369,7 @@ start "fusewizard '$Version'" -> frameset;
             showevaluate                                        -> @button="evaluate";
     
       deleteframe                  "Delete results"         -> delete killviewnior ;
-        delete:beside                 "DELETE"                -> @combo("cache","evaluate","magick","compose","video","fuse","all")="cache" ;
+        delete:beside                 "DELETE"                -> @combo("backups","evaluate","magick","compose","video","fuse","all")="cache" ;
         killviewnior                                          -> @action("killall viewnior ffplay")="killall viewnior ffplay";
   '
 }
@@ -2782,15 +2794,13 @@ $Entrylist
 fuse_config() {
   
   local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
-  local Cachedir Stackdir Tiflayer
-  local Count Setcount Line Image Imagelist Commentfile Button Argument Currentfuse=1
+  local Cachedir Stackdir
+  local Count Setcount Line Image Imagelist Commentfile Button Argument Currentfuse=1 Fusemode Fuseskip
   local Comment Commentfile
   local Formatline Formatlist Fusetoworkonlist Fusetoworkonline Setline Setlist Setcount
-  local Md5sum Md5sum_old
   
   Cachedir="$(storeinfo dump cache)"
   Commentfile="$Cachedir/exivcomment"
-  Tiflayer="$Cachedir/layer.tif"
   
   storeinfo test fuse_config && {
     note "fuse_config is already running."
@@ -2840,7 +2850,10 @@ fuse_config() {
   # grammar
   echo "#! /usr/bin/kaptain
 start 'fusewizard enfuse settings' -> frameset;
-  frameset:beside:framed -> formatline fusetoworkon $(for Setcount in $(seq $Fusesetnumber); do echo set$Setcount; done) fusesettings;
+  frameset:beside     -> leftframe rightframe ;
+    leftframe:framed:beside    -> formatline fusetoworkon $(for Setcount in $(seq $Fusesetnumber); do echo set$Setcount; done) ;
+    rightframe:framed   -> fusesettings @fill runfuseframe;
+    
     $Formatline
       $Formatlist
     
@@ -2852,7 +2865,7 @@ start 'fusewizard enfuse settings' -> frameset;
       ${Setlist[$Setcount]}"
       done)
       
-    fusesettings 'enfuse options' -> exposureweight saturationweight contrastweight entropyweight blendmask grayprojector text2 levels contrastwindowsize contrastmincurvature contrastedgescaleline exivcomment run work @fill;
+    fusesettings 'enfuse options' -> exposureweight saturationweight contrastweight entropyweight blendmask grayprojector text2 levels contrastwindowsize contrastmincurvature contrastedgescaleline exivcomment;
     
       exposureweight:beside        '--exposure-weight'            -> @combo('')='';
       saturationweight:beside      '--saturation-weight'          -> @combo('')='';
@@ -2870,10 +2883,14 @@ start 'fusewizard enfuse settings' -> frameset;
         contrastedgescale                                           -> @combow('')='';
         lcescale                                                    -> @combow('')='';
         lcefactor                                                   -> @combow('')='';
-      run                                                         -> @button='Run enfuse' ;
-      work                                                        -> @text='' ;
-      
       exivcomment                                                 -> @text='' ;
+        
+    runfuseframe 'fuse'  -> runfuseline ;
+      runfuseline:beside -> runcombo runskip runbutton ;
+        runcombo                                                    -> @combo('current',$Fusemodecombo)='current' ;
+        runskip                    'fuse only missing'              -> 'skip' | ! '' ;
+        runbutton                                                   -> @button='Run enfuse' ;
+      
         
 " > $Kaptaingrammarfile
   
@@ -2930,15 +2947,14 @@ start 'fusewizard enfuse settings' -> frameset;
           Currentfuse="${Currentfuse%:selected}"
           storeinfo "refreshgui_fuse=yes"
         ;;
-        run)
-          #cmd -f fuse -m "$Currentfuse" -t "$Stackdir"
-          Md5sum_old="$Md5sum"
-          Md5sum="$(ls --full-time $Stackdir/magick/* | md5sum)"
-          [ "$Md5sum" != "$Md5sum_old" ] && convert "$(fileglob "$Stackdir/magick/*")" $Tiflayer ### FIXME use Tiflayer
-          #fuse -s "$Stackdir/magick" -g "*" -m "$Currentfuse "
-          sendkaptain "run='*** BUSY ***'"
-          parse_cmd -f fuse -m "$Currentfuse" -t "$Stackdir"
-          sendkaptain "run='Run enfuse'"
+        runbutton)
+          Fusemode="$(askkaptain runcombo)"
+          [ "$Fusemode" = "current" ] && Fusemode="$Currentfuse"
+          Fuseskip="$(askkaptain runskip)"
+
+          sendkaptain "runbutton='*** BUSY ***'"
+          parse_cmd -f fuse -m "$Fusemode" -o "$Fuseskip" -t "$Stackdir"
+          sendkaptain "runbutton='Run enfuse'"
           storeinfo "refreshgui_fuse=yes"
         ;;
         set*)
@@ -3227,9 +3243,10 @@ parse_cmd() {
   Commandline="$@"
     
   case "$Function" in
-    deleteall)   myrm "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" "$Targetdir/video" ; Return=0 ;;
-    deletecache) myrm "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
-    delete*)     myrm "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
+    deleteall)     myrm "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" "$Targetdir/video" ; Return=0 ;;
+    #deletebackups) myrm "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
+    deletebackups) myrm "$Targetdir"/*.bak ; Return=0 ;;
+    delete*)       myrm "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
     align_vidstab)
       batch_function -f align_vidstab -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
@@ -3241,7 +3258,7 @@ parse_cmd() {
       Return=$?
     ;;
     evaluate*|compose*|fuse*)
-      batch_function -f $Function -m "${Functionmode:-all}" -t "$Targetdir" -g "$Sourcefileglob"
+      batch_function -f $Function -m "${Functionmode:-all}" -o "$Functionoption" -t "$Targetdir" -g "$Sourcefileglob"
       Return=$?
     ;;
     showimage)
@@ -3366,14 +3383,15 @@ main() {
   declare_variables
   create_cachefiles
   
-  [ -e "$Configfile" ] && source "$Configfile"
-  
   storeinfo "cache=$Wizardcache"
   storeinfo "projecthome=$Projecthome"
   storeinfo "stackshotdir=$Projecthome"
   storeinfo "gallerydir=$Gallerydir"
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
+  storeinfo "rmcache=yes"
+  
+  [ -e "$Configfile" ] && source "$Configfile"
   
   fuse_declare
 
