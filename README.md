@@ -6,12 +6,10 @@ Tools for microscopy and image focus stacking.
    - [imgruler](#imgruler): Draw a ruler or micrometer into an image (Terminal)
  - Tools in active development, beta stage:
    - [fusewizard](#fusewizard): Combine focus stack images. (GUI)
-   - [ardustack](#ardustack): Shoot foto stack with stepper motor and camera. (GUI)
+   - [ardustack](#ardustack): Shoot focus stackshots with stepper motor and camera. (GUI)
    - [camcfg](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
- - Tools in beta stage, currently no active development:
-   - [arduterm](#arduterm): Shoot foto stack with stepper motor and camera. Predecessor of [ardustack](#ardustack). (Terminal)
    
-`fusewizard` and `ardustack` need some further development before they can be recommended for general use.
+`fusewizard` and `ardustack` need some further development and documentation before they can be recommended for general use.
 However, if you are already interested to try them out, please give me some feedback in the [issue tracker](https://github.com/mviereck/microscopy-tools/issues) and I'll help to set them up.
 
 
@@ -35,6 +33,7 @@ Provides:
  - Image preprocessing with imagemagick to enhance contrast and sharpiness. 
  - Image alignment with ffmpeg/[vidstab](https://github.com/georgmartius/vid.stab).
  - Multiple combinings of stackshot images with enfuse. Further combining of results with imagemagick.
+ - Targets to generate overall sharp images and animated videos of focus stackshots.
  
 Expects a folder `stackshot` containing the source images. `stackshot` should be in an empty parent folder. The images in `stackshot` won't be changed.
 
@@ -52,8 +51,7 @@ GUI for foto stacking with a stepper motor controlled by an Arduino and a camera
 Features:
  - Camera control with gphoto2 for preview videos and tethered shooting.
  - Stepper motor control for focus adjustment.
- - Automated stackshots combining camera and stepper motor.
- - Video preview.
+ - Automated focus stackshots combining camera and stepper motor.
  
 `pololu_a4988.ino` is the code in use to control the stepper motor driver with an Arduino.
 
@@ -71,16 +69,6 @@ Dependencies:
  
 Dependencies:
  - dialog
- - gphoto2
- 
-## arduterm
-Terminal to coordinate a camera on USB and an Arduino with a stepper motor. 
-In beta stage, currently no development. Rather use [ardustack](#ardustack).
-
-Dependencies:
- - bc
- - ffmpeg
- - geeqie
  - gphoto2
 
 ## Examples
