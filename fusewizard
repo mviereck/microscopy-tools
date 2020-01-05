@@ -12,7 +12,7 @@ note() {
 }
 
 verbose() {
-  echo "$*"
+  echo "$*" >&2
 }
 
 worknote() {
@@ -139,6 +139,10 @@ checkvar() {
     ;;
   esac
   return 0
+}
+
+printnum(){ 
+  printf %0${2:-3}d "${1:-0}"
 }
 
 myrm() {
@@ -352,6 +356,7 @@ setup_workdir() {
     ;;
     *)
       mkdir -p $Targetprevdir
+      myrm "$Targetprevdir/*"
       check_fileglob "$Targetnewdir/*" && mymv "$Targetnewdir/*" "$Targetprevdir/"
     ;;
   esac
@@ -379,7 +384,7 @@ setup_workdir() {
       #Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
     ;;
     
-    align*|brightness*|sharpen*|level*|contrast*|crop*|gamma*|stretch*|kuwahara*|prepare*|ruler*|wizard*)
+    align*|brightness*|cuberotate*|sharpen*|level*|contrast*|crop*|gamma*|stretch*|kuwahara*|prepare*|ruler*|wizard*)
       Sourcedir="$Targetprevdir"
       Destinationdir="$Targetnewdir"
     ;;
@@ -1201,6 +1206,32 @@ $Position"
   multicore_wait || return 1
 }
 
+calc_autogamma() {
+  # calculate -auto-gamma value for sequence of images
+  # based on https://stackoverflow.com/questions/24396024/in-imagemagick-is-it-possible-to-auto-gamma-based-on-a-region
+  
+  local $Batchlocal
+  local Meanimage Mean Quantumrange Gamma
+  
+  parse_batchoptions "$@" || return 1
+  
+  Meanimage="$Cachedir/autogamma.mean"
+  
+  worknote "calc_autogamma: Generating mean image"
+  convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence mean "$Meanimage" || return 1
+  showimage "$Meanimage"
+  
+  Mean="$(convert "$Meanimage" -format "%[mean]" info:)"
+  Quantumrange="$(convert "$Meanimage" -format "%[fx:quantumrange]" info:)"
+  
+  # calculate gamma
+  #Gamma="$(bc -l <<< "scale=4; l($Mean/$Quantumrange)/l(0.5)")"
+  Gamma="$(awk "BEGIN{print log($Mean/$Quantumrange)/log(0.5)}")"
+  verbose "calc_autogamma: Calculated gamma: $Gamma"
+  
+  echo "$Gamma"
+}
+
 compose() {
   local $Batchlocal
   local Evalmaxfile Evalminfile Minfile Maxfile 
@@ -1325,6 +1356,108 @@ crop() {
   
   historyentry "# crop geometry: $Cropgeometry rotation: $Rotate"
   return 0
+}
+
+cuberotate() {
+  local $Batchlocal
+  local Mpcdir Linedir
+  local Image Imagelist Imagewidth Imageheight Lineimage
+  local Imagecount Linecount Imagenumber Linenumber Cropgeometry
+  
+  parse_batchoptions "$@" || return 1
+  
+  case $Functionmode in
+    top|left|bottom|right)
+      worknote "cuberotate $Functionmode: Converting images to mpc format"
+      showpercent 1 100
+      Mpcdir=$Cachedir/mpc
+      Linedir=$Cachedir/lines
+      mkdir -p $Mpcdir
+      mkdir -p $Linedir
+      for Image in $(fileglob "$Sourcedir/$Sourcefileglob"); do
+        convert "$Image" "$Mpcdir/$(basename $Image).mpc" || return 1
+      done
+      Imagelist="$(fileglob "$Mpcdir/*.mpc")"
+    ;;
+    *)
+      Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")" 
+    ;;
+  esac
+  Imagenumber="$(grep -c . <<< "$Imagelist")"
+  Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
+  Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
+    
+  case $Functionmode in
+    top|bottom) Linenumber="$Imageheight" ;;
+    left|right) Linenumber="$Imagewidth" ;;
+  esac
+  
+  case $Functionmode in
+    top|bottom|left|right)
+      for Linecount in $(seq $Linenumber); do
+        Destinationfile="$Destinationdir/cube${Functionmode}_$(printnum $Linecount 4).jpg"
+        worknote "cuberotate: Generating $(basename $Destinationfile)"
+        rm $Linedir/*
+        Imagecount=0
+    
+        for Image in $Imagelist; do
+          Imagecount="$((Imagecount+1))"
+          Lineimage=$Linedir/Line_$(printnum "$Imagecount" 4).mpc
+          case $Functionmode in
+            top)    Cropgeometry="${Imagewidth}x1+0+$((Linecount-1))" ;;
+            bottom) Cropgeometry="${Imagewidth}x1+0+$((Imageheight - Linecount))" ;;
+            left)   Cropgeometry="1x${Imageheight}+$((Linecount-1))+0" ;;
+            right)  Cropgeometry="1x${Imageheight}+$((Imagewidth - Linecount))+0" ;;
+          esac
+          multicore "convert $Image -crop $Cropgeometry $Lineimage" "" 8 || return 1
+        done
+        multicore_wait || return 1
+
+        case $Functionmode in
+          top|bottom) $Convert $(fileglob "$Linedir/*.mpc") -append "$Destinationfile" || return 1 ;;
+          left|right) $Convert $(fileglob "$Linedir/*.mpc") +append "$Destinationfile" || return 1 ;;
+        esac
+
+        showimage "$Destinationfile"
+        showpercent $Linecount $Linenumber
+      done
+    ;;
+    back-left|back-top|reverse-order)
+      Imagecount=0
+      for Image in $Imagelist; do
+        Destinationfile="$(head -n $((Imagenumber - Imagecount)) <<< "$Imagelist" | tail -1)"
+        Destinationfile="$(basename "$Destinationfile")"
+        worknote "cuberotate $Functionmode: Generating $Destinationfile"
+        Destinationfile="$Destinationdir/$Destinationfile"
+        case $Functionmode in
+          reverse-order)
+            multicore "cp -T    $Image       $Destinationfile" "$Destinationfile" 16 || return 1
+          ;;
+          back-left)
+            multicore "$Convert $Image -flop $Destinationfile" "$Destinationfile" || return 1
+          ;;
+          back-top)
+            multicore "$Convert $Image -flip $Destinationfile" "$Destinationfile" || return 1
+          ;;
+        esac
+        Imagecount="$((Imagecount+1))"
+        showpercent $Imagecount $Imagenumber
+      done
+      multicore_wait || return 1
+    ;;
+    90|180|270)
+      Imagecount=0
+      for Image in $Imagelist; do
+        Imagecount="$((Imagecount+1))"
+        Destinationfile="$(basename $Image)"
+        worknote "cuberotate $Functionmode: Generating $Destinationfile"
+        Destinationfile="$Destinationdir/$Destinationfile"
+        multicore "$Convert $Image -rotate $Functionmode $Destinationfile" "$Destinationfile" || return 1
+        showpercent $Imagecount $Imagenumber
+      done
+      multicore_wait || return 1
+    ;;
+  esac
 }
 
 evaluate() {
@@ -1601,7 +1734,7 @@ wizard() {
   #   -o Functionoption
   
   local $Batchlocal
-  local Image Destinationfile Imagelist
+  local Image Destinationfile Imagelist Gamma
 
   parse_batchoptions "$@" || return 1
   
@@ -1619,7 +1752,7 @@ wizard() {
   esac
 
   case "$Functionmode" in
-    gamma|level) 
+    level|gamma) 
       case "$Functionoption" in
         auto|"") Functionmode="-auto-$Functionmode" ; Functionoption="" ;;
         *)       Functionmode="-$Functionmode" ;;
@@ -1632,6 +1765,14 @@ wizard() {
     stretch)     Functionmode="-contrast-stretch" ;;
     wizard)      Functionmode="" ;;
   esac
+  
+  grep -q "auto-gamma" <<< "$Functionmode $Functionoption" && {
+    Gamma="$(calc_autogamma -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir")"
+    Functionmode="$(sed   "s/auto-gamma/gamma $Gamma/" <<< "$Functionmode")"
+    Functionoption="$(sed "s/auto-gamma/gamma $Gamma/" <<< "$Functionoption")"
+  }
+  
+  worknote "wizard: $Functionmode $Functionoption"
   
   Count=0
   for Image in $Imagelist; do
@@ -2105,13 +2246,16 @@ multicore() {
   # Run multiple processes in parallel, but not more than $Wizardthreads
   # $1 Command
   # $2 Image to show if $1 is finished
+  # $3 Factor to multiply allowed number of processes
   # Run multicore_wait afterwards to wait for the last processes to finish.
   
   local Process
   local Mem_free
+  
+  Multicore_maxprocesses="$((Wizardthreads*${3:-1}))"
     
-  [ "$Multicoreprocesscount" = $Wizardthreads ] && {
-    for Process in $(seq $Wizardthreads); do
+  [ "$Multicoreprocesscount" = "$Multicore_maxprocesses" ] && {
+    for Process in $(seq $Multicore_maxprocesses); do
       [ "${Multicoreprocess[$Process]}" ] && {
         multicore_waitprocess "${Multicoreprocess[$Process]}" || {
           multicore_break
@@ -2146,7 +2290,7 @@ multicore() {
   
   Multicoreprocesscount=$((Multicoreprocesscount +1))
 
-  #echo "${1:-} "
+  #verbose "multicore: ${1:-}"
   eval "${1:-} &"
   
   Multicoreprocess[Multicoreprocesscount]=$!
@@ -2157,7 +2301,7 @@ multicore() {
 
 multicore_wait() {
   local Process
-  for Process in $(seq $Wizardthreads); do
+  for Process in $(seq $Multicore_maxprocesses); do
     [ "${Multicoreprocess[$Process]}" ] && {
       multicore_waitprocess "${Multicoreprocess[$Process]}" || {
         multicore_break
@@ -2183,7 +2327,7 @@ multicore_waitprocess() {
 
 multicore_break() {
   local Process
-  for Process in $(seq $Wizardthreads); do
+  for Process in $(seq $Multicore_maxprocesses); do
     [ "${Multicoreprocess[$Process]}" ] && {
       kill "${Multicoreprocess[$Process]}"
       wait "${Multicoreprocess[$Process]}"
@@ -2277,7 +2421,7 @@ start "fusewizard '$Version'" -> frameset;
           meanbalancemagick                                     -> @button="magick" ;
           meanbalanceevaluate                                   -> @button="evaluate" ;
           meanbalancefuse                                       -> @button="fuse" ;
-          meanbalance:beside          "meanbalance"             ->  "on"  | "";
+          meanbalance:beside          "meanbalance"             ->  "on"  | ! "";
         whitebalanceline:beside                               -> whitebalance whitebalancemodecombo whitebalancecombo whitebalancemagick whitebalancefuse whitebalanceevaluate;
           whitebalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
           whitebalancecombo                                     -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#999999" ;
@@ -2328,7 +2472,7 @@ start "fusewizard '$Version'" -> frameset;
           runbatchprocessing                                    -> @button="Run selected batch blocks";
           cmdbreak                                              -> @button="break" ;
         
-      specialframe "Special operations" -> rulerline videoline animationline undoline ;
+      specialframe "Special operations" -> rulerline videoline animationline cuberotateline undoline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
           rulermodecombo                                        -> @combo("100c","100p","100z","40c","40p","40z","20c","20p","20z","10c","10p","10z")="100z" ;
           rulercombo:beside           "Title:"                  -> @string ;
@@ -2347,6 +2491,10 @@ start "fusewizard '$Version'" -> frameset;
           videocombo:beside           "Framerate:"              -> @combow("2","3","4","5","7","10","15","20","25","30")="10";
           videomagick                                           -> @button="magick" ;
           video:beside                "focus video"             -> "" ;
+        cuberotateline:beside                                 -> cuberotate cuberotatemodecombo cuberotatemagick;
+          cuberotatemodecombo:beside                            -> @combo("90","180","270","reverse-order","back-left","back-top","left","right","top","bottom")="reverse-order";
+          cuberotatemagick                                      -> @button="magick" ;
+          cuberotate:beside           "cuberotate"              -> "" ;
         undoline:beside                                       -> undo undomagick undofuse undoevaluate;
           undomagick                                            -> @button="magick" ;
           undoevaluate                                          -> @button="evaluate" ;
@@ -3252,7 +3400,7 @@ parse_cmd() {
       batch_function -f align_vidstab -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
     ;;
-    animation*|brightness*|contrast*|crop*|gamma*|kuwahara*|level*|prepare*|sharpen*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
+    animation*|brightness*|contrast*|crop*|cuberotate*|gamma*|kuwahara*|level*|prepare*|sharpen*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
       batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
@@ -3443,6 +3591,8 @@ main "$@"
 finish
 
 ##### ToDo ####
+# gamma=auto: apply mean gamma
+# crop: Do not crop if geometry is same as image
 # memory check for multicore fuse
 # configuration dialog:
 #  - project directory
