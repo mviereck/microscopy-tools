@@ -85,10 +85,17 @@ Animated video of the top of a hemp flower hair, generated from 108 single captu
 
 ![screenshot](animate.gif)
 
-## Other recommended tools
+## Related tools
+### Free and Open Source
+ - rawtherapee: RawTherapee is an advanced program for developing raw photos and for processing
+non-raw photos.
  - entangle: Entangle provides a graphical interface for "tethered shooting", aka
 taking photographs with a digital camera completely controlled from the
 computer.
  - MacroFusion: GUI for enfuse. Fork with some bug fixes: https://github.com/mviereck/macrofusion
- - rawtherapee: RawTherapee is an advanced program for developing raw photos and for processing
-non-raw photos. 
+### Closed Source freeware
+ - [CombineZP](https://combinezp.software.informer.com/): Stacker for MS Windows. Works with wine on Linux, too.
+ - [Picolay](http://www.picolay.de/): Stacker for MS Windows. Works with wine on Linux, too.
+### Closed Source commercial
+ - [Helicon Focus](https://www.heliconsoft.com/heliconsoft-products/helicon-focus/): 30 days trial version. Available for Mac and Windows.
+ - [ZereneStacker](https://zerenesystems.com/cms/stacker): 30 days trial version. Available for Linux, Mac and Windows.
