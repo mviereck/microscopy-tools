@@ -97,7 +97,7 @@ shortpath() {
 #  echo "${1:-}"
 }
 
-#### file operations
+#### misc
 
 checkvar() {
   local Arg
@@ -141,21 +141,41 @@ checkvar() {
   return 0
 }
 
-printnum(){ 
+printnum(){
+  # print number $1 with leading zeroes.
+  # $1 number
+  # $2 digits. Default: 3
   printf %0${2:-3}d "${1:-0}"
 }
 
+#### file operations
+
 myrm() {
+  # remove files
+  # $@ quoted globs
   local Line
   for Line in "$@" ; do
-    [ -e "$Line" ] && {
-      verbose "rm: deleting $Line"
+    check_fileglob "$Line" && {
+      verbose "rm: Deleting $Line"
+      rm $(fileglob "$Line")
+    }
+  done
+}
+
+myrmdir() {
+  # remove directories and their content
+  # $@ quoted globs
+  local Line
+  for Line in "$@" ; do
+    check_dirglob "$Line"  && {
+      verbose "rmdir: Deleting $Line"
       rm -rf $Line
     }
   done
 }
 
 mymv() {
+  # move quoted glob $1 to directory $2
   check_fileglob "${1:-}" || {
     verbose "mv: Source is empty: ${1:-}"
     return 1
@@ -169,6 +189,7 @@ mymv() {
 }
 
 mycp() {
+  # copy quoted glob $1 to directory $2
   check_fileglob "${1:-}" || {
     verbose "cp: Source is empty: ${1:-}"
     return 1
@@ -182,13 +203,12 @@ mycp() {
 }
 
 check_fileglob() {
-  # check whether files exist for glob $1
-  #[ -d "$1" ] && return 1
+  # check whether files exist for quoted glob $1
   [ -n "$(eval find ${1:-} -maxdepth 0 -type f -print -quit 2>/dev/null)" ]
 }
 
 check_dirglob() {
-  # check whether directories exist for glob $1
+  # check whether directories exist for quoted glob $1
   [ -f "${1:-}" ] && return 1
   [ -n "$(eval find ${1:-} -maxdepth 0 -type d -print -quit 2>/dev/null)" ]
 }
@@ -211,18 +231,6 @@ fileglob() {
   Filelist="$(sort -V <<< "$Filelist")"
   
   [ "$Filelist" ] && echo "$Filelist" || return 1
-}
-
-check_destinationfile() {
-  local Destinationfile Function
-  Destinationfile="${1:-}"
-  Function="${2:-}"
-  [ -e "$Destinationfile" ] && {
-    #failure "$Function: Destination file already exists: $Destinationfile"
-    failure "$Function: Destination file already exists: $(basename "$Destinationfile")"
-    return 1
-  }
-  return 0
 }
 
 check_stackdir() {
@@ -329,7 +337,7 @@ setup_workdir() {
   Targetvideodir="$Targetdir/video"
   
   Targetcachedir="$Targetdir/cache"
-  myrm     "$Targetcachedir"
+  myrmdir     "$Targetcachedir"
   mkdir -p "$Targetcachedir"
   Cachedir="$Targetcachedir"
   
@@ -430,19 +438,6 @@ setup_workdir() {
 
 #### show images
 
-generate_doubleimage() {
-  local Leftimage Rightimage Destinationfile Commentleft Commentright
-  
-  Leftimage="${1:-}"
-  Rightimage="${2:-}"
-  Destinationfile="${3:-}"
-  Commentleft="${4:-previous}"
-  Commentright="${5:-new}"
-  
-#  montage -geometry +0+0 -label "$Commentleft" "$Leftimage" -label "$Commentright" -flop "$Rightimage" "$Destinationfile"
-  montage -geometry +0+0 -label "$Commentleft" "$Leftimage" -label "$Commentright" "$Rightimage" "$Destinationfile"
-}
-
 showimage() {
   local Imagelist Image Shrinkimage
   Imagelist="$(fileglob "${1:-}")" >&2
@@ -481,85 +476,6 @@ showimage() {
 
 showvideo() {
   ffplay -window_title "$(basename "${1:-}")" -loglevel error -loop 0 "${1:-}" & storepid $!
-}
-
-showimagehalf() {
-  local Sourceimage Destinationimage
-  local Cacheimage
-  Sourceimage="${1:-}"
-  Destinationimage="${2:-}"
-  Cacheimage=$Wizardcache/diff.jpg
-  $Convert $Sourceimage -crop 50%x100%+0+0 $Cacheimage.half.jpg
-  composite -geometry +0+0 $Cacheimage.half.jpg $Destinationimage $Cacheimage
-  showimage $Cacheimage
-}
-
-showimagediff() {
-  local Leftimage Rightimage Commentleft Commentright
-  local Cacheimage
-  
-  Leftimage="${1:-}"
-  Rightimage="${2:-}"
-  Commentleft="${3:-previous}"
-  Commentright="${4:-new}"
-  
-  Cacheimage="$Wizardcache/diff.jpg"
-  
-  generate_doubleimage "$Leftimage" "$Rightimage" "$Cacheimage" "$Commentleft" "$Commentright"
-  showimage "$Cacheimage"
-}
-
-showimage_guiXXX() {
-
-  local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal
-  local Image
-  
-  Image="$Wizardcache/showimage.tif"
-  
-  Kaptaingrammarfile="$Cachedir/crop.kaptain.grammar"
-  Kaptainstdinfifo="$Cachedir/crop.kaptain.stdin"
-  Kaptainstdoutfifo="$Cachedir/crop.kaptain.stdout"
-  mkfifo   $Kaptainstdinfifo
-  mkfifo   $Kaptainstdoutfifo
-  exec {FDin}<>$Kaptainstdinfifo
-  exec {FDout}<>$kaptainstdoutfifo
-  
-#  kaptain --stdio $Wizardcache/test.kaptn <&${FDin} >&${FDout} &
-  
-  echo "#! /usr/bin/kaptain
-start 'View image stack' -> image directoryline resultline;
-  image -> @icon('$Cropimage');
-  directoryline -> stackshot magick;
-    stackshot     -> @button='stackshot';
-    magick        -> @button='magick';
-  resultline    -> fusemedian fusemean fusemin fusemax;
-    fusemedian    -> @button='fuse.median';
-    fusemean      -> @button='fuse.median';
-    fusemin       -> @button='fuse.median';
-    fusemax       -> @button='fuse.median';
-" >> "$Kaptaingrammarfile"
-  kaptain --stdio "$Kaptaingrammarfile" <&${FDin} >&${FDout} & Kaptainpid=$!
-
-  while ps -p $Kaptainpid >/dev/null; do
-    [ "$Refresh" = "yes" ] && {
-      echo "image('$Image')='x'" >${FDin}
-      Refresh="no"
-    }
-
-    read -t1 Kaptainsignal <&${FDout}
-    
-    [ "$Kaptainsignal" ] && {
-      Kaptainsignal="${Kaptainsignal%:pressed}"
-      case $Kaptainsignal in
-        ok)         Return=0; break ;;
-      esac
-      Refresh="yes"
-    }
-  done 
-  
-  exec ${FDin}>&- ${FDout}>&-
-  ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
-  return 0
 }
 
 #### image batch processing
@@ -784,43 +700,69 @@ runbatch3() {
   cmd -f showimage -s "$Stackdir/evaluate" -g "*fuse.median*"
 }
 
+setup_imagelist() {
+  # Set up often needed image variables
+  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
+  Imagenumber="$(grep -c . <<< "$Imagelist")"
+  Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
+  Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
+  Imagecount=0
+  Image=""
+  Cropgeometry=""
+  [ -n "$Imagelist" ] && return 0 || {
+    failure "No images found"
+    return 1
+  }
+}
+
 #### image sequence operations
 
 align_vidstab() {
+  # Align images with ffmpeg/vidstab
+  # -m  Shakiness 1-10 (low to high)
+  # -o  crop interactive yes/""
+  
   local $Batchlocal
-  local Sourcefilelist Imagelist Destinationfile Sourcefile
-  local Image Imagewidth Imageheight
+  local $Imagelocal
+  local Sourcefilelist Sourcefile
   local CropW CropH CropX CropY Cropgeometry Zoom
-  local Cropinteractive 
-  local Shakiness Stepsize
+  local Cropinteractive Shakiness Stepsize
   local Xoffset Xoffsetrelative Xoffsetlist Yoffset Yoffsetrelative Yoffsetlist Radians Radiansrelative Radianslist Degree 
-  local Framedir Motionsfile Rotatedir Rotateminimage 
-  local Count Imagecount
+  local Framedir Motionsfile Distortdir Cropminimage 
 
   parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
   
   cd $Cachedir
   
+  # settings
   Shakiness="$Functionmode"
   Shakiness="${Shakiness:-1}"
   Cropinteractive="$Functionoption"
   [ "$Cropinteractive" ] && Cropinteractive="yes"
   Stepsize=6
   
+  # cache setup
   Framedir="$Cachedir/frames"
   mkdir -p "$Framedir"
+  Distortdir="$Cachedir/distort"
+  mkdir -p "$Distortdir"
   
-  crop -m even -s "$Sourcedir" -g "$Sourcefileglob" -d "$Framedir"
-
   Sourcefilelist=$Cachedir/align.source.list
   :> $Sourcefilelist
+  Motionsfile="$Cachedir/global_motions.trf"
   
+  # ffmpeg needs even image size
+  crop -m even -s "$Sourcedir" -g "$Sourcefileglob" -d "$Framedir"
+
+  # Set up ffmpeg input images list
   Imagelist="$(fileglob "$Framedir/$Sourcefileglob")"
+  :> $Sourcefilelist
   for Image in $Imagelist; do
     echo "file $Image" >>$Sourcefilelist
   done
-  Imagecount="$(grep -c . <<< "$Imagelist")"
 
+  # Workaround to get video of png images. vidstab fails with videos generated from gphoto2 jpg for unknown reasons.
   worknote "align_vidstab: generating 1. video from images"
   ffmpeg -y -hide_banner -nostdin -safe "0" -f "concat" -i "$Sourcefilelist" \
          -vcodec "libx264" -profile:v "high444" -refs "16" -crf "0" -preset "ultrafast" \
@@ -830,11 +772,12 @@ align_vidstab() {
   ifcmdbreak && return 1
   
   worknote "align_vidstab: Splitting generated 1. video into .png images"
-  rm $Framedir/*
+  myrm "$Framedir/*"
   ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.orig.mp4" "$Framedir/sourceimg%04d.png" || return 1
   showpercent 2 100
   ifcmdbreak && return 1
 
+  # Set up ffmpeg input images list with generated png images
   :> $Sourcefilelist
   Imagelist="$(fileglob "$Framedir/*")"
   for Image in $Imagelist; do
@@ -863,7 +806,7 @@ align_vidstab() {
   ifcmdbreak && return 1
 
   worknote "align_vidstab: Splitting aligned video into images (shakiness=$Shakiness)"
-  rm $Framedir/*
+  myrm $Framedir/*
   ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.result.mp4" "$Framedir/alignimg%04d.tif" || return 1
   showpercent 6 100
   ifcmdbreak && return 1
@@ -873,28 +816,25 @@ align_vidstab() {
   Imagewidth=$(convert  -format '%w'  $Image info:)
   Imageheight=$(convert -format '%h'  $Image info:)
       
-  Motionsfile="$Cachedir/global_motions.trf"
 
   Xoffsetlist="$(cat $Motionsfile | grep -v '#' | awk '{print $2}')"
   Yoffsetlist="$(cat $Motionsfile | grep -v '#' | awk '{print $3}')"
   Radianslist="$(cat $Motionsfile | grep -v '#' | awk '{print $4}')"
-      
-  Rotatedir="$Cachedir/rotate"
-  mkdir -p "$Rotatedir"
+  
       
   worknote "align_vidstab: Cutting of black border (shakiness=$Shakiness)"
-  Count=0
+  Imagecount=0
   for Image in $Imagelist; do
-    Count="$((Count + 1))"
-    Xoffsetrelative="$(sed "${Count}q;d" <<<"$Xoffsetlist")"
+    Imagecount="$((Imagecount + 1))"
+    Xoffsetrelative="$(sed "${Imagecount}q;d" <<<"$Xoffsetlist")"
     Xoffset="$(awk "BEGIN { print $Xoffset + $Xoffsetrelative }")"
-    Yoffsetrelative="$(sed "${Count}q;d" <<<"$Yoffsetlist")"
+    Yoffsetrelative="$(sed "${Imagecount}q;d" <<<"$Yoffsetlist")"
     Yoffset="$(awk "BEGIN { print $Yoffset + $Yoffsetrelative }")"
-    Radiansrelative="$(sed "${Count}q;d" <<<"$Radianslist")"
+    Radiansrelative="$(sed "${Imagecount}q;d" <<<"$Radianslist")"
     Radians="$(awk "BEGIN { print $Radians - $Radiansrelative }")"
     Degree="$(awk  "BEGIN { print $Radians * 180 / 3.141592652}")"
         
-    Destinationfile="$Rotatedir/rotate$Count.png"
+    Destinationfile="$Distortdir/distorted$Imagecount.png"
     multicore "$Convert -size ${Imagewidth}x${Imageheight} xc:transparent -fill white -stroke white \
                -draw 'translate $((Imagewidth/2)),$((Imageheight/2)) \
                       rotate $Degree \
@@ -904,19 +844,19 @@ align_vidstab() {
                               $(awk "BEGIN {print -$Imagewidth/2  +$Xoffset}"),$(awk "BEGIN {print +$Imageheight/2 +$Yoffset}") \
                               $(awk "BEGIN {print -$Imagewidth/2  +$Xoffset}"),$(awk "BEGIN {print -$Imageheight/2 +$Yoffset}") '\
                $Image -evaluate-sequence min $Destinationfile" "$Destinationfile" || return 1
-    showpercent "$Count" "$Imagecount"
+    showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
       
-#  Rotateminimage="$Cachedir/rotate.min.png"
-  Rotateminimage="$Cachedir/rotate.min.mpc"
-  convert $(fileglob "$Cachedir/rotate/*") -evaluate-sequence min "$Rotateminimage" || return 1
+  # crop greatest common inner rectangle of distorted images
+  Cropminimage="$Cachedir/distorted.min.mpc"
+  convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
   case $Cropinteractive in
     yes) notify-send "align_vidstab(): Ready for interactive crop"
-         Cropgeometry="$(cropgeometry_interactive "$Rotateminimage" "$Cachedir")" || return 1 ;;
-    *)   Cropgeometry="$(trim_hard "$Rotateminimage" "$Cropgeometry")" || return 1 ;;
+         Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")" || return 1 ;;
+    *)   Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")" || return 1 ;;
   esac
-      
+  
   Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
   Rotate="${Rotate:-0}"
   Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
@@ -929,17 +869,17 @@ align_vidstab() {
       
   worknote "align_vidstab: Cropping aligned images to $Cropgeometry (shakiness=$Shakiness)"
   Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
-  Count=0
-  for Image in $(fileglob "$Rotatedir/*"); do
-    Count="$((Count+1))"
-    Destinationfile="$(sed "${Count}q;d" <<< "$Imagelist")"
+  Imagecount=0
+  for Image in $(fileglob "$Distortdir/*"); do
+    Imagecount="$((Imagecount+1))"
+    Destinationfile="$(sed "${Imagecount}q;d" <<< "$Imagelist")"
     Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
     multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
-    showpercent "$Count" "$Imagecount"
+    showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
             
-  showimage "$Rotateminimage.trim_hard.png"
+  showimage "$Cropminimage.trim_hard.png"
   return 0    
 }
 
@@ -947,24 +887,30 @@ animation() {
   # Generate animated GIF from stackshot.
   # Helps to visualize diferent layers and gives some 3D effect
   #
+  # -m  Rendermode:Fusemode
+  # -o  Distortion
+  #
   # Rendermode     quick or smooth
   # Distortion     Distortion between lowest and highest layer.
   # Fusemode       See fuse()
-  # Framerate          Framerate between frames
+  # Framerate      Framerate between frames
   # Staticlayer    Relative position of static layer that won't move. 0 means lowest layer, 1/2 means middle layer, 1 means top layer
   # Format         File format
-  #
+  
   local $Batchlocal
+  local $Imagelocal
   local Fusemode Distortion Framerate Sequence Staticlayer Format Appendfirstframe
-  local Distortdir Distortimage Fusedir Mpcdir Destinationfile Destinationfilebasename Imagebasename
-  local Imagewidth Imageheight Cropgeometry Xpos Ypos Offset Border
+  local Distortdir Distortimage Fusedir Mpcdir Destinationfilebasename Imagebasename
+  local Xpos Ypos Offset Border
   local Count Iteration=0 Iterationnumber
-  local Image Imagelist Imagelistfile
+  local Imagelistfile
   local Position Positionlist Positionnumber
   local Sequence Sequencename Sequencenumber
   
   parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
   
+  # settings
   Rendermode="$(cut -d: -f1  <<<"$Functionmode")"
   Fusemode="$(cut -s -d: -f2 <<<"$Functionmode")"
   Rendermode="${Rendermode:-quick}"
@@ -973,6 +919,11 @@ animation() {
   Staticlayer="1/4"
   Format="webm"
   Appendfirstframe="no"
+  Destinationfilebasename="${Destinationfile:-animation}"
+  
+  # cache setup
+  Mpcdir=$Cachedir/mpc
+  mkdir -p "$Mpcdir"
   
   # Position raster
   #
@@ -1063,11 +1014,9 @@ animation() {
   esac
     
   # convert to mpc for faster access
-  Mpcdir=$Cachedir/mpc
-  mkdir -p "$Mpcdir"
-  worknote "animation: Converting images to mpc"
+  worknote "animation: Converting images to mpc format"
   showpercent 1 100
-  for Image in $(fileglob "$Sourcedir/$Sourcefileglob"); do
+  for Image in $Imagelist; do
     multicore "convert $Image $Mpcdir/$(basename $Image).mpc" || return 1
   done
   multicore_wait || return 1
@@ -1075,15 +1024,10 @@ animation() {
   # Revert image list to work from bottom to top
   Imagelist="$(fileglob "$Mpcdir/*.mpc")"
   Imagelist="$(sort -V -r <<< "$Imagelist")"
-  Imagenumber="$(grep -c . <<< "$Imagelist")"
   
   # calculate lost borders
-  Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
-  Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
   Border="$((Distortion - Distortion * $Staticlayer))"  # wrong result if Staticlayer>1/2 ?
   Cropgeometry="$((Imagewidth - Border * 2 - 1))x$((Imageheight - Border * 2 - 1))"
-
-  Destinationfilebasename="${Destinationfile:-animation}"
   
   # offset factor, distortion between neighboured layers
   Offset="$(awk "BEGIN {print $Distortion / ( $Imagenumber * $Raster ) }")"
@@ -1124,27 +1068,6 @@ $Position"
     }
   done
   multicore_wait || return 1
-  
-  # EXPERIMENTAL cubic
-  Degree=$((-180*Distortion/Imagewidth))
-  for Position in $Positionlist; do
-    Xpos="$(cut -dx -f1 <<< "$Position")"
-    Ypos="$(cut -dx -f2 <<< "$Position")"
-#    worknote "animation: perpective images for position ${Xpos}x${Ypos}."
-    Distortdir="$Cachedir/distort.$Position"
-      mkdir -p "$Distortdir"
-      
-      Count=-$((Imagenumber * $Staticlayer))  # negative start value causes movement of lowest layer
-      for Image in $Imagelist; do
-        Count="$((Count +1))"
-        Distortimage="$Distortdir/$(basename $Image)"
-        Distortimage="${Distortimage%.mpc}"
-#        multicore "/home/lauscher/bin/rotate3D $((Degree*Xpos/Raster)),$((Degree*Ypos/Raster)),0 $Distortimage $Distortimage" "$Distortimage"
-      done
-#      Iteration=$((Iteration + 1))
-#      showpercent $Iteration $Iterationnumber
-  done
-  multicore_wait || return 1
 
   # fuse distorted images
   Showpercentfunc="$(declare -f showpercent)"
@@ -1180,26 +1103,18 @@ $Position"
   # Generate videos
   for Count in $(seq $Sequencenumber); do
     Iteration=$((Iteration + 1))
-    Imagelist=""
     Imagelistfile="$Cachedir/imagelist.${Sequencename[$Count]}"
     :> $Imagelistfile
     [ "$Appendfirstframe" = "yes" ] && Sequence[$Count]="${Sequence[$Count]} $(cut -d' ' -f1 <<< "${Sequence[$Count]}")"
+    
     for Position in ${Sequence[$Count]}; do
       Image="$(fileglob "$Cachedir/*.$Position.median.*")"
-      Imagelist="$Imagelist $Image"
       echo "file '$Image'" >> "$Imagelistfile"
     done
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$(fuse_getname $Fusemode shortcut).$Distortion.$Format"
 
     worknote "animation: Generating $(basename $Destinationfile)."
-    #multicore "convert -delay $Framerate -loop 0 $Imagelist $Destinationfile" "$Destinationfile"  || return 1
-    #multicore "ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile $Destinationfile" "$Destinationfile"  || return 1
-
-#    multicore "ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -b:v 4M -pass 1 -an -f webm /dev/null && \
-#               ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -b:v 4M -pass 2 -c:a libopus output.webm $Destinationfile" "$Destinationfile"  || return 1
-
     multicore "ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1
-    
     
     showpercent $Iteration $Iterationnumber
   done
@@ -1209,6 +1124,9 @@ $Position"
 calc_autogamma() {
   # calculate -auto-gamma value for sequence of images
   # based on https://stackoverflow.com/questions/24396024/in-imagemagick-is-it-possible-to-auto-gamma-based-on-a-region
+  # -s
+  # -g
+  # -c
   
   local $Batchlocal
   local Meanimage Mean Quantumrange Gamma
@@ -1221,11 +1139,10 @@ calc_autogamma() {
   convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence mean "$Meanimage" || return 1
   showimage "$Meanimage"
   
-  Mean="$(convert "$Meanimage" -format "%[mean]" info:)"
+  Mean="$(convert         "$Meanimage" -format "%[mean]"            info:)"
   Quantumrange="$(convert "$Meanimage" -format "%[fx:quantumrange]" info:)"
   
   # calculate gamma
-  #Gamma="$(bc -l <<< "scale=4; l($Mean/$Quantumrange)/l(0.5)")"
   Gamma="$(awk "BEGIN{print log($Mean/$Quantumrange)/log(0.5)}")"
   verbose "calc_autogamma: Calculated gamma: $Gamma"
   
@@ -1289,19 +1206,21 @@ compose() {
 }
 
 crop() {
+  # crop area of image sequence
+  # -m  even|shrink|geometry|interactive
+  # -o   -  |pixel |geometry|geometry
   local $Batchlocal
-  local Image Imagelist Cropgeometry Destinationfile
-  local Imagewidth Imageheight Newwidth Newheight Shrink
-  local Count Imagecount
+  local $Imagelocal
+  local Newwidth Newheight Shrink
   local Rotate Rotatedir
   
   parse_batchoptions "$@" || return 1
-  
-  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
-  Imagecount="$(grep -c . <<< "$Imagelist")"
-  Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
-  Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
+  setup_imagelist         || return 1
 
+  # cache setup
+  Rotatedir="$Cachedir/rotate"
+  mkdir -p $Rotatedir
+  
   case $Functionmode in
     even)
       Newwidth=$((Imagewidth/2))
@@ -1321,6 +1240,7 @@ crop() {
 #      Image="$Cachedir/crop.min.jpg"
       Image="$Cachedir/crop.min.mpc"
       showpercent 1 100
+      worknote "crop $Functionmode: Generating min image"
       convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Functionoption")"
       Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
@@ -1329,7 +1249,6 @@ crop() {
   esac
   
   Rotate="${Rotate:-0}"
-
   [ "$Cropgeometry" ] || {
     failure "crop $Functionmode: crop geometry is empty"
     return 1
@@ -1337,19 +1256,17 @@ crop() {
   
   [ "$Cropgeometry" = "${Imagewidth}x${Imageheight}+0+0" ] && [ "$Rotate" = "0" ] && {
     worknote "crop $Functionmode: Images already have desired geometry: $Cropgeometry"
-    cp $Imagelist "$Destinationdir" ### FIXME mycp()
+    mycp "$Sourcedir/$Sourcefileglob" "$Destinationdir"
     return
   }
   
   worknote "crop $Functionmode: Cropping images with rotation $Rotate and geometry $Cropgeometry"
-  Rotatedir="$Cachedir/rotate"
-  mkdir -p $Rotatedir
-  Count="0"
+  Imagecount="0"
   for Image in $Imagelist; do
-    Count="$((Count+1))"
+    Imagecount="$((Imagecount+1))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
     multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
-    showpercent "$Count" "$Imagecount"
+    showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
   Imagelist="$(fileglob "$Rotatedir/*")"
@@ -1360,32 +1277,11 @@ crop() {
 
 cuberotate() {
   local $Batchlocal
-  local Mpcdir Linedir
-  local Image Imagelist Imagewidth Imageheight Lineimage
-  local Imagecount Linecount Imagenumber Linenumber Cropgeometry
+  local $Imagelocal
+  local Linecount Linenumber
   
   parse_batchoptions "$@" || return 1
-  
-  case $Functionmode in
-    top|left|bottom|right)
-      worknote "cuberotate $Functionmode: Converting images to mpc format"
-      showpercent 1 100
-      Mpcdir=$Cachedir/mpc
-      Linedir=$Cachedir/lines
-      mkdir -p $Mpcdir
-      mkdir -p $Linedir
-      for Image in $(fileglob "$Sourcedir/$Sourcefileglob"); do
-        convert "$Image" "$Mpcdir/$(basename $Image).mpc" || return 1
-      done
-      Imagelist="$(fileglob "$Mpcdir/*.mpc")"
-    ;;
-    *)
-      Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")" 
-    ;;
-  esac
-  Imagenumber="$(grep -c . <<< "$Imagelist")"
-  Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
-  Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
+  setup_imagelist         || return 1
     
   case $Functionmode in
     top|bottom) Linenumber="$Imageheight" ;;
@@ -1394,33 +1290,38 @@ cuberotate() {
   
   case $Functionmode in
     top|bottom|left|right)
-      for Linecount in $(seq $Linenumber); do
-        Destinationfile="$Destinationdir/cube${Functionmode}_$(printnum $Linecount 4).jpg"
-        worknote "cuberotate: Generating $(basename $Destinationfile)"
-        rm $Linedir/*
-        Imagecount=0
-    
-        for Image in $Imagelist; do
-          Imagecount="$((Imagecount+1))"
-          Lineimage=$Linedir/Line_$(printnum "$Imagecount" 4).mpc
-          case $Functionmode in
-            top)    Cropgeometry="${Imagewidth}x1+0+$((Linecount-1))" ;;
-            bottom) Cropgeometry="${Imagewidth}x1+0+$((Imageheight - Linecount))" ;;
-            left)   Cropgeometry="1x${Imageheight}+$((Linecount-1))+0" ;;
-            right)  Cropgeometry="1x${Imageheight}+$((Imagewidth - Linecount))+0" ;;
-          esac
-          multicore "convert $Image -crop $Cropgeometry $Lineimage" "" 8 || return 1
-        done
-        multicore_wait || return 1
-
+      worknote "cuberotate $Functionmode: Splitting images into rows or columns"
+      Imagecount=0
+      for Image in $Imagelist; do
+        Imagecount="$((Imagecount+1))"
+        mkdir $Cachedir/split$Imagecount
         case $Functionmode in
-          top|bottom) $Convert $(fileglob "$Linedir/*.mpc") -append "$Destinationfile" || return 1 ;;
-          left|right) $Convert $(fileglob "$Linedir/*.mpc") +append "$Destinationfile" || return 1 ;;
+          top|bottom) Cropgeometry="0x1" ;;
+          left|right) Cropgeometry="1x0" ;;
         esac
-
-        showimage "$Destinationfile"
-        showpercent $Linecount $Linenumber
+        multicore "convert $Image -crop $Cropgeometry $Cachedir/split$Imagecount/line%d.mpc" || return 1
+        showpercent $Imagecount $((Imagenumber*2))
       done
+      multicore_wait
+      
+      worknote "cuberotate $Functionmode: Appending lines to rotated image"
+      for Linecount in $(seq $Linenumber); do
+        Linelist=""
+        for Imagecount in $(seq $Imagenumber); do
+          case $Functionmode in
+            left|top)     Linelist="$Linelist $Cachedir/split$((Imagenumber-Imagecount+1))/line$((Linecount-1)).mpc" ;;
+            right|bottom) Linelist="$Linelist $Cachedir/split${Imagecount}/line$((Linenumber-Linecount)).mpc" ;;
+          esac
+        done
+        Destinationfile="$Destinationdir/cube${Functionmode}$(printnum $Linecount 4).jpg"
+        
+        case $Functionmode in
+          top|bottom) multicore "$Convert $Linelist -append $Destinationfile" "$Destinationfile" || return 1 ;;
+          left|right) multicore "$Convert $Linelist +append $Destinationfile" "$Destinationfile" || return 1 ;;
+        esac
+        showpercent $((Linenumber+Linecount)) $((Linenumber*2))
+      done
+      multicore_wait
     ;;
     back-left|back-top|reverse-order)
       Imagecount=0
@@ -1488,7 +1389,7 @@ evaluate() {
   
   Destinationfile="$Destinationdir/$Destinationfilebasename.$Functionmode.$Fileformat"
   $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Functionmode "$Destinationfile" || {
-    failure "evaluate $Functionmode: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all input images have to be the same size."
+    failure "evaluate $Functionmode: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all source images must be of same size."
     return 1
   }
   showimage "$Destinationfile"
@@ -1501,6 +1402,7 @@ fuse() {
   local $Batchlocal 
   local Destinationfilebasename
   local Fusemode Fuseoption Modelist Modenumber Count
+  local Layertif Filesize
   
   parse_batchoptions "$@" || return 1
   
@@ -1510,7 +1412,10 @@ fuse() {
   
   case $Fusemode in
     all|set*)
-      convert $(fileglob "$Sourcedir/$Sourcefileglob") "$Cachedir/layer.tif" || return 1
+      Layertif="$Cachedir/layer.tif"
+      worknote "fuse $Fusemode: Generating layered tif image"
+      convert $(fileglob "$Sourcedir/$Sourcefileglob") "$Layertif" || return 1
+      Filesize="$(du -k "$Layertif" | awk '{print $1}')"
       case $Fusemode in
         all) 
           Modelist="$(seq $Fusemodenumber)" 
@@ -1525,7 +1430,7 @@ fuse() {
       Count=0
       for Fusemode in $Modelist; do
         Count="$((Count+1))"
-        multicore "fuse -s '$Cachedir' -g 'layer.tif' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Fusemode'" || return 1
+        multicore "fuse -s '$(dirname "$Layertif")' -g '$(basename "$Layertif")' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Fusemode' -o '$Fuseoption'" "" "$((Filesize*3))"|| return 1
         showpercent "$Count" "$Modenumber"
       done
       multicore_wait || return 1
@@ -1575,20 +1480,17 @@ fuse() {
 
 ruler() {
   local $Batchlocal
-  local Destinationfile
-  local Count Imagecount Imagelist
+  local $Imagelocal
   
   parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
   
-  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
-  Imagecount="$(grep -c . <<< "$Imagelist")"
-  
-  Count="0"
+  Imagecount="0"
   for Image in $Imagelist; do
-    Count="$((Count+1))"
+    Imagecount="$((Imagecount+1))"
     Destinationfile="$Destinationdir/$(basename $Image)"
     multicore "$Imgruler -m $Functionmode -t '$Functionoption' -o $Destinationfile $Image" "$Destinationfile" || return 1
-    showpercent "$Count" "$Imagecount"
+    showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
   return 0
@@ -1607,25 +1509,26 @@ undo() {
   mymv "$Destinationdir/*" "$Sourcedir" 
   mymv "$Undocache/*"      "$Destinationdir"
   
-  myrm "$Undocache"
+  myrmdir "$Undocache"
 }
 
 video() {
   # Generate video of stackshot showing focus changes
   local $Batchlocal
-  local Image Imagelist Imagelistfile
+  local $Imagelocal
+  local Imagelistfile
   local Framerate Format
   
   parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
 
-  Functionmode="${Functionmode:-down}"
+  Functionmode="${Functionmode:-in_and_out}"
   Framerate="${Functionoption:-10}"
   Format="mp4"
   
   Destinationfile="$Destinationdir/$Destinationfile.focus.$Functionmode.$Framerate.$Format"
   Imagelistfile="$Cachedir/imagelist"
   
-  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
   case $Functionmode in
     in) Imagelist="$(tac <<< "$Imagelist")";;
     out) ;;
@@ -1640,30 +1543,28 @@ $(tac <<< "$Imagelist")"
   done
   
   showpercent 20 100
-  #convert -delay $Framerate -loop 0 $Imagelist $Destinationfile
-  ffmpeg -y -r $Framerate -f concat -safe 0 -i $Imagelistfile $Destinationfile
+  ffmpeg -y -hide_banner -nostdin -safe "0" -r $Framerate -f concat -i $Imagelistfile $Destinationfile || return 1
   showpercent 100 100
   showimage $Destinationfile
 }
 
 whitebalance() {
+  # whitebalance sequence of images
+  # -m  reference geometry
+  # -o  reference color or "mean"
+  
   local $Batchlocal
-  local Image Cropgeometry Imagewidth Imageheight
+  local $Imagelocal
   local Referencecolor Referencecolorimage Meancolorimage 
-  local Destinationfile Imagelist Imagecount Count
   local Refred  Refgreen  Refblue
   local Meanred Meangreen Meanblue
   local Partred Partgreen Partblue
   
   parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
     
   Functionmode="${Functionmode:-topleft}"
   Referencecolor="${Functionoption:-#BBBBBB}"
-  
-  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
-  Imagecount="$(grep -c . <<< "$Imagelist")"
-  Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
-  Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
   
   Meancolorimage="$Cachedir/meancolor.mpc"
   Referencecolorimage="$Cachedir/referencecolor.mpc"
@@ -1677,6 +1578,7 @@ whitebalance() {
     interactive) 
 #      Image="$Cachedir/whitebalance.min.jpg"
       Image="$Cachedir/whitebalance.min.mpc"
+      worknote "whitebalance: Generating min image"
       $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "50x50+10+10")"  ### FIXME rotate
       Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")" 
@@ -1685,10 +1587,12 @@ whitebalance() {
         return 1
       }
     ;;
+    *)           Cropgeometry="$Functionmode" ;;
   esac
   
   [ "$Referencecolor" = "mean" ] && {
     Image="$Cachedir/whitebalance.mean.mpc"
+    worknote "whitebalance: Generating mean image"
     convert $(fileglob "$Sourcedir/$Sourcefileglob") -crop "$Cropgeometry" -evaluate-sequence mean "$Image"
     Referencecolor=$($Convert "$Image" -filter box -resize 1x1! -format "%[pixel:u]" info:)
   }
@@ -1700,9 +1604,10 @@ whitebalance() {
 
   historyentry "# whitebalance geometry: $Cropgeometry"
 
-  Count=0
+  worknote "whitebalance: Balancing with reference color $Referencecolor"
+  Imagecount=0
   for Image in $Imagelist; do
-    Count="$((Count + 1))"
+    Imagecount="$((Imagecount + 1))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
     
     convert $Image -crop $Cropgeometry -resize 1x1! "$Meancolorimage"
@@ -1715,8 +1620,8 @@ whitebalance() {
     [ "$Meangreen" = "0" ] && Partgreen=255 || Partgreen="$(awk "BEGIN { print $Refgreen / $Meangreen }")"
     [ "$Meanblue"  = "0" ] && Partblue=255  || Partblue="$(awk  "BEGIN { print $Refblue  / $Meanblue }")"
     
-    multicore "convert $Image -color-matrix '$Partred 0 0 0 $Partgreen 0 0 0 $Partblue' $Destinationfile" "$Destinationfile" || return 1
-    showpercent "$Count" "$Imagecount"
+    multicore "$Convert $Image -color-matrix '$Partred 0 0 0 $Partgreen 0 0 0 $Partblue' $Destinationfile" "$Destinationfile" || return 1
+    showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
   return 0
@@ -1734,12 +1639,11 @@ wizard() {
   #   -o Functionoption
   
   local $Batchlocal
-  local Image Destinationfile Imagelist Gamma
+  local $Imagelocal
+  local Gamma
 
   parse_batchoptions "$@" || return 1
-  
-  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
-  Imagecount="$(grep -c . <<< "$Imagelist")"
+  setup_imagelist         || return 1
   
   [ "$Functionoption" ] || case "$Function" in
     brightness) Functionoption="10x10" ;;
@@ -1774,12 +1678,12 @@ wizard() {
   
   worknote "wizard: $Functionmode $Functionoption"
   
-  Count=0
+  Imagecount=0
   for Image in $Imagelist; do
-    Count="$((Count + 1 ))"
+    Imagecount="$((Imagecount + 1 ))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
     multicore "$Convert $Image $Functionmode $Functionoption $Destinationfile" "$Destinationfile" || return 1
-    showpercent "$Count" "$Imagecount"
+    showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
   
@@ -2243,58 +2147,38 @@ fuse_glob() {
 #### run commands on all CPUs
 
 multicore() {
-  # Run multiple processes in parallel, but not more than $Wizardthreads
+  # Run multiple processes in parallel, but not more than $Multicore_maxprocesses
   # $1 Command
   # $2 Image to show if $1 is finished
-  # $3 Factor to multiply allowed number of processes
   # Run multicore_wait afterwards to wait for the last processes to finish.
   
   local Process
-  local Mem_free
+  local Mem_needed
   
-  Multicore_maxprocesses="$((Wizardthreads*${3:-1}))"
-    
-  [ "$Multicoreprocesscount" = "$Multicore_maxprocesses" ] && {
-    for Process in $(seq $Multicore_maxprocesses); do
-      [ "${Multicoreprocess[$Process]}" ] && {
-        multicore_waitprocess "${Multicoreprocess[$Process]}" || {
-          multicore_break
-          return 1
-        }
-        [ "${Multicoreimage[$Process]}" ] && showimage "${Multicoreimage[$Process]}"
-      }
-      Multicoreprocess[$Process]=""
-      Multicoreimage[$Process]=""
-    done
-    Multicoreprocesscount=0
+  [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
+    multicore_wait || return 1
   }
   
-  ifcmdbreak && {
-    multicore_break
-    return 1
-  }
+  [ "$Multicore_processcount" = "0" ] && Multicore_memorymax="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
   
-  Mem_free="$(free | grep "Mem:" | awk '{print $7}')"
-  [ "$Mem_free" -lt "$Multicore_minram" ] && {
-    note "multicore(): WARNING: Free memory less than $Multicore_minram. Will wait until enough memory is available."
-    while :; do
-      ifcmdbreak && {
-        multicore_break
-        return 1
-      }
-      sleep 5
-      Mem_free="$(free | grep "Mem:" | awk '{print $7}')"
-      [ "$Mem_free" -lt "$Multicore_minram" ] && break     
-    done
+  Mem_needed=0
+  for Process in $(seq $Multicore_maxprocesses); do
+    Mem_needed="$(awk "BEGIN {print $Mem_needed + ${Multicore_memory[$Process]:-0} }" )"
+  done
+  Mem_needed="$((Mem_needed+${3:-0}))"
+  [ "$Mem_needed" -gt "$Multicore_memorymax" ] && {
+    note "multicore: Low memory. Waiting for $Multicore_processcount running processes to finish. Need: $Mem_needed, Available: $Multicore_memorymax"
+    multicore_wait || return 1
   }
-  
-  Multicoreprocesscount=$((Multicoreprocesscount +1))
+
+  Multicore_processcount=$((Multicore_processcount +1))
 
   #verbose "multicore: ${1:-}"
   eval "${1:-} &"
   
-  Multicoreprocess[Multicoreprocesscount]=$!
-  Multicoreimage[Multicoreprocesscount]="${2:-}"
+  Multicore_process[Multicore_processcount]=$!
+  Multicore_image[Multicore_processcount]="${2:-}"
+  Multicore_memory[Multicore_processcount]="${3:-0}"
   
   return 0
 }
@@ -2302,17 +2186,18 @@ multicore() {
 multicore_wait() {
   local Process
   for Process in $(seq $Multicore_maxprocesses); do
-    [ "${Multicoreprocess[$Process]}" ] && {
-      multicore_waitprocess "${Multicoreprocess[$Process]}" || {
+    [ "${Multicore_process[$Process]}" ] && {
+      multicore_waitprocess "${Multicore_process[$Process]}" || {
         multicore_break
         return 1
       }
-      [ "${Multicoreimage[$Process]}" ] && showimage "${Multicoreimage[$Process]}"
+      [ "${Multicore_image[$Process]}" ] && showimage "${Multicore_image[$Process]}"
     }
-    Multicoreprocess[$Process]=""
-    Multicoreimage[$Process]=""
+    Multicore_process[$Process]=""
+    Multicore_image[$Process]=""
+    Multicore_memory[$Process]="0"
   done
-  Multicoreprocesscount=0
+  Multicore_processcount=0
   return 0
 }
 
@@ -2328,11 +2213,12 @@ multicore_waitprocess() {
 multicore_break() {
   local Process
   for Process in $(seq $Multicore_maxprocesses); do
-    [ "${Multicoreprocess[$Process]}" ] && {
-      kill "${Multicoreprocess[$Process]}"
-      wait "${Multicoreprocess[$Process]}"
-      Multicoreprocess[$Process]=""
-      Multicoreimage[$Process]=""
+    [ "${Multicore_process[$Process]}" ] && {
+      kill "${Multicore_process[$Process]}"
+      wait "${Multicore_process[$Process]}"
+      Multicore_process[$Process]=""
+      Multicore_image[$Process]=""
+      Multicore_memory[$Process]="0"
     }
   done
 }
@@ -2543,6 +2429,8 @@ askkaptain() {
   return 0
 }
 
+## GUI helpers
+
 kaptain_update() {
   local Stackdir Cmdstatus
   local Line Shortcut Comboline
@@ -2617,7 +2505,7 @@ kaptain_update_preview() {
   Imagelist="$(fileglob "$Stackdir/magick/*")"
   [ "$Imagelist" ] &&{
     Imagenumber="$(grep -c . <<< "$Imagelist")"
-    Image="$(head -n$((Imagenumber/3)) <<< "$Imagelist" | tail -n1)"
+    Image="$(head -n$((Imagenumber/2)) <<< "$Imagelist" | tail -n1)"
     showimage "$Image"
     return 0
   }
@@ -3343,8 +3231,7 @@ cmd() {
 }
 
 ifcmdbreak() {
-  storeinfo test cmdbreak && return 0
-  return 1
+  storeinfo test cmdbreak && return 0 || return 1
 }
 
 stack_cmd() {
@@ -3391,10 +3278,10 @@ parse_cmd() {
   Commandline="$@"
     
   case "$Function" in
-    deleteall)     myrm "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" "$Targetdir/video" ; Return=0 ;;
-    #deletebackups) myrm "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
-    deletebackups) myrm "$Targetdir"/*.bak ; Return=0 ;;
-    delete*)       myrm "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
+    deleteall)     myrmdir "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" "$Targetdir/video" ; Return=0 ;;
+    #deletebackups) myrmdir "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
+    deletebackups) myrmdir "$Targetdir"/*.bak ; Return=0 ;;
+    delete*)       myrmdir "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
     align_vidstab)
       batch_function -f align_vidstab -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
@@ -3444,17 +3331,20 @@ declare_variables() {
   Projecthome="$HOME/Bilder/ardustack"
   Gallerydir="$HOME/Gallery"
   
-  Wizardthreads="$(nproc)"
-#  Wizardthreads="3"
-  Wizardthreads="${Wizardthreads:-1}"
-  for i in $Wizardthreads; do
-    Multicoreprocess[$i]=""
-    Multicoreimage[$i]=""
+  Multicore_maxprocesses="$(nproc)"
+  Multicore_maxprocesses="${Multicore_maxprocesses:-1}"
+  for i in $Multicore_maxprocesses; do
+    Multicore_process[$i]=""
+    Multicore_image[$i]=""
+    Multicore_memory[$i]="0"
   done
-  Multicoreprocesscount=0
-  Multicore_minram=1000000
+  Multicore_processcount=0
+  Multicore_minram=250000
+  Multicore_maxprocesses=$Multicore_maxprocesses
   
   Batchlocal="Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Functionmode Functionoption"
+  Imagelocal="Image Imagelist Imagewidth Imageheight Imagecount Imagenumber Cropgeometry"
+
   Convert="convert -quality 100%"
 
   Commandstackfifo=$Wizardcache/commandstack
@@ -3521,6 +3411,7 @@ finish() {
   exec {Kaptainstdin}>&-
   exec {Kaptainstdout}>&-
   rm -R $Wizardcache
+  exit 0
 }
 
 main() {
