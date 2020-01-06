@@ -15,10 +15,12 @@ note() {
 }
 failure() {
   echo "${Colred}FAILURE:${Colnorm} $*" >&2
-  statusmessage "FAILURE: $*"
+  statusmessage "$*"
+  storeinfo "error=yes"
+  showpercent error
 }
 statusmessage() {
-  sendkaptain "status='$*'"
+  sendkaptain "status='$(cut -c1-35 <<< "$*")'"
 }
 
 isnum() {                       # check if $1 is a number
@@ -150,7 +152,7 @@ device_init() {
   }
 
   # Daten von Device auf fifo umleiten
-  note "Beginne Überwachung von $Device"
+  note "Beginning to watch device: $Device"
   exec 6<>$Device
   cat <&6 >>$Devicemessagefifo & Watchdevicepid=$!
   storeinfo "pidwatchdevice=$Watchdevicepid"
@@ -219,6 +221,8 @@ position_read() {
   Pos1="$(storeinfo dump pos1)"
   Pos2="$(storeinfo dump pos2)"
   Stepwidth="$(storeinfo dump stepwidth)"
+  Stepdistance="$(storeinfo dump stepdistance)"
+  Stepunit="$(storeinfo dump stepunit)"
   
   #storeinfo test pidkaptain && {
   #  Newstepwidth="$(askkaptain stepwidth)"
@@ -383,10 +387,15 @@ stackshot() {
   position_read  
   [ "$Poscurrent" = "$Pos1" ] || { failure "stack: Error: Missed position $Pos1: $Poscurrent." ; return 1 ; }
   
+  # Auf Start warten
+  sleep $(storeinfo dump startdelay)
+  
   gphoto2_cmd mirrorup
   
   while [ "$Poscurrent" -lt "$Pos2" ] ; do
     Loopcount=$((Loopcount +1 ))
+    storeinfo test cmdbreak && break
+    showpercent $Loopcount $Anzahl
     
     for ((Mediancount=1 ; Mediancount<=$Mediannumber ; Mediancount++)); do
       milisleep "$Stackshotdelay"
@@ -666,12 +675,12 @@ camerainit() {
 #### Keyboard control
 keyboard_stepin() {
   while :; do
-    [ -e "$Keyboardstepinfile" ]  && stepcmd stepin  || sleep 0.1
+    [ -e "$Keyboardstepinfile" ]  && stepcmd stepin  || sleep 0.2
   done
 }
 keyboard_stepout() {
   while :; do
-    [ -e "$Keyboardstepoutfile" ] && stepcmd stepout || sleep 0.1
+    [ -e "$Keyboardstepoutfile" ] && stepcmd stepout || sleep 0.2
   done
 }
 keyboard_watch() {
@@ -679,21 +688,19 @@ keyboard_watch() {
   while read Line <&${Keyboardfd} ; do
     Keyhub=$(awk '{print $2}' <<< $Line)
     Keycode=$(awk '{print $3}' <<< $Line)
-#    note "Keycode: $Keycode ; Keyhub: $Keyhub"
+    #note "Keycode: $Keycode ; Keyhub: $Keyhub"
     storeinfo test keyboard_watch && case $Keyhub in
       press)
         case $Keycode in
           # Durchgehender Lauf von Stepin/Stepout
-          50) touch "$Keyboardstepinfile"  ;;  # L-Shift
-          37) touch "$Keyboardstepoutfile" ;; # L-Ctrl
+          133) touch "$Keyboardstepinfile"  ;;  # win
+          64)  touch "$Keyboardstepoutfile" ;; # L-alt
         esac
       ;;
       release)
         case $Keycode in
-          50) rm -f "$Keyboardstepinfile" ;;        # L-Shift
-          37) rm -f "$Keyboardstepoutfile" ;;       # L-Ctrl
-          #62)  Shift_r="" ;;                          # R-Shift
-          #64)  keypress_lock ;;                       # L-Alt
+          133) rm -f "$Keyboardstepinfile" ;;        # win
+          64)  rm -f "$Keyboardstepoutfile" ;;       # L-alt
         esac
       ;;
     esac
@@ -703,61 +710,68 @@ keyboard_watch() {
 #### GUI
 kaptaingrammar() {
   echo "#! /usr/bin/kaptain
-start 'ardustack'            -> mainframe;
-mainframe:framed               -> fileframe naviframe camerasetframe captureframe videoframe stackshotframe statusframe;
-  fileframe 'Files'              -> device storagebasedir projectbasename stackshotbasename;
-    device:beside            'Device file'            -> @string='/dev/ttyACM1' @button='initialize' ;
-    storagebasedir:beside    'Storage base dir:'      -> @string='$HOME/Bilder/ardustack' ;
-    projectbasename:beside   'Project base name:'     -> @string='project' ;
-    stackshotbasename:beside 'Stackshot base name:'   -> @string='st' ;
-  naviframe 'Navigation'         -> stepline pos0line pos1line pos2line positionline poscalcline keyboardline;
-    stepline:beside                -> stepin stepout stepwidth stepmy;
-      stepin                         -> @button='Step in';
-      stepout                        -> @button='Step out';
-      stepwidth:beside 'Step width:' -> @combo('1','2','5','10','15','20','25','30','40','50','60','75','100','150','200','250','300','400','500','750','1000','1500','2000','3000','5000','7500','10000')='50' ;
-      stepmy                         -> @text='' ;  
-    pos0line:beside                -> setpos0 gopos0 ;
-      setpos0                        -> @button='Set current position as position zero' ;
-      gopos0                         -> @button='Go to pos0';
-    pos1line:beside                -> setpos1 gopos1;
-      setpos1                        -> @button='Set current position as start point of stack' ;
-      gopos1                         -> @button='Go to pos1' ;
-    pos2line:beside                -> setpos2 gopos2 ;
-      setpos2                        -> @button='Set current position as end point of stack' ;
-      gopos2                         -> @button='Go to pos2' ;
-    positionline:beside            -> poscurrent pos1 pos2;
-      poscurrent:beside 'Current:'   -> @text='' ;
-      pos1:beside       'Pos1:'      -> @text='' ;
-      pos2:beside       'Pos2:'      -> @text='' ;
-    poscalcline:beside             -> difference distance steps;
-      difference:beside 'Difference:'-> @text='' ;
-      distance:beside   'Distance:'  -> @text='' ;
-      steps:beside      'Steps:'     -> @text='' ;
-    keyboardline:beside 'Watch Keyboard (L-Shift=stepin, L-Ctrl=stepout)' -> "" | "" ;
-  camerasetframe 'Camera settings' -> cameraline settingline ;
-    settingline:beside               -> zoom iso shutterspeed ;
-      zoom:beside 'Zoom:'            -> @combo('1','10') ;
-      iso:beside 'ISO:'              -> @combo('____') ;
-      shutterspeed:beside 'Shutterspeed:' -> @combo('________') ;
-    cameraline:beside              -> camera ;
-      camera:beside                -> @combo('autodetect')='autodetect' ;
-  captureframe 'Captures'        -> captureline ;
-    captureline:beside             -> capturepreview capturefullres ;
-      capturepreview                 -> @button='Capture preview' ;
-      capturefullres                 -> @button='Capture full resolution' ;
-  videoframe 'Video'             -> videoline;
-    videoline:beside               -> videostart videocapture videostop;
-    videostart                       -> @button='Start video' ;
-    videocapture                     -> @button='Capture video' ;
-    videostop                        -> @button='Stop video' ;
-  stackshotframe 'Stackshot'     -> stackshotline stackshotmedian stackshotdelay;
-    stackshotline:beside           -> stackshotpreview stackshotfullres ;
-      stackshotpreview               -> @button='Run preview stackshot' ;
-      stackshotfullres               -> @button='Run full resolution stackshot' ;
-    stackshotmedian:beside 'Median captures to delete moved objects:' -> @combo('3','4','5','6','7','8','9','10')='5' | ! "";
-    stackshotdelay:beside 'Delay between captures (ms):' -> @combo('100','200','300','400','500','750','1000','1500','2000','2500','3000','4000','5000')='500';
-  statusframe 'Status'           -> status ;
-    status                         -> @text ;
+start 'ardustack'                                -> mainframe;
+mainframe:framed                                   -> fileframe naviframe camerasetframe captureframe videoframe stackshotframe statusframe;
+  fileframe 'Files'                                  -> device storagebasedir projectbasename stackshotbasename;
+    device:beside             'Device file'            -> devicecombo devicebutton ;
+      devicecombo                                        -> @combow('autodetect')='autodetect' ;
+      devicebutton                                       -> @button='initialize' ;
+    storagebasedir:beside     'Storage base dir:'      -> @directory='$HOME/Bilder/ardustack' ;
+    projectbasename:beside    'Project base name:'     -> @string='project' ;
+    stackshotbasename:beside  'Stackshot base name:'   -> @string='st' ;
+  naviframe 'Navigation'                             -> stepline pos0line pos1line pos2line positionline poscalcline keyboardline;
+    stepline:beside                                    -> stepin stepout stepwidth stepmy;
+      stepin                                             -> @button='Step in';
+      stepout                                            -> @button='Step out';
+      stepwidth:beside        'Step width:'              -> @combo('1','2','5','10','15','20','25','30','40','50','60','75','100','150','200','250','300','400','500','750','1000','1500','2000','3000','5000','7500','10000')='50' ;
+      stepmy                                             -> @text='' ;  
+    pos0line:beside                                    -> setpos0 gopos0 ;
+      setpos0                                            -> @button='Set current position as position zero' ;
+      gopos0                                             -> @button='Go to pos0';
+    pos1line:beside                                    -> setpos1 gopos1;
+      setpos1                                            -> @button='Set current position as start point of stack' ;
+      gopos1                                             -> @button='Go to pos1' ;
+    pos2line:beside                                    -> setpos2 gopos2 ;
+      setpos2                                            -> @button='Set current position as end point of stack' ;
+      gopos2                                             -> @button='Go to pos2' ;
+    positionline:beside                                -> poscurrent pos1 pos2;
+      poscurrent:beside       'Current:'                 -> @text='' ;
+      pos1:beside             'Pos1:'                    -> @text='' ;
+      pos2:beside             'Pos2:'                    -> @text='' ;
+    poscalcline:beside                                 -> difference distance steps;
+      difference:beside       'Difference:'              -> @text='' ;
+      distance:beside         'Distance:'                -> @text='' ;
+      steps:beside            'Steps:'                   -> @text='' ;
+    keyboardline:beside       'Watch Keyboard (Super=stepin, L-Alt=stepout)' -> "" | "" ;
+  camerasetframe              'Camera settings'      -> cameraline settingline ;
+    settingline:beside                                 -> zoom iso shutterspeed ;
+      zoom:beside 'Zoom:'                                -> @combo('1','10') ;
+      iso:beside 'ISO:'                                  -> @combo('____') ;
+      shutterspeed:beside     'Shutterspeed:'            -> @combo('________') ;
+    cameraline:beside                                  -> camera ;
+      camera:beside                                      -> @combo('autodetect')='autodetect' ;
+  captureframe                'Captures'             -> captureline ;
+    captureline:beside                                 -> capturepreview capturefullres ;
+      capturepreview                                   -> @button='Capture preview' ;
+      capturefullres                                   -> @button='Capture full resolution' ;
+  videoframe                  'Video'                -> videoline;
+    videoline:beside                                   -> videostart videocapture videostop;
+      videostart                                         -> @button='Start video' ;
+      videocapture                                       -> @button='Capture video' ;
+      videostop                                          -> @button='Stop video' ;
+  stackshotframe              'Stackshot'            -> stackshotline stackshotmedian stackshotdelayline;
+    stackshotline:beside                               -> stackshotpreview stackshotfullres ;
+      stackshotpreview                                   -> @button='Run preview stackshot' ;
+      stackshotfullres                                   -> @button='Run full resolution stackshot' ;
+    stackshotmedian:beside    'Median captures to delete moved objects:' -> @combo('3','4','5','6','7','8','9','10')='5' | ! "";
+    stackshotdelayline:beside                            -> stackshotdelay startdelay;
+      stackshotdelay:beside   'Delay between captures (ms):'  -> @combo('100','200','300','400','500','750','1000','1500','2000','2500','3000','4000','5000')='500';
+      startdelay:beside       'Delay before start:'      -> @combo('1s','10s','30s','1m','5m','10m')='1s';
+  statusframe 'Status'                               -> statusline ;
+    statusline:beside                                  -> cmdpercent status cmdbreak;
+      cmdpercent                                         -> @icon ;
+      status                                             -> @text ;
+      cmdbreak                                           -> @button='break';
 "
 }
 sendkaptain() {
@@ -775,9 +789,33 @@ askkaptain() {
   echo "$Answer"
   return 0
 }
+showpercent() {
+  local Percent Part Full Percentimage
+  
+  Part="${1:-}"
+  Full="${2:-1}"
+  
+  case "$Part" in
+    idle)  Percentimage="p_idle.png" ;;
+    error) Percentimage="p_error.png" ;;
+    busy)  Percentimage="p_busy.png" ;;
+    *)
+      Percent="$(( 100 * Part / Full ))"
+      Percentimage="p_$Percent.png" 
+    ;;
+  esac
+  Percentimage="$Percentcachedir/$Percentimage"
+
+  [ -e "$Percentimage" ] || case "$Part" in
+    idle)  convert -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"   "$Percentimage" ;;
+    error) convert -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"  "$Percentimage" ;;
+    busy)  convert -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'"   "$Percentimage" ;;
+    *)     convert -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
+  esac
+  sendkaptain "cmdpercent('$Percentimage')=''"
+}
 runkaptain() {
 
-  
   kaptaingrammar > $Kaptaingrammar
   #nl -ba $Kaptaingrammar
   
@@ -787,7 +825,11 @@ runkaptain() {
   position_store
   sendkaptain "storagebasedir='$(storeinfo dump storagebasedir)'"
   parse_kaptainsignal "camera:autodetect"
+  parse_kaptainsignal "device:autodetect"
 
+  position_store
+  stepcmd setpos0
+  
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
     read -t1 Kaptainsignal <&${Kaptainstdout}
@@ -801,13 +843,16 @@ runkaptain() {
 parse_kaptainsignal() {
   local Kaptainsignal Argument
   local Projecthome Projectname
+  local Device Devicecombo
   
   Kaptainsignal="${1:-}"
   Argument="$(cut -s -d: -f2 <<< "$Kaptainsignal")"
 
   position_read
   
-  statusmessage "*** BUSY *** ($Kaptainsignal)"
+  statusmessage "$Kaptainsignal"
+  showpercent busy
+  storeinfo drop cmdbreak
 
   # Provide project dir if needed, check settings in GUI
   case $Kaptainsignal in
@@ -831,8 +876,23 @@ parse_kaptainsignal() {
 
   case $Kaptainsignal in
     device*)
-      storeinfo "device=$(askkaptain device)"
+      Device="$(askkaptain devicecombo)"
+      case $Device in
+        autodetect)
+          Devicecombo=""
+          Devicelist="$(find /dev/ttyACM* 2>/dev/null)"
+          for Device in $Devicelist; do
+            Devicecombo="$Devicecombo,'$Device'"
+          done
+          Devicecombo="'autodetect'$Devicecombo"
+          Device="$(head -n1 <<< "$Devicelist")"
+          sendkaptain "devicecombo($Devicecombo)='${Device:-autodetect}'"
+        ;;
+      esac
+      storeinfo "device=${Device:-NO_DEVICE_FOUND}"
       device_init
+      stepcmd setpos0
+      stepcmd stepwidth $(storeinfo dump stepwidth)
     ;;
     
     camera:autodetect|camera:)
@@ -881,9 +941,13 @@ parse_kaptainsignal() {
       stepcmd stepwidth $Argument
     ;;
     keyboardline:on)
+      keyboard_stepin  & storeinfo "pidkeyboardstepin=$!"
+      keyboard_stepout & storeinfo "pidkeyboardstepout=$!"
       storeinfo "keyboard_watch=yes"
     ;;
     keyboardline:off)
+      storeinfo test pidkeyboardstepin  && kill $(storeinfo dump pidkeyboardstepin)
+      storeinfo test pidkeyboardstepout && kill $(storeinfo dump pidkeyboardstepout)
       storeinfo drop keyboard_watch
     ;;
     
@@ -895,10 +959,15 @@ parse_kaptainsignal() {
       storeinfo "mediannumber=$Argument"
       Argument="$(askkaptain stackshotdelay)"
       storeinfo "stackshotdelay=$Argument"
+      Argument="$(askkaptain startdelay)"
+      storeinfo "startdelay=$Argument"
       case $Kaptainsignal in
-        stackshotpreview) stackshot -p ;;
-        stackshotfullres) stackshot -c ;;
+        stackshotpreview) stackshot -p & ;;
+        stackshotfullres) stackshot -c & ;;
       esac
+    ;;
+    cmdbreak*)
+      storeinfo "cmdbreak=yes"
     ;;
   esac
 
@@ -907,12 +976,18 @@ parse_kaptainsignal() {
     ps -p "$(storeinfo dump pidffplay)" >/dev/null 2>&1 || video "$(storeinfo dump videomode)"
   }
   
-  statusmessage "idle"
+  storeinfo test error || {
+    statusmessage ""
+    showpercent idle
+  }
+  storeinfo drop error
 }
 
 #### main
 declare_variables() {
-  Cachefolder=/tmp/ardustack  
+  Cachefolder=/tmp/ardustack
+  Localsharefolder="$HOME/.local/share/ardustack"
+  Percentcachedir="$Localsharefolder/percent"
   
   Storeinfofile="$Cachefolder/store.info"
   
@@ -962,7 +1037,11 @@ declare_variables() {
   Colnorm="${Esc}[0m"
 }
 setup_cache() {
-  mkdir "$Cachefolder"
+  mkdir    "$Cachefolder"
+  mkdir -p "$Localsharefolder"
+  mkdir -p "$Percentcachedir"
+  
+  
   :> $Storeinfofile
   mkfifo "$Devicemessagefifo"
   
@@ -975,6 +1054,7 @@ setup_cache() {
   exec  {Kaptainstdout}<>"$Kaptainstdoutfifo"
 }
 finish() {
+  trap - EXIT
   local Line Pid
   
   # kill stored pids
@@ -986,8 +1066,12 @@ finish() {
     }
   done < "$Storeinfofile"
   
+  exec 6<>-
+  
   # remove cache
   rm -R $Cachefolder
+  
+  exit 0
 }
 main() {
   trap finish EXIT 
@@ -1002,23 +1086,32 @@ main() {
   
   storeinfo "storagebasedir=$HOME/Bilder/ardustack"
   
-  storeinfo "device=/dev/ttyACM0"
-  device_init
-  position_store
-  stepcmd setpos0
-  
   storeinfo "iso=800"
   storeinfo "shutterspeed=1/80"
   storeinfo "zoom=1"
   
+  storeinfo "stepdistance=$Stepdistance"
+  storeinfo "stepunit=$Stepunit"
+  position_store
+  
   Keyboardid=$(xinput | grep "AT Translated" | cut -d= -f2 | awk '{print $1}')
   [ "$Keyboardid" ] && {
     xinput test $Keyboardid >>$Keyboardfifo & storeinfo "pidxinput=$!"
-    keyboard_stepin                         & storeinfo "pidkeyboardstepin=$!"
-    keyboard_stepout                        & storeinfo "pidkeyboardstepout=$!"
     keyboard_watch                          & storeinfo "pidkeyboardwatch=$!"
   } || failure "Cannot watch keyboard. xinput not installed? Invalid keyboard id '$Keyboardid'?"
   
   runkaptain
 }
 main "$@"
+finish
+
+# Todo:
+# break button
+# replace align_image_stack ?
+# percent display
+# config dialog
+# - distance
+# - folders
+# - arduino commands
+# - wait foranswer yes/no
+# - check pos yes/no
