@@ -900,9 +900,9 @@ animation() {
   local $Batchlocal
   local $Imagelocal
   local Fusemode Distortion Framerate Sequence Staticlayer Format Appendfirstframe
-  local Distortdir Distortimage Fusedir Mpcdir Destinationfilebasename Imagebasename
+  local Distortdir Distortimage Fusedir Destinationfilebasename Imagebasename
   local Xpos Ypos Offset Border
-  local Count Iteration=0 Iterationnumber
+  local Count Iteration=0 Iterationnumber Convertline
   local Imagelistfile
   local Position Positionlist Positionnumber
   local Sequence Sequencename Sequencenumber
@@ -921,9 +921,8 @@ animation() {
   Appendfirstframe="no"
   Destinationfilebasename="${Destinationfile:-animation}"
   
-  # cache setup
-  Mpcdir=$Cachedir/mpc
-  mkdir -p "$Mpcdir"
+  # Revert image list to work from bottom to top
+  Imagelist="$(tac <<< "$Imagelist")"
   
   # Position raster
   #
@@ -1012,18 +1011,6 @@ animation() {
                    0x0 -1x0  -1x1   0x1"
     ;;
   esac
-    
-  # convert to mpc for faster access
-  worknote "animation: Converting images to mpc format"
-  showpercent 1 100
-  for Image in $Imagelist; do
-    multicore "convert $Image $Mpcdir/$(basename $Image).mpc" || return 1
-  done
-  multicore_wait || return 1
-
-  # Revert image list to work from bottom to top
-  Imagelist="$(fileglob "$Mpcdir/*.mpc")"
-  Imagelist="$(sort -V -r <<< "$Imagelist")"
   
   # calculate lost borders
   Border="$((Distortion - Distortion * $Staticlayer))"  # wrong result if Staticlayer>1/2 ?
@@ -1039,40 +1026,42 @@ animation() {
 $Position"
     done
   done
-  Positionlist="$(grep x <<< "$Positionlist")"
-  Positionlist="$(sort <<< "$Positionlist" | uniq)"
+  Positionlist="$(grep x      <<< "$Positionlist")"
+  Positionlist="$(sort -V     <<< "$Positionlist" | uniq)"
   Positionnumber="$(grep -c . <<< "$Positionlist")"
   
-  Iterationnumber=$((Positionnumber*3 + Sequencenumber))
-    
+  Iterationnumber=$((Positionnumber*5 + Imagenumber + Sequencenumber))
+  
   # Distort images
+  worknote "animation: Distorting images"
   for Position in $Positionlist; do
-    Xpos="$(cut -dx -f1 <<< "$Position")"
-    Ypos="$(cut -dx -f2 <<< "$Position")"
-    worknote "animation: Distorting images for position ${Xpos}x${Ypos}."
     Distortdir="$Cachedir/distort.$Position"
-    [ -d "$Distortdir" ] || {
-      mkdir -p "$Distortdir"
-      
-      Count=-$((Imagenumber * $Staticlayer))  # negative start value causes movement of lowest layer
-      
-      for Image in $Imagelist; do
-        Count="$((Count +1))"
-        Distortimage="$Distortdir/$(basename $Image)"
-        Distortimage="${Distortimage%.mpc}"
-        multicore "convert $Image -gravity center -crop $Cropgeometry+$(awk "BEGIN {print $Count * $Xpos * $Offset}")+$(awk "BEGIN {print $Count * $Ypos * $Offset}") $Distortimage" "$Distortimage" || return 1
-      done
-
-      Iteration=$((Iteration + 1))
-      showpercent $Iteration $Iterationnumber
-    }
+    mkdir -p "$Distortdir"
+  done
+  
+  Count=-$((Imagenumber * $Staticlayer))  # negative start value causes movement of lowest layer
+  for Image in $Imagelist; do
+    Count="$((Count +1))"
+    Convertline="convert $Image -write mpr:image +delete"
+    for Position in $Positionlist; do
+      Distortdir="$Cachedir/distort.$Position"
+      Distortimage="$Distortdir/$(basename $Image)"   
+      Xpos="$(cut -dx -f1 <<< "$Position")"
+      Ypos="$(cut -dx -f2 <<< "$Position")"   
+      Convertline="$Convertline \( mpr:image -gravity center -crop $Cropgeometry+$(awk "BEGIN {print $Count * $Xpos * $Offset}")+$(awk "BEGIN {print $Count * $Ypos * $Offset}") -write $Distortimage \)" 
+    done
+    
+    multicore "$Convertline info: >/dev/null" "$Distortimage" || return 1
+    
+    Iteration=$((Iteration + 1))
+    showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
-
+  
   # fuse distorted images
   Showpercentfunc="$(declare -f showpercent)"
   for Position in $Positionlist; do
-    Iteration=$((Iteration + 1))
+    Iteration=$((Iteration + 4))
     Distortdir="$Cachedir/distort.$Position"
     Distortcachedir="$Cachedir/distort.$Position/layered"
     mkdir -p $Distortcachedir
@@ -1087,7 +1076,7 @@ $Position"
   done
   multicore_wait || return 1
 
-  # Calculate median of fuse images
+  # Calculate median of fuse images (fuse set* or all)
   for Position in $Positionlist; do
     Iteration=$((Iteration + 1))
     Distortdir="$Cachedir/distort.$Position"
@@ -1114,7 +1103,7 @@ $Position"
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$(fuse_getname $Fusemode shortcut).$Distortion.$Format"
 
     worknote "animation: Generating $(basename $Destinationfile)."
-    multicore "ffmpeg -y -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1
+    multicore "ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1
     
     showpercent $Iteration $Iterationnumber
   done
@@ -1388,6 +1377,7 @@ evaluate() {
   esac
   
   Destinationfile="$Destinationdir/$Destinationfilebasename.$Functionmode.$Fileformat"
+  @worknote "evaluate: $Functionmode $Destinationfilebasename"
   $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Functionmode "$Destinationfile" || {
     failure "evaluate $Functionmode: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all source images must be of same size."
     return 1
@@ -1430,7 +1420,7 @@ fuse() {
       Count=0
       for Fusemode in $Modelist; do
         Count="$((Count+1))"
-        multicore "fuse -s '$(dirname "$Layertif")' -g '$(basename "$Layertif")' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Fusemode' -o '$Fuseoption'" "" "$((Filesize*3))"|| return 1
+        multicore "fuse -s '$(dirname "$Layertif")' -g '$(basename "$Layertif")' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Fusemode' -o '$Fuseoption'" "" "$((Filesize*3))" || return 1
         showpercent "$Count" "$Modenumber"
       done
       multicore_wait || return 1
@@ -1466,12 +1456,12 @@ fuse() {
            --output="$Destinationfile" \
            $(fileglob "$Sourcedir/$Sourcefileglob") 2>&1 || {
       failure "fuse $Fusemode failed"
-      return 1
+      return 1  ### FIXME seems not to return!?
     } 
   } | grep -v -E 'assuming all pixels should contribute|alpha channel|loading next image|no usable resolution found'
         
   # Write enfuse options into EXIF data of image
-  exiv2 -M"set Exif.Photo.UserComment Comment charset=Ascii enfuse $(echo $Enfuseoptions)" "$Destinationfile" 
+  exiv2 -M"set Exif.Photo.UserComment Comment charset=Ascii enfuse $(echo $Enfuseoptions)" "$Destinationfile"  || return 1
 
   #note "fuse $Fusemode is ready: ${Destinationfile}"
   showimage "$Destinationfile"
