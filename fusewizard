@@ -745,7 +745,7 @@ align_vidstab() {
 
   # Workaround to get video of png images. vidstab fails with videos generated from gphoto2 jpg for unknown reasons.
   note "align_vidstab: generating 1. video from images"
-  ffmpeg -y -hide_banner -nostdin -safe "0" -f "concat" -i "$Sourcefilelist" \
+  nice ffmpeg -y -hide_banner -nostdin -safe "0" -f "concat" -i "$Sourcefilelist" \
          -vcodec "libx264" -profile:v "high444" -refs "16" -crf "0" -preset "ultrafast" \
          "$Cachedir/align.orig.mp4" || return 1
   ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.orig.mp4"
@@ -754,7 +754,7 @@ align_vidstab() {
   
   note "align_vidstab: Splitting generated 1. video into .png images"
   myrm "$Framedir/*"
-  ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.orig.mp4" "$Framedir/sourceimg%04d.png" || return 1
+  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.orig.mp4" "$Framedir/sourceimg%04d.png" || return 1
   showpercent 2 100
   ifcmdbreak && return 1
 
@@ -766,12 +766,12 @@ align_vidstab() {
   done
   
   note "align_vidstab: generating 2. video from .png images"
-  ffmpeg -y -hide_banner -nostdin -f image2 -start_number 1 -i $Framedir/sourceimg%04d.png -safe "0" -vframes 1000 -vcodec libx264 -crf 25  -pix_fmt yuv420p "$Cachedir/align.source.mp4" || return 1
+  nice ffmpeg -y -hide_banner -nostdin -f image2 -start_number 1 -i $Framedir/sourceimg%04d.png -safe "0" -vframes 1000 -vcodec libx264 -crf 25  -pix_fmt yuv420p "$Cachedir/align.source.mp4" || return 1
   showpercent 3 100
   ifcmdbreak && return 1
 
   note "align_vidstab: Analyzing video with shakiness=$Shakiness"
-  ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
+  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
          -vf "vidstabdetect=shakiness=$Shakiness:accuracy=15:mincontrast=0.1:stepsize=$Stepsize:show=1:result=$Cachedir/transforms$Shakiness.trf" \
          "$Cachedir/align.vidstab-show.mp4" || return 1
   ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.vidstab-show.mp4"
@@ -779,7 +779,7 @@ align_vidstab() {
   ifcmdbreak && return 1
             
   note "align_vidstab: Transforming video with shakiness=$Shakiness"
-  ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
+  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
          -vf "vidstabtransform=optzoom=0:smoothing=0:interpol=bicubic:relative=1:crop=black:debug=1:input=$Cachedir/transforms$Shakiness.trf,unsharp=5:5:0.8:3:3:0.4" \
          "$Cachedir/align.result.mp4" || return 1
   ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.result.mp4"
@@ -788,7 +788,7 @@ align_vidstab() {
 
   note "align_vidstab: Splitting aligned video into images (shakiness=$Shakiness)"
   myrm "$Framedir/*"
-  ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.result.mp4" "$Framedir/alignimg%04d.tif" || return 1
+  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.result.mp4" "$Framedir/alignimg%04d.tif" || return 1
   showpercent 6 100
   ifcmdbreak && return 1
       
@@ -831,7 +831,7 @@ align_vidstab() {
       
   # crop greatest common inner rectangle of distorted images
   Cropminimage="$Cachedir/distorted.min.mpc"
-  convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
+  nice convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
   case $Cropinteractive in
     yes) notify-send "align_vidstab(): Ready for interactive crop"
          Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")" || return 1 ;;
@@ -1023,7 +1023,7 @@ $Position"
   Count=-$((Imagenumber * $Staticlayer))  # negative start value causes movement of lowest layer
   for Image in $Imagelist; do
     Count="$((Count +1))"
-    Convertline="convert $Image -write mpr:image +delete"
+    Convertline="nice convert $Image -write mpr:image +delete"
     for Position in $Positionlist; do
       Distortdir="$Cachedir/distort.$Position"
       Distortimage="$Distortdir/$(basename $Image)"   
@@ -1064,8 +1064,8 @@ $Position"
     Fusedir="$Distortdir/fuse"
     Destinationfile="$Cachedir/animation.$Position.median.jpg"
     note "animation: Generating $(basename $Destinationfile)"
-    #multicore "convert $Fusedir/* -evaluate-sequence median -gravity center -stroke black -fill black -pointsize 24 -draw 'text 0,0 \"$Position\"' $Destinationfile" "$Destinationfile" || return 1
-    multicore "convert $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
+    #multicore "nice convert $Fusedir/* -evaluate-sequence median -gravity center -stroke black -fill black -pointsize 24 -draw 'text 0,0 \"$Position\"' $Destinationfile" "$Destinationfile" || return 1
+    multicore "nice convert $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
     showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
@@ -1084,7 +1084,7 @@ $Position"
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$(fuse_getname $Fusemode shortcut).$Distortion.$Format"
 
     note "animation: Generating $(basename $Destinationfile)."
-    multicore "ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1
+    multicore "nice ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1
     
     showpercent $Iteration $Iterationnumber
   done
@@ -1106,7 +1106,7 @@ calc_autogamma() {
   Meanimage="$Cachedir/autogamma.mean"
   
   note "calc_autogamma: Generating mean image"
-  convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence mean "$Meanimage" || return 1
+  nice convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence mean "$Meanimage" || return 1
   showimage "$Meanimage"
   
   Mean="$(convert         "$Meanimage" -format "%[mean]"            info:)"
@@ -1211,7 +1211,7 @@ crop() {
       Image="$Cachedir/crop.min.mpc"
       showpercent 1 100
       note "crop $Functionmode: Generating min image"
-      convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
+      nice convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Functionoption")"
       Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
       Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
@@ -1269,7 +1269,7 @@ cuberotate() {
           top|bottom) Cropgeometry="0x1" ;;
           left|right) Cropgeometry="1x0" ;;
         esac
-        multicore "convert $Image -crop $Cropgeometry $Cachedir/split$Imagecount/line%d.mpc" || return 1
+        multicore "nice convert $Image -crop $Cropgeometry $Cachedir/split$Imagecount/line%d.mpc" || return 1
         showpercent $Imagecount $((Imagenumber*2))
       done
       multicore_wait
@@ -1385,7 +1385,7 @@ fuse() {
     all|set*)
       Layertif="$Cachedir/layer.tif"
       note "fuse $Fusemode: Generating layered tif image"
-      convert $(fileglob "$Sourcedir/$Sourcefileglob") "$Layertif" || return 1
+      nice convert $(fileglob "$Sourcedir/$Sourcefileglob") "$Layertif" || return 1
       Filesize="$(du -k "$Layertif" | awk '{print $1}')"
       case $Fusemode in
         all) 
@@ -1433,7 +1433,7 @@ fuse() {
   verbose "fuse $Fusemode: $Enfuseoptions"
   
   # Fuse
-  { enfuse $Enfuseoptions \
+  { nice enfuse $Enfuseoptions \
            --output="$Destinationfile" \
            $(fileglob "$Sourcedir/$Sourcefileglob") 2>&1 || {
       failure "fuse $Fusemode failed"
@@ -1514,7 +1514,7 @@ $(tac <<< "$Imagelist")"
   done
   
   showpercent 20 100
-  ffmpeg -y -hide_banner -nostdin -safe "0" -r $Framerate -f concat -i $Imagelistfile $Destinationfile || return 1
+  nice ffmpeg -y -hide_banner -nostdin -safe "0" -r $Framerate -f concat -i $Imagelistfile $Destinationfile || return 1
   showpercent 100 100
   showimage $Destinationfile
 }
@@ -1564,11 +1564,11 @@ whitebalance() {
   [ "$Referencecolor" = "mean" ] && {
     Image="$Cachedir/whitebalance.mean.mpc"
     note "whitebalance: Generating mean image"
-    convert $(fileglob "$Sourcedir/$Sourcefileglob") -crop "$Cropgeometry" -evaluate-sequence mean "$Image"
+    nice convert $(fileglob "$Sourcedir/$Sourcefileglob") -crop "$Cropgeometry" -evaluate-sequence mean "$Image"
     Referencecolor=$($Convert "$Image" -filter box -resize 1x1! -format "%[pixel:u]" info:)
   }
   
-  convert -size 1x1 xc:"$Referencecolor" $Referencecolorimage
+  nice convert -size 1x1 xc:"$Referencecolor" $Referencecolorimage
   Refred="$(convert   $Referencecolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
   Refgreen="$(convert $Referencecolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
   Refblue="$(convert  $Referencecolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
@@ -1581,7 +1581,7 @@ whitebalance() {
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
     
-    convert $Image -crop $Cropgeometry -resize 1x1! "$Meancolorimage"
+    nice convert $Image -crop $Cropgeometry -resize 1x1! "$Meancolorimage"
     
     Meanred="$(convert   $Meancolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
     Meangreen="$(convert $Meancolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
@@ -1704,7 +1704,7 @@ trim_hard() {
   # check source for mpc format, convert if not
   [ "$Sourceimage" = "${Sourceimage%.mpc}" ] && {
     Sourceimagempc="$Sourceimage.mpc"
-    convert "$Sourceimage" "$Sourceimagempc"
+    nice convert "$Sourceimage" "$Sourceimagempc"
   } || {
     Sourceimagempc="$Sourceimage"
   }
@@ -1712,7 +1712,7 @@ trim_hard() {
   
   # Generate alpha mask image in imagemagick memory format for fastest possible access
   Imagemask="$Sourceimage.mask.mpc"
-  convert "$Sourceimagempc" -alpha extract "$Imagemask"
+  nice convert "$Sourceimagempc" -alpha extract "$Imagemask"
   
   note "trim_hard(): Searching for inner rectangle of $(basename $Image)"
   
@@ -1725,7 +1725,7 @@ trim_hard() {
   
   # First cut with regular trim to save some time.
   # Add a colored border so trim uses the desired color. Afterward remove border from canvas to get correct geometry values. 
-  Line="$(convert "$Sourceimagempc" -bordercolor "$Trimcolor" -border 1x1  -trim -set page '%[fx:page.width-2]x%[fx:page.height-2]+%[fx:page.x-1]+%[fx:page.y-1]' info:)"
+  Line="$(nice convert "$Sourceimagempc" -bordercolor "$Trimcolor" -border 1x1  -trim -set page '%[fx:page.width-2]x%[fx:page.height-2]+%[fx:page.x-1]+%[fx:page.y-1]' info:)"
   Left="$(awk '{print $4}' <<< "$Line" | cut -d+ -f2)"
   Top="$(awk '{print $4}' <<< "$Line" | cut -d+ -f3)"
   Right="$(awk '{print $3}' <<< "$Line" | cut -dx -f1)"
@@ -1749,10 +1749,10 @@ trim_hard() {
   # - Repeat check with new geometry
   while :; do
     # Get part of non-$Trimcolor at each side
-    [ "$Skipleft" ]   || convert $Imagemask -crop 1x$((Bottom-Top+1))+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleleft    & pid1=$!
-    [ "$Skipright" ]  || convert $Imagemask -crop 1x$((Bottom-Top+1))+$Right+$Top   +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleright   & pid2=$!
-    [ "$Skiptop" ]    || convert $Imagemask -crop $((Right-Left+1))x1+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilletop     & pid3=$!
-    [ "$Skipbottom" ] || convert $Imagemask -crop $((Right-Left+1))x1+$Left+$Bottom +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permillebottom  & pid4=$!
+    [ "$Skipleft" ]   || nice convert $Imagemask -crop 1x$((Bottom-Top+1))+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleleft    & pid1=$!
+    [ "$Skipright" ]  || nice convert $Imagemask -crop 1x$((Bottom-Top+1))+$Right+$Top   +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleright   & pid2=$!
+    [ "$Skiptop" ]    || nice convert $Imagemask -crop $((Right-Left+1))x1+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilletop     & pid3=$!
+    [ "$Skipbottom" ] || nice convert $Imagemask -crop $((Right-Left+1))x1+$Left+$Bottom +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permillebottom  & pid4=$!
     wait $pid1
     wait $pid2
     wait $pid3
@@ -1804,7 +1804,7 @@ $Permillebottom" | sort -n | head -n1)
       Loopcount=$((Loopcount+1))
       [ "$Loopcount" = "10" ] && {
         Loopcount=0
-        convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
+        nice convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
         showimage $Cropgeometryimage
         eval "$Addcommand"
       }
@@ -1813,7 +1813,7 @@ $Permillebottom" | sort -n | head -n1)
 
   # show result
   showpercent 100 100
-  convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
+  nice convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
   showimage $Cropgeometryimage
   
   # Output of result
@@ -2686,7 +2686,7 @@ $Image"
     Destinationfile=$Thumbnaildir/$(basename "$Image").$Md5.png
     #[ -e "$Destinationfile" ] || convert "$Image" -resize 256x256 "$Destinationfile"
     [ -e "$Destinationfile" ] || {
-      convert "$Image" -scale 256x256 "$Destinationfile"
+      nice convert "$Image" -scale 256x256 "$Destinationfile"
       ### FIXME delete old thumbnail
     }
     
@@ -3017,7 +3017,7 @@ cropgeometry_interactive() {
   # check source for mpc format, convert if not
   [ "$Image" = "${Image%.mpc}" ] && {
     Imagempc="$Cachedir/cropgeometry.source.mpc"
-    convert "$Image" "$Imagempc"
+    nice convert "$Image" "$Imagempc"
   } || {
     Imagempc="$Image"
   }
@@ -3106,7 +3106,7 @@ start 'Choose geometry' -> frameset ;
     [ "$Refresh" = "yes" ] && {
       Cropgeometry="${CropW}x${CropH}+$CropX+$CropY"
       showpercent 10 100
-      convert $Imagempc -background '#00000000' -rotate $Rotate +repage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropgeometryimage"
+      nice convert $Imagempc -background '#00000000' -rotate $Rotate +repage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropgeometryimage"
       showpercent 60 100
       showimage "$Cropgeometryimage"
       echo "geometry='$Cropgeometry'" >&${Kaptainstdin}
@@ -3150,7 +3150,7 @@ start 'Choose geometry' -> frameset ;
           }
         ;;
         trim)
-          convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
+          nice convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
           Cropgeometry="$(trim_hard "$Cropimagempc" "$Cropgeometry" )"
           [ "$Cropgeometry" ] && {
             CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
@@ -3175,7 +3175,7 @@ start 'Choose geometry' -> frameset ;
   done 
   
   note "trim_hard(): final check"
-  convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
+  nice convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
   Cropgeometry="$(trim_hard "$Cropimagempc" "$Cropgeometry")" # final check
           
   exec {Kaptainstdin}>&- {Kaptainstdout}>&-
@@ -3316,7 +3316,7 @@ declare_variables() {
   Batchlocal="Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Functionmode Functionoption"
   Imagelocal="Image Imagelist Imagewidth Imageheight Imagecount Imagenumber Cropgeometry"
 
-  Convert="convert -quality 100%"
+  Convert="nice convert -quality 100%"
 
   Commandstackfifo=$Wizardcache/commandstack
   
