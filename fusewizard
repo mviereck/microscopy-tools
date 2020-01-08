@@ -7,28 +7,25 @@ Version="0.1"
 
 #### Messages, Log
 
-note() {
-  echo "note: $(shortpath "$*")"    >> $Wizardmessagefifo
-}
-
-verbose() {
-  echo "$*" >&2
-}
-
-worknote() {
-  echo "@work: $(shortpath "$*")"   >> $Wizardmessagefifo
-}
-
-warning() {
-  echo "WARNING: $(shortpath "$*")" >> $Wizardmessagefifo
-}
-
-failure() {
-  echo "Failure: $(shortpath "$*")" >> $Wizardmessagefifo
-}
-
 error() {
-  echo "ERROR: $(shortpath "$*")"   >> $Wizardmessagefifo
+  echo "fusewizard ERROR: $*" >&2
+  showmessage "$(shortpath "$*")"
+  showpercent error
+}
+failure() {
+  echo "fusewizard Failure: $*" >&2
+  showmessage "$(shortpath "$*")"
+}
+note() {
+  echo "fusewizard: $*"  >&2
+  showmessage "$(shortpath "$*")"
+}
+verbose() {
+  echo "fusewizard: $*" >&2
+}
+warning() {
+  echo "fusewizard WARNING: $*" >&2
+  showmessage "$(shortpath "$*")"
 }
 
 historyentry() {
@@ -68,28 +65,12 @@ storeinfo() {
 }
 
 storepid() {
-  echo "${1:-}" >> $Storepidfile
-  ### FIXME store command
+  # store pid and command name. Use in finish() to kill background processes
+  echo "$(ps -p ${1:-} -h -o pid -o comm)" >> $Storepidfile
 }
 
-showlog() {
-  local Line
-  while read Line; do
-    echo "$Line"
-    echo "$Line" >> $Wizardlogfile
-  done < $Wizardlogfifo
-}
-
-showmessages() {
-  local Line
-  while read Line; do
-    echo "$Line"
-    echo "$Line" >> $Wizardmessagefile
-#    sendkaptain 'wizardlog=`tail -n1 '$Wizardmessagefile'`'
-    Line="${Line#note: }"
-    Line="${Line#@work: }"
-    sendkaptain "wizardlog='${Line}'"
-  done <&${FDmessage}
+showmessage() {
+  sendkaptain "wizardlog='${1:-}'"
 }
 
 shortpath() {
@@ -763,7 +744,7 @@ align_vidstab() {
   done
 
   # Workaround to get video of png images. vidstab fails with videos generated from gphoto2 jpg for unknown reasons.
-  worknote "align_vidstab: generating 1. video from images"
+  note "align_vidstab: generating 1. video from images"
   ffmpeg -y -hide_banner -nostdin -safe "0" -f "concat" -i "$Sourcefilelist" \
          -vcodec "libx264" -profile:v "high444" -refs "16" -crf "0" -preset "ultrafast" \
          "$Cachedir/align.orig.mp4" || return 1
@@ -771,7 +752,7 @@ align_vidstab() {
   showpercent 1 100
   ifcmdbreak && return 1
   
-  worknote "align_vidstab: Splitting generated 1. video into .png images"
+  note "align_vidstab: Splitting generated 1. video into .png images"
   myrm "$Framedir/*"
   ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.orig.mp4" "$Framedir/sourceimg%04d.png" || return 1
   showpercent 2 100
@@ -784,12 +765,12 @@ align_vidstab() {
     echo "file $Image" >>$Sourcefilelist
   done
   
-  worknote "align_vidstab: generating 2. video from .png images"
+  note "align_vidstab: generating 2. video from .png images"
   ffmpeg -y -hide_banner -nostdin -f image2 -start_number 1 -i $Framedir/sourceimg%04d.png -safe "0" -vframes 1000 -vcodec libx264 -crf 25  -pix_fmt yuv420p "$Cachedir/align.source.mp4" || return 1
   showpercent 3 100
   ifcmdbreak && return 1
 
-  worknote "align_vidstab: Analyzing video with shakiness=$Shakiness"
+  note "align_vidstab: Analyzing video with shakiness=$Shakiness"
   ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
          -vf "vidstabdetect=shakiness=$Shakiness:accuracy=15:mincontrast=0.1:stepsize=$Stepsize:show=1:result=$Cachedir/transforms$Shakiness.trf" \
          "$Cachedir/align.vidstab-show.mp4" || return 1
@@ -797,7 +778,7 @@ align_vidstab() {
   showpercent 4 100
   ifcmdbreak && return 1
             
-  worknote "align_vidstab: Transforming video with shakiness=$Shakiness"
+  note "align_vidstab: Transforming video with shakiness=$Shakiness"
   ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
          -vf "vidstabtransform=optzoom=0:smoothing=0:interpol=bicubic:relative=1:crop=black:debug=1:input=$Cachedir/transforms$Shakiness.trf,unsharp=5:5:0.8:3:3:0.4" \
          "$Cachedir/align.result.mp4" || return 1
@@ -805,8 +786,8 @@ align_vidstab() {
   showpercent 5 100
   ifcmdbreak && return 1
 
-  worknote "align_vidstab: Splitting aligned video into images (shakiness=$Shakiness)"
-  myrm $Framedir/*
+  note "align_vidstab: Splitting aligned video into images (shakiness=$Shakiness)"
+  myrm "$Framedir/*"
   ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.result.mp4" "$Framedir/alignimg%04d.tif" || return 1
   showpercent 6 100
   ifcmdbreak && return 1
@@ -822,7 +803,7 @@ align_vidstab() {
   Radianslist="$(cat $Motionsfile | grep -v '#' | awk '{print $4}')"
   
       
-  worknote "align_vidstab: Cutting of black border (shakiness=$Shakiness)"
+  note "align_vidstab: Cutting of black border (shakiness=$Shakiness)"
   Imagecount=0
   for Image in $Imagelist; do
     Imagecount="$((Imagecount + 1))"
@@ -867,7 +848,7 @@ align_vidstab() {
     return 1
   }
       
-  worknote "align_vidstab: Cropping aligned images to $Cropgeometry (shakiness=$Shakiness)"
+  note "align_vidstab: Cropping aligned images to $Cropgeometry (shakiness=$Shakiness)"
   Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
   Imagecount=0
   for Image in $(fileglob "$Distortdir/*"); do
@@ -1033,7 +1014,7 @@ $Position"
   Iterationnumber=$((Positionnumber*5 + Imagenumber + Sequencenumber))
   
   # Distort images
-  worknote "animation: Distorting images"
+  note "animation: Distorting images"
   for Position in $Positionlist; do
     Distortdir="$Cachedir/distort.$Position"
     mkdir -p "$Distortdir"
@@ -1082,7 +1063,7 @@ $Position"
     Distortdir="$Cachedir/distort.$Position"
     Fusedir="$Distortdir/fuse"
     Destinationfile="$Cachedir/animation.$Position.median.jpg"
-    worknote "animation: Generating $(basename $Destinationfile)"
+    note "animation: Generating $(basename $Destinationfile)"
     #multicore "convert $Fusedir/* -evaluate-sequence median -gravity center -stroke black -fill black -pointsize 24 -draw 'text 0,0 \"$Position\"' $Destinationfile" "$Destinationfile" || return 1
     multicore "convert $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
     showpercent $Iteration $Iterationnumber
@@ -1102,7 +1083,7 @@ $Position"
     done
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$(fuse_getname $Fusemode shortcut).$Distortion.$Format"
 
-    worknote "animation: Generating $(basename $Destinationfile)."
+    note "animation: Generating $(basename $Destinationfile)."
     multicore "ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1
     
     showpercent $Iteration $Iterationnumber
@@ -1124,7 +1105,7 @@ calc_autogamma() {
   
   Meanimage="$Cachedir/autogamma.mean"
   
-  worknote "calc_autogamma: Generating mean image"
+  note "calc_autogamma: Generating mean image"
   convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence mean "$Meanimage" || return 1
   showimage "$Meanimage"
   
@@ -1171,7 +1152,7 @@ compose() {
     
       Destinationfile="$Destinationdir/$Destinationfilebasename.${Functionmode}1.jpg"
       $Convert "$Minfile" "$Maxfile" -compose "$Functionmode" -composite "$Destinationfile"
-      worknote "compose $Functionmode: $Destinationfile"
+      note "compose $Functionmode: $Destinationfile"
       showimage "$Destinationfile"
   
       case $Functionmode in
@@ -1229,7 +1210,7 @@ crop() {
 #      Image="$Cachedir/crop.min.jpg"
       Image="$Cachedir/crop.min.mpc"
       showpercent 1 100
-      worknote "crop $Functionmode: Generating min image"
+      note "crop $Functionmode: Generating min image"
       convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Functionoption")"
       Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
@@ -1244,12 +1225,12 @@ crop() {
   }
   
   [ "$Cropgeometry" = "${Imagewidth}x${Imageheight}+0+0" ] && [ "$Rotate" = "0" ] && {
-    worknote "crop $Functionmode: Images already have desired geometry: $Cropgeometry"
+    note "crop $Functionmode: Images already have desired geometry: $Cropgeometry"
     mycp "$Sourcedir/$Sourcefileglob" "$Destinationdir"
     return
   }
   
-  worknote "crop $Functionmode: Cropping images with rotation $Rotate and geometry $Cropgeometry"
+  note "crop $Functionmode: Cropping images with rotation $Rotate and geometry $Cropgeometry"
   Imagecount="0"
   for Image in $Imagelist; do
     Imagecount="$((Imagecount+1))"
@@ -1279,7 +1260,7 @@ cuberotate() {
   
   case $Functionmode in
     top|bottom|left|right)
-      worknote "cuberotate $Functionmode: Splitting images into rows or columns"
+      note "cuberotate $Functionmode: Splitting images into rows or columns"
       Imagecount=0
       for Image in $Imagelist; do
         Imagecount="$((Imagecount+1))"
@@ -1293,7 +1274,7 @@ cuberotate() {
       done
       multicore_wait
       
-      worknote "cuberotate $Functionmode: Appending lines to rotated image"
+      note "cuberotate $Functionmode: Appending lines to rotated image"
       for Linecount in $(seq $Linenumber); do
         Linelist=""
         for Imagecount in $(seq $Imagenumber); do
@@ -1317,7 +1298,7 @@ cuberotate() {
       for Image in $Imagelist; do
         Destinationfile="$(head -n $((Imagenumber - Imagecount)) <<< "$Imagelist" | tail -1)"
         Destinationfile="$(basename "$Destinationfile")"
-        worknote "cuberotate $Functionmode: Generating $Destinationfile"
+        note "cuberotate $Functionmode: Generating $Destinationfile"
         Destinationfile="$Destinationdir/$Destinationfile"
         case $Functionmode in
           reverse-order)
@@ -1340,7 +1321,7 @@ cuberotate() {
       for Image in $Imagelist; do
         Imagecount="$((Imagecount+1))"
         Destinationfile="$(basename $Image)"
-        worknote "cuberotate $Functionmode: Generating $Destinationfile"
+        note "cuberotate $Functionmode: Generating $Destinationfile"
         Destinationfile="$Destinationdir/$Destinationfile"
         multicore "$Convert $Image -rotate $Functionmode $Destinationfile" "$Destinationfile" || return 1
         showpercent $Imagecount $Imagenumber
@@ -1377,7 +1358,7 @@ evaluate() {
   esac
   
   Destinationfile="$Destinationdir/$Destinationfilebasename.$Functionmode.$Fileformat"
-  @worknote "evaluate: $Functionmode $Destinationfilebasename"
+  note "evaluate: $Functionmode $Destinationfilebasename"
   $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Functionmode "$Destinationfile" || {
     failure "evaluate $Functionmode: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all source images must be of same size."
     return 1
@@ -1403,7 +1384,7 @@ fuse() {
   case $Fusemode in
     all|set*)
       Layertif="$Cachedir/layer.tif"
-      worknote "fuse $Fusemode: Generating layered tif image"
+      note "fuse $Fusemode: Generating layered tif image"
       convert $(fileglob "$Sourcedir/$Sourcefileglob") "$Layertif" || return 1
       Filesize="$(du -k "$Layertif" | awk '{print $1}')"
       case $Fusemode in
@@ -1442,7 +1423,7 @@ fuse() {
       }
     ;;
   esac
-  worknote "fuse $Fusemode: Creating $(basename "$Destinationfile")"
+  note "fuse $Fusemode: Creating $(basename "$Destinationfile")"
 
   # Collect options
   Enfuseoptions=""
@@ -1568,7 +1549,7 @@ whitebalance() {
     interactive) 
 #      Image="$Cachedir/whitebalance.min.jpg"
       Image="$Cachedir/whitebalance.min.mpc"
-      worknote "whitebalance: Generating min image"
+      note "whitebalance: Generating min image"
       $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "50x50+10+10")"  ### FIXME rotate
       Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")" 
@@ -1582,7 +1563,7 @@ whitebalance() {
   
   [ "$Referencecolor" = "mean" ] && {
     Image="$Cachedir/whitebalance.mean.mpc"
-    worknote "whitebalance: Generating mean image"
+    note "whitebalance: Generating mean image"
     convert $(fileglob "$Sourcedir/$Sourcefileglob") -crop "$Cropgeometry" -evaluate-sequence mean "$Image"
     Referencecolor=$($Convert "$Image" -filter box -resize 1x1! -format "%[pixel:u]" info:)
   }
@@ -1594,7 +1575,7 @@ whitebalance() {
 
   historyentry "# whitebalance geometry: $Cropgeometry"
 
-  worknote "whitebalance: Balancing with reference color $Referencecolor"
+  note "whitebalance: Balancing with reference color $Referencecolor"
   Imagecount=0
   for Image in $Imagelist; do
     Imagecount="$((Imagecount + 1))"
@@ -1666,7 +1647,7 @@ wizard() {
     Functionoption="$(sed "s/auto-gamma/gamma $Gamma/" <<< "$Functionoption")"
   }
   
-  worknote "wizard: $Functionmode $Functionoption"
+  note "wizard: $Functionmode $Functionoption"
   
   Imagecount=0
   for Image in $Imagelist; do
@@ -1733,7 +1714,7 @@ trim_hard() {
   Imagemask="$Sourceimage.mask.mpc"
   convert "$Sourceimagempc" -alpha extract "$Imagemask"
   
-  worknote "trim_hard(): Searching for inner rectangle of $(basename $Image)"
+  note "trim_hard(): Searching for inner rectangle of $(basename $Image)"
   
   Imagewidth=$(convert  -format '%w'  $Imagemask info:)
   Imageheight=$(convert -format '%h'  $Imagemask info:)
@@ -2552,7 +2533,7 @@ parse_kaptainsignal() {
       storeinfo "refreshgui_main=yes"
     ;;
     cmdbreak)
-      worknote "Sending BREAK to current action"
+      note "Sending BREAK to current action"
       storeinfo "cmdbreak=yes"
     ;;
     choosedirguibutton)
@@ -2844,7 +2825,7 @@ fuse_config() {
   exec  {Kaptainstdin}<>$Kaptainstdinfifo
   exec  {Kaptainstdout}<>$Kaptainstdoutfifo
   
-  worknote "Preparing fuse GUI"
+  note "Preparing fuse GUI"
   
   # Prepare left columns of GUI
   Formatline="formatline ' ' -> "
@@ -3028,7 +3009,7 @@ cropgeometry_interactive() {
   checkvar -e crop_interactive Image    "$Image"    || return 1
   checkvar -d crop_interactive Cachedir "$Cachedir" || return 1
   
-  worknote "Interactive choice of crop geometry of $Image"
+  note "Interactive choice of crop geometry of $Image"
   
   Cropgeometryimage="$Cachedir/cropgeometry.gui.tif"
   Cropimagempc="$Cachedir/crop.mpc"
@@ -3193,7 +3174,7 @@ start 'Choose geometry' -> frameset ;
     }
   done 
   
-  worknote "trim_hard(): final check"
+  note "trim_hard(): final check"
   convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
   Cropgeometry="$(trim_hard "$Cropimagempc" "$Cropgeometry")" # final check
           
@@ -3340,10 +3321,8 @@ declare_variables() {
   Commandstackfifo=$Wizardcache/commandstack
   
   Wizardlogfile=$Wizardcache/fusewizard.log
-  Wizardlogfifo=$Wizardcache/fusewizard.log.fifo
   
   Wizardmessagefile=$Wizardcache/fusewizard.message.log
-  Wizardmessagefifo=$Wizardcache/fusewizard.message.fifo
   
   Kaptaingrammarfile=$Wizardcache/kaptain.grammar
   Kaptainstdinfifo=$Wizardcache/kaptain.stdin 
@@ -3364,17 +3343,12 @@ create_cachefiles() {
   mkdir -p $Thumbnaildir
   mkdir -p $Percentcachedir
   
-  mkfifo   $Wizardlogfifo
   :>       $Wizardlogfile
 
   mkfifo   $Kaptainstdinfifo
   exec  {Kaptainstdin}<>$Kaptainstdinfifo
   mkfifo   $Kaptainstdoutfifo
   exec  {Kaptainstdout}<>$Kaptainstdoutfifo
-
-  mkfifo   $Wizardmessagefifo
-  exec  {FDmessage}<>$Wizardmessagefifo
-  :>       $Wizardmessagefile
   
   mkfifo   $Commandstackfifo
   exec  {FDcmd}<>$Commandstackfifo
@@ -3394,13 +3368,22 @@ check_dependencies() {
 }
 
 finish() {
+  local Line Pid Comm
+
   trap - EXIT
-  while read Pid; do ### FIXME check command
-    kill $Pid
+
+  while read Line; do
+    Pid="$(awk  '{print $1}' <<< "$Line")"
+    Comm="$(awk '{print $2}' <<< "$Line")"
+    [ "$(ps -p $Pid -h -o comm)" = "$Comm" ] && kill $Pid
   done <$Storepidfile
+
   exec {Kaptainstdin}>&-
   exec {Kaptainstdout}>&-
+  exec {FDcmd}>&-
+  
   rm -R $Wizardcache
+  
   exit 0
 }
 
@@ -3412,6 +3395,8 @@ main() {
   declare_variables
   create_cachefiles
   
+  exec 1> >(tee -a $Wizardlogfile) 2>&1
+  
   storeinfo "cache=$Wizardcache"
   storeinfo "projecthome=$Projecthome"
   storeinfo "stackshotdir=$Projecthome"
@@ -3420,9 +3405,8 @@ main() {
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
   storeinfo "rmcache=yes"
   
-  [ -e "$Configfile" ] && source "$Configfile"
-  
   fuse_declare
+  [ -e "$Configfile" ] && source "$Configfile"
 
   # start kaptain
   kaptaingrammar > $Kaptaingrammarfile
@@ -3430,10 +3414,6 @@ main() {
   kaptain --stdio $Kaptaingrammarfile <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
   storepid $Kaptainpid
   
-  # messages
-  showlog      & storepid $!
-  showmessages & storepid $!
-  exec 1>$Wizardlogfifo 2>&1
   stack_cmd    & storepid $!
   
   check_dependencies
