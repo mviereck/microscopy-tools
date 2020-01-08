@@ -5,16 +5,17 @@
 # License: MIT
 #
 # Dependencies:
+#  - align_image_stack (hugin tools)
 #  - ffmpeg
 #  - geeqie
 #  - gphoto2
 #  - kaptain  https://github.com/mviereck/kaptain
 
 note() {
-  echo "${Colgreen}Note:${Colnorm} $*" >&2
+  echo "${Colgreen}ardustack:${Colnorm} $*" >&2
 }
 failure() {
-  echo "${Colred}FAILURE:${Colnorm} $*" >&2
+  echo "${Colred}ardustack FAILURE:${Colnorm} $*" >&2
   statusmessage "$*"
   storeinfo "error=yes"
   showpercent error
@@ -87,6 +88,9 @@ storeinfo() {
   
   return ${Return:-0}
 }
+storepid() {
+  echo "$(ps -p ${1:-} -h -o pid -o comm)" >> $Storepidfile
+}
 
 get_latest_file() {
   ## Funktion: Neueste erstellte Datei ermitteln
@@ -141,7 +145,7 @@ device_init() {
   ps -p "$Watchdevicepid" >/dev/null 2>&1 && {
     kill $Watchdevicepid
     wait $Watchdevicepid 2>/dev/null
-    exec 6<>-
+    exec 6>&-
   }
 
   # Device auf Gültigkeit prüfen
@@ -149,12 +153,14 @@ device_init() {
     failure "Device not found: $Device"
     Device="$Devicefallback"
     failure "Fallback device: $Device"
+    storeinfo "device=$Device"
   }
 
   # Daten von Device auf fifo umleiten
   note "Beginning to watch device: $Device"
   exec 6<>$Device
   cat <&6 >>$Devicemessagefifo & Watchdevicepid=$!
+  storepid $Watchdevicepid
   storeinfo "pidwatchdevice=$Watchdevicepid"
     
   # Seriellen Port initialisieren
@@ -223,15 +229,6 @@ position_read() {
   Stepwidth="$(storeinfo dump stepwidth)"
   Stepdistance="$(storeinfo dump stepdistance)"
   Stepunit="$(storeinfo dump stepunit)"
-  
-  #storeinfo test pidkaptain && {
-  #  Newstepwidth="$(askkaptain stepwidth)"
-  #  isnum "$Newstepwidth" && [ "$Newstepwidth" != "$Stepwidth" ] && {
-  #    Stepwidth="$Newstepwidth"
-  #    storeinfo "stepwidth=$Stepwidth"
-  #    stepcmd stepwidth $Stepwidth
-  #  }
-  #}
 }
 
 stepcmd() {
@@ -242,19 +239,15 @@ stepcmd() {
       steplauf "${2:-$Poscurrent}"
     ;;
     stepin)  
-      #steplauf "$(bc <<< "$Poscurrent + $Stepwidth")" 
       steplauf "$(awk "BEGIN {print $Poscurrent + $Stepwidth }" )" 
     ;;
     stepout) 
-      #steplauf "$(bc <<< "$Poscurrent - $Stepwidth")" 
-      echo " 1 $Poscurrent"
       steplauf "$(awk "BEGIN {print $Poscurrent - $Stepwidth }" )" 
-      echo " 2 $Poscurrent"
     ;;
     setpos0)
       Poscurrent=0
-      device_send "$Ardu_setpos0"
-      Answer="$(device_wait)"
+      #device_send "$Ardu_setpos0"
+      #Answer="$(device_wait)"
     ;;
     setpos1)
       Pos1="$Poscurrent"
@@ -308,7 +301,6 @@ steplauf() {
     [ "$(device_wait)" = "TIMEOUT" ] && return 1
   }
 
-  #Timetowait="$(bc <<< "18 * $Distance /10000 + $Devicetimeout")"
   Timetowait="$(awk "BEGIN {print 18 * $Distance / 10000 + $Devicetimeout }" )" ### FIXME needs more general solution
 
   device_send "$Direction"
@@ -323,7 +315,6 @@ steplauf() {
     device_wait >/dev/null
   }
 }
-
 stackshot() {
   ## Funktion: Fotoserie schießen, dabei Motor weiterdrehen. Geht von $Pos1 zu $Pos2.
   # -p   Default: Serie aus Preview-Bildern.
@@ -335,8 +326,14 @@ stackshot() {
   local Mediannumber Medianmode Mediancount
   local Stackshotdir Stackshotbasename Stackshotname Projectname Storagebase
   
-  gphoto2_cmd check || return 1
-  device_check      || return 1
+  gphoto2_cmd check || {
+    storeinfo drop stackshot
+    return 1
+  }
+  device_check      || {
+    storeinfo drop stackshot
+    return 1
+  }
   
   [ "$1" = "-c" ] && Fotomodus="capture" && shift
   [ "$1" = "-p" ] && Fotomodus="preview" && shift
@@ -381,11 +378,16 @@ stackshot() {
   #Anzahl="$(bc <<< "($Pos2 - $Pos1) / $Stepwidth" | cut -d. -f1)"
   Anzahl="$(awk "BEGIN {print ($Pos2 - $Pos1) / $Stepwidth }" | cut -d. -f1)"
   note "Shooting stack $Stackshotdir with $Anzahl steps."
+  sendkaptain "info='Shooting stack $(basename $Stackshotdir) with $Anzahl steps.'"
   
   # An Startposition gehen
   stepcmd go $Pos1
   position_read  
-  [ "$Poscurrent" = "$Pos1" ] || { failure "stack: Error: Missed position $Pos1: $Poscurrent." ; return 1 ; }
+  [ "$Poscurrent" = "$Pos1" ] || { 
+    failure "stack: Error: Missed position $Pos1: $Poscurrent." 
+    storeinfo drop stackshot
+    return 1 
+  }
   
   # Auf Start warten
   sleep $(storeinfo dump startdelay)
@@ -408,6 +410,7 @@ stackshot() {
           Latestimage="$Stackshotdir/stackshot/capture_$(printf "%04d" $Loopcount).jpg"
           [ -e "$Filename" ] || {
             failure "Capture failed"
+            storeinfo drop stackshot
             return 1
           }
           mv "$Filename" "$Latestimage"
@@ -463,6 +466,8 @@ stackshot() {
   
   note "stack: Ready: Stackshot $Stackshotname with $((Loopcount * Mediannumber)) images in $Loopcount steps."
   note "stack: Location: $Stackshotdir"
+  storeinfo drop stackshot
+  return 0
 }
 
 #### gphoto2 camera
@@ -472,7 +477,7 @@ gphoto2_wrap() {
   [ "$Cameraport" ] && Cameraport="--port=$Cameraport"
   note "gphoto2 $Cameraport $@"
   gphoto2 $Cameraport $@ || {
-    failure "gphoto2 failed with error code $?. Is the camera plugged in and turned on?"
+    failure "gphoto2 failed. Is the camera plugged in and turned on?"
     return 1
   }
   return 0
@@ -486,7 +491,7 @@ gphoto2_cmd () {
   shift
   case $Command in
     check)
-      gphoto2_wrap --list-config >/dev/null 2>&1 || failure "gphoto2 check failed. Is the camera connected and turned on?"
+      gphoto2_wrap --list-config >/dev/null 2>&1
       Return=$?
     ;;    
     set-config-value|scv)                     # Kameraeinstellung setzen (Wert)
@@ -597,7 +602,7 @@ video() {
     ;;
   esac
   
-  [ "$Pidffplay" ] && ps -p "$Pidffplay" >/dev/null 2>&1 && storeinfo "pidffplay=$Pidffplay"
+  [ "$Pidffplay" ] && ps -p "$Pidffplay" >/dev/null 2>&1 && storeinfo "pidffplay=$Pidffplay" && storepid $Pidffplay
  
 }
 cameralist() {
@@ -648,7 +653,10 @@ camerainit() {
   storeinfo "cameraport=$Cameraport"
   
   gphoto2_cmd reset
-  gphoto2_cmd check || return 1
+  gphoto2_cmd check || {
+    
+    return 1
+  }
   gphoto2_cmd set-config-index autoexposuremode=3 # mode "Manuell"
   gphoto2_cmd set-config-index imageformat=0      # Large fine JPG. 6=Large fine JPG + RAW
   
@@ -711,15 +719,11 @@ keyboard_watch() {
 kaptaingrammar() {
   echo "#! /usr/bin/kaptain
 start 'ardustack'                                -> mainframe;
-mainframe:framed                                   -> fileframe naviframe camerasetframe captureframe videoframe stackshotframe statusframe;
-  fileframe 'Files'                                  -> device storagebasedir projectbasename stackshotbasename;
+mainframe:framed                                   -> naviframe cameraframe stackshotframe statusframe;
+  naviframe 'Device'                                 -> device stepline pos0line pos1line pos2line positionline poscalcline keyboardline;
     device:beside             'Device file'            -> devicecombo devicebutton ;
-      devicecombo                                        -> @combow('autodetect')='autodetect' ;
-      devicebutton                                       -> @button='initialize' ;
-    storagebasedir:beside     'Storage base dir:'      -> @directory='$HOME/Bilder/ardustack' ;
-    projectbasename:beside    'Project base name:'     -> @string='project' ;
-    stackshotbasename:beside  'Stackshot base name:'   -> @string='st' ;
-  naviframe 'Navigation'                             -> stepline pos0line pos1line pos2line positionline poscalcline keyboardline;
+      devicecombo                                        -> @combo('autodetect')='autodetect' ;
+      devicebutton                                       -> @button=' initialize' ;
     stepline:beside                                    -> stepin stepout stepwidth stepmy;
       stepin                                             -> @button='Step in';
       stepout                                            -> @button='Step out';
@@ -743,23 +747,21 @@ mainframe:framed                                   -> fileframe naviframe camera
       distance:beside         'Distance:'                -> @text='' ;
       steps:beside            'Steps:'                   -> @text='' ;
     keyboardline:beside       'Watch Keyboard (Super=stepin, L-Alt=stepout)' -> "" | "" ;
-  camerasetframe              'Camera settings'      -> cameraline settingline ;
+  cameraframe                 'Camera'               -> cameraline settingline captureline videoline;
     settingline:beside                                 -> zoom iso shutterspeed ;
       zoom:beside 'Zoom:'                                -> @combo('1','10') ;
       iso:beside 'ISO:'                                  -> @combo('____') ;
       shutterspeed:beside     'Shutterspeed:'            -> @combo('________') ;
     cameraline:beside                                  -> camera ;
       camera:beside                                      -> @combo('autodetect')='autodetect' ;
-  captureframe                'Captures'             -> captureline ;
     captureline:beside                                 -> capturepreview capturefullres ;
-      capturepreview                                   -> @button='Capture preview' ;
-      capturefullres                                   -> @button='Capture full resolution' ;
-  videoframe                  'Video'                -> videoline;
+      capturepreview                                     -> @button='Capture preview' ;
+      capturefullres                                     -> @button='Capture full resolution' ;
     videoline:beside                                   -> videostart videocapture videostop;
       videostart                                         -> @button='Start video' ;
       videocapture                                       -> @button='Capture video' ;
       videostop                                          -> @button='Stop video' ;
-  stackshotframe              'Stackshot'            -> stackshotline stackshotmedian stackshotdelayline;
+  stackshotframe              'Stackshot'            -> stackshotdelayline stackshotmedian stackshotline;
     stackshotline:beside                               -> stackshotpreview stackshotfullres ;
       stackshotpreview                                   -> @button='Run preview stackshot' ;
       stackshotfullres                                   -> @button='Run full resolution stackshot' ;
@@ -768,10 +770,10 @@ mainframe:framed                                   -> fileframe naviframe camera
       stackshotdelay:beside   'Delay between captures (ms):'  -> @combo('100','200','300','400','500','750','1000','1500','2000','2500','3000','4000','5000')='500';
       startdelay:beside       'Delay before start:'      -> @combo('1s','10s','30s','1m','5m','10m')='1s';
   statusframe 'Status'                               -> statusline ;
-    statusline:beside                                  -> cmdpercent status cmdbreak;
+    statusline:beside                                  -> cmdpercent status config;
       cmdpercent                                         -> @icon ;
       status                                             -> @text ;
-      cmdbreak                                           -> @button='break';
+      config                                             -> @button='config' ;
 "
 }
 sendkaptain() {
@@ -821,14 +823,14 @@ runkaptain() {
   
   kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
   storeinfo "pidkaptain=$Kaptainpid"
+  storepid $Kaptainpid
 
   position_store
-  sendkaptain "storagebasedir='$(storeinfo dump storagebasedir)'"
   parse_kaptainsignal "camera:autodetect"
-  parse_kaptainsignal "device:autodetect"
+  parse_kaptainsignal "devicecombo:autodetect"
+#  parse_kaptainsignal "devicebutton"
 
   position_store
-  stepcmd setpos0
   
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
@@ -843,7 +845,7 @@ runkaptain() {
 parse_kaptainsignal() {
   local Kaptainsignal Argument
   local Projecthome Projectname
-  local Device Devicecombo
+  local Device
   
   Kaptainsignal="${1:-}"
   Argument="$(cut -s -d: -f2 <<< "$Kaptainsignal")"
@@ -857,9 +859,6 @@ parse_kaptainsignal() {
   # Provide project dir if needed, check settings in GUI
   case $Kaptainsignal in
     *capture*|stackshot*)
-      storeinfo "storagebasedir=$(askkaptain storagebasedir)"
-      storeinfo "projectbasename=$(askkaptain projectbasename)"
-      storeinfo "stackshotbasename=$(askkaptain stackshotbasename)"
       storeinfo test projectname || setup_projectdir
       Projecthome="$(storeinfo dump storagebasedir)"
       Projectname="$(storeinfo dump projectname)"
@@ -875,22 +874,40 @@ parse_kaptainsignal() {
   esac
 
   case $Kaptainsignal in
-    device*)
-      Device="$(askkaptain devicecombo)"
+    devicecombo*)
+      Device="$(cut -d: -f2 <<< "$Kaptainsignal")"
       case $Device in
         autodetect)
           Devicecombo=""
-          Devicelist="$(find /dev/ttyACM* 2>/dev/null)"
+          Devicebasename="$(storeinfo dump devicebasename)"
+          Devicelist="$(find ${Devicebasename}* 2>/dev/null)"
           for Device in $Devicelist; do
             Devicecombo="$Devicecombo,'$Device'"
           done
-          Devicecombo="'autodetect'$Devicecombo"
+          Devicecombo="'autodetect'$Devicecombo,'/dev/null'"
           Device="$(head -n1 <<< "$Devicelist")"
-          sendkaptain "devicecombo($Devicecombo)='${Device:-autodetect}'"
+          Device="${Device:-autodetect}"
+          sendkaptain "devicecombo($Devicecombo)='$Device'"
         ;;
       esac
-      storeinfo "device=${Device:-NO_DEVICE_FOUND}"
+      storeinfo "device=$Device"
+    ;;
+    devicebutton*)
+      Device="$(storeinfo dump device)"
+      case $Device in
+        autodetect) 
+          parse_kaptainsignal "devicecombo:autodetect"
+          Device="$(storeinfo dump device)"
+        ;;
+      esac
+      case $Device in
+        autodetect) 
+          Device="/dev/null"
+          storeinfo "device=$Device"
+        ;;
+      esac
       device_init
+      sendkaptain "devicecombo($Devicecombo)='$Device'"
       stepcmd setpos0
       stepcmd stepwidth $(storeinfo dump stepwidth)
     ;;
@@ -941,8 +958,8 @@ parse_kaptainsignal() {
       stepcmd stepwidth $Argument
     ;;
     keyboardline:on)
-      keyboard_stepin  & storeinfo "pidkeyboardstepin=$!"
-      keyboard_stepout & storeinfo "pidkeyboardstepout=$!"
+      keyboard_stepin  & storeinfo "pidkeyboardstepin=$!"  && storepid $(storeinfo dump pidkeyboardstepin)
+      keyboard_stepout & storeinfo "pidkeyboardstepout=$!" && storepid $(storeinfo dump pidkeyboardstepout)
       storeinfo "keyboard_watch=yes"
     ;;
     keyboardline:off)
@@ -952,7 +969,6 @@ parse_kaptainsignal() {
     ;;
     
     stackshot*)
-      storeinfo drop videomode
       setup_projectdir
       Argument="$(askkaptain stackshotmedian)"
       Argument="${Argument:-1}"
@@ -961,13 +977,13 @@ parse_kaptainsignal() {
       storeinfo "stackshotdelay=$Argument"
       Argument="$(askkaptain startdelay)"
       storeinfo "startdelay=$Argument"
-      case $Kaptainsignal in
-        stackshotpreview) stackshot -p & ;;
-        stackshotfullres) stackshot -c & ;;
-      esac
+      stackshotgui $Kaptainsignal
     ;;
-    cmdbreak*)
-      storeinfo "cmdbreak=yes"
+    config)
+      configgui
+      read_configfile "$Configfile"
+      position_read
+      position_store
     ;;
   esac
 
@@ -982,14 +998,152 @@ parse_kaptainsignal() {
   }
   storeinfo drop error
 }
+configgui() {
+  local Kaptaingrammar Kaptainstdin Kaptainstdout Kaptainstdinfifo Kaptainstdoutfifo Kaptainpid Kaptainsignal
+  local Setting
+    
+  Kaptaingrammar="$Cachefolder/cfg.grammar"
+  Kaptainstdinfifo="$Cachefolder/cfg.stdin"
+  Kaptainstdoutfifo="$Cachefolder/cfg.stdout"
+  
+  mkfifo   "$Kaptainstdinfifo"
+  exec  {Kaptainstdin}<>"$Kaptainstdinfifo"
+  mkfifo   "$Kaptainstdoutfifo"
+  exec  {Kaptainstdout}<>"$Kaptainstdoutfifo"
+  
+  echo '#! /usr/bin/kaptain
+start "ardustack configuration" -> frameset ;
+  frameset:framed                                         -> fileframe signalframe unitframe saveframe;
+    fileframe                 "Files"                       -> storagebasedir projectbasename stackshotbasename devicebasename;
+      storagebasedir:beside     "Storage base dir:"           -> @directory="$HOME/Bilder/ardustack" ;
+      projectbasename:beside    "Project base name:"          -> @string="project" ;
+      stackshotbasename:beside  "Stackshot base name:"        -> @string="st" ;
+      devicebasename:beside     "Device base name to search:" -> @string="/dev/ttyACM" ;
+    signalframe               "Device signals"              -> signaltext signalline1 signalline2;
+      signaltext -> @text="Commands send to device by ardustack. \n
+  ardustack expects an arbitray string as a response from device. \n
+  signal stepin should cause n=stepwidth steps forwards. \n
+  signal stepout should cause n=stepwidth steps backwards. \n
+  signal stepwidth will be send as w,25 to transmit the value. \n
+  signal check should cause no action but an answer only." ;
+      signalline1:beside                                      -> signalstepin signalstepout;
+        signalstepin:beside             "stepin"                -> @string="i" ;
+        signalstepout:beside            "stepout"               -> @string="o" ;
+      signalline2:beside                                      ->  signalstepwidth signalcheck;
+        signalstepwidth:beside          "stepwidth"             -> @string="w" ;
+        signalcheck:beside              "check"                 -> @string="c" ;
+    unitframe                 "Step distance and unit"      -> unitline ;
+      unitline:beside                                         -> stepdistance stepunit;
+        stepdistance:beside         "Distance of stepwidth 1:"  -> @string="0.048" ;
+        stepunit:beside             "Unit:"                     -> @string="my" ;
+    saveframe:beside                                            -> savebutton closebutton;
+      savebutton                                              -> @button="save settings" ;
+      closebutton                                             -> @close="close" ;
+' > "$Kaptaingrammar"
+  #nl -ba < "$Kaptaingrammar"
+  
+  kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  storepid $Kaptainpid
+  
+  for Setting in storagebasedir projectbasename stackshotbasename devicebasename signalstepin signalstepout signalstepwidth signalcheck stepdistance stepunit ; do
+    sendkaptain "$Setting='$(storeinfo dump $Setting)'"
+  done
 
+  # watch signals of kaptain
+  while ps -p $Kaptainpid >/dev/null; do
+    read -t1 Kaptainsignal <&${Kaptainstdout}
+    [ "$Kaptainsignal" ] && {
+      note "Signal from kaptain: $Kaptainsignal"
+      Kaptainsignal="${Kaptainsignal%:pressed}"
+    }
+    [ "$Kaptainsignal" ] && {
+      case $Kaptainsignal in
+        savebutton)
+          :> $Configfile
+          for Setting in storagebasedir projectbasename stackshotbasename devicebasename signalstepin signalstepout signalstepwidth signalcheck stepdistance stepunit ; do
+            echo "${Setting}=$(askkaptain $Setting)" >> "$Configfile" 
+          done
+        ;;
+      esac
+    }
+  done
+  
+  exec  {Kaptainstdin}>&-
+  exec  {Kaptainstdout}>&-
+  rm   "$Kaptainstdinfifo"
+  rm   "$Kaptainstdoutfifo"
+}
+stackshotgui() {
+
+  local Kaptaingrammar Kaptainstdin Kaptainstdout Kaptainstdinfifo Kaptainstdoutfifo Kaptainpid Kaptainsignal
+  local Functionmode
+  
+  Functionmode="${1:-stackshotpreview}"
+  
+  Kaptaingrammar="$Cachefolder/stackshot.grammar"
+  Kaptainstdinfifo="$Cachefolder/stackshot.stdin"
+  Kaptainstdoutfifo="$Cachefolder/stackshot.stdout"
+  
+  mkfifo   "$Kaptainstdinfifo"
+  exec  {Kaptainstdin}<>"$Kaptainstdinfifo"
+  mkfifo   "$Kaptainstdoutfifo"
+  exec  {Kaptainstdout}<>"$Kaptainstdoutfifo"
+  
+  echo '#! /usr/bin/kaptain
+start "Running stackshot"   -> frameset ;
+  frameset  -> info cmdline ;
+    info                -> @text="Running stackshot" ;
+    cmdline:beside      -> cmdpercent cmdbreak;
+      cmdpercent          -> @icon ;
+      cmdbreak            -> @button="break";
+   
+' > "$Kaptaingrammar"
+
+  kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  storepid $Kaptainpid
+  
+  showpercent busy
+  storeinfo "stackshot=running"
+  
+  case $Functionmode in
+    stackshotpreview) stackshot -p & Stackshotpid=$! ;;
+    stackshotfullres) stackshot -c & Stackshotpid=$! ;;
+  esac
+  storepid $Stackshotpid
+      
+  # watch signals of kaptain
+  while ps -p $Kaptainpid >/dev/null; do
+    storeinfo test stackshot || break
+    read -t1 Kaptainsignal <&${Kaptainstdout}
+    [ "$Kaptainsignal" ] && {
+      note "Signal from kaptain: $Kaptainsignal"
+      Kaptainsignal="${Kaptainsignal%:pressed}"
+    }
+    [ "$Kaptainsignal" ] && {
+      case $Kaptainsignal in
+        cmdbreak)
+          storeinfo "cmdbreak=yes"
+        ;;
+      esac
+    }
+  done
+  
+  ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
+  exec  {Kaptainstdin}>&-
+  exec  {Kaptainstdout}>&-
+  rm   "$Kaptainstdinfifo"
+  rm   "$Kaptainstdoutfifo"
+}
 #### main
 declare_variables() {
   Cachefolder=/tmp/ardustack
   Localsharefolder="$HOME/.local/share/ardustack"
   Percentcachedir="$Localsharefolder/percent"
+  Configfolder="$HOME/.config"
+  Configfile="$Configfolder/ardustack.cfg"
   
   Storeinfofile="$Cachefolder/store.info"
+  Storepidfile="$Cachefolder/store.pid"
   
   Kaptainpid=""
   Kaptaingrammar="$Cachefolder/kaptain.grammar"
@@ -999,9 +1153,12 @@ declare_variables() {
   Latestimage=""
   Latestvideo=""
   
+  Device=""
+  Devicecombo=""
   Devicetimeout=2
   Devicefallback="/dev/null"
   Devicemessagefifo="$Cachefolder/device.fifo"
+  Devicebasename="/dev/ttyACM"
   
   Poscurrent=0
   Pos1=100
@@ -1010,6 +1167,7 @@ declare_variables() {
   
   Stepdistance="0.048"
   Stepunit="my"
+  Stepdefaultwidth="50"
   
   Keyboardid=""
   Keyboardfifo="$Cachefolder/keyboard.fifo"
@@ -1043,6 +1201,8 @@ setup_cache() {
   
   
   :> $Storeinfofile
+  :> $Storepidfile
+  
   mkfifo "$Devicemessagefifo"
   
   mkfifo "$Keyboardfifo"
@@ -1053,20 +1213,37 @@ setup_cache() {
   mkfifo   "$Kaptainstdoutfifo"
   exec  {Kaptainstdout}<>"$Kaptainstdoutfifo"
 }
+read_configfile() {
+  local Configfile Line
+  Configfile="${1:-}"
+  while read Line; do
+    storeinfo "$Line"
+  done < "$Configfile"
+  Ardu_check="$(storeinfo dump signalcheck)"
+  Ardu_stepin="$(storeinfo dump signalstepin)"
+  Ardu_stepout="$(storeinfo dump signalstepout)"
+  Ardu_stepwidth="$(storeinfo dump signalstepwidth)"
+  Ardu_setpos0="$(storeinfo dump signalsetpos0)"
+}
 finish() {
   trap - EXIT
-  local Line Pid
+  local Line Pid Comm
   
   # kill stored pids
   while read Line; do
-    grep -q "^pid" <<< "$Line" && {
-      Pid="$(cut -d= -f2 <<< "$Line")"
-      ps -p "$Pid" >/dev/null 2>&1 && kill $Pid
-      wait $Pid 2>/dev/null
-    }
-  done < "$Storeinfofile"
+    Pid="$(awk  '{print $1}' <<< "$Line")"
+    Comm="$(awk '{print $2}' <<< "$Line")"
+    [ "$(ps -p $Pid -h -o comm)" = "$Comm" ] && kill $Pid
+  done <$Storepidfile
   
-  exec 6<>-
+  # close device
+  exec 6>&-
+  
+  # close kaptain fifos
+  exec  {Kaptainstdin}>&-
+  exec  {Kaptainstdout}>&-
+  rm   "$Kaptainstdinfifo"
+  rm   "$Kaptainstdoutfifo"
   
   # remove cache
   rm -R $Cachefolder
@@ -1085,19 +1262,31 @@ main() {
   setup_cache
   
   storeinfo "storagebasedir=$HOME/Bilder/ardustack"
-  
+  storeinfo "projectbasename=project"
+  storeinfo "stackshotbasename=st"
+  storeinfo "devicebasename=$Devicebasename"
+      
   storeinfo "iso=800"
   storeinfo "shutterspeed=1/80"
   storeinfo "zoom=1"
   
+  storeinfo "signalstepin=$Ardu_stepin"
+  storeinfo "signalstepout=$Ardu_stepout"
+  storeinfo "signalcheck=$Ardu_check"
+  storeinfo "signalstepwidth=$Ardu_stepwidth"
+  storeinfo "signalsetpos0=$Ardu_setpos0"
+  
   storeinfo "stepdistance=$Stepdistance"
   storeinfo "stepunit=$Stepunit"
+  storeinfo "stepdefaultwidth=$Stepdefaultwidth"
+  
+  read_configfile "$Configfile"
   position_store
   
   Keyboardid=$(xinput | grep "AT Translated" | cut -d= -f2 | awk '{print $1}')
   [ "$Keyboardid" ] && {
-    xinput test $Keyboardid >>$Keyboardfifo & storeinfo "pidxinput=$!"
-    keyboard_watch                          & storeinfo "pidkeyboardwatch=$!"
+    xinput test $Keyboardid >>$Keyboardfifo & storepid $!
+    keyboard_watch                          & storepid $!
   } || failure "Cannot watch keyboard. xinput not installed? Invalid keyboard id '$Keyboardid'?"
   
   runkaptain
@@ -1106,12 +1295,5 @@ main "$@"
 finish
 
 # Todo:
-# break button
+# break button + percent in separate stack gui
 # replace align_image_stack ?
-# percent display
-# config dialog
-# - distance
-# - folders
-# - arduino commands
-# - wait foranswer yes/no
-# - check pos yes/no
