@@ -650,7 +650,7 @@ runbatch1() {
 runbatch2() {
   local Function Functionmode Functionoption
   local Iterate
-  for Function in whitebalance align_vidstab gamma_ ; do
+  for Function in whitebalance align_vidstab align_ais ; do
     askkaptain -c $Function > /dev/null && {
       getfunctionsettings
       case $Function in
@@ -862,6 +862,145 @@ align_vidstab() {
             
   showimage "$Cropminimage.trim_hard.png"
   return 0    
+}
+
+align_aisX() {
+
+  local $Batchlocal
+  local $Imagelocal
+  local Alignlist
+  local Distortdir
+  local Cropminimage Rotate
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  [ "$Functionmode" ] && Functionmode="-m"
+
+  Distortdir=$Cachedir/distort
+  mkdir $Distortdir
+  
+  nice align_image_stack -l $Functionmode --gpu -a $Distortdir/align --use-given-order $Imagelist || return 1
+
+  Alignlist="$(fileglob "$Distortdir/*")"
+
+  # crop greatest common inner rectangle of distorted images
+  Cropminimage="$Cachedir/distorted.min.mpc"
+  nice convert $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
+  case $Cropinteractive in
+    yes) notify-send "align_ais: Ready for interactive crop"
+         Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
+    *)   Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")"              || return 1 ;;
+  esac
+  
+  Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
+  Rotate="${Rotate:-0}"
+  Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
+      
+  [ "$Cropgeometry" ] || {
+    failure "align_ais: crop geometry is empty"
+    return 1
+  }
+  
+  note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeoemtry"
+  Imagecount=0
+  for Image in $Alignlist; do
+    Imagecount="$((Imagecount + 1))"
+    Destinationfile="$(head -n$Imagecount <<< "$Imagelist" | tail -n1)"
+    Destinationfile="$Destinationdir/$(basename $Destinationfile)"
+    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    showpercent $Imagecount $Imagenumber
+  done
+  multicore_wait || return 1
+}
+
+align_ais() {
+
+  local $Batchlocal
+  local $Imagelocal
+  local Imagelist1 Imagelist2 Alignlist
+  local Count Imagehalf
+  local Part1dir Part2dir Distortdir
+  local Cropminimage Rotate
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  [ "$Functionmode" ] && Functionmode="-m"
+  
+  Part1dir=$Cachedir/part1
+  Part2dir=$Cachedir/part2
+  Distortdir=$Cachedir/distort
+  mkdir $Part1dir
+  mkdir $Part2dir
+  mkdir $Distortdir
+
+  Imagehalf=$((Imagenumber/2 +1))
+  Count=0
+  for Image in $Imagelist; do
+    Count=$((Count + 1))
+    [ "$Count" -le "$Imagehalf" ] && Imagelist1="$Image $Imagelist1"
+    [ "$Count" -ge "$Imagehalf" ] && Imagelist2="$Imagelist2 $Image"
+  done
+
+  echo "List1:
+$Imagelist1"
+  echo "List2:
+$Imagelist2"
+  showpercent busy
+  multicore "nice align_image_stack -l $Functionmode --gpu -a $Part1dir/align --use-given-order $Imagelist1" || return 1
+  multicore "nice align_image_stack -l $Functionmode --gpu -a $Part2dir/align --use-given-order $Imagelist2" || return 1
+  multicore_wait || return 1
+
+  Alignlist="$(fileglob "$Part1dir/*")"
+  Count=0
+  for Image in $Alignlist ; do
+    Destinationfile="$(head -n$((Imagehalf - Count)) <<< "$Imagelist" | tail -1)"
+    Destinationfile="$Distortdir/$(basename "$Destinationfile").tif"
+    cp -T "$Image" "$Destinationfile"
+    Count=$((Count + 1))
+    showimage "$Destinationfile"
+  done
+  Alignlist="$(fileglob "$Part2dir/*")"
+  Count=0
+  for Image in $Alignlist ; do
+    Destinationfile="$(head -n$((Imagehalf + Count)) <<< "$Imagelist" | tail -1)"
+    Destinationfile="$Distortdir/$(basename "$Destinationfile").tif"
+    cp "$Image" "$Destinationfile"
+    Count=$((Count + 1))
+    showimage "$Destinationfile"
+  done
+
+  # crop greatest common inner rectangle of distorted images
+  Cropminimage="$Cachedir/distorted.min.mpc"
+  nice convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
+  case $Cropinteractive in
+    yes) notify-send "align_ais: Ready for interactive crop"
+         Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
+    *)   Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")"              || return 1 ;;
+  esac
+  
+  Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
+  Rotate="${Rotate:-0}"
+  Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
+  Cropgeometry="$(calc_evengeometry "$Cropgeometry")"
+      
+  [ "$Cropgeometry" ] || {
+    failure "align_ais: crop geometry is empty"
+    return 1
+  }
+  
+  note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeoemtry"
+  Imagelist="$(fileglob "$Distortdir/*")"
+  Imagecount=0
+  for Image in $Imagelist; do
+    Imagecount="$((Imagecount + 1))"
+    Destinationfile="$Destinationdir/$(basename $Image)"
+    Destinationfile="${Destinationfile%.tif}"
+    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    showpercent $Imagecount $Imagenumber
+  done
+  multicore_wait || return 1
 }
 
 animation() {
@@ -1513,7 +1652,7 @@ $(tac <<< "$Imagelist")"
     echo "file '$Image'" >> $Imagelistfile
   done
   
-  showpercent 20 100
+  showpercent busy
   nice ffmpeg -y -hide_banner -nostdin -safe "0" -r $Framerate -f concat -i $Imagelistfile $Destinationfile || return 1
   showpercent 100 100
   showimage $Destinationfile
@@ -2272,7 +2411,7 @@ start "fusewizard '$Version'" -> frameset;
           applyallfuse                                          -> @button="fuse" ;
           applyall:beside             "Apply all convert options"  -> "" ;
           
-      batchblock2 "batch block 2: post processing directory magick" -> meanbalanceline whitebalanceline align_vidstabline gamma_line;
+      batchblock2 "batch block 2: post processing directory magick" -> meanbalanceline whitebalanceline align_vidstabline align_aisline ;
         meanbalanceline:beside                                -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
           meanbalancemodecombo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
           meanbalancemagick                                     -> @button="magick" ;
@@ -2294,15 +2433,14 @@ start "fusewizard '$Version'" -> frameset;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
         align_vidstabline:beside                              -> align_vidstab align_vidstabcombo align_vidstabbutton ;
-          align_vidstabcombo          "crop interactive"        -> "on" | ! "";
+          align_vidstabcombo          "crop interactive"        -> "interactive" | ! "";
           align_vidstabbutton                                   -> @button="magick" ;
-          align_vidstab:beside        "align"                   -> "on" | "";
-        gamma_line:beside                                     -> gamma_ gamma_magick gamma_fuse gamma_evaluate;
-          gamma_combo                                           -> @combow("auto","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9","1.2","1.3","1.4","1.5","2.0","3.0","4.0")="1.4" ;
-          gamma_magick                                          -> @button="magick" ;
-          gamma_evaluate                                        -> @button="evaluate" ;
-          gamma_fuse                                            -> @button="fuse" ;
-          gamma_:beside                "gamma"                  -> gamma_combo | ! "";
+          align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | "";
+        align_aisline:beside                                  -> align_ais align_aismodecombo align_aiscombo align_aisbutton ;
+          align_aismodecombo          "demagnifier"             -> "m"  | ! "";
+          align_aiscombo              "crop interactive"        -> "interactive" | ! "";
+          align_aisbutton                                       -> @button="magick" ;
+          align_ais:beside            "align with align_image_stack" -> "on" | ! "";
         
       batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose;
         fuseline:beside                                       -> fuse fuseconfig @fill fusemodecombo fusemagick;
@@ -2338,7 +2476,7 @@ start "fusewizard '$Version'" -> frameset;
           rulerfuse                                             -> @button="fuse" ;
           ruler:beside                "micrometer"              -> "" rulermodecombo rulercombo;
         animationline:beside                                  -> animation animationmodecombo animationfusecombo animationcombo animationmagick;
-          animationmodecombo:beside                             -> @combo("quick","smooth")="quick";
+          animationmodecombo:beside                             -> @combo("quick","smooth")="smooth";
           animationcombo:beside       "Distortion:"             -> @combow("15","20","25","30","40","50","75","100","150")="30";
           animationfusecombo:beside   "fuse:"                   -> @combow('$Fusemodecombo')="fuse18";
           animationmagick                                       -> @button="magick" ;
@@ -2501,6 +2639,7 @@ showpercent() {
   
   case "$Part" in
     idle) Percentimage="p_idle.png" ;;
+    busy) Percentimage="p_busy.png" ;;
     error) Percentimage="p_error.png" ;;
     *)
       Percent="$(( 100 * Part / Full ))"
@@ -2510,126 +2649,12 @@ showpercent() {
   Percentimage="$Percentcachedir/$Percentimage"
 
   [ -e "$Percentimage" ] || case "$Part" in
-    idle)  convert -size 100x20 xc:transparent -fill black -pointsize 20 -gravity center -draw "text 0,0 'idle'"   "$Percentimage" ;;
-    error) convert -size 100x20 xc:transparent -fill red   -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"  "$Percentimage" ;;
+    idle)  convert -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"     "$Percentimage" ;;
+    busy)  convert -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'" "$Percentimage" ;;
+    error) convert -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"    "$Percentimage" ;;
     *)     convert -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
   esac
   sendkaptain "cmdpercent('$Percentimage')=''"
-}
-
-parse_kaptainsignal() {
-  local Kaptainsignal
-  local Command Argument Functionmode Functionoption Stackdir Newstackdir Projecthome
-  local Image
-  
-  Kaptainsignal="${1:-}"
-  Stackdir="$(storeinfo dump stackshotdir)"
-  Projecthome="$(storeinfo dump projecthome)"
-  
-  case $Kaptainsignal in
-    refreshbutton) 
-      #kaptain_update
-      storeinfo drop showimage
-      storeinfo "refreshgui_main=yes"
-    ;;
-    cmdbreak)
-      note "Sending BREAK to current action"
-      storeinfo "cmdbreak=yes"
-    ;;
-    choosedirguibutton)
-      stackshot_selector &
-    ;;
-    opendirbutton)
-      xdg-open "${Stackdir:-$Projecthome}" &
-    ;;
-    delete*) 
-      cmd -f $(tr -d ":" <<< "$Kaptainsignal") -t "$Stackdir"
-    ;;
-    show_video*)
-      Image="$(echo "$Kaptainsignal" | cut -d: -f2-)"
-      Image="$Stackdir/video/*.$Image*"
-      showimage "$(fileglob "$Image")"
-    ;;
-    showimage*)
-      Image="$(cut -d: -f2 <<< "$Kaptainsignal")"
-      showimage "$(fileglob "$Stackdir/evaluate/*$Image*")"
-    ;;
-    show*)
-      showimage "$Stackdir/${Kaptainsignal#show}/*"
-    ;;
-    
-    fuseconfig)
-      fuse_config &
-    ;;
-    fuse*)
-      Functionmode=$(askkaptain fusemodecombo)
-      cmd -f $Kaptainsignal -t $Stackdir -m $Functionmode    
-    ;;
-    evaluatemagick|compose)
-      cmd -f $Kaptainsignal -t $Stackdir
-    ;;
-    evaluatefuse)
-      Functionoption=$(askkaptain evaluatecombo)
-      cmd -f $Kaptainsignal -t "$Stackdir" -g "$(fuse_glob $Functionoption)"
-    ;;
-    sharpen_evaluate)
-      cmd -f sharpenevaluate -o 3x1 -t "$Stackdir"
-    ;;
-    
-    *magick|*compose|*evaluate|*fuse)
-      Command="$Kaptainsignal"
-      Command="${Command%magick}"
-      Command="${Command%evaluate}"
-      Command="${Command%evaluate}"
-      Command="${Command%fuse}"
-      Functionmode="$(askkaptain -c "${Command}modecombo")"
-      Functionoption="$(askkaptain -c "${Command}combo")"
-      case "$Command" in
-        applyall) 
-          Functionoption="$(getbatch1)"
-          Kaptainsignal="wizard${Kaptainsignal#applyall}"
-        ;;
-        meanbalance)
-          Functionoption="mean"
-          Kaptainsignal="whitebalance${Kaptainsignal#meanbalance}"
-        ;;
-        animation)
-          Functionmode="${Functionmode}:$(askkaptain "animationfusecombo")"
-      esac
-      Command="${Command%_}"
-      
-      cmd -f "$Kaptainsignal" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
-    ;;
-    
-    align_vidstabbutton)
-      Functionoption="$(askkaptain "align_vidstabcombo")"
-      cmd -f align_vidstab -m "10" -o "$Functionoption" -t "$Stackdir"
-      cmd -f align_vidstab -m "5"  -o ""                -t "$Stackdir"
-      cmd -f align_vidstab -m "1"  -o ""                -t "$Stackdir"
-    ;;
-    
-    runbatch1) 
-      runbatch1 "$Stackdir"
-      note "Batch 1 is ready."
-    ;;
-    runbatch2) 
-      runbatch2 "$Stackdir"
-      note "Batch 2 is ready."
-    ;;
-    runbatch3) 
-      runbatch3 "$Stackdir"
-      note "Batch 3 is ready."
-    ;;
-    runbatchprocessing)
-      askkaptain "runbatch1" >/dev/null && runbatch1 "$Stackdir"
-      askkaptain "runbatch2" >/dev/null && runbatch2 "$Stackdir"
-      askkaptain "runbatch3" >/dev/null && runbatch3 "$Stackdir"
-      note "Batch all is ready."
-    ;;
-    *)
-      failure "Unknown signal: $Kaptainsignal"
-    ;;
-  esac
 }
 
 ## sub GUIs
@@ -3189,6 +3214,128 @@ start 'Choose geometry' -> frameset ;
 
 #### headquarter
 
+parse_kaptainsignal() {
+  local Kaptainsignal
+  local Command Argument Functionmode Functionoption Stackdir Newstackdir Projecthome
+  local Image
+  
+  Kaptainsignal="${1:-}"
+  Stackdir="$(storeinfo dump stackshotdir)"
+  Projecthome="$(storeinfo dump projecthome)"
+  
+  case $Kaptainsignal in
+    refreshbutton) 
+      #kaptain_update
+      storeinfo drop showimage
+      storeinfo "refreshgui_main=yes"
+    ;;
+    cmdbreak)
+      note "Sending BREAK to current action"
+      storeinfo "cmdbreak=yes"
+    ;;
+    choosedirguibutton)
+      stackshot_selector &
+    ;;
+    opendirbutton)
+      xdg-open "${Stackdir:-$Projecthome}" &
+    ;;
+    delete*) 
+      cmd -f $(tr -d ":" <<< "$Kaptainsignal") -t "$Stackdir"
+    ;;
+    show_video*)
+      Image="$(echo "$Kaptainsignal" | cut -d: -f2-)"
+      Image="$Stackdir/video/*.$Image*"
+      showimage "$(fileglob "$Image")"
+    ;;
+    showimage*)
+      Image="$(cut -d: -f2 <<< "$Kaptainsignal")"
+      showimage "$(fileglob "$Stackdir/evaluate/*$Image*")"
+    ;;
+    show*)
+      showimage "$Stackdir/${Kaptainsignal#show}/*"
+    ;;
+    
+    fuseconfig)
+      fuse_config &
+    ;;
+    fuse*)
+      Functionmode=$(askkaptain fusemodecombo)
+      cmd -f $Kaptainsignal -t $Stackdir -m $Functionmode    
+    ;;
+    evaluatemagick|compose)
+      cmd -f $Kaptainsignal -t $Stackdir
+    ;;
+    evaluatefuse)
+      Functionoption=$(askkaptain evaluatecombo)
+      cmd -f $Kaptainsignal -t "$Stackdir" -g "$(fuse_glob $Functionoption)"
+    ;;
+    sharpen_evaluate)
+      cmd -f sharpenevaluate -o 3x1 -t "$Stackdir"
+    ;;
+    
+    *magick|*compose|*evaluate|*fuse)
+      Command="$Kaptainsignal"
+      Command="${Command%magick}"
+      Command="${Command%evaluate}"
+      Command="${Command%evaluate}"
+      Command="${Command%fuse}"
+      Functionmode="$(askkaptain -c "${Command}modecombo")"
+      Functionoption="$(askkaptain -c "${Command}combo")"
+      case "$Command" in
+        applyall) 
+          Functionoption="$(getbatch1)"
+          Kaptainsignal="wizard${Kaptainsignal#applyall}"
+        ;;
+        meanbalance)
+          Functionoption="mean"
+          Kaptainsignal="whitebalance${Kaptainsignal#meanbalance}"
+        ;;
+        animation)
+          Functionmode="${Functionmode}:$(askkaptain "animationfusecombo")"
+      esac
+      Command="${Command%_}"
+      
+      cmd -f "$Kaptainsignal" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+    ;;
+    
+    align_vidstabbutton)
+      Functionoption="$(askkaptain "align_vidstabcombo")"
+      cmd -f align_vidstab -m "10" -o "$Functionoption" -t "$Stackdir"
+      cmd -f align_vidstab -m "5"  -o ""                -t "$Stackdir"
+      cmd -f align_vidstab -m "1"  -o ""                -t "$Stackdir"
+    ;;
+    align_aisbutton)
+      Functionmode="$(askkaptain "align_aismodecombo")"
+      Functionoption="$(askkaptain "align_aiscombo")"
+      cmd -f align_ais -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+      #cmd -f align_vidstab -m "5"  -o ""                -t "$Stackdir"
+      #cmd -f align_vidstab -m "1"  -o ""                -t "$Stackdir"
+    ;;
+    
+    runbatch1) 
+      runbatch1 "$Stackdir"
+      note "Batch 1 is ready."
+    ;;
+    runbatch2) 
+      runbatch2 "$Stackdir"
+      note "Batch 2 is ready."
+    ;;
+    runbatch3) 
+      runbatch3 "$Stackdir"
+      note "Batch 3 is ready."
+    ;;
+    runbatchprocessing)
+      askkaptain "runbatch1" >/dev/null && runbatch1 "$Stackdir"
+      askkaptain "runbatch2" >/dev/null && runbatch2 "$Stackdir"
+      askkaptain "runbatch3" >/dev/null && runbatch3 "$Stackdir"
+      note "Batch all is ready."
+    ;;
+    *)
+      failure "Unknown signal: $Kaptainsignal"
+    ;;
+  esac
+}
+
 cmd() {
   local Arg Command
   
@@ -3218,7 +3365,7 @@ stack_cmd() {
       eval set -- $Command 
       
       #sendkaptain "wizardcmd=' $*'"
-      showpercent "0" "100"
+      showpercent busy
       storeinfo "status=work"
       
       parse_cmd "$@"
@@ -3254,8 +3401,8 @@ parse_cmd() {
     deletebackups) myrmdir "$Targetdir"/*.bak ; Return=0 ;;
     delete*)       myrmdir "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
-    align_vidstab)
-      batch_function -f align_vidstab -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
+    align_*)
+      batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
     ;;
     animation*|brightness*|contrast*|crop*|cuberotate*|gamma*|kuwahara*|level*|prepare*|sharpen*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
@@ -3403,7 +3550,7 @@ main() {
   storeinfo "gallerydir=$Gallerydir"
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
-  storeinfo "rmcache=yes"
+  #storeinfo "rmcache=yes"
   
   fuse_declare
   [ -e "$Configfile" ] && source "$Configfile"
