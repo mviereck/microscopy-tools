@@ -71,17 +71,17 @@ Dependencies:
  - dialog
  - gphoto2
 
-## Examples
+## Example
 
-Image of pollen. Generated with the tools from this repository and a [microscope from Hund/Wetzlar](https://www.hund.de/en/). Camera Canon EOS 1000d. Stackshot result of 69 single captures with slightly different focus:
+Image of pollen. Generated with the tools from this repository and a [microscope from Hund/Wetzlar](https://www.hund.de/en/). Camera Canon EOS 1000D. Stackshot result of 240 single captures with slightly different focus:
 
 ![screenshot](example.jpg)
 
-Overview of source stack of fused pollen image above:
+Iconified excerpt of source stackshot:
 
 ![screenshot](sourcetable.jpg)
 
-Animated video of the top of a hemp flower hair, generated from 108 single captures in dark-field microscopy:
+Animated video:
 
 ![screenshot](animate.gif)
 
