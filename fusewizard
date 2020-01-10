@@ -3508,7 +3508,7 @@ create_cachefiles() {
 
 check_dependencies() {
   local Dependency
-  for Dependency in kaptain convert enfuse ffmpeg geeqie viewnior $Imgruler; do
+  for Dependency in kaptain convert enfuse ffmpeg geeqie viewnior align_image_stack $Imgruler; do
     command -v $Dependency >/dev/null || failure "Dependency $Dependency not found. Please install $Dependency."
   done
   ffmpeg 2>&1 | grep -q libvidstab || failure "Dependency libvidstab in ffmpeg not found. Please install ffmpeg with vidstab."
@@ -3550,7 +3550,7 @@ main() {
   storeinfo "gallerydir=$Gallerydir"
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
-  #storeinfo "rmcache=yes"
+  storeinfo "rmcache=yes"
   
   fuse_declare
   [ -e "$Configfile" ] && source "$Configfile"

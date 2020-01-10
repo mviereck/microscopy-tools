@@ -3,11 +3,11 @@
 Tools for microscopy and image focus stacking.
 
  - Tools ready for use:
-   - [imgruler](#imgruler): Draw a ruler or micrometer into an image (Terminal)
+   - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image (Terminal)
  - Tools in active development, beta stage:
-   - [fusewizard](#fusewizard): Combine focus stack images. (GUI)
-   - [ardustack](#ardustack): Shoot focus stackshots with stepper motor and camera. (GUI)
-   - [camcfg](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
+   - [`fusewizard`](#fusewizard): Combine focus stack images. (GUI)
+   - [`ardustack`](#ardustack): Shoot focus stackshots with stepper motor and camera. (GUI)
+   - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
    
 `fusewizard` and `ardustack` need some further development and documentation before they can be recommended for general use.
 However, if you are already interested to try them out, please give me some feedback in the [issue tracker](https://github.com/mviereck/microscopy-tools/issues) and I'll help to set them up.
@@ -23,44 +23,56 @@ Runs on Linux, macOS and (in Cygwin) on MS Windows.
 Considered to be ready for general use.
 
 Dependencies:
- - imagemagick
+ - `imagemagick`
 
 ## fusewizard
 
 GUI frontend for image foto stacking with enfuse. In active development, beta stage.
 
 Provides:
- - Image preprocessing with imagemagick to enhance contrast and sharpiness. 
- - Image alignment with ffmpeg/[vidstab](https://github.com/georgmartius/vid.stab).
- - Multiple combinings of stackshot images with enfuse. Further combining of results with imagemagick.
- - Targets to generate overall sharp images and animated videos of focus stackshots.
+ - Image preprocessing with `imagemagick` to enhance contrast and sharpness. 
+ - Image alignment with `ffmpeg`/[vidstab](https://github.com/georgmartius/vid.stab) or `align_image_stack`.
+ - Generating multiple overall sharp images from stackshot with `enfuse`. Further combining of these results with `imagemagick`.
+ - Animated videos of focus stackshots.
  
-Expects a folder `stackshot` containing the source images. `stackshot` should be in an empty parent folder. The images in `stackshot` won't be changed.
+Expects a folder with name `stackshot` containing the source images. `stackshot` should be in an otherwise empty parent folder. The images in `stackshot` won't be changed.
+Folder structure:
+```
+-.
+ |--somedir--.
+              |--stackshot--.
+                            |--img001.jpg
+                            |--img002.jpg
+                            |--img003.jpg
+              
+```
+`fusewizard` will create further subfolders in `somedir` containing intermediate and final results.
 
 Dependencies:
- - enfuse
- - ffmpeg
- - geeqie
- - imagemagick
- - imgruler
- - [kaptain](https://github.com/mviereck/kaptain)
- - viewnior
+ - `align_image_stack` (hugin tools)
+ - `enfuse`
+ - `ffmpeg`
+ - `geeqie`
+ - `imagemagick`
+ - [`imgruler`](#imgruler)
+ - [`kaptain`](https://github.com/mviereck/kaptain)
+ - `viewnior`
  
 ## ardustack
 GUI for foto stacking with a stepper motor controlled by an Arduino and a camera connected on USB. Beta stage, in active development.
 Features:
- - Camera control with gphoto2 for preview videos and tethered shooting.
+ - Camera control with `gphoto2` for preview videos and tethered shooting.
  - Stepper motor control for focus adjustment.
  - Automated focus stackshots combining camera and stepper motor.
  
-`pololu_a4988.ino` is the code in use to control the stepper motor driver with an Arduino.
+`pololu_a4988.ino` is my code to control my stepper motor driver with an Arduino. The control commands send by `ardustack` to Arduino can be customized in `ardustack` configuration dialog.
 
 Dependencies:
- - ffmpeg
- - geeqie
- - gphoto2
- - hugin-tools (align_image_stack)
- - [kaptain](https://github.com/mviereck/kaptain)
+ - `ffmpeg`
+ - `geeqie`
+ - `gphoto2`
+ - `align_image_stack` (hugin tools)
+ - [`kaptain`](https://github.com/mviereck/kaptain)
  
 ## camcfg
 `dialog` frontend for `gphoto2` camera configuration. Reads possible configurations of a camera and provides a dialog in terminal to choose desired settings. Beta stage, already useable.
@@ -68,12 +80,14 @@ Dependencies:
  - `camcfg ENTRY` shows configuration of entry ENTRY. Example: `camcfg iso`
  
 Dependencies:
- - dialog
- - gphoto2
+ - `dialog`
+ - `gphoto2`
 
 ## Example
-
-Image of pollen. Generated with the tools from this repository and a [microscope from Hund/Wetzlar](https://www.hund.de/en/). Camera Canon EOS 1000D. Stackshot result of 240 single captures with slightly different focus:
+Image of pollen. Generated with `ardustack` and `fusewizard`. 
+Technic: Microscope from [Hund/Wetzlar](https://www.hund.de/en/) with a stepper motor and an arduino. 
+Camera: Canon EOS 1000D. 
+Stackshot result of 240 single captures with slightly different focus:
 
 ![screenshot](example.jpg)
 
@@ -86,13 +100,17 @@ Animated video:
 ![screenshot](animate.gif)
 
 ## Related tools
+
 ### Free and Open Source
- - rawtherapee: RawTherapee is an advanced program for developing raw photos and for processing
-non-raw photos.
- - entangle: Entangle provides a graphical interface for "tethered shooting", aka
+ - `enfuse`: Enfuse blends differently exposed images of the same scene into a nice output
+image. Used by `fusewizard`.
+ - `entangle`: Entangle provides a graphical interface for "tethered shooting", aka
 taking photographs with a digital camera completely controlled from the
 computer.
- - MacroFusion: GUI for enfuse. Fork with some bug fixes: https://github.com/mviereck/macrofusion
+ - `macrofusion`: GUI for stacking software `enfuse`. Fork with some bug fixes: https://github.com/mviereck/macrofusion
+ - `rawtherapee`: RawTherapee is an advanced program for developing raw photos and for processing
+non-raw photos.
+
 ### Closed Source freeware
  - [CombineZP](https://combinezp.software.informer.com/): Stacker for MS Windows. Works with wine on Linux, too.
  - [Picolay](http://www.picolay.de/): Stacker for MS Windows. Works with wine on Linux, too.
