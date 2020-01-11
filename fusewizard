@@ -69,6 +69,11 @@ storepid() {
   echo "$(ps -p ${1:-} -h -o pid -o comm)" >> $Storepidfile
 }
 
+storefd() {
+  # store file descriptor numbers
+  echo "${1:-}" >> $Storefdfile
+}
+
 showmessage() {
   sendkaptain "wizardlog='${1:-}'"
 }
@@ -373,7 +378,7 @@ setup_workdir() {
       #Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
     ;;
     
-    align*|brightness*|cuberotate*|sharpen*|level*|contrast*|crop*|gamma*|stretch*|kuwahara*|prepare*|ruler*|wizard*)
+    align*|brightness*|contrast*|crop*|cuberotate*|gamma*|level*|ruler*|sharpen*|statistic*|stretch*|wizard*)
       Sourcedir="$Targetprevdir"
       Destinationdir="$Targetnewdir"
     ;;
@@ -498,24 +503,26 @@ batch_function() {
   Function="${Function%_}"
   
   case "$Function" in
-    brightness|contrast|gamma|kuwahara|level|prepare|sharpen|stretch|wizard)
+    brightness|contrast|gamma|level|prepare|sharpen|statistic|stretch|wizard)
+      Functionoption="$Functionmode $Functionoption"
       Functionmode="$Function"
       Function="wizard"
     ;;
   esac
+  Functionoption="${Functionoption# }"
   
   checkvar           -D "$Function" Sourcedir      "$Sourcedir"        || return 1
   checkvar           -d "$Function" Destinationdir "$Destinationdir"   || return 1
   case $Function in
     undo|compose) ;;
-    *) checkvar         $Function Sourcefileglob "$Sourcefileglob"   || return 1 ;;
+    *) checkvar         $Function Sourcefileglob   "$Sourcefileglob"   || return 1 ;;
   esac
   case $Function in
-    wizard) checkvar    $Function Functionmode   "$Functionmode"     || return 1 ;;
+    wizard) checkvar    $Function Functionmode     "$Functionmode"     || return 1 ;;
   esac
   case $Function in
     align*|crop|undo|whitebalance)
-      checkvar       -d $Function Cachedir       "$Cachedir"         || return 1 ;;
+      checkvar       -d $Function Cachedir         "$Cachedir"         || return 1 ;;
   esac
   
   [ -z "$Functionmode" ] && case "$Function" in
@@ -612,12 +619,13 @@ parse_batchoptions() {
 
 getbatch1() {
   local Command= Line Argument
-  for Line in contrast sharpen kuwahara brightness gamma level stretch wizard; do
+  for Line in gamma level contrast sharpen brightness stretch statistic wizard; do
     Argument="$(askkaptain "$Line")"
     case $Line in
       brightness) Line="-brightness-contrast" ;;
       contrast)   Line="-sigmoidal-contrast" ;;
       sharpen)    Line="-adaptive-sharpen" ;;
+      statistic)  Line="-statistic" ; Argument="$(askkaptain statisticmodecombo) $(askkaptain statisticcombo)" ;;
       stretch)    Line="-contrast-stretch" ;;
       wizard)     Line="" ;;
       *)          Line="-$Line" ;;
@@ -1242,7 +1250,7 @@ calc_autogamma() {
   
   parse_batchoptions "$@" || return 1
   
-  Meanimage="$Cachedir/autogamma.mean"
+  Meanimage="$Cachedir/autogamma.mean.jpg"
   
   note "calc_autogamma: Generating mean image"
   nice convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence mean "$Meanimage" || return 1
@@ -1758,8 +1766,8 @@ wizard() {
   [ "$Functionoption" ] || case "$Function" in
     brightness) Functionoption="10x10" ;;
     contrast)   Functionoption="3x50%" ;;
+    statistic)  Functionoption="median 5" ;;
     gamma)      Functionoption="auto" ;;
-    kuwahara)   Functionoption="1.5" ;;
     level)      Functionoption="auto" ;;
     sharpen)    Functionoption="6x2" ;;
     stretch)    Functionoption="0%" ;;
@@ -1774,7 +1782,7 @@ wizard() {
     ;;
     brightness)  Functionmode="-brightness-contrast" ;;
     contrast)    Functionmode="-sigmoidal-contrast" ;;
-    kuwahara)    Functionmode="-kuwahara" ;;
+    statistic)   Functionmode="-statistic" ;;
     sharpen)     Functionmode="-adaptive-sharpen" ;;
     stretch)     Functionmode="-contrast-stretch" ;;
     wizard)      Functionmode="" ;;
@@ -2280,6 +2288,8 @@ multicore() {
     note "multicore: Low memory. Waiting for $Multicore_processcount running processes to finish. Need: $Mem_needed, Available: $Multicore_memorymax"
     multicore_wait || return 1
   }
+  
+  storeinfo test cmdbreak && return 1
 
   Multicore_processcount=$((Multicore_processcount +1))
 
@@ -2356,9 +2366,9 @@ start "fusewizard '$Version'" -> frameset;
           cmdpercent                         -> @icon ;
           wizardlog                          -> @text="" ;
       
-      batchblock1 "batch block 1: prepare stackshot images in directory magick" -> cropline @text="convert options" contrastline sharpenline kuwaharaline brightnessline gammaline levelline stretchline wizardline applyallline;
+      batchblock1 "batch block 1: prepare stackshot images in directory magick" -> cropline @text="imagemagick options" gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline applyallline;
         gammaline:beside                                      -> gamma gammamagick gammafuse gammaevaluate;
-          gammacombo                                            -> @combow("auto","0.2","0.3","0.4","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
+          gammacombo                                            -> @combow("auto","0.2","0.3","0.4","0.454545","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
           gammamagick                                           -> @button="magick" ;
           gammaevaluate                                         -> @button="evaluate" ;
           gammafuse                                             -> @button="fuse" ;
@@ -2370,23 +2380,24 @@ start "fusewizard '$Version'" -> frameset;
           levelfuse                                             -> @button="fuse" ;
           level:beside                "level"                   -> levelcombo | ! "";
         contrastline:beside                                   -> contrast contrastmagick contrastfuse contrastevaluate;
-          contrastcombo                                         -> @combow("1x50%","2x50%","3x50%","4x50%","5x50%","6x50%")="6x50%" ;
+          contrastcombo                                         -> @combow("2x50%","3x50%","4x50%","5x50%","3x30%","3x70%")="3x50%" ;
           contrastmagick                                        -> @button="magick" ;
           contrastevaluate                                      -> @button="evaluate" ;
           contrastfuse                                          -> @button="fuse" ;
           contrast:beside             "sigmoidal-contrast"      -> contrastcombo | "";
-        kuwaharaline:beside                                   -> kuwahara kuwaharamagick kuwaharafuse kuwaharaevaluate;
-          kuwaharacombo                                         -> @combow("1.2","1.5","2.0","2.5","3.0","4.0","5.0")="1.5" ;
-          kuwaharamagick                                        -> @button="magick" ;
-          kuwaharaevaluate                                      -> @button="evaluate" ;
-          kuwaharafuse                                          -> @button="fuse" ;
-          kuwahara:beside             "kuwahara"                -> kuwaharacombo | ! "";
         sharpenline:beside                                    -> sharpen sharpenmagick sharpenfuse sharpenevaluate;
-          sharpencombo                                          -> @combow("3x1","6x2","6x4","8x4")="6x4" ;
+          sharpencombo                                          -> @combow("3x1","6x2","8x4","12x6")="8x4" ;
           sharpenmagick                                         -> @button="magick" ;
           sharpenevaluate                                       -> @button="evaluate" ;
           sharpenfuse                                           -> @button="fuse" ;
           sharpen:beside              "adaptive-sharpen"        -> sharpencombo | "";
+        statisticline:beside                                  -> statistic statisticmodecombo statisticcombo statisticmagick statisticfuse statisticevaluate;
+          statisticmodecombo                                    -> @combow("gradient","maximum","minimum","mean","median","mode","nonpeak","rms","standarddeviation")="median" ;
+          statisticcombo                                        -> @combow("1","2","3","4","5","6","7","8","9","10")="5" ;
+          statisticmagick                                       -> @button="magick" ;
+          statisticevaluate                                     -> @button="evaluate" ;
+          statisticfuse                                         -> @button="fuse" ;
+          statistic:beside            "statistic"               -> "on" | ! "";
         brightnessline:beside                                 -> brightness brightnessmagick brightnessfuse brightnessevaluate;
           brightnesscombo                                       -> @combow("0x5","0x10","0x15","5x0","5x5","5x10","5x15","10x0","10x5","10x10","15x15","20x20")="10x10" ;
           brightnessmagick                                      -> @button="magick" ;
@@ -2400,7 +2411,7 @@ start "fusewizard '$Version'" -> frameset;
           stretchfuse                                           -> @button="fuse" ;
           stretch:beside              "stretch-contrast"        -> stretchcombo | ! "";
         wizardline:beside                                     -> wizard wizardmagick wizardfuse wizardevaluate;
-          wizardcombo                                           -> @combow("","-negate","-despeckle","-edge 3","-emboss 3","-enhance","-equalize","-canny 3","-charcoal 3")="" ;
+          wizardcombo                                           -> @combow("","-statistic median 5","-negate","-despeckle","-edge 3","-kuwahara 2.0","-enhance","-equalize","-canny 3","-charcoal 3")="" ;
           wizardmagick                                          -> @button="magick" ;
           wizardevaluate                                        -> @button="evaluate" ;
           wizardfuse                                            -> @button="fuse" ;
@@ -2764,6 +2775,8 @@ $Image"
   mkfifo   $Kaptainstdoutfifo
   exec  {Kaptainstdin}<>$Kaptainstdinfifo
   exec  {Kaptainstdout}<>$Kaptainstdoutfifo
+  storefd ${Kaptainstdin}
+  storefd ${Kaptainstdout}
   
   echo "#! /usr/bin/kaptain
 start 'fusewizard stackshot selector' -> frame1 frame2;
@@ -2849,6 +2862,8 @@ fuse_config() {
   mkfifo   $Kaptainstdoutfifo
   exec  {Kaptainstdin}<>$Kaptainstdinfifo
   exec  {Kaptainstdout}<>$Kaptainstdoutfifo
+  storefd ${Kaptainstdin}
+  storefd ${Kaptainstdout}
   
   note "Preparing fuse GUI"
   
@@ -3074,6 +3089,8 @@ cropgeometry_interactive() {
   mkfifo   $Kaptainstdoutfifo
   exec  {Kaptainstdin}<>$Kaptainstdinfifo
   exec  {Kaptainstdout}<>$Kaptainstdoutfifo
+  storefd ${Kaptainstdin}
+  storefd ${Kaptainstdout}
   
   echo "#! /usr/bin/kaptain
 start 'Choose geometry' -> frameset ;
@@ -3405,7 +3422,7 @@ parse_cmd() {
       batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
     ;;
-    animation*|brightness*|contrast*|crop*|cuberotate*|gamma*|kuwahara*|level*|prepare*|sharpen*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
+    animation*|brightness*|contrast*|crop*|cuberotate*|gamma*|level*|prepare*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
       batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
@@ -3479,6 +3496,7 @@ declare_variables() {
   
   Storeinfofile=$Wizardcache/store.info
   Storepidfile=$Wizardcache/store.pid
+  Storefdfile=$Wizardcache/store.fd
   Storefusefile=$Wizardlocalshare/fuse_storevalue
     
   Imgruler="$(command -v imgruler)"
@@ -3491,14 +3509,18 @@ create_cachefiles() {
   mkdir -p $Percentcachedir
   
   :>       $Wizardlogfile
+  :>       $Storefdfile
 
   mkfifo   $Kaptainstdinfifo
   exec  {Kaptainstdin}<>$Kaptainstdinfifo
+  storefd ${Kaptainstdin}
   mkfifo   $Kaptainstdoutfifo
   exec  {Kaptainstdout}<>$Kaptainstdoutfifo
+  storefd ${Kaptainstdout}
   
   mkfifo   $Commandstackfifo
   exec  {FDcmd}<>$Commandstackfifo
+  storefd ${FDcmd}
   
   :>       $Storeinfofile
   :>       $Storepidfile
@@ -3524,10 +3546,14 @@ finish() {
     Comm="$(awk '{print $2}' <<< "$Line")"
     [ "$(ps -p $Pid -h -o comm)" = "$Comm" ] && kill $Pid
   done <$Storepidfile
+  
+  while read Line; do
+    exec {Line}>&-
+  done <$Storefdfile
 
-  exec {Kaptainstdin}>&-
-  exec {Kaptainstdout}>&-
-  exec {FDcmd}>&-
+  #exec {Kaptainstdin}>&-
+  #exec {Kaptainstdout}>&-
+  #exec {FDcmd}>&-
   
   rm -R $Wizardcache
   
@@ -3542,7 +3568,7 @@ main() {
   declare_variables
   create_cachefiles
   
-  exec 1> >(tee -a $Wizardlogfile) 2>&1
+  #exec 1> >(tee -a $Wizardlogfile) 2>&1
   
   storeinfo "cache=$Wizardcache"
   storeinfo "projecthome=$Projecthome"
