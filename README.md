@@ -103,10 +103,12 @@ Animated video:
 
 ### Free and Open Source
  - `enfuse`: Enfuse blends differently exposed images of the same scene into a nice output
-image. Used by `fusewizard`.
+image. Command line tool, used by `fusewizard`.
  - `entangle`: Entangle provides a graphical interface for "tethered shooting", aka
 taking photographs with a digital camera completely controlled from the
 computer.
+ - `gphoto2`: The gphoto2 library allows access and control of various digital camera models. Command line tool, used by `fusewizard`.
+ - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `fusewizard`.
  - `macrofusion`: GUI for stacking software `enfuse`. Fork with some bug fixes: https://github.com/mviereck/macrofusion
  - `rawtherapee`: RawTherapee is an advanced program for developing raw photos and for processing
 non-raw photos.
