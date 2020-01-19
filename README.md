@@ -1,4 +1,4 @@
-r# microscopy-tools
+# microscopy-tools
 
 Tools for microscopy and image focus stacking.
 
@@ -107,8 +107,9 @@ image. Command line tool, used by `stackfuser`.
  - `entangle`: Entangle provides a graphical interface for "tethered shooting", aka
 taking photographs with a digital camera completely controlled from the
 computer.
- - `gphoto2`: The gphoto2 library allows access and control of various digital camera models. Command line tool, used by `stackfuser`.
- - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `stackfuser`.
+ - `gphoto2`: The gphoto2 library allows access and control of various digital camera models. Command line tool, used by `stackshooter`.
+ - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `stackfuser` and `stackshooter`.
+ - `hugin`: Hugin is a panorama photo stitching program for several overlapping photos taken from the same location, transforming the photos to one larger image.
  - `macrofusion`: GUI for stacking software `enfuse`. Fork with some bug fixes: https://github.com/mviereck/macrofusion
  - `rawtherapee`: RawTherapee is an advanced program for developing raw photos and for processing
 non-raw photos.
