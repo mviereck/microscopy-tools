@@ -1,15 +1,15 @@
-# microscopy-tools
+r# microscopy-tools
 
 Tools for microscopy and image focus stacking.
 
  - Tools ready for use:
    - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image (Terminal)
  - Tools in active development, beta stage:
-   - [`fusewizard`](#fusewizard): Combine focus stack images. (GUI)
-   - [`ardustack`](#ardustack): Shoot focus stackshots with stepper motor and camera. (GUI)
+   - [`stackfuser`](#stackfuser): Combine focus stack images. (GUI)
+   - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
    
-`fusewizard` and `ardustack` need some further development and documentation before they can be recommended for general use.
+`stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
 However, if you are already interested to try them out, please give me some feedback in the [issue tracker](https://github.com/mviereck/microscopy-tools/issues) and I'll help to set them up.
 
 
@@ -25,7 +25,7 @@ Considered to be ready for general use.
 Dependencies:
  - `imagemagick`
 
-## fusewizard
+## stackfuser
 
 GUI frontend for image foto stacking with enfuse. In active development, beta stage.
 
@@ -46,7 +46,7 @@ Folder structure:
                             |--img003.jpg
               
 ```
-`fusewizard` will create further subfolders in `somedir` containing intermediate and final results.
+`stackfuser` will create further subfolders in `somedir` containing intermediate and final results.
 
 Dependencies:
  - `align_image_stack` (hugin tools)
@@ -58,14 +58,14 @@ Dependencies:
  - [`kaptain`](https://github.com/mviereck/kaptain)
  - `viewnior`
  
-## ardustack
+## stackshooter
 GUI for foto stacking with a stepper motor controlled by an Arduino and a camera connected on USB. Beta stage, in active development.
 Features:
  - Camera control with `gphoto2` for preview videos and tethered shooting.
  - Stepper motor control for focus adjustment.
  - Automated focus stackshots combining camera and stepper motor.
  
-`pololu_a4988.ino` is my code to control my stepper motor driver with an Arduino. The control commands send by `ardustack` to Arduino can be customized in `ardustack` configuration dialog.
+`pololu_a4988.ino` is my code to control my stepper motor driver with an Arduino. The control commands send by `stackshooter` to Arduino can be customized in `stackshooter` configuration dialog.
 
 Dependencies:
  - `ffmpeg`
@@ -84,7 +84,7 @@ Dependencies:
  - `gphoto2`
 
 ## Example
-Image of pollen. Generated with `ardustack` and `fusewizard`. 
+Image of pollen. Generated with `stackshooter` and `stackfuser`. 
 Technic: Microscope from [Hund/Wetzlar](https://www.hund.de/en/) with a stepper motor and an arduino. 
 Camera: Canon EOS 1000D. 
 Stackshot result of 240 single captures with slightly different focus:
@@ -103,12 +103,12 @@ Animated video:
 
 ### Free and Open Source
  - `enfuse`: Enfuse blends differently exposed images of the same scene into a nice output
-image. Command line tool, used by `fusewizard`.
+image. Command line tool, used by `stackfuser`.
  - `entangle`: Entangle provides a graphical interface for "tethered shooting", aka
 taking photographs with a digital camera completely controlled from the
 computer.
- - `gphoto2`: The gphoto2 library allows access and control of various digital camera models. Command line tool, used by `fusewizard`.
- - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `fusewizard`.
+ - `gphoto2`: The gphoto2 library allows access and control of various digital camera models. Command line tool, used by `stackfuser`.
+ - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `stackfuser`.
  - `macrofusion`: GUI for stacking software `enfuse`. Fork with some bug fixes: https://github.com/mviereck/macrofusion
  - `rawtherapee`: RawTherapee is an advanced program for developing raw photos and for processing
 non-raw photos.

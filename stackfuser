@@ -1,6 +1,6 @@
 #! /bin/bash
 #
-# fusewizard - generate sharp aligned images from stackshots
+# stackfuser - generate sharp aligned images from stackshots
 #
 
 Version="0.1"
@@ -8,23 +8,23 @@ Version="0.1"
 #### Messages, Log
 
 error() {
-  echo "fusewizard ERROR: $*" >&2
+  echo "stackfuser ERROR: $*" >&2
   showmessage "$(shortpath "$*")"
   showpercent error
 }
 failure() {
-  echo "fusewizard Failure: $*" >&2
+  echo "stackfuser Failure: $*" >&2
   showmessage "$(shortpath "$*")"
 }
 note() {
-  echo "fusewizard: $*"  >&2
+  echo "stackfuser: $*"  >&2
   showmessage "$(shortpath "$*")"
 }
 verbose() {
-  echo "fusewizard: $*" >&2
+  echo "stackfuser: $*" >&2
 }
 warning() {
-  echo "fusewizard WARNING: $*" >&2
+  echo "stackfuser WARNING: $*" >&2
   showmessage "$(shortpath "$*")"
 }
 
@@ -1930,7 +1930,7 @@ $Permillebottom" | sort -n | head -n1)
     [ "1.0000" = "$Permilletop" ]    && Skiptop=yes
     [ "1.0000" = "$Permillebottom" ] && Skipbottom=yes
     
-    # break signal of fusewizard
+    # break signal of stackfuser
     ifcmdbreak && return 1
 
     # Out-of-range error
@@ -2348,7 +2348,7 @@ multicore_break() {
 kaptaingrammar() {
   echo '#! /usr/bin/kaptain
 
-start "fusewizard '$Version'" -> frameset;
+start "stackfuser '$Version'" -> frameset;
   frameset:framed                    -> topframe bottomframe;
     topframe                           -> batchoptionframe ;
       batchoptionframe:beside            -> batchframeleft  batchframeright;
@@ -2779,7 +2779,7 @@ $Image"
   storefd ${Kaptainstdout}
   
   echo "#! /usr/bin/kaptain
-start 'fusewizard stackshot selector' -> frame1 frame2;
+start 'stackfuser stackshot selector' -> frame1 frame2;
   frame1:tree -> $Allprojects ;
 $Entrylist
   frame2:beside -> refresh windowpos close ;
@@ -2813,7 +2813,7 @@ $Entrylist
         ;;
         windowpos)
           # check width of main window
-          Windowgeometry="$(xdotool search --name "fusewizard $Version" getwindowgeometry)"
+          Windowgeometry="$(xdotool search --name "stackfuser $Version" getwindowgeometry)"
           Windowwidth="$(grep  Geometry <<< "$Windowgeometry" | rev | cut -d' ' -f1 | rev | cut -dx -f1)"
           Windowheight="$(grep Geometry <<< "$Windowgeometry"  | rev | cut -d' ' -f1 | rev | cut -dx -f2)"
           Windowxpos="$(grep   Position <<< "$Windowgeometry"| cut -d: -f2 | cut -d' ' -f2 | cut -d, -f1)"
@@ -2896,7 +2896,7 @@ fuse_config() {
   
   # grammar
   echo "#! /usr/bin/kaptain
-start 'fusewizard enfuse settings' -> frameset;
+start 'stackfuser enfuse settings' -> frameset;
   frameset:beside     -> leftframe rightframe ;
     leftframe:framed:beside    -> formatline fusetoworkon $(for Setcount in $(seq $Fusesetnumber); do echo set$Setcount; done) ;
     rightframe:framed   -> fusesettings @fill runfuseframe;
@@ -3456,12 +3456,12 @@ parse_cmd() {
 
 declare_variables() {
 
-  Wizardcache="$HOME/.cache/fusewizard"
-  Wizardlocalshare="$HOME/.local/share/fusewizard"
+  Wizardcache="$HOME/.cache/stackfuser"
+  Wizardlocalshare="$HOME/.local/share/stackfuser"
   Percentcachedir="$Wizardlocalshare/percent"
   Thumbnaildir="$Wizardlocalshare/thumbnails"
   
-  Configfile="$HOME/.config/fusewizardrc"
+  Configfile="$HOME/.config/stackfuserrc"
   
   Projecthome="$HOME/Bilder/ardustack"
   Gallerydir="$HOME/Gallery"
@@ -3484,9 +3484,9 @@ declare_variables() {
 
   Commandstackfifo=$Wizardcache/commandstack
   
-  Wizardlogfile=$Wizardcache/fusewizard.log
+  Wizardlogfile=$Wizardcache/stackfuser.log
   
-  Wizardmessagefile=$Wizardcache/fusewizard.message.log
+  Wizardmessagefile=$Wizardcache/stackfuser.message.log
   
   Kaptaingrammarfile=$Wizardcache/kaptain.grammar
   Kaptainstdinfifo=$Wizardcache/kaptain.stdin 

@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# ardustack - Generate stackshots with arduino + steppermotor + camera
+# stackshooter - Generate stackshots with arduino + steppermotor + camera
 #
 # License: MIT
 #
@@ -12,10 +12,10 @@
 #  - kaptain  https://github.com/mviereck/kaptain
 
 note() {
-  echo "${Colgreen}ardustack:${Colnorm} $*" >&2
+  echo "${Colgreen}stackshooter:${Colnorm} $*" >&2
 }
 failure() {
-  echo "${Colred}ardustack FAILURE:${Colnorm} $*" >&2
+  echo "${Colred}stackshooter FAILURE:${Colnorm} $*" >&2
   statusmessage "$*"
   storeinfo "error=yes"
   showpercent error
@@ -24,7 +24,7 @@ statusmessage() {
   sendkaptain "status='$(cut -c1-35 <<< "$*")'"
 }
 
-isnum() {                       # check if $1 is a number
+isnum() {
   [ "1" = "$(awk -v a="${1:-}" 'BEGIN {print (a == a + 0)}')" ]
 }
 showimage() {
@@ -92,6 +92,33 @@ storepid() {
   echo "$(ps -p ${1:-} -h -o pid -o comm)" >> $Storepidfile
 }
 
+storevar() {
+  local Line
+  set -x
+  while read Line; do
+    eval "$Line"       >&${StorevarFDout}
+  done                 <&${StorevarFDin}
+  failure "storevar(): terminated"
+}
+getvar() {
+  local Result
+  echo "echo \$${1:-}" >&${StorevarFDin}
+  read -t1 Result      <&${StorevarFDout} || failure "getvar(): No response for ${1:-}"
+  echo "$Result"
+}
+setvar() {
+  echo "export ${1:-}" >&${StorevarFDin}
+}
+dumpvar() {
+  local Line Var
+  echo "env"           >&${StorevarFDin}
+  while read -t1 Line; do
+    Var="$(cut -d= -f1 <<< "$Line")"
+    [ "$Var" = "${Var^^}" ] || echo "$Line"
+  done                 <&${StorevarFDout}
+}
+
+
 get_latest_file() {
   ## Funktion: Neueste erstellte Datei ermitteln
   # $1 kann Suche auf Dateien DATEI* begrenzen
@@ -119,7 +146,7 @@ setup_projectdir() {
   local Projecthome Projectname Projectdate
   
   Projecthome="$(storeinfo dump storagebasedir)"
-  Projecthome="${Projecthome:-$HOME/ardustack}"
+  Projecthome="${Projecthome:-$HOME/stackshooter}"
   Projectbasename="$(storeinfo dump projectbasename)"
   Projectbasename="${Projectbasename:-project}"
   Projectdate="$(date +%Y-%m-%d)"
@@ -207,6 +234,29 @@ device_check() {
 }
 
 position_store() {
+  setvar "poscurrent=$Poscurrent"
+  setvar "pos1=$Pos1"
+  setvar "pos2=$Pos2"
+  setvar "stepwidth=$Stepwidth"
+  
+  sendkaptain "poscurrent='$Poscurrent'"
+  sendkaptain "pos1='$Pos1'"
+  sendkaptain "pos2='$Pos2'"
+  sendkaptain "difference='$(awk "BEGIN {print $Pos2 - $Pos1 }" )'"
+  sendkaptain "distance='$(awk   "BEGIN {print $Stepdistance * ($Pos2 - $Pos1) }") $Stepunit'"
+  sendkaptain "steps='$(awk      "BEGIN {print ($Pos2 - $Pos1)/$Stepwidth }" )'"
+  sendkaptain "stepmy='$(awk     "BEGIN {print $Stepdistance * $Stepwidth}") $Stepunit'"
+}
+position_read() {
+  local Newstepwidth
+  Poscurrent="$(getvar poscurrent)"
+  Pos1="$(getvar pos1)"
+  Pos2="$(getvar pos2)"
+  Stepwidth="$(getvar stepwidth)"
+  Stepdistance="$(getvar stepdistance)"
+  Stepunit="$(getvar stepunit)"
+}
+position_storeXXX() {
   storeinfo "poscurrent=$Poscurrent"
   storeinfo "pos1=$Pos1"
   storeinfo "pos2=$Pos2"
@@ -220,7 +270,7 @@ position_store() {
   sendkaptain "steps='$(awk      "BEGIN {print ($Pos2 - $Pos1)/$Stepwidth }" )'"
   sendkaptain "stepmy='$(awk     "BEGIN {print $Stepdistance * $Stepwidth}") $Stepunit'"
 }
-position_read() {
+position_readXXX() {
   local Newstepwidth
   
   Poscurrent="$(storeinfo dump poscurrent)"
@@ -347,7 +397,7 @@ stackshot() {
   Stackshotdelay="${Stackshotdelay:-500}"
   
   Storagebasedir="$(storeinfo dump storagebasedir)"
-  Storagebasedir="${Storagebasedir:-$HOME/ardustack}"
+  Storagebasedir="${Storagebasedir:-$HOME/stackshooter}"
   
   Projectname="$(storeinfo dump projectname)"
   Projectname="${Projectname:-project_unknown}"
@@ -439,7 +489,7 @@ stackshot() {
     
     [ "$Medianmode" = "yes" ] && {
       note "stack: Aligning captures of step $Loopcount."
-      align_image_stack -m --use-given-order -a ${Mediangroup}_align $Mediangroup*.jpg 2>&1 | grep -v "Unable to read EXIF data"
+      align_image_stack -l --use-given-order -a ${Mediangroup}_align $Mediangroup*.jpg 2>&1 | grep -v "Unable to read EXIF data"
       Latestimage="$Stackshotdir/stackshot/${Fotomodus}_$(printf "%04d" $Loopcount).jpg"
       $Convert ${Mediangroup}_align*.tif -evaluate-sequence median "$Latestimage"
       showimage "$Latestimage"
@@ -584,7 +634,7 @@ video() {
   
   GPHOTO2="gphoto2 --capture-movie=$Videodauer --stdout"
   FFMPEG="ffmpeg -loglevel error -i -  -c:v copy -f mpjpeg  - "
-  FFPLAY="ffplay -loglevel error -sync ext -window_title ardustack-Video $FFPLAY_LOCATION - "
+  FFPLAY="ffplay -loglevel error -sync ext -window_title stackshooter-Video $FFPLAY_LOCATION - "
 
   case $Videomode in
     preview)
@@ -718,7 +768,7 @@ keyboard_watch() {
 #### GUI
 kaptaingrammar() {
   echo "#! /usr/bin/kaptain
-start 'ardustack'                                -> mainframe;
+start 'stackshooter'                                -> mainframe;
 mainframe:framed                                   -> naviframe cameraframe stackshotframe statusframe;
   naviframe 'Device'                                 -> device stepline pos0line pos1line pos2line positionline poscalcline keyboardline;
     device:beside             'Device file'            -> devicecombo devicebutton ;
@@ -1012,16 +1062,16 @@ configgui() {
   exec  {Kaptainstdout}<>"$Kaptainstdoutfifo"
   
   echo '#! /usr/bin/kaptain
-start "ardustack configuration" -> frameset ;
+start "stackshooter configuration" -> frameset ;
   frameset:framed                                         -> fileframe signalframe unitframe saveframe;
     fileframe                 "Files"                       -> storagebasedir projectbasename stackshotbasename devicebasename;
-      storagebasedir:beside     "Storage base dir:"           -> @directory="$HOME/Bilder/ardustack" ;
+      storagebasedir:beside     "Storage base dir:"           -> @directory="$HOME/Bilder/stackshooter" ;
       projectbasename:beside    "Project base name:"          -> @string="project" ;
       stackshotbasename:beside  "Stackshot base name:"        -> @string="st" ;
       devicebasename:beside     "Device base name to search:" -> @string="/dev/ttyACM" ;
     signalframe               "Device signals"              -> signaltext signalline1 signalline2;
-      signaltext -> @text="Commands send to device by ardustack. \n
-  ardustack expects an arbitray string as a response from device. \n
+      signaltext -> @text="Commands send to device by stackshooter. \n
+  stackshooter expects an arbitray string as a response from device. \n
   signal stepin should cause n=stepwidth steps forwards. \n
   signal stepout should cause n=stepwidth steps backwards. \n
   signal stepwidth will be send as w,25 to transmit the value. \n
@@ -1134,16 +1184,19 @@ start "Running stackshot"   -> frameset ;
   rm   "$Kaptainstdinfifo"
   rm   "$Kaptainstdoutfifo"
 }
+
 #### main
 declare_variables() {
-  Cachefolder=/tmp/ardustack
-  Localsharefolder="$HOME/.local/share/ardustack"
+  Cachefolder=/tmp/stackshooter
+  Localsharefolder="$HOME/.local/share/stackshooter"
   Percentcachedir="$Localsharefolder/percent"
   Configfolder="$HOME/.config"
-  Configfile="$Configfolder/ardustack.cfg"
+  Configfile="$Configfolder/stackshooter.cfg"
   
   Storeinfofile="$Cachefolder/store.info"
   Storepidfile="$Cachefolder/store.pid"
+  Storevarinfifo="$Cachefolder/storevar.in.fifo"
+  Storevaroutfifo="$Cachefolder/storevar.out.fifo"
   
   Kaptainpid=""
   Kaptaingrammar="$Cachefolder/kaptain.grammar"
@@ -1203,6 +1256,11 @@ setup_cache() {
   :> $Storeinfofile
   :> $Storepidfile
   
+  mkfifo $Storevarinfifo
+  mkfifo $Storevaroutfifo
+  exec {StorevarFDin}<>$Storevarinfifo
+  exec {StorevarFDout}<>$Storevaroutfifo
+  
   mkfifo "$Devicemessagefifo"
   
   mkfifo "$Keyboardfifo"
@@ -1239,11 +1297,12 @@ finish() {
   # close device
   exec 6>&-
   
+  exec {StorevarFDin}>&-
+  exec {StorevarFDout}>&-
+  
   # close kaptain fifos
   exec  {Kaptainstdin}>&-
   exec  {Kaptainstdout}>&-
-  rm   "$Kaptainstdinfifo"
-  rm   "$Kaptainstdoutfifo"
   
   # remove cache
   rm -R $Cachefolder
@@ -1261,7 +1320,7 @@ main() {
   declare_variables
   setup_cache
   
-  storeinfo "storagebasedir=$HOME/Bilder/ardustack"
+  storeinfo "storagebasedir=$HOME/Bilder/stackshooter"
   storeinfo "projectbasename=project"
   storeinfo "stackshotbasename=st"
   storeinfo "devicebasename=$Devicebasename"
@@ -1281,7 +1340,14 @@ main() {
   storeinfo "stepdefaultwidth=$Stepdefaultwidth"
   
   read_configfile "$Configfile"
+  
+  storevar & storepid $!
+  while read Line; do
+    echo "storeinfo: $Line"
+    setvar "$Line"
+  done <$Storeinfofile
   position_store
+  dumpvar
   
   Keyboardid=$(xinput | grep "AT Translated" | cut -d= -f2 | awk '{print $1}')
   [ "$Keyboardid" ] && {
@@ -1296,4 +1362,3 @@ finish
 
 # Todo:
 # break button + percent in separate stack gui
-# replace align_image_stack ?
