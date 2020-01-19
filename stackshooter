@@ -94,7 +94,6 @@ storepid() {
 
 storevar() {
   local Line
-  set -x
   while read Line; do
     eval "$Line"       >&${StorevarFDout}
   done                 <&${StorevarFDin}
@@ -1343,11 +1342,10 @@ main() {
   
   storevar & storepid $!
   while read Line; do
-    echo "storeinfo: $Line"
+    echo "configuration: $Line"
     setvar "$Line"
   done <$Storeinfofile
   position_store
-  dumpvar
   
   Keyboardid=$(xinput | grep "AT Translated" | cut -d= -f2 | awk '{print $1}')
   [ "$Keyboardid" ] && {
