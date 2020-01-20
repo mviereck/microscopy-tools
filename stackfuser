@@ -49,9 +49,6 @@ storeinfo() {
   #   $1 test
   #   $2 codeword
   #
-  # note: sed -i causes file permission issues if called in container in Cygwin, compare ticket #187
-  #       chmod 666 for $Sharefolder could probably fix that. (FIXME)
-  #
   [ -e "$Storeinfofile" ] || return 1
   case "${1:-}" in
     dump) grep     "^${2:-}="   $Storeinfofile | sed "s/^${2:-}=//" ;;      # dump entry
@@ -440,7 +437,7 @@ showimage() {
     ;;
     1) 
       Image="$Imagelist"
-      #Shrinkimage="$Wizardcache/showimage.png"
+      #Shrinkimage="$Maincachedir/showimage.png"
       #convert "$Image" -scale 800x800\> "$Shrinkimage" 
       #sendkaptain "showimage('$Shrinkimage')=''" 
       #sendkaptain "showimagename='$(shortpath "$Image")'"
@@ -2185,7 +2182,7 @@ fuse_getvalue() {
   esac
   
   
-  Value="$(grep "^$Number:$Entry:" $Storefusefile | cut -d: -f3)"
+  Value="$(grep "^$Number:$Entry:" $Enfuseconfigfile | cut -d: -f3)"
   [ -z "$Value" ] && Value="$(fuse_defaultvalue "$Entry")"
   
   case $Mode in
@@ -2240,11 +2237,11 @@ fuse_storevalue() {
   Value="${3:-}"
   
   Entry="$(tr -d "-" <<< "$Entry")"
-  Content="$(sed "/^$Number:$Entry:/d" $Storefusefile)"
+  Content="$(sed "/^$Number:$Entry:/d" $Enfuseconfigfile)"
   [ "$Value" = "$(fuse_defaultvalue "$Entry")" ] && Line="" || Line="$Number:$Entry:$Value"
   [ "$Line" ] && Content="$(sort -V <<< "$Content
 $Line")"
-  echo "$Content" > $Storefusefile
+  echo "$Content" > $Enfuseconfigfile
   return 0
 }
 
@@ -2644,7 +2641,7 @@ kaptain_update_preview() {
 showpercent() {
   local Percent Part Full Percentimage
   
-  Percentimage="$Wizardcache/percent.png"
+  Percentimage="$Maincachedir/percent.png"
   Part="${1:-}"
   Full="${2:-1}"
   
@@ -3456,14 +3453,16 @@ parse_cmd() {
 
 declare_variables() {
 
-  Wizardcache="$HOME/.cache/stackfuser"
-  Wizardlocalshare="$HOME/.local/share/stackfuser"
-  Percentcachedir="$Wizardlocalshare/percent"
-  Thumbnaildir="$Wizardlocalshare/thumbnails"
+  Cachebasedir="$HOME/.cache/stackshots"
+  Maincachedir="$Cachebasedir/stackfuser"
+  Percentcachedir="$Cachebasedir/percent"
+  Thumbnaildir="$Cachebasedir/thumbnails"
   
-  Configfile="$HOME/.config/stackfuserrc"
+  Configdir="$HOME/.config/stackshots"
+  Configfile="$Configdir/stackfuser.cfg"
+  Enfuseconfigfile="$Configdir/stackfuser.enfuse.cfg"
   
-  Projecthome="$HOME/Bilder/ardustack"
+  Projecthome="$HOME/Bilder/stackshots"
   Gallerydir="$HOME/Gallery"
   
   Multicore_maxprocesses="$(nproc)"
@@ -3482,31 +3481,31 @@ declare_variables() {
 
   Convert="nice convert -quality 100%"
 
-  Commandstackfifo=$Wizardcache/commandstack
+  Commandstackfifo=$Maincachedir/commandstack
   
-  Wizardlogfile=$Wizardcache/stackfuser.log
+  Wizardlogfile=$Maincachedir/stackfuser.log
   
-  Wizardmessagefile=$Wizardcache/stackfuser.message.log
+  Wizardmessagefile=$Maincachedir/stackfuser.message.log
   
-  Kaptaingrammarfile=$Wizardcache/kaptain.grammar
-  Kaptainstdinfifo=$Wizardcache/kaptain.stdin 
-  Kaptainstdoutfifo=$Wizardcache/kaptain.stdout
+  Kaptaingrammarfile=$Maincachedir/kaptain.grammar
+  Kaptainstdinfifo=$Maincachedir/kaptain.stdin 
+  Kaptainstdoutfifo=$Maincachedir/kaptain.stdout
   Kaptainstdin=""
   Kaptainstdout=""
   
-  Storeinfofile=$Wizardcache/store.info
-  Storepidfile=$Wizardcache/store.pid
-  Storefdfile=$Wizardcache/store.fd
-  Storefusefile=$Wizardlocalshare/fuse_storevalue
+  Storeinfofile=$Maincachedir/store.info
+  Storepidfile=$Maincachedir/store.pid
+  Storefdfile=$Maincachedir/store.fd
     
   Imgruler="$(command -v imgruler)"
   [ -z "$Imgruler" ] && Imgruler="$(dirname $0)/imgruler"
 }
 
 create_cachefiles() {
-  mkdir -p $Wizardcache
+  mkdir -p $Maincachedir
   mkdir -p $Thumbnaildir
   mkdir -p $Percentcachedir
+  mkdir -p $Configdir
   
   :>       $Wizardlogfile
   :>       $Storefdfile
@@ -3525,7 +3524,7 @@ create_cachefiles() {
   :>       $Storeinfofile
   :>       $Storepidfile
   
-  touch    $Storefusefile
+  touch    $Enfuseconfigfile
 }
 
 check_dependencies() {
@@ -3555,7 +3554,7 @@ finish() {
   #exec {Kaptainstdout}>&-
   #exec {FDcmd}>&-
   
-  rm -R $Wizardcache
+  rm -R $Maincachedir
   
   exit 0
 }
@@ -3570,7 +3569,7 @@ main() {
   
   #exec 1> >(tee -a $Wizardlogfile) 2>&1
   
-  storeinfo "cache=$Wizardcache"
+  storeinfo "cache=$Maincachedir"
   storeinfo "projecthome=$Projecthome"
   storeinfo "stackshotdir=$Projecthome"
   storeinfo "gallerydir=$Gallerydir"

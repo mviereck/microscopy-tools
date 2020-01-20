@@ -17,12 +17,13 @@ note() {
 failure() {
   echo "${Colred}stackshooter FAILURE:${Colnorm} $*" >&2
   statusmessage "$*"
-  storeinfo "error=yes"
+  setvar "error=yes"
   showpercent error
 }
 statusmessage() {
-  sendkaptain "status='$(cut -c1-35 <<< "$*")'"
+  sendkaptain "status='$(cut -c1-37 <<< "$*")'"
 }
+
 
 isnum() {
   [ "1" = "$(awk -v a="${1:-}" 'BEGIN {print (a == a + 0)}')" ]
@@ -92,21 +93,10 @@ storepid() {
   echo "$(ps -p ${1:-} -h -o pid -o comm)" >> $Storepidfile
 }
 
-storevar() {
-  local Line
-  while read Line; do
-    eval "$Line"       >&${StorevarFDout}
-  done                 <&${StorevarFDin}
-  failure "storevar(): terminated"
-}
-getvar() {
-  local Result
-  echo "echo \$${1:-}" >&${StorevarFDin}
-  read -t1 Result      <&${StorevarFDout} || failure "getvar(): No response for ${1:-}"
-  echo "$Result"
-}
-setvar() {
-  echo "export ${1:-}" >&${StorevarFDin}
+
+dropvar() {
+  echo "unset  ${1:-}"   >&${StorevarFDin}
+  echo "export ${1:-}"   >&${StorevarFDin}
 }
 dumpvar() {
   local Line Var
@@ -116,7 +106,28 @@ dumpvar() {
     [ "$Var" = "${Var^^}" ] || echo "$Line"
   done                 <&${StorevarFDout}
 }
-
+getvar() {
+  local Result
+  echo "echo \$${1:-}"   >&${StorevarFDin}
+  read -t1 Result        <&${StorevarFDout} || failure "getvar(): No response for ${1:-}"
+  milisleep 10
+  echo "$Result"
+}
+setvar() {
+  echo "export '${1:-}'" >&${StorevarFDin}
+}
+storevar() {
+  local Line
+  while read Line; do
+    eval "$Line"         >&${StorevarFDout}
+  done                   <&${StorevarFDin}
+  failure "storevar(): terminated"
+}
+testvar() {
+  local Value
+  Value="$(getvar "${1:-}")"
+  test -n "$Value"
+}
 
 get_latest_file() {
   ## Funktion: Neueste erstellte Datei ermitteln
@@ -144,15 +155,15 @@ get_free_filenumber(){
 setup_projectdir() {
   local Projecthome Projectname Projectdate
   
-  Projecthome="$(storeinfo dump storagebasedir)"
+  Projecthome="$(getvar storagebasedir)"
   Projecthome="${Projecthome:-$HOME/stackshooter}"
-  Projectbasename="$(storeinfo dump projectbasename)"
+  Projectbasename="$(getvar projectbasename)"
   Projectbasename="${Projectbasename:-project}"
   Projectdate="$(date +%Y-%m-%d)"
 
   [ "${1:-}" ] && Projectname="${1:-}.${Projectdate}"
   Projectname="${Projectname:-${Projectbasename}.${Projectdate}}"
-  storeinfo "projectname=$Projectname"
+  setvar "projectname=$Projectname"
 
   cd "$Projecthome"
   mkdir -p "$Projectname"
@@ -164,10 +175,10 @@ device_init() {
   
   local Device Watchdevicepid i Return
 
-  Device="$(storeinfo dump device)"
+  Device="$(getvar device)"
   
   # Stop a running watching instance
-  Watchdevicepid="$(storeinfo dump pidwatchdevice)"
+  Watchdevicepid="$(getvar pidwatchdevice)"
   ps -p "$Watchdevicepid" >/dev/null 2>&1 && {
     kill $Watchdevicepid
     wait $Watchdevicepid 2>/dev/null
@@ -179,7 +190,7 @@ device_init() {
     failure "Device not found: $Device"
     Device="$Devicefallback"
     failure "Fallback device: $Device"
-    storeinfo "device=$Device"
+    setvar "device=$Device"
   }
 
   # Daten von Device auf fifo umleiten
@@ -187,7 +198,7 @@ device_init() {
   exec 6<>$Device
   cat <&6 >>$Devicemessagefifo & Watchdevicepid=$!
   storepid $Watchdevicepid
-  storeinfo "pidwatchdevice=$Watchdevicepid"
+  setvar "pidwatchdevice=$Watchdevicepid"
     
   # Seriellen Port initialisieren
   stty -F $Device raw ispeed 9600 ospeed 9600 cs8 -hupcl -ignpar -cstopb -echo || {
@@ -217,7 +228,7 @@ device_wait() {
   read -t ${1:-$Devicetimeout} -r Answer <&6
   
   [ "$Answer" ] || {
-    failure "Device $(storeinfo dump device): TIMEOUT"
+    failure "Device $(getvar device): TIMEOUT"
     echo "TIMEOUT"
     return 1
   }
@@ -254,30 +265,6 @@ position_read() {
   Stepwidth="$(getvar stepwidth)"
   Stepdistance="$(getvar stepdistance)"
   Stepunit="$(getvar stepunit)"
-}
-position_storeXXX() {
-  storeinfo "poscurrent=$Poscurrent"
-  storeinfo "pos1=$Pos1"
-  storeinfo "pos2=$Pos2"
-  storeinfo "stepwidth=$Stepwidth"
-  
-  sendkaptain "poscurrent='$Poscurrent'"
-  sendkaptain "pos1='$Pos1'"
-  sendkaptain "pos2='$Pos2'"
-  sendkaptain "difference='$(awk "BEGIN {print $Pos2 - $Pos1 }" )'"
-  sendkaptain "distance='$(awk   "BEGIN {print $Stepdistance * ($Pos2 - $Pos1) }") $Stepunit'"
-  sendkaptain "steps='$(awk      "BEGIN {print ($Pos2 - $Pos1)/$Stepwidth }" )'"
-  sendkaptain "stepmy='$(awk     "BEGIN {print $Stepdistance * $Stepwidth}") $Stepunit'"
-}
-position_readXXX() {
-  local Newstepwidth
-  
-  Poscurrent="$(storeinfo dump poscurrent)"
-  Pos1="$(storeinfo dump pos1)"
-  Pos2="$(storeinfo dump pos2)"
-  Stepwidth="$(storeinfo dump stepwidth)"
-  Stepdistance="$(storeinfo dump stepdistance)"
-  Stepunit="$(storeinfo dump stepunit)"
 }
 
 stepcmd() {
@@ -370,17 +357,17 @@ stackshot() {
   # -c   Serie aus richtigen Fotos / Captures.
   
   local Posmem=
-  local Stackshotdelay Anzahl Count= Loopcount=0
+  local Stackshotdelay Anzahl Count= Loopcount=0 Warten
   local Fotomodus Ordnername= Glob
   local Mediannumber Medianmode Mediancount
   local Stackshotdir Stackshotbasename Stackshotname Projectname Storagebase
   
   gphoto2_cmd check || {
-    storeinfo drop stackshot
+    dropvar stackshot
     return 1
   }
   device_check      || {
-    storeinfo drop stackshot
+    dropvar stackshot
     return 1
   }
   
@@ -388,27 +375,27 @@ stackshot() {
   [ "$1" = "-p" ] && Fotomodus="preview" && shift
   Fotomodus="${Fotomodus:-preview}"
   
-  Mediannumber="$(storeinfo dump mediannumber)"
+  Mediannumber="$(getvar mediannumber)"
   Mediannumber="${Mediannumber:-1}"
   [ "$Mediannumber" = "1" ] && Medianmode="no" || Medianmode="yes"
   
-  Stackshotdelay="$(storeinfo dump stackshotdelay)"
+  Stackshotdelay="$(getvar stackshotdelay)"
   Stackshotdelay="${Stackshotdelay:-500}"
   
-  Storagebasedir="$(storeinfo dump storagebasedir)"
+  Storagebasedir="$(getvar storagebasedir)"
   Storagebasedir="${Storagebasedir:-$HOME/stackshooter}"
   
-  Projectname="$(storeinfo dump projectname)"
+  Projectname="$(getvar projectname)"
   Projectname="${Projectname:-project_unknown}"
 
-  Stackshotbasename="$(storeinfo dump stackshotbasename)"
+  Stackshotbasename="$(getvar stackshotbasename)"
   Stackshotbasename="${Stackshotbasename:-st}" ### FIXME declare in GUI
   
   cd "$Storagebasedir/$Projectname"
   Stackshotname="${Stackshotbasename}_$(get_free_filenumber "$Stackshotbasename")"
   
   Stackshotdir="$Storagebasedir/$Projectname/$Stackshotname"
-  storeinfo "lateststack=$Stackshotdir"
+  setvar "lateststack=$Stackshotdir"
   mkdir -p "$Stackshotdir/stackshot"
   [ "$Medianmode" = "yes" ] && mkdir -p $Stackshotdir/median.source
   cd $Stackshotdir
@@ -434,23 +421,44 @@ stackshot() {
   position_read  
   [ "$Poscurrent" = "$Pos1" ] || { 
     failure "stack: Error: Missed position $Pos1: $Poscurrent." 
-    storeinfo drop stackshot
+    dropvar stackshot
     return 1 
   }
   
   # Auf Start warten
-  sleep $(storeinfo dump startdelay)
+  #sleep $(getvar startdelay)
+  Warten="$(getvar startdelay)"
+  Count=0
+  while [ "$Count" -lt "$Warten" ] ; do
+    statusmessage "Delay before start: Countdown $((Warten-Count))s"
+    showpercent $Count $Warten
+    testvar cmdbreak && break
+    Count="$((Count+1))"
+    sleep 1
+  done
+  showpercent busy
   
+  statusmessage "mirror up"
   gphoto2_cmd mirrorup
   
   while [ "$Poscurrent" -lt "$Pos2" ] ; do
     Loopcount=$((Loopcount +1 ))
-    storeinfo test cmdbreak && break
+    testvar cmdbreak && break
     showpercent $Loopcount $Anzahl
+    statusmessage "$Fotomodus $Loopcount / $Anzahl"
     
     for ((Mediancount=1 ; Mediancount<=$Mediannumber ; Mediancount++)); do
-      milisleep "$Stackshotdelay"
+      # wait after step before capture
+      Count=1
+      while [ "$((Count*1000))" -lt "$Stackshotdelay" ] ; do
+        statusmessage "Delay before next capture: Countdown $((Stackshotdelay/1000-Count))s"
+        Count="$((Count+1))"
+        sleep 1
+      done
+      Count="$((Count-1))"
+      milisleep $((Stackshotdelay - Count*1000))
 
+      # capture
       case $Fotomodus in
         capture) 
           Filename="$(LC_ALL=C gphoto2_wrap --capture-image-and-download --force-overwrite | grep 'Saving file as')"
@@ -459,7 +467,7 @@ stackshot() {
           Latestimage="$Stackshotdir/stackshot/capture_$(printf "%04d" $Loopcount).jpg"
           [ -e "$Filename" ] || {
             failure "Capture failed"
-            storeinfo drop stackshot
+            dropvar stackshot
             return 1
           }
           mv "$Filename" "$Latestimage"
@@ -468,26 +476,29 @@ stackshot() {
           gphoto2_wrap --capture-preview
           Latestimage="$Stackshotdir/stackshot/preview_$(printf "%04d" $Loopcount).jpg"
           mv -f capture_preview.jpg "$Latestimage"
-          storeinfo "latestimage=$Latestimage"
+          setvar "latestimage=$Latestimage"
         ;;
       esac
+      
       case $Medianmode in
         yes)
           Mediangroup="$Stackshotdir/median.source/img_$(printf "%04d" $Loopcount)"
           Latestmedian="${Mediangroup}_m$(printf "%02d" $Mediancount).jpg"
           cp $Latestimage $Latestmedian
           note "stack: Image stored as $Latestmedian"
-          storeinfo "latestimage=$Latestmedian"
+          setvar "latestimage=$Latestmedian"
         ;;
         no)
           note "stack: Image stored as $Latestimage"
         ;;
       esac
+      
       showimage "$Latestimage"
     done
     
     [ "$Medianmode" = "yes" ] && {
       note "stack: Aligning captures of step $Loopcount."
+      statusmessage "Aligning median captures of step $Loopcount."
       align_image_stack -l --use-given-order -a ${Mediangroup}_align $Mediangroup*.jpg 2>&1 | grep -v "Unable to read EXIF data"
       Latestimage="$Stackshotdir/stackshot/${Fotomodus}_$(printf "%04d" $Loopcount).jpg"
       $Convert ${Mediangroup}_align*.tif -evaluate-sequence median "$Latestimage"
@@ -495,6 +506,7 @@ stackshot() {
     }
 
     # step in
+    statusmessage "next step"
     stepcmd stepin
     position_read
         
@@ -515,14 +527,14 @@ stackshot() {
   
   note "stack: Ready: Stackshot $Stackshotname with $((Loopcount * Mediannumber)) images in $Loopcount steps."
   note "stack: Location: $Stackshotdir"
-  storeinfo drop stackshot
+  dropvar stackshot
   return 0
 }
 
 #### gphoto2 camera
 gphoto2_wrap() {
   local Cameraport
-  Cameraport="$(storeinfo dump cameraport)"
+  Cameraport="$(getvar cameraport)"
   [ "$Cameraport" ] && Cameraport="--port=$Cameraport"
   note "gphoto2 $Cameraport $@"
   gphoto2 $Cameraport $@ || {
@@ -559,7 +571,7 @@ gphoto2_cmd () {
       # Dateiname mit tatsächlichem Suffix ermitteln. 
       Latestimage="$(pwd)/$(get_latest_file "capture*.jpg")"
       [ "$Latestimage" ] || Latestimage="$(pwd)/$(get_latest_file "capture*")"
-      storeinfo "latestimage=$Latestimage"
+      setvar "latestimage=$Latestimage"
       ;;
     capture-preview)                         # Einzelnes Videobild aufnehmen, ohne daß der Spiegel zuklappt
       ## Funktioniert ab gphoto2 Version >= 2.5.9 ##
@@ -569,7 +581,7 @@ gphoto2_cmd () {
       [ "$Return" = "0" ] && {
         Latestimage="$(pwd)/preview_$(get_free_filenumber preview).jpg"
         mv capture_preview.jpg "$Latestimage"
-        storeinfo "latestimage=$Latestimage"
+        setvar "latestimage=$Latestimage"
       } 
       ;;
     mirrorup)                                 # Viewfinder einschalten = Spiegel hoch
@@ -608,7 +620,7 @@ video() {
   local GPHOTO2 FFMPEG FFPLAY FFPLAY_LOCATION
   local Windowid Windowgeometry Ffplay_x Ffplay_y
 
-  Pidffplay="$(storeinfo dump pidffplay)"
+  Pidffplay="$(getvar pidffplay)"
   [ "$Pidffplay" ] && ps -p "$Pidffplay" >/dev/null 2>&1 && {
     # store window position
     Windowid=$(xdotool search --pid "$Pidffplay" | tail -n1)
@@ -616,17 +628,17 @@ video() {
     grep -q "X=" <<< "$Windowgeometry" && {
       Ffplay_x="$(grep "^X=" <<< "$Windowgeometry" | cut -d= -f2)"
       Ffplay_y="$(grep "^Y=" <<< "$Windowgeometry" | cut -d= -f2)"
-      storeinfo "ffplay_x=$Ffplay_x"
-      storeinfo "ffplay_y=$Ffplay_y"
+      setvar "ffplay_x=$Ffplay_x"
+      setvar "ffplay_y=$Ffplay_y"
     }
     # kill ffplay
     kill $Pidffplay
-    storeinfo drop pidffplay
+    dropvar pidffplay
     Pidffplay=""
   }
 
   # Restore ffplay position
-  storeinfo test ffplay_x && FFPLAY_LOCATION="-left $(storeinfo dump ffplay_x) -top $(storeinfo dump ffplay_y)"
+  testvar ffplay_x && FFPLAY_LOCATION="-left $(getvar ffplay_x) -top $(getvar ffplay_y)"
   
   Videodauer="3600s"
   Videomode="${1:-preview}"
@@ -651,12 +663,12 @@ video() {
     ;;
   esac
   
-  [ "$Pidffplay" ] && ps -p "$Pidffplay" >/dev/null 2>&1 && storeinfo "pidffplay=$Pidffplay" && storepid $Pidffplay
+  [ "$Pidffplay" ] && ps -p "$Pidffplay" >/dev/null 2>&1 && setvar "pidffplay=$Pidffplay" && storepid $Pidffplay
  
 }
 cameralist() {
   local Camera Cameralist Cameralistkaptain
-  Camera="$(storeinfo dump camera)"
+  Camera="$(getvar camera)"
   
   Cameralist="$(gphoto2 --auto-detect | tail -n+3)"
   while read Line; do
@@ -681,12 +693,12 @@ $(echo "$Line" | xargs)"
   
   case $Camera in
     autodetect) 
-      storeinfo drop camera 
-      storeinfo drop cameraport  
+      dropvar camera 
+      dropvar cameraport  
     ;;
     *)
-      storeinfo "camera=$Camera" 
-      storeinfo "cameraport=$Cameraport"
+      setvar "camera=$Camera" 
+      setvar "cameraport=$Cameraport"
     ;;
   esac
 }
@@ -695,11 +707,11 @@ camerainit() {
   local Configlist Kaptainlist Setting Value
   
   Camera="${1:-}"
-  [ -z "$Camera" ] && Camera="$(storeinfo dump camera)"
+  [ -z "$Camera" ] && Camera="$(getvar camera)"
   Cameraport="$(rev <<< "$Camera" | cut -d' ' -f1 | rev)"
   
-  storeinfo "camera=$Camera"
-  storeinfo "cameraport=$Cameraport"
+  setvar "camera=$Camera"
+  setvar "cameraport=$Cameraport"
   
   gphoto2_cmd reset
   gphoto2_cmd check || {
@@ -717,13 +729,13 @@ camerainit() {
       Kaptainlist="$Kaptainlist,'$Line'"
     done <<< "$Configlist"
     Kaptainlist="${Kaptainlist#,}"
-    Value="$(storeinfo dump $Setting)"
+    Value="$(getvar $Setting)"
     [ "$Value" ] && grep -q -x "$Value" <<< "$Configlist" || {
       grep -q -x "1/80" <<< "$Configlist" && Value="1/80"
       grep -q -x "800"  <<< "$Configlist" && Value="800"
       [ -z "$Value" ] && Value="$(head -n1 <<< "$Configlist")"
     }
-    storeinfo "$Setting=$Value"
+    setvar "$Setting=$Value"
     gphoto2_cmd set-config-value $Setting=$Value
     sendkaptain "$Setting($Kaptainlist)='$Value'"
   done
@@ -746,7 +758,7 @@ keyboard_watch() {
     Keyhub=$(awk '{print $2}' <<< $Line)
     Keycode=$(awk '{print $3}' <<< $Line)
     #note "Keycode: $Keycode ; Keyhub: $Keyhub"
-    storeinfo test keyboard_watch && case $Keyhub in
+    testvar keyboard_watch && case $Keyhub in
       press)
         case $Keycode in
           # Durchgehender Lauf von Stepin/Stepout
@@ -817,7 +829,7 @@ mainframe:framed                                   -> naviframe cameraframe stac
     stackshotmedian:beside    'Median captures to delete moved objects:' -> @combo('3','4','5','6','7','8','9','10')='5' | ! "";
     stackshotdelayline:beside                            -> stackshotdelay startdelay;
       stackshotdelay:beside   'Delay between captures (ms):'  -> @combo('100','200','300','400','500','750','1000','1500','2000','2500','3000','4000','5000')='500';
-      startdelay:beside       'Delay before start:'      -> @combo('1s','10s','30s','1m','5m','10m')='1s';
+      startdelay:beside       'Delay before start:'      -> @combo('1','10','30','60','300','600')='1';
   statusframe 'Status'                               -> statusline ;
     statusline:beside                                  -> cmdpercent status config;
       cmdpercent                                         -> @icon ;
@@ -828,14 +840,14 @@ mainframe:framed                                   -> naviframe cameraframe stac
 sendkaptain() {
   # send messages to kaptain over its stdin
 #  note "Send to kaptain: $1"
-  storeinfo test pidkaptain && echo "$1" >&${Kaptainstdin}
+  testvar pidkaptain && echo "$1" >&${Kaptainstdin}
 }
 askkaptain() {
   # ask kaptain for value of $1
   local Answer
   #kaptaingrammar | grep -q "${1:-}" || return 1
   sendkaptain "${1:-}?"
-  storeinfo test pidkaptain && read Answer <&${Kaptainstdout}
+  testvar pidkaptain && read Answer <&${Kaptainstdout}
   [ -z "$Answer" ] && return 1
   echo "$Answer"
   return 0
@@ -871,7 +883,7 @@ runkaptain() {
   #nl -ba $Kaptaingrammar
   
   kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
-  storeinfo "pidkaptain=$Kaptainpid"
+  setvar "pidkaptain=$Kaptainpid"
   storepid $Kaptainpid
 
   position_store
@@ -903,14 +915,14 @@ parse_kaptainsignal() {
   
   statusmessage "$Kaptainsignal"
   showpercent busy
-  storeinfo drop cmdbreak
+  dropvar cmdbreak
 
   # Provide project dir if needed, check settings in GUI
   case $Kaptainsignal in
     *capture*|stackshot*)
-      storeinfo test projectname || setup_projectdir
-      Projecthome="$(storeinfo dump storagebasedir)"
-      Projectname="$(storeinfo dump projectname)"
+      testvar projectname || setup_projectdir
+      Projecthome="$(getvar storagebasedir)"
+      Projectname="$(getvar projectname)"
       cd "$Projecthome/$Projectname"
     ;;
   esac
@@ -928,7 +940,7 @@ parse_kaptainsignal() {
       case $Device in
         autodetect)
           Devicecombo=""
-          Devicebasename="$(storeinfo dump devicebasename)"
+          Devicebasename="$(getvar devicebasename)"
           Devicelist="$(find ${Devicebasename}* 2>/dev/null)"
           for Device in $Devicelist; do
             Devicecombo="$Devicecombo,'$Device'"
@@ -939,26 +951,26 @@ parse_kaptainsignal() {
           sendkaptain "devicecombo($Devicecombo)='$Device'"
         ;;
       esac
-      storeinfo "device=$Device"
+      setvar "device=$Device"
     ;;
     devicebutton*)
-      Device="$(storeinfo dump device)"
+      Device="$(getvar device)"
       case $Device in
         autodetect) 
           parse_kaptainsignal "devicecombo:autodetect"
-          Device="$(storeinfo dump device)"
+          Device="$(getvar device)"
         ;;
       esac
       case $Device in
         autodetect) 
           Device="/dev/null"
-          storeinfo "device=$Device"
+          setvar "device=$Device"
         ;;
       esac
       device_init
       sendkaptain "devicecombo($Devicecombo)='$Device'"
       stepcmd setpos0
-      stepcmd stepwidth $(storeinfo dump stepwidth)
+      stepcmd stepwidth $(getvar stepwidth)
     ;;
     
     camera:autodetect|camera:)
@@ -970,34 +982,34 @@ parse_kaptainsignal() {
     ;;
     zoom*)
       gphoto2_cmd zoom $Argument
-      storeinfo "zoom=$Argument"
+      setvar "zoom=$Argument"
     ;;
     iso*)
       gphoto2_cmd set-config-value iso="$Argument"
-      storeinfo "iso=$Argument"
+      setvar "iso=$Argument"
     ;;
     shutterspeed*)
       gphoto2_cmd set-config-value shutterspeed="$Argument"
-      storeinfo "shutterspeed=$Argument"
+      setvar "shutterspeed=$Argument"
     ;;
     
     capturepreview)
       gphoto2_cmd capture-preview
-      showimage "$(storeinfo dump latestimage)"
+      showimage "$(getvar latestimage)"
     ;;
     capturefullres)
       gphoto2_cmd capture-image-and-download
-      showimage "$(storeinfo dump latestimage)"
+      showimage "$(getvar latestimage)"
     ;;
     
     videostart)
-      storeinfo "videomode=preview"
+      setvar "videomode=preview"
     ;;
     videocapture)
-      storeinfo "videomode=capture"
+      setvar "videomode=capture"
     ;;
     videostop)
-      storeinfo drop videomode
+      dropvar videomode
     ;;
     
     setpos*|gopos*|stepin|stepout) 
@@ -1007,25 +1019,25 @@ parse_kaptainsignal() {
       stepcmd stepwidth $Argument
     ;;
     keyboardline:on)
-      keyboard_stepin  & storeinfo "pidkeyboardstepin=$!"  && storepid $(storeinfo dump pidkeyboardstepin)
-      keyboard_stepout & storeinfo "pidkeyboardstepout=$!" && storepid $(storeinfo dump pidkeyboardstepout)
-      storeinfo "keyboard_watch=yes"
+      keyboard_stepin  & setvar "pidkeyboardstepin=$!"  && storepid $(getvar pidkeyboardstepin)
+      keyboard_stepout & setvar "pidkeyboardstepout=$!" && storepid $(getvar pidkeyboardstepout)
+      setvar "keyboard_watch=yes"
     ;;
     keyboardline:off)
-      storeinfo test pidkeyboardstepin  && kill $(storeinfo dump pidkeyboardstepin)
-      storeinfo test pidkeyboardstepout && kill $(storeinfo dump pidkeyboardstepout)
-      storeinfo drop keyboard_watch
+      testvar pidkeyboardstepin  && kill $(getvar pidkeyboardstepin)
+      testvar pidkeyboardstepout && kill $(getvar pidkeyboardstepout)
+      dropvar keyboard_watch
     ;;
     
     stackshot*)
       setup_projectdir
       Argument="$(askkaptain stackshotmedian)"
       Argument="${Argument:-1}"
-      storeinfo "mediannumber=$Argument"
+      setvar "mediannumber=$Argument"
       Argument="$(askkaptain stackshotdelay)"
-      storeinfo "stackshotdelay=$Argument"
+      setvar "stackshotdelay=$Argument"
       Argument="$(askkaptain startdelay)"
-      storeinfo "startdelay=$Argument"
+      setvar "startdelay=$Argument"
       stackshotgui $Kaptainsignal
     ;;
     config)
@@ -1037,23 +1049,23 @@ parse_kaptainsignal() {
   esac
 
   # restart video
-  storeinfo test videomode && {
-    ps -p "$(storeinfo dump pidffplay)" >/dev/null 2>&1 || video "$(storeinfo dump videomode)"
+  testvar videomode && {
+    ps -p "$(getvar pidffplay)" >/dev/null 2>&1 || video "$(getvar videomode)"
   }
   
-  storeinfo test error || {
+  testvar error || {
     statusmessage ""
     showpercent idle
   }
-  storeinfo drop error
+  dropvar error
 }
 configgui() {
   local Kaptaingrammar Kaptainstdin Kaptainstdout Kaptainstdinfifo Kaptainstdoutfifo Kaptainpid Kaptainsignal
   local Setting
     
-  Kaptaingrammar="$Cachefolder/cfg.grammar"
-  Kaptainstdinfifo="$Cachefolder/cfg.stdin"
-  Kaptainstdoutfifo="$Cachefolder/cfg.stdout"
+  Kaptaingrammar="$Maincachedir/cfg.grammar"
+  Kaptainstdinfifo="$Maincachedir/cfg.stdin"
+  Kaptainstdoutfifo="$Maincachedir/cfg.stdout"
   
   mkfifo   "$Kaptainstdinfifo"
   exec  {Kaptainstdin}<>"$Kaptainstdinfifo"
@@ -1095,7 +1107,7 @@ start "stackshooter configuration" -> frameset ;
   storepid $Kaptainpid
   
   for Setting in storagebasedir projectbasename stackshotbasename devicebasename signalstepin signalstepout signalstepwidth signalcheck stepdistance stepunit ; do
-    sendkaptain "$Setting='$(storeinfo dump $Setting)'"
+    sendkaptain "$Setting='$(getvar $Setting)'"
   done
 
   # watch signals of kaptain
@@ -1129,9 +1141,9 @@ stackshotgui() {
   
   Functionmode="${1:-stackshotpreview}"
   
-  Kaptaingrammar="$Cachefolder/stackshot.grammar"
-  Kaptainstdinfifo="$Cachefolder/stackshot.stdin"
-  Kaptainstdoutfifo="$Cachefolder/stackshot.stdout"
+  Kaptaingrammar="$Maincachedir/stackshot.grammar"
+  Kaptainstdinfifo="$Maincachedir/stackshot.stdin"
+  Kaptainstdoutfifo="$Maincachedir/stackshot.stdout"
   
   mkfifo   "$Kaptainstdinfifo"
   exec  {Kaptainstdin}<>"$Kaptainstdinfifo"
@@ -1140,11 +1152,12 @@ stackshotgui() {
   
   echo '#! /usr/bin/kaptain
 start "Running stackshot"   -> frameset ;
-  frameset  -> info cmdline ;
+  frameset  -> info cmdline status;
     info                -> @text="Running stackshot" ;
     cmdline:beside      -> cmdpercent cmdbreak;
       cmdpercent          -> @icon ;
       cmdbreak            -> @button="break";
+    status              -> @text ;
    
 ' > "$Kaptaingrammar"
 
@@ -1152,7 +1165,7 @@ start "Running stackshot"   -> frameset ;
   storepid $Kaptainpid
   
   showpercent busy
-  storeinfo "stackshot=running"
+  setvar "stackshot=running"
   
   case $Functionmode in
     stackshotpreview) stackshot -p & Stackshotpid=$! ;;
@@ -1162,7 +1175,7 @@ start "Running stackshot"   -> frameset ;
       
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
-    storeinfo test stackshot || break
+    testvar stackshot || break
     read -t1 Kaptainsignal <&${Kaptainstdout}
     [ "$Kaptainsignal" ] && {
       note "Signal from kaptain: $Kaptainsignal"
@@ -1171,7 +1184,7 @@ start "Running stackshot"   -> frameset ;
     [ "$Kaptainsignal" ] && {
       case $Kaptainsignal in
         cmdbreak)
-          storeinfo "cmdbreak=yes"
+          setvar "cmdbreak=yes"
         ;;
       esac
     }
@@ -1186,21 +1199,21 @@ start "Running stackshot"   -> frameset ;
 
 #### main
 declare_variables() {
-  Cachefolder=/tmp/stackshooter
-  Localsharefolder="$HOME/.local/share/stackshooter"
-  Percentcachedir="$Localsharefolder/percent"
-  Configfolder="$HOME/.config"
-  Configfile="$Configfolder/stackshooter.cfg"
+  Cachebasedir="$HOME/.cache/stackshots"
+  Maincachedir="$Cachebasedir/stackshooter"
+  Percentcachedir="$Cachebasedir/percent"
+  Configdir="$HOME/.config/stackshots"
+  Configfile="$Configdir/stackshooter.cfg"
   
-  Storeinfofile="$Cachefolder/store.info"
-  Storepidfile="$Cachefolder/store.pid"
-  Storevarinfifo="$Cachefolder/storevar.in.fifo"
-  Storevaroutfifo="$Cachefolder/storevar.out.fifo"
+  Storeinfofile="$Maincachedir/store.info"
+  Storepidfile="$Maincachedir/store.pid"
+  Storevarinfifo="$Maincachedir/storevar.in.fifo"
+  Storevaroutfifo="$Maincachedir/storevar.out.fifo"
   
   Kaptainpid=""
-  Kaptaingrammar="$Cachefolder/kaptain.grammar"
-  Kaptainstdinfifo="$Cachefolder/kaptain.stdin" 
-  Kaptainstdoutfifo="$Cachefolder/kaptain.stdout"
+  Kaptaingrammar="$Maincachedir/kaptain.grammar"
+  Kaptainstdinfifo="$Maincachedir/kaptain.stdin" 
+  Kaptainstdoutfifo="$Maincachedir/kaptain.stdout"
   
   Latestimage=""
   Latestvideo=""
@@ -1209,7 +1222,7 @@ declare_variables() {
   Devicecombo=""
   Devicetimeout=2
   Devicefallback="/dev/null"
-  Devicemessagefifo="$Cachefolder/device.fifo"
+  Devicemessagefifo="$Maincachedir/device.fifo"
   Devicebasename="/dev/ttyACM"
   
   Poscurrent=0
@@ -1222,10 +1235,10 @@ declare_variables() {
   Stepdefaultwidth="50"
   
   Keyboardid=""
-  Keyboardfifo="$Cachefolder/keyboard.fifo"
+  Keyboardfifo="$Maincachedir/keyboard.fifo"
   Keyboardfd=""
-  Keyboardstepinfile="$Cachefolder/keyboard.stepin"
-  Keyboardstepoutfile="$Cachefolder/keyboard.stepout"
+  Keyboardstepinfile="$Maincachedir/keyboard.stepin"
+  Keyboardstepoutfile="$Maincachedir/keyboard.stepout"
   
   # Command codes send to Arduino. Each command expects an (arbitrary) answer string+newline from arduino.
   # Answers will be shown and can contain sense making messages.
@@ -1247,8 +1260,7 @@ declare_variables() {
   Colnorm="${Esc}[0m"
 }
 setup_cache() {
-  mkdir    "$Cachefolder"
-  mkdir -p "$Localsharefolder"
+  mkdir    "$Maincachedir"
   mkdir -p "$Percentcachedir"
   
   
@@ -1274,13 +1286,13 @@ read_configfile() {
   local Configfile Line
   Configfile="${1:-}"
   while read Line; do
-    storeinfo "$Line"
+    setvar "$Line"
   done < "$Configfile"
-  Ardu_check="$(storeinfo dump signalcheck)"
-  Ardu_stepin="$(storeinfo dump signalstepin)"
-  Ardu_stepout="$(storeinfo dump signalstepout)"
-  Ardu_stepwidth="$(storeinfo dump signalstepwidth)"
-  Ardu_setpos0="$(storeinfo dump signalsetpos0)"
+  Ardu_check="$(getvar signalcheck)"
+  Ardu_stepin="$(getvar signalstepin)"
+  Ardu_stepout="$(getvar signalstepout)"
+  Ardu_stepwidth="$(getvar signalstepwidth)"
+  Ardu_setpos0="$(getvar signalsetpos0)"
 }
 finish() {
   trap - EXIT
@@ -1304,7 +1316,7 @@ finish() {
   exec  {Kaptainstdout}>&-
   
   # remove cache
-  rm -R $Cachefolder
+  rm -R $Maincachedir
   
   exit 0
 }
@@ -1318,33 +1330,33 @@ main() {
   
   declare_variables
   setup_cache
+  storevar & storepid $!
   
-  storeinfo "storagebasedir=$HOME/Bilder/stackshooter"
-  storeinfo "projectbasename=project"
-  storeinfo "stackshotbasename=st"
-  storeinfo "devicebasename=$Devicebasename"
+  setvar "storagebasedir=$HOME/Bilder/stackshots"
+  setvar "projectbasename=project"
+  setvar "stackshotbasename=st"
+  setvar "devicebasename=$Devicebasename"
       
-  storeinfo "iso=800"
-  storeinfo "shutterspeed=1/80"
-  storeinfo "zoom=1"
+  setvar "iso=800"
+  setvar "shutterspeed=1/80"
+  setvar "zoom=1"
   
-  storeinfo "signalstepin=$Ardu_stepin"
-  storeinfo "signalstepout=$Ardu_stepout"
-  storeinfo "signalcheck=$Ardu_check"
-  storeinfo "signalstepwidth=$Ardu_stepwidth"
-  storeinfo "signalsetpos0=$Ardu_setpos0"
+  setvar "signalstepin=$Ardu_stepin"
+  setvar "signalstepout=$Ardu_stepout"
+  setvar "signalcheck=$Ardu_check"
+  setvar "signalstepwidth=$Ardu_stepwidth"
+  setvar "signalsetpos0=$Ardu_setpos0"
   
-  storeinfo "stepdistance=$Stepdistance"
-  storeinfo "stepunit=$Stepunit"
-  storeinfo "stepdefaultwidth=$Stepdefaultwidth"
+  setvar "stepdistance=$Stepdistance"
+  setvar "stepunit=$Stepunit"
+  setvar "stepdefaultwidth=$Stepdefaultwidth"
   
   read_configfile "$Configfile"
   
-  storevar & storepid $!
-  while read Line; do
-    echo "configuration: $Line"
-    setvar "$Line"
-  done <$Storeinfofile
+#  while read Line; do
+#    echo "configuration: $Line"
+#    setvar "$Line"
+#  done <$Storeinfofile
   position_store
   
   Keyboardid=$(xinput | grep "AT Translated" | cut -d= -f2 | awk '{print $1}')
