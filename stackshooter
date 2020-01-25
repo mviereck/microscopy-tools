@@ -11,6 +11,8 @@
 #  - gphoto2
 #  - kaptain  https://github.com/mviereck/kaptain
 
+#### Messages
+
 note() {
   echo "${Colgreen}stackshooter:${Colnorm} $*" >&2
 }
@@ -24,110 +26,18 @@ statusmessage() {
   sendkaptain "status='$(cut -c1-37 <<< "$*")'"
 }
 
+#### Misc
 
 isnum() {
   [ "1" = "$(awk -v a="${1:-}" 'BEGIN {print (a == a + 0)}')" ]
-}
-showimage() {
-  [ -f "${1:-}" ] || {
-    failure "Image not found: ${1:-}"
-    return 1
-  }
-  geeqie -t -r File:"${1:-}"
 }
 milisleep() {
   local Time 
   Time="$(awk "BEGIN { print ${1:-1000} / 1000 }")"
   sleep $Time
 }
-storeinfo() {
-  # store and provide pieces of information in file $Storeinfofile
-  # replace entry if codeword is already present
-  # Store as codeword=string:
-  #   $1 codeword=string
-  # Dump stored string:
-  #   $1 dump
-  #   #2 codeword
-  # Drop stored string:
-  #   $1 drop
-  #   #2 codeword
-  # Test for codeword: (return 1 if not found)
-  #   $1 test
-  #   $2 codeword
-  #
-  local Lockfile Return
-  
-  #note "$*"
-  
-  #[ -e "$Storeinfofile" ] || return 1
-  
-  Lockfile="$Storeinfofile.lock"
-  [ -e "$Lockfile" ] && {
-    while [ -e "$Lockfile" ] ; do
-      sleep 0.1
-    done
-  }
-  case "${1:-}" in
-    dump|test) ;;
-    *) touch "$Storeinfofile.lock" ;;
-  esac
-  
-  case "${1:-}" in
-    dump) grep     "^${2:-}="   $Storeinfofile | sed "s/^${2:-}=//" || Return=1 ;;  # dump entry
-    drop) sed -i  "/^${2:-}=/d" $Storeinfofile ;;                                   # drop entry
-    test) grep -q  "^${2:-}="   $Storeinfofile                      || Return=1 ;;  # test for entry
-    *)                                                                              # store entry
-      sed -i "/^$(echo "${1:-}" | cut -d= -f1 | head -n1)=/d"  $Storeinfofile       # drop possible old entry
-      echo "${1:-}"                                         >> $Storeinfofile
-    ;;
-  esac
-  
-  case "${1:-}" in
-    dump|test) ;;
-    *) rm "$Storeinfofile.lock" ;;
-  esac
-  
-  return ${Return:-0}
-}
-storepid() {
-  echo "$(ps -p ${1:-} -h -o pid -o comm)" >> $Storepidfile
-}
 
-
-dropvar() {
-  echo "unset  ${1:-}"   >&${StorevarFDin}
-  echo "export ${1:-}"   >&${StorevarFDin}
-}
-dumpvar() {
-  local Line Var
-  echo "env"           >&${StorevarFDin}
-  while read -t1 Line; do
-    Var="$(cut -d= -f1 <<< "$Line")"
-    [ "$Var" = "${Var^^}" ] || echo "$Line"
-  done                 <&${StorevarFDout}
-}
-getvar() {
-  local Result
-  echo "echo \$${1:-}"   >&${StorevarFDin}
-  read -t1 Result        <&${StorevarFDout} || failure "getvar(): No response for ${1:-}"
-  milisleep 10
-  echo "$Result"
-}
-setvar() {
-  echo "export '${1:-}'" >&${StorevarFDin}
-}
-storevar() {
-  local Line
-  while read Line; do
-    eval "$Line"         >&${StorevarFDout}
-  done                   <&${StorevarFDin}
-  failure "storevar(): terminated"
-}
-testvar() {
-  local Value
-  Value="$(getvar "${1:-}")"
-  test -n "$Value"
-}
+#### File operations
 
 get_latest_file() {
   ## Funktion: Neueste erstellte Datei ermitteln
@@ -151,7 +61,6 @@ get_free_filenumber(){
   Number="$(awk "BEGIN {print \"$Number\" + 1}" )"
   printf "%04d" "$Number"
 }
-
 setup_projectdir() {
   local Projecthome Projectname Projectdate
   
@@ -169,6 +78,15 @@ setup_projectdir() {
   mkdir -p "$Projectname"
   cd "$Projectname"
 }
+showimage() {
+  [ -f "${1:-}" ] || {
+    failure "Image not found: ${1:-}"
+    return 1
+  }
+  geeqie -t -r File:"${1:-}"
+}
+
+#### Device communication
 
 device_init() {
   # Init Device and start watching background process
@@ -211,7 +129,7 @@ device_init() {
     device_check && break || Return=1
   done
   
-  [ "$Return" = "1" ] && failure "Initialized device $Device does not respond to signal $Ardu_check"
+  [ "$Return" = "1" ] && failure "Device init failed: $Device"
   
   return ${Return:-0}
 }
@@ -228,7 +146,7 @@ device_wait() {
   read -t ${1:-$Devicetimeout} -r Answer <&6
   
   [ "$Answer" ] || {
-    failure "Device $(getvar device): TIMEOUT"
+    failure "Device does not respond: $(getvar device) "
     echo "TIMEOUT"
     return 1
   }
@@ -239,9 +157,11 @@ device_wait() {
 }
 device_check() {
   # Prüfen, ob Arduino auf Kontrollsignal "c" antwortet
-  device_send "$Ardu_check"
-  [ "$(device_wait)" = "TIMEOUT" ] && return 1 && note "Device check failed" || return 0
+  device_send "$(getvar signalcheck)"
+  [ "$(device_wait)" = "TIMEOUT" ] && return 1 && failure "Device check failed: $(getvar device)" || return 0
 }
+
+#### Device navigation
 
 position_store() {
   setvar "poscurrent=$Poscurrent"
@@ -266,7 +186,6 @@ position_read() {
   Stepdistance="$(getvar stepdistance)"
   Stepunit="$(getvar stepunit)"
 }
-
 stepcmd() {
   local Return Answer
   position_read
@@ -282,7 +201,7 @@ stepcmd() {
     ;;
     setpos0)
       Poscurrent=0
-      #device_send "$Ardu_setpos0"
+      #device_send "$(getvar signalsetpos0)"
       #Answer="$(device_wait)"
     ;;
     setpos1)
@@ -304,7 +223,7 @@ stepcmd() {
     ;;
     stepwidth)
       Stepwidth="${2:-25}"
-      device_send "$Ardu_stepwidth,$Stepwidth"
+      device_send "$(getvar signalstepwidth),$Stepwidth"
       Answer="$(device_wait)"
     ;;
   esac
@@ -326,14 +245,14 @@ steplauf() {
   Distance="$(awk "BEGIN {print ${1:-} - $Poscurrent }" )"
   [ "$Distance" = "0" ] && return 0
   [ "$Distance" -gt "0" ] && {
-    Direction="$Ardu_stepin"
+    Direction="$(getvar signalstepin)"
   } || { 
-    Direction="$Ardu_stepout"
+    Direction="$(getvar signalstepout)"
     Distance="$(awk "BEGIN {print -1 * $Distance }" )"
   }
 
   [ "$Distance" = "$Stepwidth" ] || {
-    device_send "$Ardu_stepwidth,$Distance"
+    device_send "$(getvar signalstepwidth),$Distance"
     [ "$(device_wait)" = "TIMEOUT" ] && return 1
   }
 
@@ -343,11 +262,11 @@ steplauf() {
   Answer="$(device_wait "$Timetowait")"
   [ "$Answer" = "TIMEOUT" ] && return 1
   case $Direction in
-    "$Ardu_stepin")  Poscurrent="$(awk "BEGIN {print $Poscurrent + $Distance }" )" ;;
-    "$Ardu_stepout") Poscurrent="$(awk "BEGIN {print $Poscurrent - $Distance }" )" ;;
+    "$(getvar signalstepin)")  Poscurrent="$(awk "BEGIN {print $Poscurrent + $Distance }" )" ;;
+    "$(getvar signalstepout)") Poscurrent="$(awk "BEGIN {print $Poscurrent - $Distance }" )" ;;
   esac
   [ "$Distance" = "$Stepwidth_store" ] || {
-    device_send "$Ardu_stepwidth,$Stepwidth"
+    device_send "$(getvar signalstepwidth),$Stepwidth"
     device_wait >/dev/null
   }
 }
@@ -531,7 +450,8 @@ stackshot() {
   return 0
 }
 
-#### gphoto2 camera
+#### gphoto2 camera control
+
 gphoto2_wrap() {
   local Cameraport
   Cameraport="$(getvar cameraport)"
@@ -546,7 +466,7 @@ gphoto2_wrap() {
 gphoto2_cmd () {
   ## Funktion: Sammlung und Koordination der gphoto2-Aufrufe
   #
-  local Command Return=0
+  local Command Return=0 Workdir
  
   Command="${1:-}"
   shift
@@ -564,22 +484,26 @@ gphoto2_cmd () {
       Return=$? 
       ;;
     capture-image-and-download)               # Bild aufnehmen und herunterladen
+      Workdir="$(pwd)/captures"
+      mkdir -p "$Workdir"
       # %C als Suffix läßt gphoto2 Dateiende selbst richtig einsetzen (jpg oder cr2 oder ...)
-      Latestimage="$(pwd)/capture_$(get_free_filenumber capture).%C"
+      Latestimage="$Workdir/capture_$(get_free_filenumber capture).%C"
       gphoto2_wrap --capture-image-and-download --filename $Latestimage
       Return=$?
       # Dateiname mit tatsächlichem Suffix ermitteln. 
-      Latestimage="$(pwd)/$(get_latest_file "capture*.jpg")"
-      [ "$Latestimage" ] || Latestimage="$(pwd)/$(get_latest_file "capture*")"
+      Latestimage="$Workdir/$(get_latest_file "capture*.jpg")"
+      [ "$Latestimage" ] || Latestimage="$Workdir/$(get_latest_file "capture*")"
       setvar "latestimage=$Latestimage"
       ;;
     capture-preview)                         # Einzelnes Videobild aufnehmen, ohne daß der Spiegel zuklappt
       ## Funktioniert ab gphoto2 Version >= 2.5.9 ##
+      Workdir="$(pwd)/captures"
+      mkdir -p "$Workdir"
       gphoto2_cmd mirrorup
       gphoto2_wrap --capture-preview
       Return=$?
       [ "$Return" = "0" ] && {
-        Latestimage="$(pwd)/preview_$(get_free_filenumber preview).jpg"
+        Latestimage="$Workdir/preview_$(get_free_filenumber preview).jpg"
         mv capture_preview.jpg "$Latestimage"
         setvar "latestimage=$Latestimage"
       } 
@@ -619,6 +543,7 @@ video() {
   local Videodauer Videomode Pidffplay
   local GPHOTO2 FFMPEG FFPLAY FFPLAY_LOCATION
   local Windowid Windowgeometry Ffplay_x Ffplay_y
+  local Workdir
 
   Pidffplay="$(getvar pidffplay)"
   [ "$Pidffplay" ] && ps -p "$Pidffplay" >/dev/null 2>&1 && {
@@ -652,8 +577,10 @@ video() {
       $GPHOTO2 | $FFPLAY & Pidffplay=$!
     ;;
     capture)
+      Workdir="$(pwd)/video"
+      mkdir -p "$Workdir"
       # Dateiname für neues Video
-      Latestvideo="$(pwd)/movie_$(get_free_filenumber).mjpg"
+      Latestvideo="$Workdir/video_$(get_free_filenumber).mjpg"
       $GPHOTO2 | $FFMPEG | tee $Latestvideo | $FFPLAY & Pidffplay=$!
     ;;
     stop)
@@ -742,6 +669,7 @@ camerainit() {
 }
 
 #### Keyboard control
+
 keyboard_stepin() {
   while :; do
     [ -e "$Keyboardstepinfile" ]  && stepcmd stepin  || sleep 0.2
@@ -754,11 +682,11 @@ keyboard_stepout() {
 }
 keyboard_watch() {
   local Keyhub Keycode
-  while read Line <&${Keyboardfd} ; do
-    Keyhub=$(awk '{print $2}' <<< $Line)
-    Keycode=$(awk '{print $3}' <<< $Line)
+  while read Line <$Keyboardfifo ; do
+    Keyhub=$(awk '{print $2}' <<< "$Line")
+    Keycode=$(awk '{print $3}' <<< "$Line")
     #note "Keycode: $Keycode ; Keyhub: $Keyhub"
-    testvar keyboard_watch && case $Keyhub in
+    [ -e "$Keyboardwatchfile" ] && case $Keyhub in
       press)
         case $Keycode in
           # Durchgehender Lauf von Stepin/Stepout
@@ -776,8 +704,85 @@ keyboard_watch() {
   done
 }
 
+#### Variable storage in parallel subshell
+
+dropvar() {
+  echo "unset  ${1:-}"   >$Storevarinfifo
+  read Dummy             <$Storevaroutfifo
+  echo "export ${1:-}"   >$Storevarinfifo
+  read Dummy             <$Storevaroutfifo
+}
+dumpvar() {
+  local Line Var
+  echo "env"           >$Storevarinfifo
+  while read -t1 Line; do
+    Var="$(cut -d= -f1 <<< "$Line")"
+    [ "$Var" = "${Var^^}" ] || echo "$Line"
+  done                 <$Storevaroutfifo
+}
+getvar() {
+  local Result
+  echo "echo \$${1:-}"   >$Storevarinfifo
+  read -t1 Result        <$Storevaroutfifo || failure "getvar(): No response for ${1:-}"
+  #milisleep 10
+  echo "$Result"
+}
+setvar() {
+  echo "export '${1:-}'" >$Storevarinfifo
+  read Dummy             <$Storevaroutfifo
+}
+storevar() {
+  local Line
+  #set -x
+  while :; do
+    read Line            <$Storevarinfifo
+    eval "$Line"         >$Storevaroutfifo
+  done                   
+  failure "storevar(): terminated"
+}
+testvar() {
+  local Value
+  Value="$(getvar "${1:-}")"
+  test -n "$Value"
+}
+
 #### GUI
-kaptaingrammar() {
+
+gui_main() {
+  local Kaptainpid Kaptaingrammar Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptainsignal
+
+  Kaptaingrammar="$Maincachedir/gui_main.grammar"
+  Kaptainstdinfile="$Maincachedir/gui_main.stdin" 
+  Kaptainstdoutfile="$Maincachedir/gui_main.stdout"
+  Kaptainanswerfile="$Maincachedir/gui_main.reply"
+  Kaptainpipefile="$Maincachedir/gui_main.pipe.sh"
+
+  :>     "$Kaptainstdinfile"
+  :>     "$Kaptainstdoutfile"
+  
+  gui_main_grammar > $Kaptaingrammar
+  #nl -ba $Kaptaingrammar
+  pipekaptain
+  tail -F "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
+
+  kaptain --pipe $Kaptainpipefile $Kaptaingrammar & Kaptainpid=$!
+  setvar "pidkaptain=$Kaptainpid"
+  storepid $Kaptainpid
+  
+  gui_main_parser "camera:autodetect"
+  gui_main_parser "devicecombo:autodetect"
+  position_store
+  
+  while ps -p $Kaptainpid >/dev/null; do
+    read -t1 Kaptainsignal
+    [ "$Kaptainsignal" ] && {
+      note "Signal from kaptain: $Kaptainsignal"
+      Kaptainsignal="${Kaptainsignal%:pressed}"
+    }
+    [ "$Kaptainsignal" ] && gui_main_parser "$Kaptainsignal"
+  done < <(tail -F "$Kaptainstdoutfile")
+}
+gui_main_grammar() {
   echo "#! /usr/bin/kaptain
 start 'stackshooter'                                -> mainframe;
 mainframe:framed                                   -> naviframe cameraframe stackshotframe statusframe;
@@ -837,73 +842,7 @@ mainframe:framed                                   -> naviframe cameraframe stac
       config                                             -> @button='config' ;
 "
 }
-sendkaptain() {
-  # send messages to kaptain over its stdin
-#  note "Send to kaptain: $1"
-  testvar pidkaptain && echo "$1" >&${Kaptainstdin}
-}
-askkaptain() {
-  # ask kaptain for value of $1
-  local Answer
-  #kaptaingrammar | grep -q "${1:-}" || return 1
-  sendkaptain "${1:-}?"
-  testvar pidkaptain && read Answer <&${Kaptainstdout}
-  [ -z "$Answer" ] && return 1
-  echo "$Answer"
-  return 0
-}
-showpercent() {
-  local Percent Part Full Percentimage
-  
-  Part="${1:-}"
-  Full="${2:-1}"
-  
-  case "$Part" in
-    idle)  Percentimage="p_idle.png" ;;
-    error) Percentimage="p_error.png" ;;
-    busy)  Percentimage="p_busy.png" ;;
-    *)
-      Percent="$(( 100 * Part / Full ))"
-      Percentimage="p_$Percent.png" 
-    ;;
-  esac
-  Percentimage="$Percentcachedir/$Percentimage"
-
-  [ -e "$Percentimage" ] || case "$Part" in
-    idle)  convert -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"   "$Percentimage" ;;
-    error) convert -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"  "$Percentimage" ;;
-    busy)  convert -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'"   "$Percentimage" ;;
-    *)     convert -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
-  esac
-  sendkaptain "cmdpercent('$Percentimage')=''"
-}
-runkaptain() {
-
-  kaptaingrammar > $Kaptaingrammar
-  #nl -ba $Kaptaingrammar
-  
-  kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
-  setvar "pidkaptain=$Kaptainpid"
-  storepid $Kaptainpid
-
-  position_store
-  parse_kaptainsignal "camera:autodetect"
-  parse_kaptainsignal "devicecombo:autodetect"
-#  parse_kaptainsignal "devicebutton"
-
-  position_store
-  
-  # watch signals of kaptain
-  while ps -p $Kaptainpid >/dev/null; do
-    read -t1 Kaptainsignal <&${Kaptainstdout}
-    [ "$Kaptainsignal" ] && {
-      note "Signal from kaptain: $Kaptainsignal"
-      Kaptainsignal="${Kaptainsignal%:pressed}"
-    }
-    [ "$Kaptainsignal" ] && parse_kaptainsignal "$Kaptainsignal"
-  done
-}
-parse_kaptainsignal() {
+gui_main_parser() {
   local Kaptainsignal Argument
   local Projecthome Projectname
   local Device
@@ -957,7 +896,7 @@ parse_kaptainsignal() {
       Device="$(getvar device)"
       case $Device in
         autodetect) 
-          parse_kaptainsignal "devicecombo:autodetect"
+          gui_main_parser "devicecombo:autodetect"
           Device="$(getvar device)"
         ;;
       esac
@@ -1021,27 +960,31 @@ parse_kaptainsignal() {
     keyboardline:on)
       keyboard_stepin  & setvar "pidkeyboardstepin=$!"  && storepid $(getvar pidkeyboardstepin)
       keyboard_stepout & setvar "pidkeyboardstepout=$!" && storepid $(getvar pidkeyboardstepout)
-      setvar "keyboard_watch=yes"
+      touch "$Keyboardwatchfile"
     ;;
     keyboardline:off)
       testvar pidkeyboardstepin  && kill $(getvar pidkeyboardstepin)
       testvar pidkeyboardstepout && kill $(getvar pidkeyboardstepout)
-      dropvar keyboard_watch
+      rm "$Keyboardwatchfile"
     ;;
     
-    stackshot*)
+    stackshotpreview|stackshotfullres)
+      kill -s STOP $(getvar pidkeyboardwatch)
       setup_projectdir
       Argument="$(askkaptain stackshotmedian)"
       Argument="${Argument:-1}"
       setvar "mediannumber=$Argument"
       Argument="$(askkaptain stackshotdelay)"
+      Argument="${Argument:-500}"
       setvar "stackshotdelay=$Argument"
       Argument="$(askkaptain startdelay)"
       setvar "startdelay=$Argument"
-      stackshotgui $Kaptainsignal
+      Argument="${Argument:-100}"
+      gui_stackshot $Kaptainsignal
+      kill -s CONT $(getvar pidkeyboardwatch)
     ;;
     config)
-      configgui
+      gui_config
       read_configfile "$Configfile"
       position_read
       position_store
@@ -1059,18 +1002,18 @@ parse_kaptainsignal() {
   }
   dropvar error
 }
-configgui() {
-  local Kaptaingrammar Kaptainstdin Kaptainstdout Kaptainstdinfifo Kaptainstdoutfifo Kaptainpid Kaptainsignal
+gui_config() {
+  local Kaptainpid Kaptaingrammar Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptainsignal
   local Setting
     
-  Kaptaingrammar="$Maincachedir/cfg.grammar"
-  Kaptainstdinfifo="$Maincachedir/cfg.stdin"
-  Kaptainstdoutfifo="$Maincachedir/cfg.stdout"
-  
-  mkfifo   "$Kaptainstdinfifo"
-  exec  {Kaptainstdin}<>"$Kaptainstdinfifo"
-  mkfifo   "$Kaptainstdoutfifo"
-  exec  {Kaptainstdout}<>"$Kaptainstdoutfifo"
+  Kaptaingrammar="$Maincachedir/gui_config.grammar"
+  Kaptainstdinfile="$Maincachedir/gui_config.stdin"
+  Kaptainstdoutfile="$Maincachedir/gui_config.stdout"
+  Kaptainanswerfile="$Maincachedir/gui_config.reply"
+  Kaptainpipefile="$Maincachedir/gui_config.pipe.sh"
+
+  :>     "$Kaptainstdinfile"
+  :>     "$Kaptainstdoutfile"
   
   echo '#! /usr/bin/kaptain
 start "stackshooter configuration" -> frameset ;
@@ -1103,7 +1046,10 @@ start "stackshooter configuration" -> frameset ;
 ' > "$Kaptaingrammar"
   #nl -ba < "$Kaptaingrammar"
   
-  kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  pipekaptain
+  tail -F "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
+  
+  kaptain --pipe $Kaptainpipefile $Kaptaingrammar & Kaptainpid=$!
   storepid $Kaptainpid
   
   for Setting in storagebasedir projectbasename stackshotbasename devicebasename signalstepin signalstepout signalstepwidth signalcheck stepdistance stepunit ; do
@@ -1112,7 +1058,7 @@ start "stackshooter configuration" -> frameset ;
 
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
-    read -t1 Kaptainsignal <&${Kaptainstdout}
+    read -t1 Kaptainsignal
     [ "$Kaptainsignal" ] && {
       note "Signal from kaptain: $Kaptainsignal"
       Kaptainsignal="${Kaptainsignal%:pressed}"
@@ -1127,41 +1073,46 @@ start "stackshooter configuration" -> frameset ;
         ;;
       esac
     }
-  done
-  
-  exec  {Kaptainstdin}>&-
-  exec  {Kaptainstdout}>&-
-  rm   "$Kaptainstdinfifo"
-  rm   "$Kaptainstdoutfifo"
+  done < <(tail -F "$Kaptainstdoutfile")
 }
-stackshotgui() {
-
-  local Kaptaingrammar Kaptainstdin Kaptainstdout Kaptainstdinfifo Kaptainstdoutfifo Kaptainpid Kaptainsignal
+gui_stackshot() {
+  local Kaptainpid Kaptaingrammar Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptainsignal
   local Functionmode
   
   Functionmode="${1:-stackshotpreview}"
   
-  Kaptaingrammar="$Maincachedir/stackshot.grammar"
-  Kaptainstdinfifo="$Maincachedir/stackshot.stdin"
-  Kaptainstdoutfifo="$Maincachedir/stackshot.stdout"
-  
-  mkfifo   "$Kaptainstdinfifo"
-  exec  {Kaptainstdin}<>"$Kaptainstdinfifo"
-  mkfifo   "$Kaptainstdoutfifo"
-  exec  {Kaptainstdout}<>"$Kaptainstdoutfifo"
+  Kaptaingrammar="$Maincachedir/gui_stackshot.grammar"
+  Kaptainstdinfile="$Maincachedir/gui_stackshot.stdin"
+  Kaptainstdoutfile="$Maincachedir/gui_stackshot.stdout"
+  Kaptainanswerfile="$Maincachedir/gui_stackshot.reply"
+  Kaptainpipefile="$Maincachedir/gui_stackshot.pipe.sh"
+
+  :>     "$Kaptainstdinfile"
+  :>     "$Kaptainstdoutfile"
   
   echo '#! /usr/bin/kaptain
 start "Running stackshot"   -> frameset ;
-  frameset  -> info cmdline status;
+  frameset  -> info cmdline status positionline poscalcline;
     info                -> @text="Running stackshot" ;
     cmdline:beside      -> cmdpercent cmdbreak;
       cmdpercent          -> @icon ;
       cmdbreak            -> @button="break";
     status              -> @text ;
+    positionline:beside                                -> poscurrent pos1 pos2;
+      poscurrent:beside       "Current:"                 -> @text="" ;
+      pos1:beside             "Pos1:"                    -> @text="" ;
+      pos2:beside             "Pos2:"                    -> @text="" ;
+    poscalcline:beside                                 -> difference distance steps;
+      difference:beside       "Difference:"              -> @text="" ;
+      distance:beside         "Distance:"                -> @text="" ;
+      steps:beside            "Steps:"                   -> @text="" ;
    
 ' > "$Kaptaingrammar"
 
-  kaptain --stdio $Kaptaingrammar <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  pipekaptain
+  tail -F "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
+  
+  kaptain --pipe $Kaptainpipefile $Kaptaingrammar & Kaptainpid=$!
   storepid $Kaptainpid
   
   showpercent busy
@@ -1176,7 +1127,7 @@ start "Running stackshot"   -> frameset ;
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
     testvar stackshot || break
-    read -t1 Kaptainsignal <&${Kaptainstdout}
+    read -t1 Kaptainsignal
     [ "$Kaptainsignal" ] && {
       note "Signal from kaptain: $Kaptainsignal"
       Kaptainsignal="${Kaptainsignal%:pressed}"
@@ -1188,16 +1139,73 @@ start "Running stackshot"   -> frameset ;
         ;;
       esac
     }
-  done
+  done < <(tail -F "$Kaptainstdoutfile")
   
   ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
-  exec  {Kaptainstdin}>&-
-  exec  {Kaptainstdout}>&-
-  rm   "$Kaptainstdinfifo"
-  rm   "$Kaptainstdoutfifo"
+}
+sendkaptain() {
+  # send messages to kaptain over its stdin
+#  note "Send to kaptain: $1"
+  #testvar pidkaptain && echo "$1" >&${Kaptainstdin}
+  testvar pidkaptain || return 1
+  #echo "${1:-}" >>${Kaptainstdinfifo}
+  echo "${1:-}" >>${Kaptainstdinfile}
+}
+askkaptain() {
+  # ask kaptain for value of $1
+  local Wait Answer
+  
+  testvar pidkaptain || return 1
+  #gui_main_grammar | grep -q "${1:-}" || return 1
+  
+  :> $Kaptainanswerfile
+  sendkaptain "${1:-}?"
+  for Wait in $(seq 15); do
+    milisleep $Wait
+    Answer="$(cat "$Kaptainanswerfile")"
+    [ -n "$Answer" ] && echo "$Answer" && break
+  done
+  return 0
+}
+pipekaptain() {
+  # provide script for interactive kaptain option --pipe
+  # Needs containing variables to be set beforehand.
+  echo  "#! /bin/bash
+$(declare -f storepid)
+Storepidfile='$Storepidfile'
+tail -F ${Kaptainstdinfile} & storepid \$!
+cat >> ${Kaptainstdoutfile}
+" >$Kaptainpipefile
+  chmod +x $Kaptainpipefile
+}
+showpercent() {
+  local Percent Part Full Percentimage
+  
+  Part="${1:-}"
+  Full="${2:-1}"
+  
+  case "$Part" in
+    idle)  Percentimage="p_idle.png" ;;
+    error) Percentimage="p_error.png" ;;
+    busy)  Percentimage="p_busy.png" ;;
+    *)
+      Percent="$(( 100 * Part / Full ))"
+      Percentimage="p_$Percent.png" 
+    ;;
+  esac
+  Percentimage="$Percentcachedir/$Percentimage"
+
+  [ -e "$Percentimage" ] || case "$Part" in
+    idle)  convert -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"   "$Percentimage" ;;
+    error) convert -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"  "$Percentimage" ;;
+    busy)  convert -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'"   "$Percentimage" ;;
+    *)     convert -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
+  esac
+  sendkaptain "cmdpercent('$Percentimage')=''"
 }
 
 #### main
+
 declare_variables() {
   Cachebasedir="$HOME/.cache/stackshots"
   Maincachedir="$Cachebasedir/stackshooter"
@@ -1205,15 +1213,9 @@ declare_variables() {
   Configdir="$HOME/.config/stackshots"
   Configfile="$Configdir/stackshooter.cfg"
   
-  Storeinfofile="$Maincachedir/store.info"
   Storepidfile="$Maincachedir/store.pid"
   Storevarinfifo="$Maincachedir/storevar.in.fifo"
   Storevaroutfifo="$Maincachedir/storevar.out.fifo"
-  
-  Kaptainpid=""
-  Kaptaingrammar="$Maincachedir/kaptain.grammar"
-  Kaptainstdinfifo="$Maincachedir/kaptain.stdin" 
-  Kaptainstdoutfifo="$Maincachedir/kaptain.stdout"
   
   Latestimage=""
   Latestvideo=""
@@ -1239,14 +1241,7 @@ declare_variables() {
   Keyboardfd=""
   Keyboardstepinfile="$Maincachedir/keyboard.stepin"
   Keyboardstepoutfile="$Maincachedir/keyboard.stepout"
-  
-  # Command codes send to Arduino. Each command expects an (arbitrary) answer string+newline from arduino.
-  # Answers will be shown and can contain sense making messages.
-  Ardu_check="c"
-  Ardu_stepin="i"
-  Ardu_stepout="o"
-  Ardu_stepwidth="w"  # sent with comma+value in form: w,12
-  Ardu_setpos0="z"
+  Keyboardwatchfile="$Maincachedir/keyboard.watch"
     
   # Terminal colors used for messages
   Esc="$(printf '\033')"
@@ -1259,40 +1254,15 @@ declare_variables() {
   Coluline="${Esc}[4m"
   Colnorm="${Esc}[0m"
 }
-setup_cache() {
-  mkdir    "$Maincachedir"
-  mkdir -p "$Percentcachedir"
-  
-  
-  :> $Storeinfofile
-  :> $Storepidfile
-  
-  mkfifo $Storevarinfifo
-  mkfifo $Storevaroutfifo
-  exec {StorevarFDin}<>$Storevarinfifo
-  exec {StorevarFDout}<>$Storevaroutfifo
-  
-  mkfifo "$Devicemessagefifo"
-  
-  mkfifo "$Keyboardfifo"
-  exec {Keyboardfd}<>"$Keyboardfifo"
-  
-  mkfifo   "$Kaptainstdinfifo"
-  exec  {Kaptainstdin}<>"$Kaptainstdinfifo"
-  mkfifo   "$Kaptainstdoutfifo"
-  exec  {Kaptainstdout}<>"$Kaptainstdoutfifo"
-}
 read_configfile() {
   local Configfile Line
   Configfile="${1:-}"
   while read Line; do
     setvar "$Line"
   done < "$Configfile"
-  Ardu_check="$(getvar signalcheck)"
-  Ardu_stepin="$(getvar signalstepin)"
-  Ardu_stepout="$(getvar signalstepout)"
-  Ardu_stepwidth="$(getvar signalstepwidth)"
-  Ardu_setpos0="$(getvar signalsetpos0)"
+}
+storepid() {
+  echo "$(ps -p ${1:-} -h -o pid -o comm)" >> $Storepidfile
 }
 finish() {
   trap - EXIT
@@ -1308,13 +1278,6 @@ finish() {
   # close device
   exec 6>&-
   
-  exec {StorevarFDin}>&-
-  exec {StorevarFDout}>&-
-  
-  # close kaptain fifos
-  exec  {Kaptainstdin}>&-
-  exec  {Kaptainstdout}>&-
-  
   # remove cache
   rm -R $Maincachedir
   
@@ -1323,13 +1286,15 @@ finish() {
 main() {
   trap finish EXIT 
   
-  # Dependencies:
-  # bc
-  # gphoto2
-  # ffmpeg
-  
   declare_variables
-  setup_cache
+  
+  mkdir    "$Maincachedir"
+  mkdir -p "$Percentcachedir"
+  :> $Storepidfile
+  mkfifo "$Devicemessagefifo"
+  
+  mkfifo "$Storevarinfifo"
+  mkfifo "$Storevaroutfifo"
   storevar & storepid $!
   
   setvar "storagebasedir=$HOME/Bilder/stackshots"
@@ -1341,34 +1306,29 @@ main() {
   setvar "shutterspeed=1/80"
   setvar "zoom=1"
   
-  setvar "signalstepin=$Ardu_stepin"
-  setvar "signalstepout=$Ardu_stepout"
-  setvar "signalcheck=$Ardu_check"
-  setvar "signalstepwidth=$Ardu_stepwidth"
-  setvar "signalsetpos0=$Ardu_setpos0"
+  setvar "signalstepin=i"
+  setvar "signalstepout=o"
+  setvar "signalcheck=c"
+  setvar "signalstepwidth=w"
+  setvar "signalsetpos0=z"
   
   setvar "stepdistance=$Stepdistance"
   setvar "stepunit=$Stepunit"
   setvar "stepdefaultwidth=$Stepdefaultwidth"
   
   read_configfile "$Configfile"
-  
-#  while read Line; do
-#    echo "configuration: $Line"
-#    setvar "$Line"
-#  done <$Storeinfofile
   position_store
   
+  mkfifo "$Keyboardfifo"
   Keyboardid=$(xinput | grep "AT Translated" | cut -d= -f2 | awk '{print $1}')
   [ "$Keyboardid" ] && {
     xinput test $Keyboardid >>$Keyboardfifo & storepid $!
-    keyboard_watch                          & storepid $!
+    keyboard_watch                          & setvar "pidkeyboardwatch=$!"
+    storepid $(getvar pidkeyboardwatch)
   } || failure "Cannot watch keyboard. xinput not installed? Invalid keyboard id '$Keyboardid'?"
   
-  runkaptain
+  gui_main
 }
+
 main "$@"
 finish
-
-# Todo:
-# break button + percent in separate stack gui
