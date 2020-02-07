@@ -375,7 +375,7 @@ setup_workdir() {
       #Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
     ;;
     
-    align*|brightness*|contrast*|crop*|cuberotate*|gamma*|level*|ruler*|sharpen*|statistic*|stretch*|wizard*)
+    align*|brightness*|contrast*|crop*|cuberotate*|lightbalance*|gamma*|level*|ruler*|sharpen*|statistic*|stretch*|wizard*)
       Sourcedir="$Targetprevdir"
       Destinationdir="$Targetnewdir"
     ;;
@@ -1511,6 +1511,52 @@ evaluate() {
   return 0
 }
 
+lightbalance() {
+  # simulate a HDR image with multiple exposures combined to one image with balanced light.
+  # To achieve this some brightened and darkened images are generated with IM and combined with enfuse.
+
+  local $Batchlocal
+  local $Imagelocal
+  local Count Value Gammacount Gammasequence 
+  local Cachefile
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+
+  Functionmode="${Functionmode:-level}"
+  Gammacount=5
+  
+  for Image in $Imagelist; do
+    Destinationfile="$Destinationdir/$(basename $Image)"
+    case $Functionmode in
+      level)
+        cp -T $Image "$Cachedir/exp_0.tif"
+        for Value in 10 20 30 40 50 60 70 80; do      
+          Cachefile=$Cachedir/exp_${Value}.1.tif
+          multicore "$Convert $Image -level 0%x$((100-Value))% $Cachefile" || return 1
+      
+          Cachefile=$Cachedir/exp_${Value}.2.tif
+          multicore "$Convert $Image +level 0%x$((100-Value))% $Cachefile" || return 1
+        done
+        multicore_wait || return 1
+      ;;
+      gamma)
+        for Count in $(seq $Gammacount); do
+          Gammasequence="$Gammasequence $Count $(awk "BEGIN {print 1/$Count}")"
+        done
+        for Value in $Gammasequence; do
+          Cachefile="$Cachedir/exp_${Value}.tif"
+          multicore "$Convert $Image -gamma $Value $Cachefile" || return 1
+        done
+        multicore_wait || return 1
+      ;;
+    esac
+    enfuse $(find $Cachedir/exp*) -o $Destinationfile --contrast-weight 0.2 2>&1 || return 1
+    #| grep -v -E "loading next image|alpha channel"
+    showimage $Destinationfile
+  done
+}
+
 fuse() {
   # fuse stackshot of images with enfuse
   
@@ -2419,7 +2465,7 @@ start "stackfuser '$Version'" -> frameset;
           applyallfuse                                          -> @button="fuse" ;
           applyall:beside             "Apply all convert options"  -> "" ;
           
-      batchblock2 "batch block 2: post processing directory magick" -> meanbalanceline whitebalanceline align_vidstabline align_aisline ;
+      batchblock2 "batch block 2: post processing directory magick" -> whitebalanceline meanbalanceline lightbalanceline align_vidstabline align_aisline ;
         meanbalanceline:beside                                -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
           meanbalancemodecombo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
           meanbalancemagick                                     -> @button="magick" ;
@@ -2440,6 +2486,12 @@ start "stackfuser '$Version'" -> frameset;
           cropevaluate                                          -> @button="evaluate" ;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
+        lightbalanceline:beside                               -> lightbalance lightbalancemodecombo lightbalancemagick lightbalancefuse lightbalanceevaluate;
+          lightbalancemodecombo                                 -> @combo("level","gamma")="level" ;
+          lightbalancemagick                                    -> @button="magick" ;
+          lightbalanceevaluate                                  -> @button="evaluate" ;
+          lightbalancefuse                                      -> @button="fuse" ;
+          lightbalance:beside         "lightbalance"            -> "on" | ! "";
         align_vidstabline:beside                              -> align_vidstab align_vidstabcombo align_vidstabbutton ;
           align_vidstabcombo          "crop interactive"        -> "interactive" | ! "";
           align_vidstabbutton                                   -> @button="magick" ;
@@ -3419,7 +3471,7 @@ parse_cmd() {
       batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
     ;;
-    animation*|brightness*|contrast*|crop*|cuberotate*|gamma*|level*|prepare*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
+    animation*|brightness*|contrast*|crop*|cuberotate*|lightbalance*|gamma*|level*|prepare*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
       batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
@@ -3566,16 +3618,14 @@ main() {
   # init
   declare_variables
   create_cachefiles
-  
-  #exec 1> >(tee -a $Wizardlogfile) 2>&1
-  
+    
   storeinfo "cache=$Maincachedir"
   storeinfo "projecthome=$Projecthome"
   storeinfo "stackshotdir=$Projecthome"
   storeinfo "gallerydir=$Gallerydir"
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
-  storeinfo "rmcache=yes"
+  #storeinfo "rmcache=yes"
   
   fuse_declare
   [ -e "$Configfile" ] && source "$Configfile"
