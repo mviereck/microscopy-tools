@@ -1527,11 +1527,12 @@ lightbalance() {
   Gammacount=5
   
   for Image in $Imagelist; do
+    Imagecount=$((Imagecount+1))
     Destinationfile="$Destinationdir/$(basename $Image)"
     case $Functionmode in
       level)
         cp -T $Image "$Cachedir/exp_0.tif"
-        for Value in 10 20 30 40 50 60 70 80; do      
+        for Value in 10 20 30 40 50; do      
           Cachefile=$Cachedir/exp_${Value}.1.tif
           multicore "$Convert $Image -level 0%x$((100-Value))% $Cachefile" || return 1
       
@@ -1554,6 +1555,7 @@ lightbalance() {
     enfuse $(find $Cachedir/exp*) -o $Destinationfile --contrast-weight 0.2 2>&1 || return 1
     #| grep -v -E "loading next image|alpha channel"
     showimage $Destinationfile
+    showpercent $Imagecount $Imagenumber
   done
 }
 
