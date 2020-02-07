@@ -214,9 +214,7 @@ stepcmd() {
       steplauf "0" 
     ;;
     gopos1)
-      echo " 1 $Poscurrent"
       steplauf "$Pos1" 
-      echo " 2 $Poscurrent"
     ;;
     gopos2)
       steplauf "$Pos2" 
@@ -428,21 +426,7 @@ stackshot() {
     statusmessage "next step"
     stepcmd stepin
     position_read
-        
-    # Fortschrittsanzeige %
-    #Count=$((Count + 1))
-    #for ((i=1 ; i<=100 ; i++)); do
-    #  Prozent="$((100 * $Count / $Anzahl))"
-    #  [ "$Prozent" -lt "$i" ] && echo -n "." || echo -n "X" 
-    #done
-    #echo " $Prozent%"
   done
-  
-  # Create video from stackshot
-  #note "stack: Creating video from stackshot"
-  #[ -e "$Stackshotdir/stackshot" ]    && Glob="$Stackshotdir/stackshot/*"
-  #[ -e "$Stackshotdir/median.source" ] && Glob="$Stackshotdir/median.source/*"
-  #ffmpeg -framerate 5 -pattern_type glob -i "$Glob" -c:v libx264  -pix_fmt yuv420p "$Stackshotdir/stackshotvideo.mp4"
   
   note "stack: Ready: Stackshot $Stackshotname with $((Loopcount * Mediannumber)) images in $Loopcount steps."
   note "stack: Location: $Stackshotdir"
