@@ -1517,46 +1517,34 @@ lightbalance() {
 
   local $Batchlocal
   local $Imagelocal
-  local Count Value Gammacount Gammasequence 
-  local Cachefile
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
 
   Functionmode="${Functionmode:-level}"
-  Gammacount=5
   
   for Image in $Imagelist; do
     Imagecount=$((Imagecount+1))
-    Destinationfile="$Destinationdir/$(basename $Image)"
+    Destinationfile="$(basename $Image)"
+    Convertline="nice convert $Image -write mpr:image +delete"  
+    Convertline="$Convertline \(     mpr:image                 -write $Cachedir/$Destinationfile.exp.source.tif \)" 
     case $Functionmode in
-      level)
-        cp -T $Image "$Cachedir/exp_0.tif"
-        for Value in 10 20 30 40 50; do      
-          Cachefile=$Cachedir/exp_${Value}.1.tif
-          multicore "$Convert $Image -level 0%x$((100-Value))% $Cachefile" || return 1
-      
-          Cachefile=$Cachedir/exp_${Value}.2.tif
-          multicore "$Convert $Image +level 0%x$((100-Value))% $Cachefile" || return 1
-        done
-        multicore_wait || return 1
+      level)    
+        Convertline="$Convertline \( mpr:image -level 0%x66%   -write $Cachedir/$Destinationfile.exp.light.tif \)" 
+        Convertline="$Convertline \( mpr:image +level 0%x66%   -write $Cachedir/$Destinationfile.exp.dark.tif \)" 
       ;;
       gamma)
-        for Count in $(seq $Gammacount); do
-          Gammasequence="$Gammasequence $Count $(awk "BEGIN {print 1/$Count}")"
-        done
-        for Value in $Gammasequence; do
-          Cachefile="$Cachedir/exp_${Value}.tif"
-          multicore "$Convert $Image -gamma $Value $Cachefile" || return 1
-        done
-        multicore_wait || return 1
+        Convertline="$Convertline \( mpr:image -gamma 0.454545 -write $Cachedir/$Destinationfile.exp.light.tif \)" 
+        Convertline="$Convertline \( mpr:image -gamma 2.2      -write $Cachedir/$Destinationfile.exp.dark.tif \)" 
       ;;
     esac
-    enfuse $(find $Cachedir/exp*) -o $Destinationfile --contrast-weight 0.2 2>&1 || return 1
-    #| grep -v -E "loading next image|alpha channel"
-    showimage $Destinationfile
+    Convertline="$Convertline info: >/dev/null"
+    multicore "$Convertline" || return 1
+    multicore_wait || return 1
+    multicore "enfuse $(find $Cachedir/${Destinationfile}.exp* | tr "\n" " ") -o $Destinationdir/$Destinationfile --contrast-weight 0.2 " "$Destinationdir/$Destinationfile" || return 1
     showpercent $Imagecount $Imagenumber
   done
+  multicore_wait || return 1
 }
 
 fuse() {
