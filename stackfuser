@@ -461,7 +461,7 @@ showvideo() {
   ffplay -window_title "$(basename "${1:-}")" -loglevel error -loop 0 "${1:-}" & storepid $!
 }
 
-#### image batch processing
+#### batch functions
 
 batch_function() {
   # Apply image processing function $1 on all possible source dirs in target directory $2, options in $3
@@ -644,8 +644,13 @@ getfunctionsettings() {
 runbatch1() {
   local Function Functionmode Functionoption Stackdir
   Stackdir="${1:-}"
-  askkaptain crop > /dev/null && {
-    Function="crop"
+  Function="crop"
+  askkaptain $Function > /dev/null && {
+    getfunctionsettings
+    cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+  }
+  Function="lightbalance"
+  askkaptain $Function > /dev/null && {
     getfunctionsettings
     cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
   }
@@ -1511,42 +1516,6 @@ evaluate() {
   return 0
 }
 
-lightbalance() {
-  # simulate a HDR image with multiple exposures combined to one image with balanced light.
-  # To achieve this some brightened and darkened images are generated with IM and combined with enfuse.
-
-  local $Batchlocal
-  local $Imagelocal
-  
-  parse_batchoptions "$@" || return 1
-  setup_imagelist         || return 1
-
-  Functionmode="${Functionmode:-level}"
-  
-  for Image in $Imagelist; do
-    Imagecount=$((Imagecount+1))
-    Destinationfile="$(basename $Image)"
-    Convertline="nice convert $Image -write mpr:image +delete"  
-    Convertline="$Convertline \(     mpr:image                 -write $Cachedir/$Destinationfile.exp.source.tif \)" 
-    case $Functionmode in
-      level)    
-        Convertline="$Convertline \( mpr:image -level 0%x66%   -write $Cachedir/$Destinationfile.exp.light.tif \)" 
-        Convertline="$Convertline \( mpr:image +level 0%x66%   -write $Cachedir/$Destinationfile.exp.dark.tif \)" 
-      ;;
-      gamma)
-        Convertline="$Convertline \( mpr:image -gamma 0.454545 -write $Cachedir/$Destinationfile.exp.light.tif \)" 
-        Convertline="$Convertline \( mpr:image -gamma 2.2      -write $Cachedir/$Destinationfile.exp.dark.tif \)" 
-      ;;
-    esac
-    Convertline="$Convertline info: >/dev/null"
-    multicore "$Convertline" || return 1
-    multicore_wait || return 1
-    multicore "enfuse $(find $Cachedir/${Destinationfile}.exp* | tr "\n" " ") -o $Destinationdir/$Destinationfile --contrast-weight 0.2 " "$Destinationdir/$Destinationfile" || return 1
-    showpercent $Imagecount $Imagenumber
-  done
-  multicore_wait || return 1
-}
-
 fuse() {
   # fuse stackshot of images with enfuse
   
@@ -1627,6 +1596,60 @@ fuse() {
   #note "fuse $Fusemode is ready: ${Destinationfile}"
   showimage "$Destinationfile"
   return 0
+}
+
+lightbalance() {
+  # simulate a HDR image with multiple exposures combined to one image with balanced light.
+  # To achieve this some brightened and darkened images are generated with IM and combined with enfuse.
+
+  local $Batchlocal
+  local $Imagelocal
+  local Darkfactor Brightfactor Darkpercent Brightpercent
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  Functionmode="${Functionmode:-level}"
+  Functionoption="${Functionoption:-50%}"
+  Functionoption="${Functionoption%"%"}"
+  Functionoption="$((100-Functionoption))"
+  
+  Darkpercent="$(awk   "BEGIN {print  100-$Functionoption}")"
+  Brightpercent="$(awk "BEGIN {print  100+$Functionoption}")"
+  Darkfactor="$(awk    "BEGIN {print (100-$Functionoption)/100}")"
+  Brightfactor="$(awk  "BEGIN {print  1/$Darkfactor}")"
+  
+  for Image in $Imagelist; do
+    Imagecount=$((Imagecount+1))
+    Destinationfile="$(basename $Image)"
+    Convertline="nice convert $Image -write mpr:image +delete"  
+    Convertline="$Convertline     \( mpr:image                                           -write $Cachedir/$Destinationfile.exp.source.tif \)" 
+    case $Functionmode in
+      multiply)    
+        Convertline="$Convertline \( mpr:image -evaluate multiply ${Brightfactor}        -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
+        Convertline="$Convertline \( mpr:image -evaluate multiply ${Darkfactor}          -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
+      ;;
+      levelgamma)    
+        Convertline="$Convertline \( mpr:image -level 0%x${Darkpercent}%,${Brightfactor} -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
+        Convertline="$Convertline \( mpr:image +level 0%x${Darkpercent}%,${Brightfactor} -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
+      ;;
+      level)    
+        Convertline="$Convertline \( mpr:image -level 0%x${Darkpercent}%                 -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
+        Convertline="$Convertline \( mpr:image +level 0%x${Darkpercent}%                 -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
+      ;;
+      gamma)
+        Convertline="$Convertline \( mpr:image -gamma ${Brightfactor}                    -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
+        Convertline="$Convertline \( mpr:image -gamma ${Darkfactor}                      -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
+      ;;
+    esac
+    Convertline="$Convertline info: >/dev/null"
+    echo $Convertline
+    multicore "$Convertline" || return 1
+    multicore_wait || return 1
+    multicore "enfuse $(find $Cachedir/${Destinationfile}.exp* | tr "\n" " ") -o $Destinationdir/$Destinationfile --contrast-weight 0.2 " "$Destinationdir/$Destinationfile" || return 1
+    showpercent $Imagecount $Imagenumber
+  done
+  multicore_wait || return 1
 }
 
 ruler() {
@@ -2399,7 +2422,7 @@ start "stackfuser '$Version'" -> frameset;
           cmdpercent                         -> @icon ;
           wizardlog                          -> @text="" ;
       
-      batchblock1 "batch block 1: prepare stackshot images in directory magick" -> cropline @text="imagemagick options" gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline applyallline;
+      batchblock1 "batch block 1: prepare stackshot images in directory magick" -> cropline lightbalanceline @text="imagemagick convert options" gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline applyallline;
         gammaline:beside                                      -> gamma gammamagick gammafuse gammaevaluate;
           gammacombo                                            -> @combow("auto","0.2","0.3","0.4","0.454545","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
           gammamagick                                           -> @button="magick" ;
@@ -2444,7 +2467,7 @@ start "stackfuser '$Version'" -> frameset;
           stretchfuse                                           -> @button="fuse" ;
           stretch:beside              "stretch-contrast"        -> stretchcombo | ! "";
         wizardline:beside                                     -> wizard wizardmagick wizardfuse wizardevaluate;
-          wizardcombo                                           -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 3","-enhance","-equalize","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 120,90","-negate","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
+          wizardcombo                                           -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 3","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
           wizardmagick                                          -> @button="magick" ;
           wizardevaluate                                        -> @button="evaluate" ;
           wizardfuse                                            -> @button="fuse" ;
@@ -2455,7 +2478,7 @@ start "stackfuser '$Version'" -> frameset;
           applyallfuse                                          -> @button="fuse" ;
           applyall:beside             "Apply all convert options"  -> "" ;
           
-      batchblock2 "batch block 2: post processing directory magick" -> whitebalanceline meanbalanceline lightbalanceline align_vidstabline align_aisline ;
+      batchblock2 "batch block 2: post processing directory magick" -> whitebalanceline meanbalanceline align_vidstabline align_aisline ;
         meanbalanceline:beside                                -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
           meanbalancemodecombo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
           meanbalancemagick                                     -> @button="magick" ;
@@ -2476,8 +2499,9 @@ start "stackfuser '$Version'" -> frameset;
           cropevaluate                                          -> @button="evaluate" ;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
-        lightbalanceline:beside                               -> lightbalance lightbalancemodecombo lightbalancemagick lightbalancefuse lightbalanceevaluate;
-          lightbalancemodecombo                                 -> @combo("level","gamma")="level" ;
+        lightbalanceline:beside                               -> lightbalance lightbalancemodecombo lightbalancecombo lightbalancemagick lightbalancefuse lightbalanceevaluate;
+          lightbalancemodecombo                                 -> @combo("level","gamma","levelgamma","multiply")="levelgamma" ;
+          lightbalancecombo                                     -> @combo("20%","30%","40%","50%","60%","70%")="50%" ;
           lightbalancemagick                                    -> @button="magick" ;
           lightbalanceevaluate                                  -> @button="evaluate" ;
           lightbalancefuse                                      -> @button="fuse" ;
@@ -3615,7 +3639,7 @@ main() {
   storeinfo "gallerydir=$Gallerydir"
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
-  #storeinfo "rmcache=yes"
+  storeinfo "rmcache=yes"
   
   fuse_declare
   [ -e "$Configfile" ] && source "$Configfile"
