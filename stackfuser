@@ -618,7 +618,7 @@ getbatch1() {
   local Command= Line Argument
   for Line in gamma level contrast sharpen brightness stretch statistic wizard; do
     Argument="$(askkaptain "$Line")"
-    case $Line in
+    [ "$Argument" ] && case $Line in
       brightness) Line="-brightness-contrast" ;;
       contrast)   Line="-sigmoidal-contrast" ;;
       sharpen)    Line="-adaptive-sharpen" ;;
@@ -2509,7 +2509,7 @@ start "stackfuser '$Version'" -> frameset;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
         lightbalanceline:beside                               -> lightbalance lightbalancemodecombo lightbalancecombo lightbalancemagick lightbalancefuse lightbalanceevaluate;
           lightbalancemodecombo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
-          lightbalancecombo                                     -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="50%" ;
+          lightbalancecombo                                     -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
           lightbalancemagick                                    -> @button="magick" ;
           lightbalanceevaluate                                  -> @button="evaluate" ;
           lightbalancefuse                                      -> @button="fuse" ;
