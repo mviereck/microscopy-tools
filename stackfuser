@@ -1612,19 +1612,27 @@ lightbalance() {
   Functionmode="${Functionmode:-level}"
   Functionoption="${Functionoption:-50%}"
   Functionoption="${Functionoption%"%"}"
-  Functionoption="$((100-Functionoption))"
   
   Darkpercent="$(awk   "BEGIN {print  100-$Functionoption}")"
   Brightpercent="$(awk "BEGIN {print  100+$Functionoption}")"
   Darkfactor="$(awk    "BEGIN {print (100-$Functionoption)/100}")"
-  Brightfactor="$(awk  "BEGIN {print  1/$Darkfactor}")"
-  
+  Brightfactor="$(awk  "BEGIN {print (100+$Functionoption)/100}")"
+  #Brightfactor="$(awk  "BEGIN {print  1/$Darkfactor}")"
+
   for Image in $Imagelist; do
     Imagecount=$((Imagecount+1))
     Destinationfile="$(basename $Image)"
     Convertline="nice convert $Image -write mpr:image +delete"  
     Convertline="$Convertline     \( mpr:image                                           -write $Cachedir/$Destinationfile.exp.source.tif \)" 
     case $Functionmode in
+      brightness)    
+        Convertline="$Convertline \( mpr:image -brightness-contrast  ${Functionoption}%  -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
+        Convertline="$Convertline \( mpr:image -brightness-contrast -${Functionoption}%  -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
+      ;;
+      modulate)    
+        Convertline="$Convertline \( mpr:image -modulate ${Brightpercent}%               -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
+        Convertline="$Convertline \( mpr:image -modulate ${Darkpercent}%                 -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
+      ;;
       multiply)    
         Convertline="$Convertline \( mpr:image -evaluate multiply ${Brightfactor}        -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
         Convertline="$Convertline \( mpr:image -evaluate multiply ${Darkfactor}          -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
@@ -1646,7 +1654,7 @@ lightbalance() {
     echo $Convertline
     multicore "$Convertline" || return 1
     multicore_wait || return 1
-    multicore "enfuse $(find $Cachedir/${Destinationfile}.exp* | tr "\n" " ") -o $Destinationdir/$Destinationfile --contrast-weight 0.2 " "$Destinationdir/$Destinationfile" || return 1
+    multicore "enfuse $(find $Cachedir/${Destinationfile}.exp* | tr "\n" " ") -o $Destinationdir/$Destinationfile --gray-projector=pl-star" "$Destinationdir/$Destinationfile" || return 1
     showpercent $Imagecount $Imagenumber
   done
   multicore_wait || return 1
@@ -2198,7 +2206,7 @@ fuse_defaultvalue() {
     contrastweight)       echo "1" ;;
     entropyweight)        echo "0" ;;
     blendmask)            echo "--hard-mask" ;;
-    grayprojector)        echo "luminance" ;;
+    grayprojector)        echo "pl-star" ;;
     levels)               echo "" ;;
     contrastwindowsize)   echo "5" ;;
     contrastmincurvature) echo "" ;;
@@ -2500,8 +2508,8 @@ start "stackfuser '$Version'" -> frameset;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
         lightbalanceline:beside                               -> lightbalance lightbalancemodecombo lightbalancecombo lightbalancemagick lightbalancefuse lightbalanceevaluate;
-          lightbalancemodecombo                                 -> @combo("level","gamma","levelgamma","multiply")="levelgamma" ;
-          lightbalancecombo                                     -> @combo("20%","30%","40%","50%","60%","70%")="50%" ;
+          lightbalancemodecombo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
+          lightbalancecombo                                     -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="50%" ;
           lightbalancemagick                                    -> @button="magick" ;
           lightbalanceevaluate                                  -> @button="evaluate" ;
           lightbalancefuse                                      -> @button="fuse" ;
