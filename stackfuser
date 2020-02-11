@@ -2206,7 +2206,7 @@ fuse_defaultvalue() {
     contrastweight)       echo "1" ;;
     entropyweight)        echo "0" ;;
     blendmask)            echo "--hard-mask" ;;
-    grayprojector)        echo "pl-star" ;;
+    grayprojector)        echo "" ;;
     levels)               echo "" ;;
     contrastwindowsize)   echo "5" ;;
     contrastmincurvature) echo "" ;;
@@ -3371,7 +3371,7 @@ parse_kaptainsignal() {
       Functionoption="$(askkaptain -c "${Command}combo")"
       case "$Command" in
         applyall) 
-          Functionoption="$(getbatch1)"
+          Functionoption="$(getbatch1)" ### FIXME convert options only
           Kaptainsignal="wizard${Kaptainsignal#applyall}"
         ;;
         meanbalance)
@@ -3696,18 +3696,16 @@ main "$@"
 finish
 
 ##### ToDo ####
-# gamma=auto: apply mean gamma
+# applyall: convert options only
 # crop: Do not crop if geometry is same as image
-# memory check for multicore fuse
 # configuration dialog:
 #  - project directory
 #  - gallery directory
 #  - number of threads
 #  - checkbutton: "allow invalid directory structure"
+#  - checkbutton: "keep cache"
 # storepid(): store name, too, check in finish()
 # cli support
 # documentation in all functions
 # Features:
 #  - clean entire project home: cache, backup, magick (note in history)
-# Fix:
-#  ardustack - replace align_image_stack for median with vidstab
