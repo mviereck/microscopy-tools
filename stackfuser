@@ -127,6 +127,18 @@ storepid() {
 
 #### file operations
 
+cut_extension() {
+  local Extension
+  Extension="$(get_extension "${1:-}")"
+  sed "s%\.${Extension}\$%%" <<< "${1:-}"
+}
+get_extension() {
+  local Filename Extension
+  Filename="$(head -n1 <<< "${1:-}")"
+  Extension="$(rev <<< "$Filename" | cut -d/ -f1 | cut -d. -s -f1 | rev)"
+  echo "$Extension"
+}
+
 myrm() {
   # remove files
   # $@ quoted globs
@@ -288,6 +300,7 @@ setup_workdir() {
   local Targetstackshotdir Targetnewdir Targetprevdir 
   local Targetmagickdir Targetfusedir Targetevaluatedir Targetcomposedir Targetcachedir
   local Projectname
+  local Imageformat
 
   Function="${1:-}"
   Targetdir="${2:-}"
@@ -327,9 +340,16 @@ setup_workdir() {
   
   [ "$Targetnewdir" = "$Targetmagickdir" ] && {
     mkdir -p $Targetnewdir
-    check_fileglob "$Targetmagickdir/$Sourcefileglob" || mycp "$Targetstackshotdir/$Sourcefileglob" "$Targetmagickdir"
+    check_fileglob "$Targetmagickdir/$Sourcefileglob" || {
+      Imageformat="$(get_extension "$(fileglob "$Targetstackshotdir/$Sourcefileglob")")"
+      grep -q -i -x "$Imageformat" <<< "$Imageformatlist" && {
+        mycp "$Targetstackshotdir/$Sourcefileglob" "$Targetmagickdir"
+        :
+      } || {
+        imageformat -o "tif" -s "$Targetstackshotdir" -g "$Sourcefileglob" -d "$Targetmagickdir"
+      }
+    }
   }
-  
   Targetprevdir="$Targetnewdir.bak"
 
   # backup for undo, serving also as source for batch operations
@@ -369,7 +389,7 @@ setup_workdir() {
       #Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
     ;;
     
-    align*|brightness*|contrast*|crop*|cuberotate*|lightbalance*|gamma*|level*|ruler*|sharpen*|statistic*|stretch*|wizard*)
+    align*|brightness*|contrast*|crop*|cuberotate*|imageformat*|lightbalance*|gamma*|level*|ruler*|sharpen*|statistic*|stretch*|wizard*)
       Sourcedir="$Targetprevdir"
       Destinationdir="$Targetnewdir"
     ;;
@@ -689,20 +709,187 @@ setup_imagelist() {
   # Set up often needed image variables
   Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
   Imagenumber="$(grep -c . <<< "$Imagelist")"
-  Imagewidth=$($Convert  -format '%w'  "$(head -n1 <<< "$Imagelist")" info:)
-  Imageheight=$($Convert -format '%h'  "$(head -n1 <<< "$Imagelist")" info:)
-  Imagecount=0
-  Image=""
-  Cropgeometry=""
-  [ -n "$Imagelist" ] && return 0 || {
+  Image="$(head -n1 <<< "$Imagelist")"
+  [ -z "$Image" ] && {
     failure "No images found"
     return 1
   }
+  Imagewidth=$($Convert  -format '%w' "$Image" info:)
+  Imageheight=$($Convert -format '%h' "$Image" info:)
+  Imageformat="$(get_extension        "$Image")"
+  Image=""
+  Imagecount=0
+  Cropgeometry=""
 }
 
 #### image sequence operations
 
 align_vidstab() {
+  # Align images with ffmpeg/vidstab
+  # -m  Shakiness 1-10 (low to high)
+  # -o  crop interactive yes/""
+  
+  local $Batchlocal
+  local $Imagelocal
+  local Sourcefilelist Sourcefile
+  local CropW CropH CropX CropY Cropgeometry Zoom
+  local Colmaxlevel Colminlevel
+  local Cropinteractive Shakiness Stepsize
+  local Xoffset Xoffsetrelative Xoffsetlist Yoffset Yoffsetrelative Yoffsetlist Radians Radiansrelative Radianslist Degree 
+  local Framedir Motionsfile Distortdir Cropminimage 
+
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  cd $Cachedir
+  
+  # settings
+  Shakiness="$Functionmode"
+  Shakiness="${Shakiness:-1}"
+  Cropinteractive="$Functionoption"
+  [ "$Cropinteractive" ] && Cropinteractive="yes"
+  Stepsize=6
+  
+  # cache setup
+  Framedir="$Cachedir/frames"
+  mkdir -p "$Framedir"
+  Distortdir="$Cachedir/distort"
+  mkdir -p "$Distortdir"
+  
+  Sourcefilelist=$Cachedir/align.source.list
+  :> $Sourcefilelist
+  Motionsfile="$Cachedir/global_motions.trf"
+  
+  note "align_vidstab: Generating mean image for contrast enhancement (shakiness=$Shakiness)"
+  convert $Imagelist -evaluate-sequence mean $Cachedir/source.mean.jpg
+  showimage $Cachedir/source.mean.jpg
+  Colminlevel="$(convert -format '%[fx:minima*100]' info:)"
+  Colmaxlevel="$(convert -format '%[fx:maxima*100]' info:)"
+  
+  note "align_vidstab: Preparing frames for alignment (shakiness=$Shakiness)"
+  Cropgeometry="$(calc_evengeometry "${Imagewidth}x${Imageheight}+0+0")"
+  Imagecount=0
+  for Image in $Imagelist; do
+    Imagecount="$((Imagecount + 1))"
+    multicore "convert $Image -crop $Cropgeometry -contrast-stretch ${Colminlevel}x${Colmaxlevel} $Framedir/frame${Imagecount}.jpg" "$Framedir/frame${Imagecount}.jpg" || return 1
+    showpercent "$Imagecount" "$Imagenumber"
+  done
+  multicore_wait || return 1
+  Cropgeometry=""
+
+  # Set up ffmpeg input images list
+  Framelist="$(fileglob "$Framedir/*")"
+  :> $Sourcefilelist
+  for Image in $Framelist; do
+    echo "file $Image" >>$Sourcefilelist
+  done
+
+  # Workaround to get video of png images. vidstab fails with videos generated from gphoto2 jpg for unknown reasons.
+  note "align_vidstab: generating video from images (shakiness=$Shakiness"
+  nice ffmpeg -y -hide_banner -nostdin -safe "0" -f "concat" -i "$Sourcefilelist" \
+         -vcodec "libx264" -profile:v "high444" -refs "16" -crf "0" -preset "ultrafast" \
+         "$Cachedir/align.orig.mp4" || return 1
+  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.orig.mp4"
+  showpercent 1 100
+  ifcmdbreak && return 1
+  
+  note "align_vidstab: Splitting generated 1. video into .png images (shakiness=$Shakiness"
+  myrm "$Framedir/*"
+  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.orig.mp4" "$Framedir/frame%04d.png" || return 1
+  showpercent 2 100
+  ifcmdbreak && return 1
+
+  # Set up ffmpeg input images list with generated png images
+  :> $Sourcefilelist
+  Framelist="$(fileglob "$Framedir/*")"
+  for Image in $Framelist; do
+    echo "file $Image" >>$Sourcefilelist
+  done
+  
+  note "align_vidstab: generating 2. video from .png images (shakiness=$Shakiness"
+  nice ffmpeg -y -hide_banner -nostdin -f image2 -start_number 1 -i $Framedir/frame%04d.png -safe "0" -vframes 1000 -vcodec libx264 -crf 25  -pix_fmt yuv420p "$Cachedir/align.source.mp4" || return 1
+  showpercent 3 100
+  ifcmdbreak && return 1
+
+  note "align_vidstab: Analyzing video (shakiness=$Shakiness)"
+  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
+         -vf "vidstabdetect=shakiness=$Shakiness:accuracy=15:mincontrast=0.1:stepsize=$Stepsize:show=1:result=$Cachedir/transforms$Shakiness.trf" \
+         "$Cachedir/align.vidstab-show.mp4" || return 1
+  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.vidstab-show.mp4"
+  showpercent 4 100
+  ifcmdbreak && return 1
+            
+  note "align_vidstab: Transforming video (shakiness=$Shakiness"
+  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
+         -vf "vidstabtransform=optzoom=0:smoothing=0:interpol=bicubic:relative=1:crop=black:debug=1:input=$Cachedir/transforms$Shakiness.trf,unsharp=5:5:0.8:3:3:0.4" \
+         "$Cachedir/align.result.mp4" || return 1
+  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.result.mp4"
+  showpercent 5 100
+  ifcmdbreak && return 1
+
+  #note "align_vidstab: Splitting aligned video into images (shakiness=$Shakiness)"
+  #myrm "$Framedir/*"
+  #nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.result.mp4" "$Framedir/align%04d.tif" || return 1
+  #showpercent 6 100
+  #ifcmdbreak && return 1
+  
+  Xoffsetlist="$(cat $Motionsfile | grep -v '#' | awk '{print $2}')"
+  Yoffsetlist="$(cat $Motionsfile | grep -v '#' | awk '{print $3}')"
+  Radianslist="$(cat $Motionsfile | grep -v '#' | awk '{print $4}')"
+  
+  note "align_vidstab: Distorting source images (shakiness=$Shakiness)"
+  Imagecount=0
+  for Image in $Imagelist; do
+    Imagecount="$((Imagecount + 1))"
+    Xoffsetrelative="$(sed "${Imagecount}q;d" <<<"$Xoffsetlist")"
+    Xoffset="$(awk "BEGIN { print $Xoffset + $Xoffsetrelative }")"
+    Yoffsetrelative="$(sed "${Imagecount}q;d" <<<"$Yoffsetlist")"
+    Yoffset="$(awk "BEGIN { print $Yoffset + $Yoffsetrelative }")"
+    Radiansrelative="$(sed "${Imagecount}q;d" <<<"$Radianslist")"
+    Radians="$(awk "BEGIN { print $Radians - $Radiansrelative }")"
+    Degree="$(awk  "BEGIN { print $Radians * 180 / 3.141592652}")"
+        
+    Destinationfile="$Distortdir/distorted$Imagecount.tif"
+    multicore "$Convert $Image -virtual-pixel transparent -distort SRT '0,0 1 $Degree $Xoffset,$Yoffset' $Destinationfile" "$Destinationfile" || return 1
+    showpercent "$Imagecount" "$Imagenumber"
+  done
+  multicore_wait || return 1
+      
+  # crop greatest common inner rectangle of distorted images
+  Cropminimage="$Cachedir/distorted.min.mpc"
+  nice convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
+  case $Cropinteractive in
+    yes) notify-send "align_vidstab(): Ready for interactive crop"
+         Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")" || return 1 ;;
+    *)   Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")" || return 1 ;;
+  esac
+  
+  Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
+  Rotate="${Rotate:-0}"
+  Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
+      
+  [ "$Cropgeometry" ] || {
+    failure "align_vidstab: crop geometry is empty"
+    return 1
+  }
+      
+  note "align_vidstab: Cropping aligned images to $Cropgeometry (shakiness=$Shakiness)"
+  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
+  Imagecount=0
+  for Image in $(fileglob "$Distortdir/*"); do
+    Imagecount="$((Imagecount+1))"
+    Destinationfile="$(sed "${Imagecount}q;d" <<< "$Imagelist")"
+    Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
+    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    showpercent "$Imagecount" "$Imagenumber"
+  done
+  multicore_wait || return 1
+            
+  showimage "$Cropminimage.trim_hard.png"
+  return 0    
+}
+
+align_vidstab_jpg() {
   # Align images with ffmpeg/vidstab
   # -m  Shakiness 1-10 (low to high)
   # -o  crop interactive yes/""
@@ -748,7 +935,7 @@ align_vidstab() {
   done
 
   # Workaround to get video of png images. vidstab fails with videos generated from gphoto2 jpg for unknown reasons.
-  note "align_vidstab: generating 1. video from images"
+  note "align_vidstab: generating video from images"
   nice ffmpeg -y -hide_banner -nostdin -safe "0" -f "concat" -i "$Sourcefilelist" \
          -vcodec "libx264" -profile:v "high444" -refs "16" -crf "0" -preset "ultrafast" \
          "$Cachedir/align.orig.mp4" || return 1
@@ -819,7 +1006,7 @@ align_vidstab() {
     Radians="$(awk "BEGIN { print $Radians - $Radiansrelative }")"
     Degree="$(awk  "BEGIN { print $Radians * 180 / 3.141592652}")"
         
-    Destinationfile="$Distortdir/distorted$Imagecount.png"
+    Destinationfile="$Distortdir/distorted$Imagecount.$Imageformat"
     multicore "$Convert -size ${Imagewidth}x${Imageheight} xc:transparent -fill white -stroke white \
                -draw 'translate $((Imagewidth/2)),$((Imageheight/2)) \
                       rotate $Degree \
@@ -1234,34 +1421,6 @@ $Position"
   multicore_wait || return 1
 }
 
-calc_autogamma() {
-  # calculate -auto-gamma value for sequence of images
-  # based on https://stackoverflow.com/questions/24396024/in-imagemagick-is-it-possible-to-auto-gamma-based-on-a-region
-  # -s
-  # -g
-  # -c
-  
-  local $Batchlocal
-  local Meanimage Mean Quantumrange Gamma
-  
-  parse_batchoptions "$@" || return 1
-  
-  Meanimage="$Cachedir/autogamma.mean.jpg"
-  
-  note "calc_autogamma: Generating mean image"
-  nice convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence mean "$Meanimage" || return 1
-  showimage "$Meanimage"
-  
-  Mean="$(convert         "$Meanimage" -format "%[mean]"            info:)"
-  Quantumrange="$(convert "$Meanimage" -format "%[fx:quantumrange]" info:)"
-  
-  # calculate gamma
-  Gamma="$(awk "BEGIN{print log($Mean/$Quantumrange)/log(0.5)}")"
-  verbose "calc_autogamma: Calculated gamma: $Gamma"
-  
-  echo "$Gamma"
-}
-
 compose() {
   local $Batchlocal
   local Evalmaxfile Evalminfile Minfile Maxfile 
@@ -1478,20 +1637,20 @@ evaluate() {
   # Evaluate image stack.
   
   local $Batchlocal
-  local Destinationfilebasename Fileformat Count
+  local Destinationfilebasename Imageformat Count
   
   parse_batchoptions "$@" || return 1
   
   Destinationfilebasename="${Destinationfile:-evaluate}"  
-  Fileformat="${Functionoption:-jpg}"
   Functionmode="${Functionmode:-all}"
+  Imageformat="$(get_extension "$(fileglob "$Sourcedir/$Sourcefileglob")")"
   
   case "$Functionmode" in
     all)
       Count=0
       for Functionmode in min mean max median; do
         Count="$((Count + 1))"
-        multicore "evaluate -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Functionmode' -o '$Fileformat'" || return 1
+        multicore "evaluate -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Functionmode'" || return 1
         showpercent "$Count" "4"
       done
       multicore_wait || return 1
@@ -1500,7 +1659,7 @@ evaluate() {
     *) failure "evaluate: Unknown function mode $Functionmode" ; return 1 ;;
   esac
   
-  Destinationfile="$Destinationdir/$Destinationfilebasename.$Functionmode.$Fileformat"
+  Destinationfile="$Destinationdir/$Destinationfilebasename.$Functionmode.$Imageformat"
   note "evaluate: $Functionmode $Destinationfilebasename"
   $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Functionmode "$Destinationfile" || {
     failure "evaluate $Functionmode: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all source images must be of same size."
@@ -1514,11 +1673,13 @@ fuse() {
   # fuse stackshot of images with enfuse
   
   local $Batchlocal 
+  local $Imagelocal
   local Destinationfilebasename
   local Fusemode Fuseoption Modelist Modenumber Count
-  local Layertif Filesize
+  #local Layertif Filesize
   
   parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
   
   Destinationfilebasename="${Destinationfile:-fuse}"
   Fusemode="${Functionmode:-1}"
@@ -1526,10 +1687,10 @@ fuse() {
   
   case $Fusemode in
     all|set*)
-      Layertif="$Cachedir/layer.tif"
-      note "fuse $Fusemode: Generating layered tif image"
-      nice convert $(fileglob "$Sourcedir/$Sourcefileglob") "$Layertif" || return 1
-      Filesize="$(du -k "$Layertif" | awk '{print $1}')"
+      #Layertif="$Cachedir/layer.tif"
+      #note "fuse $Fusemode: Generating layered tif image"         ### FIXME Damaging other file formats?
+      #nice convert $(echo $Imagelist) "$Layertif" || return 1
+      #Filesize="$(du -k "$Layertif" | awk '{print $1}')"
       case $Fusemode in
         all) 
           Modelist="$(seq $Fusemodenumber)" 
@@ -1541,10 +1702,15 @@ fuse() {
         ;;
       esac
       Modenumber="$(wc -w <<< "$Modelist")"
+      
+      convert "$(head -n1 <<< "$Imagelist")" "$Cachedir/stackfuser-test.gif"
+      Imagememsize="$(du -k $Cachedir/memsizetest.gif | awk '{print $1}')"
+  
       Count=0
       for Fusemode in $Modelist; do
         Count="$((Count+1))"
-        multicore "fuse -s '$(dirname "$Layertif")' -g '$(basename "$Layertif")' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Fusemode' -o '$Fuseoption'" "" "$((Filesize*3))" || return 1
+#        multicore "fuse -s '$(dirname "$Layertif")' -g '$(basename "$Layertif")' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Fusemode' -o '$Fuseoption'" "" "$((Filesize*3))" || return 1
+        multicore "fuse -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Fusemode' -o '$Fuseoption'" "" "$((Imagememsize*Imagenumber*3))" || return 1
         showpercent "$Count" "$Modenumber"
       done
       multicore_wait || return 1
@@ -1556,7 +1722,7 @@ fuse() {
     ;;
   esac
   
-  Destinationfile="$Destinationdir/$Destinationfilebasename.$(fuse_getname $Fusemode shortcut).jpg"
+  Destinationfile="$Destinationdir/$Destinationfilebasename.$(fuse_getname $Fusemode shortcut).${Imageformat}"
   case $Fuseoption in
     skip)
       [ -e "$Destinationfile" ] && {
@@ -1576,9 +1742,7 @@ fuse() {
   verbose "fuse $Fusemode: $Enfuseoptions"
   
   # Fuse
-  { nice enfuse $Enfuseoptions \
-           --output="$Destinationfile" \
-           $(fileglob "$Sourcedir/$Sourcefileglob") 2>&1 || {
+  { nice enfuse $Enfuseoptions --output="$Destinationfile" $(echo $Imagelist) 2>&1 || {
       failure "fuse $Fusemode failed"
       return 1  ### FIXME seems not to return!?
     } 
@@ -1590,6 +1754,38 @@ fuse() {
   #note "fuse $Fusemode is ready: ${Destinationfile}"
   showimage "$Destinationfile"
   return 0
+}
+
+imageformat() {
+  local $Batchlocal
+  local $Imagelocal
+  local Sourceformat Destinationformat
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  Sourceformat="$(head -n1 <<< "$Imagelist" | rev | cut -d. -f1 | rev)"
+  Sourceformat="${Sourceformat,,}"
+  Destinationformat="${Functionoption:-jpg}"
+  Destinationformat="${Destinationformat,,}"
+  
+  [ "$Sourceformat" = "$Destinationformat" ] && {
+    note "imageformat(): Files already have desired image format $Destinationformat"
+    cp $Imagelist $Destinationdir
+    showpercent 100 100
+    return 0
+  }
+    
+  note "imageformat(): Converting image format from $Sourceformat to $Destinationformat"
+  for Image in $Imagelist; do
+    Imagecount=$((Imagecount+1))
+    showpercent $Imagecount $Imagenumber
+    Destinationfile="$(rev <<< "$Image" | cut -d. -f2- | rev).$Destinationformat"
+    Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
+    multicore "$Convert $Image $Destinationfile" "$Destinationfile" || return 1
+  done
+  
+  multicore_wait || return 1
 }
 
 lightbalance() {
@@ -1816,23 +2012,24 @@ wizard() {
   
   local $Batchlocal
   local $Imagelocal
-  local Gamma
+  local $Imagepropertieslocal
+  local Meanimage Gamma 
 
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
-  
   [ "$Functionoption" ] || case "$Function" in
     brightness) Functionoption="10x10" ;;
     contrast)   Functionoption="3x50%" ;;
-    statistic)  Functionoption="median 5" ;;
     gamma)      Functionoption="auto" ;;
     level)      Functionoption="auto" ;;
     sharpen)    Functionoption="6x2" ;;
-    stretch)    Functionoption="0%" ;;
+    statistic)  Functionoption="median 5" ;;
+    stretch)    Functionoption="auto" ;;
   esac
 
+  [ "$Functionmode" = "stretch" ] && Functionmode="contrast-stretch"
   case "$Functionmode" in
-    level|gamma) 
+    level|gamma|contrast-stretch) 
       case "$Functionoption" in
         auto|"") Functionmode="-auto-$Functionmode" ; Functionoption="" ;;
         *)       Functionmode="-$Functionmode" ;;
@@ -1842,18 +2039,19 @@ wizard() {
     contrast)    Functionmode="-sigmoidal-contrast" ;;
     statistic)   Functionmode="-statistic" ;;
     sharpen)     Functionmode="-adaptive-sharpen" ;;
-    stretch)     Functionmode="-contrast-stretch" ;;
     wizard)      Functionmode="" ;;
   esac
   
-  grep -q "auto-gamma" <<< "$Functionmode $Functionoption" && {
-    Gamma="$(calc_autogamma -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir")"
-    Functionmode="$(sed   "s/auto-gamma/gamma $Gamma/" <<< "$Functionmode")"
-    Functionoption="$(sed "s/auto-gamma/gamma $Gamma/" <<< "$Functionoption")"
+  grep -q -E "auto-gamma|auto-level|auto-contrast-stretch" <<< "$Functionmode $Functionoption" && {
+    imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir" || return 1
+    Functionmode="$(sed   "s/auto-gamma/gamma $Imageautogamma/ ; 
+                           s/auto-contrast-stretch/contrast-stretch ${Imageminlevel}x${Imagemaxlevel}/ ; 
+                           s/auto-level/level ${Imageminlevel}%x${Imagemaxlevel}%/"    <<< "$Functionmode")"
+    Functionoption="$(sed "s/auto-gamma/gamma $Imageautogamma/ ; 
+                           s/auto-contrast-stretch/contrast-stretch ${Imageminlevel}x${Imagemaxlevel}/ ; 
+                           s/auto-level/level ${Imageminlevel}%x${Imagemaxlevel}%/"    <<< "$Functionoption")"
   }
-  
   note "wizard: $Functionmode $Functionoption"
-  
   Imagecount=0
   for Image in $Imagelist; do
     Imagecount="$((Imagecount + 1 ))"
@@ -1867,6 +2065,45 @@ wizard() {
 }
 
 #### single image operations
+
+imageproperties() {
+  local $Batchlocal
+  local $Imagelocal
+  local Meanimage Imageproperties
+  #local Imagemean Imagequantumrange Imageautogamma Imageminlevel Imagemaxlevel Imageminlevelred Imagemaxlevelred Imageminlevelgreen Imagemaxlevelgreen Imageminlevelblue Imagemaxlevelblue
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+
+  case $(wc -l <<< "$Imagelist") in
+    0) return 1 ;;
+    1) Meanimage="$Imagelist" ;;
+    *)
+      note "imageproperties(): Generating mean image"
+      Meanimage="$Cachedir/mean.jpg"
+      convert $Imagelist -evaluate-sequence mean "$Meanimage" || return 1
+      showimage "$Meanimage"
+    ;;
+  esac
+
+  Imageproperties="$(convert "$Meanimage" -format '
+Imagemean=%[mean]
+Imagequantumrange=%[fx:quantumrange]
+Imageautogamma=%[fx:log(mean)/log(0.5)]
+Imageminlevel=%[fx:minima*100]
+Imagemaxlevel=%[fx:maxima*100]
+Imageminlevelred=%[fx:minima.r*100]
+Imagemaxlevelred=%[fx:maxima.r*100]
+Imageminlevelgreen=%[fx:minima.g*100]
+Imagemaxlevelgreen=%[fx:maxima.g*100]
+Imageminlevelblue=%[fx:minima.b*100]
+Imagemaxlevelblue=%[fx:maxima.b*100]
+' info:)"
+
+  verbose "Image properties of $Meanimage: 
+$Imageproperties"
+  eval $Imageproperties
+}
 
 calc_evengeometry() {
   local Geometry XY W H
@@ -2406,23 +2643,23 @@ multicore_break() {
 kaptaingrammar() {
   echo '#! /usr/bin/kaptain
 
-start "stackfuser '$Version'" -> frameset;
-  frameset:framed                    -> topframe bottomframe;
-    topframe                           -> batchoptionframe ;
+start "stackfuser '$Version'"     -> tabset bottomframe;
+  
+  bottomframe                       -> dirframe statusframe ;  
+    dirframe:beside                    -> choosedirguibutton choosedir refreshbutton;
+      choosedirguibutton                 -> @button="Stackshot directory:" ;
+      choosedir                          -> @directory="'$Projecthome'" ;
+      refreshbutton                      -> @button="refresh" ;
+    statusframe                        -> wizardstatusline ;
+      wizardstatusline:beside            -> cmdpercent wizardlog;
+        cmdpercent                         -> @icon ;
+        wizardlog                          -> @text="" ;
+
+  tabset:tabbed                     -> batchtab specialtab;
+    batchtab "Image batch processing" -> batchoptionframe ;
       batchoptionframe:beside            -> batchframeleft  batchframeright;
-        batchframeleft:framed              -> batchblock1 batchblock2 specialframe;
-        batchframeright:framed             -> batchblock3 runbatchframe showresultframe @fill deleteframe;
-    bottomframe                        -> dirframe statusframe ;
-    
-      dirframe:beside                    -> choosedirguibutton choosedir refreshbutton;
-        choosedirguibutton                 -> @button="Stackshot directory:" ;
-        choosedir                          -> @directory="'$Projecthome'" ;
-        refreshbutton                      -> @button="refresh" ;
-    
-      statusframe                        -> wizardstatusline ;
-        wizardstatusline:beside            -> cmdpercent wizardlog;
-          cmdpercent                         -> @icon ;
-          wizardlog                          -> @text="" ;
+        batchframeleft:framed              -> batchblock1 batchblock2 ;
+        batchframeright:framed             -> batchblock3 runbatchframe showresultframe;
       
       batchblock1 "batch block 1: prepare stackshot images in directory magick" -> cropline lightbalanceline @text="imagemagick convert options" gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline applyallline;
         gammaline:beside                                      -> gamma gammamagick gammafuse gammaevaluate;
@@ -2463,7 +2700,7 @@ start "stackfuser '$Version'" -> frameset;
           brightnessfuse                                        -> @button="fuse" ;
           brightness:beside           "brightness-contrast"     -> brightnesscombo | ! "";
         stretchline:beside                                    -> stretch stretchmagick stretchfuse stretchevaluate;
-          stretchcombo                                          -> @combow("0%","2%x1%","1%","2%","3%","4%","5%","10%","15%","20%")="2%x1%" ;
+          stretchcombo                                          -> @combow("auto","2%x1%","1%","2%","3%","4%","5%","10%","15%","20%")="auto" ;
           stretchmagick                                         -> @button="magick" ;
           stretchevaluate                                       -> @button="evaluate" ;
           stretchfuse                                           -> @button="fuse" ;
@@ -2543,7 +2780,24 @@ start "stackfuser '$Version'" -> frameset;
           runbatchprocessing                                    -> @button="Run selected batch blocks";
           cmdbreak                                              -> @button="break" ;
         
-      specialframe "Special operations" -> rulerline videoline animationline cuberotateline undoline ;
+      showresultframe "Show results"                        -> showimagebuttons show_video showdirline killviewnior;
+        showimagebuttons:beside                               -> showimagemagickeval showimagefuseeval ;
+          showimagemagickeval                                 -> @combo("magick.max","magick.mean","magick.median","magick.min")="magick.max" ;
+          showimagefuseeval                                   -> @combo("fuse.max","fuse.mean","fuse.median","fuse.min")="fuse.median" ;
+        show_video                                          -> @combo("-");
+        showdirline                                         -> @text="Directories" showdirline1 showdirline2 ;
+          showdirline1:beside                                 -> opendirbutton showstackshot showmagick ;
+            opendirbutton                                       -> @button="FM";
+            showstackshot                                       -> @button="stackshot";
+            showmagick                                          -> @button="magick";
+          showdirline2:beside                                 -> showfuse showcompose showevaluate;
+            showfuse                                            -> @button="fuse";
+            showcompose                                         -> @button="compose";
+            showevaluate                                        -> @button="evaluate";
+        killviewnior                                          -> @action("killall viewnior ffplay")="killall viewnior ffplay";
+        
+    specialtab:framed "Special operations" -> specialframe @fill deleteframe;
+      specialframe "Special operations" -> rulerline videoline animationline cuberotateline imageformatline undoline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
           rulermodecombo                                        -> @combo("100c","100p","100z","40c","40p","40z","20c","20p","20z","10c","10p","10z")="100z" ;
           rulercombo:beside           "Title:"                  -> @string ;
@@ -2566,30 +2820,27 @@ start "stackfuser '$Version'" -> frameset;
           cuberotatemodecombo:beside                            -> @combo("90","180","270","reverse-order","back-left","back-top","left","right","top","bottom")="reverse-order";
           cuberotatemagick                                      -> @button="magick" ;
           cuberotate:beside           "cuberotate"              -> "" ;
+        imageformatline:beside                                -> imageformat imageformatcombo imageformatmagick imageformatfuse imageformatevaluate;
+          imageformatcombo                                      -> @combow('$Imageformatcombo')="TIFF" ;
+          imageformatmagick                                     -> @button="magick" ;
+          imageformatevaluate                                   -> @button="evaluate" ;
+          imageformatfuse                                       -> @button="fuse" ;
+          imageformat:beside          "change image format"     -> "";
         undoline:beside                                       -> undo undomagick undofuse undoevaluate;
           undomagick                                            -> @button="magick" ;
           undoevaluate                                          -> @button="evaluate" ;
           undofuse                                              -> @button="fuse" ;
           undo                        "undo last step"          -> "" ;
-          
-      showresultframe "Show results"                        -> showimagebuttons show_video showdirline;
-        showimagebuttons:beside                               -> showimagemagickeval showimagefuseeval ;
-          showimagemagickeval                                 -> @combo("magick.max","magick.mean","magick.median","magick.min")="magick.max" ;
-          showimagefuseeval                                   -> @combo("fuse.max","fuse.mean","fuse.median","fuse.min")="fuse.median" ;
-        show_video                                          -> @combo("-");
-        showdirline                                         -> @text="Directories" showdirline1 showdirline2 ;
-          showdirline1:beside                                 -> opendirbutton showstackshot showmagick ;
-            opendirbutton                                       -> @button="FM";
-            showstackshot                                       -> @button="stackshot";
-            showmagick                                          -> @button="magick";
-          showdirline2:beside                                 -> showfuse showcompose showevaluate;
-            showfuse                                            -> @button="fuse";
-            showcompose                                         -> @button="compose";
-            showevaluate                                        -> @button="evaluate";
     
-      deleteframe                  "Delete results"         -> delete killviewnior ;
-        delete:beside                 "DELETE"                -> @combo("backups","evaluate","magick","compose","video","fuse","all")="cache" ;
-        killviewnior                                          -> @action("killall viewnior ffplay")="killall viewnior ffplay";
+      deleteframe                  "Delete results"         -> deletebuttons; 
+        deletebuttons:beside                                   -> deletebackups deletemagick deleteevaluate deletecompose deletefuse deletevideo deleteall ;
+          deletebackups                                          -> @button="backups + cache";
+          deleteevaluate                                         -> @button="evaluate";
+          deletemagick                                           -> @button="magick";
+          deletecompose                                          -> @button="compose";
+          deletefuse                                             -> @button="fuse";
+          deletevideo                                            -> @button="video";
+          deleteall                                              -> @button="all";
   '
 }
 
@@ -2651,11 +2902,19 @@ kaptain_update() {
   sendkaptain "choosedir='$Stackdir'"
   
   # show directory buttons
-  [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"      || sendkaptain "showstackshot='-'"
-  [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"            || sendkaptain "showmagick='-'"
-  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"        || sendkaptain "showevaluate='-'"
-  [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"          || sendkaptain "showcompose='-'"
-  [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"                || sendkaptain "showfuse='-'"
+  [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"       || sendkaptain "showstackshot='-'"
+  [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"             || sendkaptain "showmagick='-'"
+  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"         || sendkaptain "showevaluate='-'"
+  [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"           || sendkaptain "showcompose='-'"
+  [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"                 || sendkaptain "showfuse='-'"
+  
+  # show delete buttons
+  check_dirglob "$Stackdir/*.bak" ]               && sendkaptain "deletebackups='backups + cache'" || sendkaptain "deletebackups='-'"
+  check_dirglob "$Stackdir/magick" ]              && sendkaptain "deletemagick='magick'"           || sendkaptain "deletemagick='-'"
+  check_dirglob "$Stackdir/evaluate" ]            && sendkaptain "deleteevaluate='evaluate'"       || sendkaptain "deleteevaluate='-'"
+  check_dirglob "$Stackdir/compose" ]             && sendkaptain "deletecompose='compose'"         || sendkaptain "deletecompose='-'"
+  check_dirglob "$Stackdir/fuse" ]                && sendkaptain "deletefuse='fuse'"               || sendkaptain "deletefuse='-'"
+  check_dirglob "$Stackdir/video" ]               && sendkaptain "deletevideo='video'"             || sendkaptain "deletevideo='-'"
   
   # videos
   Comboline=""
@@ -3428,21 +3687,21 @@ parse_kaptainsignal() {
     
     runbatch1) 
       runbatch1 "$Stackdir"
-      note "Batch 1 is ready."
+      cmd -f note -o "Batch 1 is ready."
     ;;
     runbatch2) 
       runbatch2 "$Stackdir"
-      note "Batch 2 is ready."
+      cmd -f note -o "Batch 2 is ready."
     ;;
     runbatch3) 
       runbatch3 "$Stackdir"
-      note "Batch 3 is ready."
+      cmd -f note -o "Batch 3 is ready."
     ;;
     runbatchprocessing)
       askkaptain "runbatch1" >/dev/null && runbatch1 "$Stackdir"
       askkaptain "runbatch2" >/dev/null && runbatch2 "$Stackdir"
       askkaptain "runbatch3" >/dev/null && runbatch3 "$Stackdir"
-      note "Batch all is ready."
+      cmd -f note -o "Batch all is ready."
     ;;
     *)
       verbose "Unknown signal: $Kaptainsignal"
@@ -3511,15 +3770,15 @@ parse_cmd() {
     
   case "$Function" in
     deleteall)     myrmdir "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" "$Targetdir/video" ; Return=0 ;;
-    #deletebackups) myrmdir "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
-    deletebackups) myrmdir "$Targetdir"/*.bak ; Return=0 ;;
+    deletebackups) myrmdir "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
+    #deletebackups) myrmdir "$Targetdir"/*.bak ; Return=0 ;;
     delete*)       myrmdir "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
     align_*)
       batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
     ;;
-    animation*|brightness*|contrast*|crop*|cuberotate*|lightbalance*|gamma*|level*|prepare*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
+    animation*|brightness*|contrast*|crop*|cuberotate*|imageformat*|lightbalance*|gamma*|level*|prepare*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
       batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
       Return=$?
@@ -3527,6 +3786,10 @@ parse_cmd() {
     evaluate*|compose*|fuse*)
       batch_function -f $Function -m "${Functionmode:-all}" -o "$Functionoption" -t "$Targetdir" -g "$Sourcefileglob"
       Return=$?
+    ;;
+    note)
+      note "$Functionoption"
+      Return=0
     ;;
     showimage)
       showimage "$Sourcedir/$Sourcefileglob"
@@ -3577,7 +3840,8 @@ declare_variables() {
   Multicore_maxprocesses=$Multicore_maxprocesses
   
   Batchlocal="Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Functionmode Functionoption"
-  Imagelocal="Image Imagelist Imagewidth Imageheight Imagecount Imagenumber Cropgeometry"
+  Imagelocal="Image Imagelist Imagewidth Imageheight Imageformat Imagememsize Imagecount Imagenumber Cropgeometry"
+  Imagepropertieslocal="Imagemean Imagequantumrange Imageautogamma Imageminlevel Imagemaxlevel Imageminlevelred Imagemaxlevelred Imageminlevelgreen Imagemaxlevelgreen Imageminlevelblue Imagemaxlevelblue"
 
   Convert="nice convert -quality 100%"
 
@@ -3585,12 +3849,19 @@ declare_variables() {
   Wizardlogfile=$Maincachedir/stackfuser.log
   Wizardmessagefile=$Maincachedir/stackfuser.message.log
   
-  
   Storeinfofile=$Maincachedir/store.info
   Storepidfile=$Maincachedir/store.pid
     
   Imgruler="$(command -v imgruler)"
   [ -z "$Imgruler" ] && Imgruler="$(dirname $0)/imgruler"
+  
+  Imageformatlist="$(convert -list format | grep " rw" | cut -c1-9 | tr -d ' ')
+TIF"
+  Imageformatlist="$(sort <<< "$Imageformatlist")"
+  for Line in $Imageformatlist; do
+    Imageformatcombo="$Imageformatcombo,'$Line'"
+  done
+  Imageformatcombo="${Imageformatcombo#,}"
 }
 
 create_cachefiles() {
