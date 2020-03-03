@@ -747,7 +747,7 @@ gui_main() {
   gui_main_grammar > $Kaptaingrammar
   #nl -ba $Kaptaingrammar
   pipekaptain
-  tail -F "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
+  tail -f "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
 
   kaptain --pipe $Kaptainpipefile $Kaptaingrammar & Kaptainpid=$!
   setvar "pidkaptain=$Kaptainpid"
@@ -764,7 +764,7 @@ gui_main() {
       Kaptainsignal="${Kaptainsignal%:pressed}"
     }
     [ "$Kaptainsignal" ] && gui_main_parser "$Kaptainsignal"
-  done < <(tail -F "$Kaptainstdoutfile")
+  done < <(tail -f "$Kaptainstdoutfile")
 }
 gui_main_grammar() {
   echo "#! /usr/bin/kaptain
@@ -1031,7 +1031,7 @@ start "stackshooter configuration" -> frameset ;
   #nl -ba < "$Kaptaingrammar"
   
   pipekaptain
-  tail -F "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
+  tail -f "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
   
   kaptain --pipe $Kaptainpipefile $Kaptaingrammar & Kaptainpid=$!
   storepid $Kaptainpid
@@ -1057,7 +1057,9 @@ start "stackshooter configuration" -> frameset ;
         ;;
       esac
     }
-  done < <(tail -F "$Kaptainstdoutfile")
+  done < <(tail -f "$Kaptainstdoutfile")
+  
+  rm $Maincachedir/gui_config.*
 }
 gui_stackshot() {
   local Kaptainpid Kaptaingrammar Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptainsignal
@@ -1094,7 +1096,7 @@ start "Running stackshot"   -> frameset ;
 ' > "$Kaptaingrammar"
 
   pipekaptain
-  tail -F "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
+  tail -f "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
   
   kaptain --pipe $Kaptainpipefile $Kaptaingrammar & Kaptainpid=$!
   storepid $Kaptainpid
@@ -1123,7 +1125,7 @@ start "Running stackshot"   -> frameset ;
         ;;
       esac
     }
-  done < <(tail -F "$Kaptainstdoutfile")
+  done < <(tail -f "$Kaptainstdoutfile")
   
   ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
 }
@@ -1157,8 +1159,10 @@ pipekaptain() {
   echo  "#! /bin/bash
 $(declare -f storepid)
 Storepidfile='$Storepidfile'
-tail -F ${Kaptainstdinfile} & storepid \$!
+tail -f ${Kaptainstdinfile} & Tailpid=\$!
+storepid \$Tailpid
 cat >> ${Kaptainstdoutfile}
+kill \$Tailpid
 " >$Kaptainpipefile
   chmod +x $Kaptainpipefile
 }

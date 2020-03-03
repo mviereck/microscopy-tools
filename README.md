@@ -89,15 +89,15 @@ Technic: Microscope from [Hund/Wetzlar](https://www.hund.de/en/) with a stepper 
 Camera: Canon EOS 1000D. 
 Stackshot result of 240 single captures with slightly different focus:
 
-![screenshot](example.jpg)
+![screenshot](https://raw.githubusercontent.com/mviereck/microscopy-tools/images/example.jpg)
 
 Iconified excerpt of source stackshot:
 
-![screenshot](sourcetable.jpg)
+![screenshot](https://raw.githubusercontent.com/mviereck/microscopy-tools/images/sourcetable.jpg)
 
 Animated video:
 
-![screenshot](animate.gif)
+![screenshot](https://raw.githubusercontent.com/mviereck/microscopy-tools/images/animate.gif)
 
 ## Related tools
 

@@ -27,54 +27,14 @@ warning() {
   echo "stackfuser WARNING: $*" >&2
   showmessage "$(shortpath "$*")"
 }
-
 historyentry() {
   local Historyfile
   Historyfile="$(storeinfo dump history)"
   [ "$Historyfile" ] && echo "$*" >> "$Historyfile"
 }
-
-storeinfo() {
-  # store and provide pieces of information
-  # replace entry if codeword is already present
-  # Store as codeword=string:
-  #   $1 codeword=string
-  # Dump stored string:
-  #   $1 dump
-  #   #2 codeword
-  # Drop stored string:
-  #   $1 drop
-  #   #2 codeword
-  # Test for codeword: (return 1 if not found)
-  #   $1 test
-  #   $2 codeword
-  #
-  [ -e "$Storeinfofile" ] || return 1
-  case "${1:-}" in
-    dump) grep     "^${2:-}="   $Storeinfofile | sed "s/^${2:-}=//" ;;      # dump entry
-    drop) sed -i  "/^${2:-}=/d" $Storeinfofile ;;                           # drop entry
-    test) grep -q  "^${2:-}="   $Storeinfofile ;;                           # test for entry
-    *)                                                                      # store entry
-      sed -i "/^$(echo "${1:-}" | cut -d= -f1)=/d"     $Storeinfofile       # drop possible old entry
-      echo "${1:-}"                                 >> $Storeinfofile
-    ;;
-  esac
-}
-
-storepid() {
-  # store pid and command name. Use in finish() to kill background processes
-  echo "$(ps -p ${1:-} -h -o pid -o comm)" >> $Storepidfile
-}
-
-storefd() {
-  # store file descriptor numbers
-  echo "${1:-}" >> $Storefdfile
-}
-
 showmessage() {
   sendkaptain "wizardlog='${1:-}'"
 }
-
 shortpath() {
   LC_ALL=C sed "s!$Projecthome!.!g" <<< "${1:-}"
 #  echo "${1:-}"
@@ -123,12 +83,46 @@ checkvar() {
   esac
   return 0
 }
-
+milisleep() {
+  local Time 
+  Time="$(awk "BEGIN { print ${1:-1000} / 1000 }")"
+  sleep $Time
+}
 printnum(){
   # print number $1 with leading zeroes.
   # $1 number
   # $2 digits. Default: 3
   printf %0${2:-3}d "${1:-0}"
+}
+storeinfo() {
+  # store and provide pieces of information
+  # replace entry if codeword is already present
+  # Store as codeword=string:
+  #   $1 codeword=string
+  # Dump stored string:
+  #   $1 dump
+  #   #2 codeword
+  # Drop stored string:
+  #   $1 drop
+  #   #2 codeword
+  # Test for codeword: (return 1 if not found)
+  #   $1 test
+  #   $2 codeword
+  #
+  [ -e "$Storeinfofile" ] || return 1
+  case "${1:-}" in
+    dump) grep     "^${2:-}="   $Storeinfofile | sed "s/^${2:-}=//" ;;      # dump entry
+    drop) sed -i  "/^${2:-}=/d" $Storeinfofile ;;                           # drop entry
+    test) grep -q  "^${2:-}="   $Storeinfofile ;;                           # test for entry
+    *)                                                                      # store entry
+      sed -i "/^$(echo "${1:-}" | cut -d= -f1)=/d"     $Storeinfofile       # drop possible old entry
+      echo "${1:-}"                                 >> $Storeinfofile
+    ;;
+  esac
+}
+storepid() {
+  # store pid and command name. Use in finish() to kill background processes
+  echo "$(ps -p ${1:-} -h -o pid -o comm)" >> $Storepidfile
 }
 
 #### file operations
@@ -1654,7 +1648,7 @@ lightbalance() {
     echo $Convertline
     multicore "$Convertline" || return 1
     multicore_wait || return 1
-    multicore "enfuse $(find $Cachedir/${Destinationfile}.exp* | tr "\n" " ") -o $Destinationdir/$Destinationfile --gray-projector=pl-star" "$Destinationdir/$Destinationfile" || return 1
+    multicore "enfuse $(find $Cachedir/${Destinationfile}.exp* | tr "\n" " ") -o $Destinationdir/$Destinationfile --gray-projector=average" "$Destinationdir/$Destinationfile" || return 1
     showpercent $Imagecount $Imagenumber
   done
   multicore_wait || return 1
@@ -2601,23 +2595,49 @@ start "stackfuser '$Version'" -> frameset;
 
 sendkaptain() {
   # send messages to kaptain over its stdin
-  echo "$1" >&${Kaptainstdin}
-#  echo "sent to kaptain: $1"
+#  note "Send to kaptain: $1"
+  #testvar pidkaptain && echo "$1" >&${Kaptainstdin}
+  #testvar pidkaptain || return 1
+  #echo "${1:-}" >>${Kaptainstdinfifo}
+  echo "${1:-}" >>${Kaptainstdinfile}
 }
 
 askkaptain() {
   # ask kaptain for value of $1
-  local Answer
+  local Wait Answer
+  
+  #testvar pidkaptain || return 1
+  #gui_main_grammar | grep -q "${1:-}" || return 1
+
   [ "${1:-}" = "-c" ] && {
     # check if entry if present at all
     shift
     kaptaingrammar | grep -q "${1:-}" || return 1
   }
+  :> $Kaptainanswerfile
+  
   sendkaptain "${1:-}?"
-  read Answer <&${Kaptainstdout}
+  for Wait in $(seq 15); do
+    milisleep $Wait
+    Answer="$(cat "$Kaptainanswerfile")"
+    [ -n "$Answer" ] && echo "$Answer" && break
+  done
   [ -z "$Answer" ] && return 1
-  echo "$Answer"
   return 0
+}
+
+pipekaptain() {
+  # provide script for interactive kaptain option --pipe
+  # Needs containing variables to be set beforehand.
+  echo  "#! /bin/bash
+$(declare -f storepid)
+Storepidfile='$Storepidfile'
+tail -f ${Kaptainstdinfile} & Tailpid=\$!
+storepid \$Tailpid
+cat >> ${Kaptainstdoutfile}
+kill \$Tailpid
+" >$Kaptainpipefile
+  chmod +x $Kaptainpipefile
 }
 
 ## GUI helpers
@@ -2761,7 +2781,7 @@ stackshot_selector() {
   storeinfo test stackshot_selector && {
     note "stackshot_selector is already running."
     xdotool search --name "stackshot selector" windowraise
-    return
+    return 0
   }
   storeinfo "stackshot_selector=running"
   
@@ -2837,17 +2857,13 @@ $Image"
   done
   showpercent idle
  
-  local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
-  # prepare kaptain files and fifos
-  Kaptaingrammarfile="$Cachedir/selector.kaptain.grammar"
-  Kaptainstdinfifo="$Cachedir/selector.kaptain.stdin"
-  Kaptainstdoutfifo="$Cachedir/selector.kaptain.stdout"
-  mkfifo   $Kaptainstdinfifo
-  mkfifo   $Kaptainstdoutfifo
-  exec  {Kaptainstdin}<>$Kaptainstdinfifo
-  exec  {Kaptainstdout}<>$Kaptainstdoutfifo
-  storefd ${Kaptainstdin}
-  storefd ${Kaptainstdout}
+  # prepare kaptain
+  local Kaptainpid Kaptainsignal Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptaingrammarfile
+  Kaptaingrammarfile="$Cachedir/gui_selector.kaptain.grammar"
+  Kaptainstdinfile="$Cachedir/gui_selector.kaptain.stdin"
+  Kaptainstdoutfile="$Cachedir/gui_selector.kaptain.stdout"
+  Kaptainanswerfile="$Cachedir/gui_selector.kaptain.reply"
+  Kaptainpipefile="$Cachedir/gui_selector.kaptain.pipe.sh"
   
   echo "#! /usr/bin/kaptain
 start 'stackfuser stackshot selector' -> frame1 frame2;
@@ -2860,15 +2876,20 @@ $Entrylist
 
 " > $Kaptaingrammarfile
 
-  kaptain --stdio $Kaptaingrammarfile <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  pipekaptain
+  :>     "$Kaptainstdinfile"
+  :>     "$Kaptainstdoutfile"
+  tail -f "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
+  kaptain --pipe $Kaptainpipefile $Kaptaingrammarfile & Kaptainpid=$!
   storepid $Kaptainpid
-  for Count in $(seq 50); do
-    read -t1 Line <&${Kaptainstdout}
-    [ -z "$Line" ] && break
-  done
+  
+  #for Count in $(seq 50); do
+  #  read -t1 Line
+  #  [ -z "$Line" ] && break
+  #done < <(tail -f "$Kaptainstdoutfile")
     
   while ps -p $Kaptainpid >/dev/null; do
-    read -t1 Kaptainsignal <&${Kaptainstdout}
+    read -t1 Kaptainsignal
     [ "$Kaptainsignal" ] && {
       echo $Kaptainsignal
       Button="$(cut -d: -f1 <<< "$Kaptainsignal")"
@@ -2900,16 +2921,16 @@ $Entrylist
         ;;
       esac
     }
-  done
+  done < <(tail -f "$Kaptainstdoutfile")
+  
   ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
-  rm $Kaptainstdinfifo $Kaptainstdoutfifo
+  rm $Cachedir/gui_selector.*
+  
   storeinfo drop stackshot_selector
   [ "$Refresh" = "yes" ] && stackshot_selector
 }
 
 fuse_config() {
-  
-  local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
   local Cachedir Stackdir
   local Count Setcount Line Image Imagelist Commentfile Button Argument Currentfuse=1 Fusemode Fuseskip
   local Comment Commentfile
@@ -2924,19 +2945,8 @@ fuse_config() {
     return 1
   }
   storeinfo "fuse_config=running"
-
-  # prepare kaptain files and fifos
-  Kaptaingrammarfile="$Cachedir/fuse.kaptain.grammar"
-  Kaptainstdinfifo="$Cachedir/fuse.kaptain.stdin"
-  Kaptainstdoutfifo="$Cachedir/fuse.kaptain.stdout"
-  mkfifo   $Kaptainstdinfifo
-  mkfifo   $Kaptainstdoutfifo
-  exec  {Kaptainstdin}<>$Kaptainstdinfifo
-  exec  {Kaptainstdout}<>$Kaptainstdoutfifo
-  storefd ${Kaptainstdin}
-  storefd ${Kaptainstdout}
   
-  note "Preparing fuse GUI"
+  verbose "Preparing fuse GUI"
   
   # Prepare left columns of GUI
   Formatline="formatline ' ' -> "
@@ -2964,6 +2974,14 @@ fuse_config() {
   for Setcount in $(seq $Fusesetnumber); do
     Setline[$Setcount]="${Setline[$Setcount]} ;"
   done
+  
+  # prepare kaptain
+  local Kaptainpid Kaptainsignal Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptaingrammarfile
+  Kaptaingrammarfile="$Cachedir/gui_fuse.kaptain.grammar"
+  Kaptainstdinfile="$Cachedir/gui_fuse.kaptain.stdin"
+  Kaptainstdoutfile="$Cachedir/gui_fuse.kaptain.stdout"
+  Kaptainanswerfile="$Cachedir/gui_fuse.kaptain.reply"
+  Kaptainpipefile="$Cachedir/gui_fuse.kaptain.pipe.sh"
   
   # grammar
   echo "#! /usr/bin/kaptain
@@ -3011,15 +3029,19 @@ start 'stackfuser enfuse settings' -> frameset;
       
         
 " > $Kaptaingrammarfile
+  #nl -ba $Kaptaingrammarfile
   
-  nl -ba $Kaptaingrammarfile
-  
-  kaptain --stdio $Kaptaingrammarfile <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  pipekaptain
+  :>     "$Kaptainstdinfile"
+  :>     "$Kaptainstdoutfile"
+  tail -f "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
+  kaptain --pipe $Kaptainpipefile $Kaptaingrammarfile & Kaptainpid=$!
   storepid $Kaptainpid
-  for Count in $(seq 50); do
-    read -t1 Line <&${Kaptainstdout}
-    [ -z "$Line" ] && break
-  done
+  
+  #for Count in $(seq 50); do
+  #  read -t1 Line
+  #  [ -z "$Line" ] && break
+  #done < <(tail -f "$Kaptainstdoutfile")
 
   storeinfo "refreshgui_fuse=yes"
   while ps -p $Kaptainpid >/dev/null; do
@@ -3052,7 +3074,7 @@ start 'stackfuser enfuse settings' -> frameset;
       done
     }
     
-    read -t1 Kaptainsignal <&${Kaptainstdout}
+    read -t1 Kaptainsignal
     
     [ "$Kaptainsignal" ] && {
       echo $Kaptainsignal
@@ -3087,10 +3109,10 @@ start 'stackfuser enfuse settings' -> frameset;
         ;;
       esac
     }
-  done
+  done < <(tail -f "$Kaptainstdoutfile")
   
-  exec {Kaptainstdin}>&- {Kaptainstdout}>&-
   ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
+  rm $Cachedir/gui_fuse.+
   storeinfo drop fuse_config
 }
 
@@ -3106,13 +3128,13 @@ cropgeometry_interactive() {
   #   imagemagick
   #   kaptain (https://github.com/mviereck/kaptain)
 
-  local Kaptaingrammarfile Kaptainpid Kaptainstdinfifo Kaptainstdoutfifo Kaptainsignal Kaptainstdin Kaptainstdout
+  local Kaptainpid Kaptainsignal Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptaingrammarfile
   local Image Imagempc Imagewidth Imageheight
   local CropX CropY CropW CropH Cropgeometry
   local Rotate
   local Refresh Stepsize Return
   local Cachedir Cropgeometryimage Cropimagempc
-  
+
   Image="${1:-}"
   Cachedir="${2:-}"
   Cropgeometry="${3:-}"
@@ -3120,7 +3142,7 @@ cropgeometry_interactive() {
   checkvar -e crop_interactive Image    "$Image"    || return 1
   checkvar -d crop_interactive Cachedir "$Cachedir" || return 1
   
-  note "Interactive choice of crop geometry of $Image"
+  verbose "Interactive choice of crop geometry of $Image"
   
   Cropgeometryimage="$Cachedir/cropgeometry.gui.tif"
   Cropimagempc="$Cachedir/crop.mpc"
@@ -3153,15 +3175,11 @@ cropgeometry_interactive() {
     CropH=$((Imageheight-1))
   }
   
-  Kaptaingrammarfile="$Cachedir/crop.kaptain.grammar"
-  Kaptainstdinfifo="$Cachedir/crop.kaptain.stdin"
-  Kaptainstdoutfifo="$Cachedir/crop.kaptain.stdout"
-  mkfifo   $Kaptainstdinfifo
-  mkfifo   $Kaptainstdoutfifo
-  exec  {Kaptainstdin}<>$Kaptainstdinfifo
-  exec  {Kaptainstdout}<>$Kaptainstdoutfifo
-  storefd ${Kaptainstdin}
-  storefd ${Kaptainstdout}
+  Kaptaingrammarfile="$Cachedir/gui_crop.kaptain.grammar"
+  Kaptainstdinfile="$Cachedir/gui_crop.kaptain.stdin"
+  Kaptainstdoutfile="$Cachedir/gui_crop.kaptain.stdout"
+  Kaptainanswerfile="$Cachedir/gui_crop.kaptain.reply"
+  Kaptainpipefile="$Cachedir/gui_crop.kaptain.pipe.sh"
   
   echo "#! /usr/bin/kaptain
 start 'Choose geometry' -> frameset ;
@@ -3211,8 +3229,14 @@ start 'Choose geometry' -> frameset ;
     ok                                     -> @button=' OK' ;
     cancel                                 -> @close='Cancel';
 " >> $Kaptaingrammarfile
-  kaptain --stdio $Kaptaingrammarfile <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
 
+  pipekaptain
+  :>     "$Kaptainstdinfile"
+  :>     "$Kaptainstdoutfile"
+  tail -f "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
+  kaptain --pipe $Kaptainpipefile $Kaptaingrammarfile & Kaptainpid=$!
+  storepid $Kaptainpid
+  
   Refresh="yes"
   while ps -p $Kaptainpid >/dev/null; do
 
@@ -3222,7 +3246,8 @@ start 'Choose geometry' -> frameset ;
       nice convert $Imagempc -background '#00000000' -rotate $Rotate +repage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropgeometryimage"
       showpercent 60 100
       showimage "$Cropgeometryimage"
-      echo "geometry='$Cropgeometry'" >&${Kaptainstdin}
+      #echo "geometry='$Cropgeometry'" >&${Kaptainstdin}
+      sendkaptain "geometry='$Cropgeometry'"
       Refresh="no"
       showpercent 100 100
     }
@@ -3230,7 +3255,7 @@ start 'Choose geometry' -> frameset ;
     Imagewidth=$(convert  -format '%w'  $Cropgeometryimage info:)
     Imageheight=$(convert -format '%h'  $Cropgeometryimage info:)
     
-    read -t1 Kaptainsignal <&${Kaptainstdout}
+    read -t1 Kaptainsignal
     
     ifcmdbreak && Return=1 && break
     
@@ -3285,14 +3310,15 @@ start 'Choose geometry' -> frameset ;
       [ "$((CropY+CropH-1))" -gt "$Imageheight" ] && CropH=$((Imageheight-CropY))
       Refresh="yes"
     }
-  done 
+  done < <(tail -f "$Kaptainstdoutfile")
+          
+  ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
+  rm $Cachedir/gui_crop.*
   
   note "trim_hard(): final check"
   nice convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
   Cropgeometry="$(trim_hard "$Cropimagempc" "$Cropgeometry")" # final check
-          
-  exec {Kaptainstdin}>&- {Kaptainstdout}>&-
-  ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
+  
   [ "$Return" = "0" ] && {
     [ "$Rotate" = "0" ] && echo "$Cropgeometry" || echo "$Cropgeometry:$Rotate"
     return 0
@@ -3419,7 +3445,7 @@ parse_kaptainsignal() {
       note "Batch all is ready."
     ;;
     *)
-      failure "Unknown signal: $Kaptainsignal"
+      verbose "Unknown signal: $Kaptainsignal"
     ;;
   esac
 }
@@ -3556,20 +3582,12 @@ declare_variables() {
   Convert="nice convert -quality 100%"
 
   Commandstackfifo=$Maincachedir/commandstack
-  
   Wizardlogfile=$Maincachedir/stackfuser.log
-  
   Wizardmessagefile=$Maincachedir/stackfuser.message.log
   
-  Kaptaingrammarfile=$Maincachedir/kaptain.grammar
-  Kaptainstdinfifo=$Maincachedir/kaptain.stdin 
-  Kaptainstdoutfifo=$Maincachedir/kaptain.stdout
-  Kaptainstdin=""
-  Kaptainstdout=""
   
   Storeinfofile=$Maincachedir/store.info
   Storepidfile=$Maincachedir/store.pid
-  Storefdfile=$Maincachedir/store.fd
     
   Imgruler="$(command -v imgruler)"
   [ -z "$Imgruler" ] && Imgruler="$(dirname $0)/imgruler"
@@ -3582,18 +3600,9 @@ create_cachefiles() {
   mkdir -p $Configdir
   
   :>       $Wizardlogfile
-  :>       $Storefdfile
-
-  mkfifo   $Kaptainstdinfifo
-  exec  {Kaptainstdin}<>$Kaptainstdinfifo
-  storefd ${Kaptainstdin}
-  mkfifo   $Kaptainstdoutfifo
-  exec  {Kaptainstdout}<>$Kaptainstdoutfifo
-  storefd ${Kaptainstdout}
   
   mkfifo   $Commandstackfifo
   exec  {FDcmd}<>$Commandstackfifo
-  storefd ${FDcmd}
   
   :>       $Storeinfofile
   :>       $Storepidfile
@@ -3619,27 +3628,20 @@ finish() {
     Comm="$(awk '{print $2}' <<< "$Line")"
     [ "$(ps -p $Pid -h -o comm)" = "$Comm" ] && kill $Pid
   done <$Storepidfile
-  
-  while read Line; do
-    exec {Line}>&-
-  done <$Storefdfile
 
-  #exec {Kaptainstdin}>&-
-  #exec {Kaptainstdout}>&-
-  #exec {FDcmd}>&-
-  
+  exec {FDcmd}>&-
   rm -R $Maincachedir
-  
   exit 0
 }
 
 main() {
-  local Kaptainpid Kaptainsignal
+  local Kaptainpid Kaptainsignal Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptaingrammarfile
   trap finish EXIT
   
   # init
   declare_variables
   create_cachefiles
+  check_dependencies
     
   storeinfo "cache=$Maincachedir"
   storeinfo "projecthome=$Projecthome"
@@ -3652,18 +3654,27 @@ main() {
   fuse_declare
   [ -e "$Configfile" ] && source "$Configfile"
 
+  
+   
   # start kaptain
+  Kaptaingrammarfile="$Maincachedir/gui_main.kaptain.grammar"
+  Kaptainstdinfile="$Maincachedir/gui_main.kaptain.stdin" 
+  Kaptainstdoutfile="$Maincachedir/gui_main.kaptain.stdout"
+  Kaptainanswerfile="$Maincachedir/gui_main.kaptain.reply"
+  Kaptainpipefile="$Maincachedir/gui_main.kaptain.pipe.sh"
+  
   kaptaingrammar > $Kaptaingrammarfile
   #nl -ba $Kaptaingrammarfile
-  kaptain --stdio $Kaptaingrammarfile <&${Kaptainstdin} >&${Kaptainstdout} & Kaptainpid=$!
+  :>     "$Kaptainstdinfile"
+  :>     "$Kaptainstdoutfile"
+  pipekaptain
+  
+  tail -f "$Kaptainstdoutfile" >> $Kaptainanswerfile & storepid $!
+  kaptain --pipe $Kaptainpipefile $Kaptaingrammarfile & Kaptainpid=$!
   storepid $Kaptainpid
-  
-  stack_cmd    & storepid $!
-  
-  check_dependencies
-  
-#  kaptain_update
+
   storeinfo "refreshgui_main=yes"
+  stack_cmd    & storepid $!
 
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
@@ -3671,7 +3682,7 @@ main() {
       storeinfo drop refreshgui_main
       kaptain_update
     }
-    read -t1 Kaptainsignal <&${Kaptainstdout}
+    read -t1 Kaptainsignal
     [ "$Kaptainsignal" ] && {
       echo "Signal from kaptain: $Kaptainsignal"
       grep -q ":on"      <<< "$Kaptainsignal" && Kaptainsignal=""
@@ -3689,7 +3700,10 @@ main() {
       Kaptainsignal="${Kaptainsignal%:pressed}"
     }
     [ "$Kaptainsignal" ] && parse_kaptainsignal "$Kaptainsignal"
-  done
+  done < <(tail -f "$Kaptainstdoutfile")
+  
+  ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
+  rm $Maincachedir/gui_main.*
 }
 
 main "$@"
