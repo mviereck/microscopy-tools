@@ -22,7 +22,7 @@ note() {
 }
 notify() {
   note "$*"
-  notify-send "$*" >/dev/null 2>&1 & 
+  notify-send "stackfuser: $*" >/dev/null 2>&1 & 
 }
 verbose() {
   echo "stackfuser: $*" >&2
@@ -37,7 +37,7 @@ historyentry() {
   [ "$Historyfile" ] && echo "$*" >> "$Historyfile"
 }
 showmessage() {
-  sendkaptain "wizardlog='$(cut -c1-100 <<< '${1:-}')'"
+  sendkaptain "wizardlog='$(cut -c1-100 <<< "${1:-}")'"
 }
 shortpath() {
   LC_ALL=C sed "s!$Projecthome!.!g" <<< "${1:-}"
@@ -127,6 +127,9 @@ storeinfo() {
 storepid() {
   # store pid and command name. Use in finish() to kill background processes
   echo "$(ps -p ${1:-} -h -o pid -o comm)" >> $Storepidfile
+}
+zeronumber() {
+  printf "%04d" "${1:-}"
 }
 
 #### file operations
@@ -743,7 +746,7 @@ align_vidstab() {
   local $Batchlocal
   local $Imagelocal
   local $Imagepropertieslocal
-  local Sourcefilelist Sourcefile
+  local Sourcefile
   local CropW CropH CropX CropY Cropgeometry Zoom
   local Colmaxlevel Colminlevel
   local Cropinteractive Shakiness Stepsize
@@ -767,54 +770,23 @@ align_vidstab() {
   mkdir -p "$Framedir"
   Distortdir="$Cachedir/distort"
   mkdir -p "$Distortdir"
-  
-  Sourcefilelist=$Cachedir/align.source.list
-  :> $Sourcefilelist
   Motionsfile="$Cachedir/global_motions.trf"
   
   imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir"
   
-  note "align_vidstab: Preparing frames for alignment (shakiness=$Shakiness)"
+  note "align_vidstab: Preparing video frames for alignment (shakiness=$Shakiness)"
   Cropgeometry="$(calc_evengeometry "${Imagewidth}x${Imageheight}+0+0")"
   Imagecount=0
   for Image in $Imagelist; do
     Imagecount="$((Imagecount + 1))"
-    multicore "convert $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Framedir/frame${Imagecount}.jpg" "$Framedir/frame${Imagecount}.jpg" || return 1
+    Destinationfile="$Framedir/frame$(zeronumber $Imagecount).png"
+    multicore "convert $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
   Cropgeometry=""
-
-  # Set up ffmpeg input images list
-  Framelist="$(fileglob "$Framedir/*")"
-  :> $Sourcefilelist
-  for Image in $Framelist; do
-    echo "file $Image" >>$Sourcefilelist
-  done
-
-  # Workaround to get video of png images. vidstab fails with videos generated from gphoto2 jpg for unknown reasons.
-  note "align_vidstab: generating video from images (shakiness=$Shakiness"
-  nice ffmpeg -y -hide_banner -nostdin -safe "0" -f "concat" -i "$Sourcefilelist" \
-         -vcodec "libx264" -profile:v "high444" -refs "16" -crf "0" -preset "ultrafast" \
-         "$Cachedir/align.orig.mp4" || return 1
-  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.orig.mp4"
-  showpercent 1 100
-  ifcmdbreak && return 1
   
-  note "align_vidstab: Splitting generated 1. video into .png images (shakiness=$Shakiness"
-  myrm "$Framedir/*"
-  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.orig.mp4" "$Framedir/frame%04d.png" || return 1
-  showpercent 2 100
-  ifcmdbreak && return 1
-
-  # Set up ffmpeg input images list with generated png images
-  :> $Sourcefilelist
-  Framelist="$(fileglob "$Framedir/*")"
-  for Image in $Framelist; do
-    echo "file $Image" >>$Sourcefilelist
-  done
-  
-  note "align_vidstab: generating 2. video from .png images (shakiness=$Shakiness"
+  note "align_vidstab: Generating video (shakiness=$Shakiness)"
   nice ffmpeg -y -hide_banner -nostdin -f image2 -start_number 1 -i $Framedir/frame%04d.png -safe "0" -vframes 1000 -vcodec libx264 -crf 25  -pix_fmt yuv420p "$Cachedir/align.source.mp4" || return 1
   showpercent 3 100
   ifcmdbreak && return 1
@@ -829,17 +801,11 @@ align_vidstab() {
             
   note "align_vidstab: Transforming video (shakiness=$Shakiness"
   nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
-         -vf "vidstabtransform=optzoom=0:smoothing=0:interpol=bilinear:relative=1:crop=black:debug=1:input=$Cachedir/transforms$Shakiness.trf,unsharp=5:5:0.8:3:3:0.4" \
+         -vf "vidstabtransform=optzoom=0:smoothing=0:interpol=bilinear:relative=1:crop=black:debug=1:input=$Cachedir/transforms$Shakiness.trf" \
          "$Cachedir/align.result.mp4" || return 1
   ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.result.mp4"
   showpercent 5 100
   ifcmdbreak && return 1
-
-  #note "align_vidstab: Splitting aligned video into images (shakiness=$Shakiness)"
-  #myrm "$Framedir/*"
-  #nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.result.mp4" "$Framedir/align%04d.tif" || return 1
-  #showpercent 6 100
-  #ifcmdbreak && return 1
   
   Xoffsetlist="$(cat $Motionsfile | grep -v '#' | awk '{print $2}')"
   Yoffsetlist="$(cat $Motionsfile | grep -v '#' | awk '{print $3}')"
@@ -3388,12 +3354,14 @@ start 'Choose geometry' -> frameset ;
         ss*)        Stepsize="$(cut -c3- <<< "$Kaptainsignal")" ;;
         rotatecombo*) Rotate="$(cut -d: -f2 <<< "$Kaptainsignal")" ;;
         rotateapply) 
-          echo "rotatecombo?" >&${Kaptainstdin}
-          read Rotate <&${Kaptainstdout}
+          #echo "rotatecombo?" >&${Kaptainstdin}
+          #read Rotate <&${Kaptainstdout}
+          Rotate="$(askkaptain rotatecombo)"
         ;;
         geometryapply)
-          echo "geometry?" >&${Kaptainstdin}
-          read Cropgeometry <&${Kaptainstdout}
+          #echo "geometry?" >&${Kaptainstdin}
+          #read Cropgeometry <&${Kaptainstdout}
+          Cropgeometry="$(askkaptain geometry)"
           [ "$Cropgeometry" ] && {
             CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
             CropY=$(cut -d+ -f3 <<< "$Cropgeometry")
@@ -3415,6 +3383,7 @@ start 'Choose geometry' -> frameset ;
         ;;
         ok)         Return=0; break ;;
       esac
+      
       [ "$CropX" -lt "0" ] && CropX=0
       [ "$CropY" -lt "0" ] && CropY=0
       [ "$CropW" -lt "1" ] && CropW=1
@@ -3423,7 +3392,11 @@ start 'Choose geometry' -> frameset ;
       [ "$CropY" -gt "$Imageheight" ] && CropY=$Imageheight
       [ "$((CropX+CropW-1))" -gt "$Imagewidth" ]  && CropW=$((Imagewidth-CropX))
       [ "$((CropY+CropH-1))" -gt "$Imageheight" ] && CropH=$((Imageheight-CropY))
-      Refresh="yes"
+      
+      case $Kaptainsignal in
+        ss*) Refresh="no" ;;
+        *)   Refresh="yes" ;;
+      esac
     }
   done < <(tail -f "$Kaptainstdoutfile")
           
