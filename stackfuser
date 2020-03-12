@@ -139,96 +139,15 @@ cut_extension() {
   Extension="$(get_extension "${1:-}")"
   sed "s%\.${Extension}\$%%" <<< "${1:-}"
 }
-get_extension() {
-  local Filename Extension
-  Filename="$(head -n1 <<< "${1:-}")"
-  Extension="$(rev <<< "$Filename" | cut -d/ -f1 | cut -d. -s -f1 | rev)"
-  echo "$Extension"
-}
-
-myrm() {
-  # remove files
-  # $@ quoted globs
-  local Line
-  for Line in "$@" ; do
-    check_fileglob "$Line" && {
-      verbose "rm: Deleting $Line"
-      rm $(fileglob "$Line")
-    }
-  done
-}
-
-myrmdir() {
-  # remove directories and their content
-  # $@ quoted globs
-  local Line
-  for Line in "$@" ; do
-    check_dirglob "$Line"  && {
-      verbose "rmdir: Deleting $Line"
-      rm -rf $Line
-    }
-  done
-}
-
-mymv() {
-  # move quoted glob $1 to directory $2
-  check_fileglob "${1:-}" || {
-    verbose "mv: Source is empty: ${1:-}"
-    return 1
-  }
-  [ -d "${2:-}" ] || {
-    failure "mv: Target is not a directory: ${2:-}"
-    return 1
-  }
-  verbose "mv: moving ${1:-} to ${2:-}"
-  mv -f $(fileglob "${1:-}") "${2:-}"
-}
-
-mycp() {
-  # copy quoted glob $1 to directory $2
-  check_fileglob "${1:-}" || {
-    verbose "cp: Source is empty: ${1:-}"
-    return 1
-  }
-  [ -d "${2:-}" ] || {
-    failure "cp: Target is not a directory: ${2:-}"
-    return 1
-  }
-  verbose "cp: copy ${1:-} to ${2:-}"
-  cp $(fileglob "${1:-}") "${2:-}"
-}
-
-check_fileglob() {
-  # check whether files exist for quoted glob $1
-  [ -n "$(eval find ${1:-} -maxdepth 0 -type f -print -quit 2>/dev/null)" ]
-}
-
 check_dirglob() {
   # check whether directories exist for quoted glob $1
   [ -f "${1:-}" ] && return 1
   [ -n "$(eval find ${1:-} -maxdepth 0 -type d -print -quit 2>/dev/null)" ]
 }
-
-fileglob() {
-  # echos files only for glob $1
-  #local Path Glob 
-  local Filelist
-  
-  #[ -d "${1:-}" ] && {
-  #  Path="${1:-}"
-  #  Glob="*"
-  #} || {
-  #  Path="$(dirname  "${1:-}")"
-  #  Glob="$(basename "${1:-}")"
-  #}
-  #Path="$(realpath "$Path")"
-  
-  Filelist="$(eval find ${1:-} -maxdepth 0 -type f 2>/dev/null)"
-  Filelist="$(sort -V <<< "$Filelist")"
-  
-  [ "$Filelist" ] && echo "$Filelist" || return 1
+check_fileglob() {
+  # check whether files exist for quoted glob $1
+  [ -n "$(eval find ${1:-} -maxdepth 0 -type f -print -quit 2>/dev/null)" ]
 }
-
 check_stackdir() {
   # Check $1 if it is a valid directory containing a subfolder stackshot
   local Stackdir Newstackdir Stackdirvalid Projectname Projecthome
@@ -276,7 +195,79 @@ check_stackdir() {
     ;;
   esac
 }
-
+fileglob() {
+  # echos files only for glob $1
+  #local Path Glob 
+  local Filelist
+  
+  #[ -d "${1:-}" ] && {
+  #  Path="${1:-}"
+  #  Glob="*"
+  #} || {
+  #  Path="$(dirname  "${1:-}")"
+  #  Glob="$(basename "${1:-}")"
+  #}
+  #Path="$(realpath "$Path")"
+  
+  Filelist="$(eval find ${1:-} -maxdepth 0 -type f 2>/dev/null)"
+  Filelist="$(sort -V <<< "$Filelist")"
+  
+  [ "$Filelist" ] && echo "$Filelist" || return 1
+}
+get_extension() {
+  local Filename Extension
+  Filename="$(head -n1 <<< "${1:-}")"
+  Extension="$(rev <<< "$Filename" | cut -d/ -f1 | cut -d. -s -f1 | rev)"
+  echo "$Extension"
+}
+mycp() {
+  # copy quoted glob $1 to directory $2
+  check_fileglob "${1:-}" || {
+    verbose "cp: Source is empty: ${1:-}"
+    return 1
+  }
+  [ -d "${2:-}" ] || {
+    failure "cp: Target is not a directory: ${2:-}"
+    return 1
+  }
+  verbose "cp: copy ${1:-} to ${2:-}"
+  cp $(fileglob "${1:-}") "${2:-}"
+}
+mymv() {
+  # move quoted glob $1 to directory $2
+  check_fileglob "${1:-}" || {
+    verbose "mv: Source is empty: ${1:-}"
+    return 1
+  }
+  [ -d "${2:-}" ] || {
+    failure "mv: Target is not a directory: ${2:-}"
+    return 1
+  }
+  verbose "mv: moving ${1:-} to ${2:-}"
+  mv -f $(fileglob "${1:-}") "${2:-}"
+}
+myrm() {
+  # remove files
+  # $@ quoted globs
+  local Line
+  for Line in "$@" ; do
+    check_fileglob "$Line" && {
+      verbose "rm: Deleting $Line"
+      rm $(fileglob "$Line")
+    }
+  done
+}
+myrmdir() {
+  # remove directories and their content
+  # $@ quoted globs
+  local Line
+  for Line in "$@" ; do
+    check_dirglob "$Line"  && {
+      verbose "rmdir: Deleting $Line"
+      rm -rf $Line
+    }
+  done
+}
 setup_workdir() {
   # Detect possible source directories in $2 for function $1
   # Set up variables that can be used to call function $1
@@ -477,7 +468,6 @@ showimage() {
   esac
   return 0
 }
-
 showvideo() {
   ffplay -window_title "$(basename "${1:-}")" -loglevel error -loop 0 "${1:-}" & storepid $!
 }
@@ -594,7 +584,6 @@ batch_function() {
 
   return $Return
 }
-
 parse_batchoptions() {
   # To be called by batch functions to parse options.
   # Include this local line in the calling function:
@@ -634,7 +623,6 @@ parse_batchoptions() {
   #! check_fileglob "$Sourcedir/$Sourcefileglob" && failure "$Function: No source files found: $Sourcedir/$Sourcefileglob"  && return 1
   return 0
 }
-
 getbatch1() {
   local Command= Line Argument
   for Line in gamma level contrast sharpen brightness stretch statistic wizard; do
@@ -656,12 +644,10 @@ getbatch1() {
   done
   echo "$Command"
 }
-
 getfunctionsettings() {
   Functionmode="$(askkaptain -c ${Function}modecombo)"
   Functionoption="$(askkaptain -c ${Function}combo)"
 }
-
 runbatch1() {
   local Function Functionmode Functionoption Stackdir
   Stackdir="${1:-}"
@@ -677,28 +663,17 @@ runbatch1() {
   }
   cmd -f wizard -o "$(getbatch1)" -t "$Stackdir"
 }
-
 runbatch2() {
   local Function Functionmode Functionoption
   local Iterate
   for Function in whitebalance align_vidstab align_ais ; do
     askkaptain -c $Function > /dev/null && {
       getfunctionsettings
-      case $Function in
-        align_vidstab)
-          cmd -f "$Function" -m "10"            -o "$Functionoption" -t "$Stackdir"
-          cmd -f "$Function" -m "5"             -o ""                -t "$Stackdir"
-          cmd -f "$Function" -m "1"             -o ""                -t "$Stackdir"
-        ;;
-        *)
-          cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
-        ;;
-      esac
+      cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
     }
   done
   return 0
 }
-
 runbatch3() {
   askkaptain evaluate1 >/dev/null        && cmd -f evaluate -m all -t "$Stackdir"
   askkaptain fuse >/dev/null             && cmd -f fuse -m $(askkaptain fusemodecombo) -t "$Stackdir"
@@ -711,7 +686,6 @@ runbatch3() {
   
   cmd -f showimage -s "$Stackdir/evaluate" -g "*fuse.median*"
 }
-
 setup_imagelist() {
   # Set up often needed image variables
   Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
@@ -739,42 +713,28 @@ setup_imagelist() {
 #### image sequence operations
 
 align_vidstab() {
-  # Align images with ffmpeg/vidstab
-  # -m  Shakiness 1-10 (low to high)
-  # -o  crop interactive yes/""
-  
+
   local $Batchlocal
   local $Imagelocal
-  local $Imagepropertieslocal
-  local Sourcefile
-  local CropW CropH CropX CropY Cropgeometry Zoom
-  local Colmaxlevel Colminlevel
-  local Cropinteractive Shakiness Stepsize
-  local Xoffset Xoffsetrelative Xoffsetlist Yoffset Yoffsetrelative Yoffsetlist Radians Radiansrelative Radianslist Degree 
-  local Framedir Motionsfile Distortdir Cropminimage 
-
+  local Framedir Distortdir Distortlogfile
+  local Xoffset Yoffset Degree
+  local Cropminimage Commonareaimage
+  
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
-  
-  cd $Cachedir
-  
-  # settings
-  Shakiness="$Functionmode"
-  Shakiness="${Shakiness:-1}"
-  Cropinteractive="$Functionoption"
-  [ "$Cropinteractive" ] && Cropinteractive="yes"
-  Stepsize=6
   
   # cache setup
   Framedir="$Cachedir/frames"
   mkdir -p "$Framedir"
-  Distortdir="$Cachedir/distort"
+  Distortdir="$Cachedir/distorted"
   mkdir -p "$Distortdir"
-  Motionsfile="$Cachedir/global_motions.trf"
+  Cropminimage="distort.min.mpc"
+  Commonareaimage="$Cachedir/distorted.commonarea.mpc"
+  Distortlogfile="$Cachedir/align_vidstab.log"
   
   imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir"
   
-  note "align_vidstab: Preparing video frames for alignment (shakiness=$Shakiness)"
+  note "align_vidstab: Preparing video frames for alignment"
   Cropgeometry="$(calc_evengeometry "${Imagewidth}x${Imageheight}+0+0")"
   Imagecount=0
   for Image in $Imagelist; do
@@ -785,33 +745,177 @@ align_vidstab() {
   done
   multicore_wait || return 1
   Cropgeometry=""
+  showpercent 10 100
+  
+  align_vidstab_ffmpeg -o "10" -s "$Framedir" -g "*" -c "$Cachedir" || return 1
+  note "align_vidstab: Distorting frames (Shakiness=10)"
+  distort -o "$Cachedir/align.10.log" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir" || return 1
+  showpercent 30 100
+  
+  mycp "$Distortdir/*" "$Framedir"
+  align_vidstab_ffmpeg -o "5"  -s "$Framedir" -g "*" -c "$Cachedir" || return 1
+  note "align_vidstab: Distorting frames (Shakiness=5)"
+  distort -o "$Cachedir/align.5.log" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir" || return 1
+  showpercent 50 100  
+  
+  mycp "$Distortdir/*" "$Framedir"
+  align_vidstab_ffmpeg -o "1"  -s "$Framedir" -g "*" -c "$Cachedir" || return 1
+  showpercent 60 100
+  
+  myrm "$Framedir/*"
+  case $Imageformat in
+    png|tif|tiff)
+      mycp "$Sourcedir/$Sourcefileglob" "$Framedir"
+    ;;
+    *)
+      imageformat -m "tif" -s "$Sourcedir" -g "$Sourcefileglob" -d "$Framedir" -c "$Cachedir"
+    ;;
+  esac
+  showpercent 70 100
+  
+  echo "# Image | Xoffset | Yoffset | Degree" > $Distortlogfile
+  echo "# convert Image -virtual-pixel transparent -distort SRT '0,0 1 Degree Xoffset,Yoffset' out.png" >> $Distortlogfile
+  Imagecount=0
+  for Image in $(fileglob "$Framedir/*") ; do
+    Imagecount="$((Imagecount+1))"
+    Image="$(basename "$Image")"
+    Xoffset=0
+    Yoffset=0
+    Degree=0
+    for Logfile in $Cachedir/align.10.log $Cachedir/align.5.log $Cachedir/align.1.log; do
+      Line="$(sed "${Imagecount}q;d" "$Logfile")"
+      Xoffset="$(awk "BEGIN {print $Xoffset + $(cut -d' ' -f2 <<< "$Line") }" )"
+      Yoffset="$(awk "BEGIN {print $Yoffset + $(cut -d' ' -f3 <<< "$Line") }" )"
+      Degree="$(awk  "BEGIN {print $Degree  + $(cut -d' ' -f4 <<< "$Line") }" )"
+    done
+    echo "$Image $Xoffset $Yoffset $Degree" >> "$Distortlogfile"
+  done
+  
+  note "align_vidstab: Distorting source images"
+  rm $Distortdir/*
+  distort -o "$Distortlogfile" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir"
+  showpercent 80 100
+
+  case $Functionmode in
+    crop|crop_interactive|common_area) 
+      note "align_vidstab: Generating min image"
+      nice convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
+    ;;
+  esac
+  
+  case $Functionmode in
+    crop) 
+      Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")" || return 1 
+    ;;
+    crop_interactive) 
+      notify "align_vidstab: Ready for interactive crop"
+      Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")" || return 1 
+    ;;
+    distort_only) ;;
+    common_area) 
+      note "align_vidstab: Generating mask image"
+      nice convert $Cropminimage -threshold 0% $Commonareaimage || return 1
+    ;;
+  esac
+  
+  case $Functionmode in
+    crop|crop_interactive) 
+      Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
+      Rotate="${Rotate:-0}"
+      Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
+      [ "$Cropgeometry" ] || {
+        failure "align_vidstab: crop geometry is empty"
+        Cropgeometry="${Imagewidth}x${Imageheight}+0+0"
+      }
+      note "align_vidstab: Cropping aligned images to $Cropgeometry"
+    ;;
+    common_area)
+      note "align_vidstab: Reducing image content to common area of aligned images"
+    ;;
+    distort_only) 
+      note "align_vidstab: Moving distorted images to destination"
+    ;;
+  esac
+      
+  Imagecount=0
+  for Image in $(fileglob "$Distortdir/*"); do
+    Imagecount="$((Imagecount+1))"
+    Destinationfile="$(sed "${Imagecount}q;d" <<< "$Imagelist")"
+    Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
+    case $Functionmode in
+      crop|crop_interactive) 
+        multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+      ;;
+      common_area)
+        multicore "$Convert $Image $Commonareaimage -evaluate-sequence min $Destinationfile" "$Destinationfile" || return 1
+      ;;
+      distort_only)
+        multicore "$Convert $Image $Destinationfile" "$Destinationfile" || return 1
+      ;;
+    esac
+    showpercent "$Imagecount" "$Imagenumber"
+  done
+  multicore_wait || return 1
+
+  case $Functionmode in
+    crop)             showimage "$Cropminimage.trim_hard.png" ;;
+    crop_interactive) showimage "$Cachedir/cropgeometry.gui.tif" ;;
+    common_area)      showimage "$Commonareaimage" ;;
+  esac
+  return 0     
+}
+align_vidstab_ffmpeg() {
+  # Align images with ffmpeg/vidstab
+  # Generates file $Cachedir/align.$Functionoption.log containing the calculated distortion parameters.
+  # -o  Shakiness 1-10 (low to high)
+  # -s  Sourcedir must contain files of form frame0001.png
+  
+  local $Batchlocal
+  local $Imagelocal
+  local $Imagepropertieslocal
+  local CropW CropH CropX CropY Cropgeometry Zoom
+  local Shakiness Stepsize
+  local Xoffset Xoffsetrelative Xoffsetlist Yoffset Yoffsetrelative Yoffsetlist Radians Radiansrelative Radianslist Degree 
+  local Motionsfile Distortlogfile
+
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  cd $Cachedir
+  
+  # settings
+  Shakiness="${Functionoption:-1}"
+  Stepsize=6
+  
+  # cache setup
+  Motionsfile="$Cachedir/global_motions.trf"
+  Distortlogfile="$Cachedir/align.$Shakiness.log"
+  :> $Distortlogfile
+  
   
   note "align_vidstab: Generating video (shakiness=$Shakiness)"
-  nice ffmpeg -y -hide_banner -nostdin -f image2 -start_number 1 -i $Framedir/frame%04d.png -safe "0" -vframes 1000 -vcodec libx264 -crf 25  -pix_fmt yuv420p "$Cachedir/align.source.mp4" || return 1
-  showpercent 3 100
+  nice ffmpeg -y -hide_banner -nostdin -f image2 -start_number 1 -i $Sourcedir/frame%04d.png -safe "0" -vframes 1000 -vcodec libx264 -crf 25  -pix_fmt rgba "$Cachedir/align.source.mov" || return 1
   ifcmdbreak && return 1
 
   note "align_vidstab: Analyzing video (shakiness=$Shakiness)"
-  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
+  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mov" \
          -vf "vidstabdetect=shakiness=$Shakiness:accuracy=15:mincontrast=0.1:stepsize=$Stepsize:show=1:result=$Cachedir/transforms$Shakiness.trf" \
-         "$Cachedir/align.vidstab-show.mp4" || return 1
-  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.vidstab-show.mp4"
-  showpercent 4 100
+         "$Cachedir/align.vidstab-show.mov" || return 1
+  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.vidstab-show.mov"
   ifcmdbreak && return 1
             
   note "align_vidstab: Transforming video (shakiness=$Shakiness"
-  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mp4" \
+  nice ffmpeg -y -hide_banner -nostdin -i "$Cachedir/align.source.mov" \
          -vf "vidstabtransform=optzoom=0:smoothing=0:interpol=bilinear:relative=1:crop=black:debug=1:input=$Cachedir/transforms$Shakiness.trf" \
-         "$Cachedir/align.result.mp4" || return 1
-  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.result.mp4"
-  showpercent 5 100
+         "$Cachedir/align.result.mov" || return 1
+  ffplay -autoexit -exitonkeydown -exitonmousedown -loglevel quiet "$Cachedir/align.result.mov"
   ifcmdbreak && return 1
   
   Xoffsetlist="$(cat $Motionsfile | grep -v '#' | awk '{print $2}')"
   Yoffsetlist="$(cat $Motionsfile | grep -v '#' | awk '{print $3}')"
   Radianslist="$(cat $Motionsfile | grep -v '#' | awk '{print $4}')"
   
-  note "align_vidstab: Distorting source images (shakiness=$Shakiness)"
+  note "align_vidstab: Calculating distortion (shakiness=$Shakiness)"
   Imagecount=0
   for Image in $Imagelist; do
     Imagecount="$((Imagecount + 1))"
@@ -822,47 +926,11 @@ align_vidstab() {
     Radiansrelative="$(sed "${Imagecount}q;d" <<<"$Radianslist")"
     Radians="$(awk "BEGIN { print $Radians - $Radiansrelative }")"
     Degree="$(awk  "BEGIN { print $Radians * 180 / 3.141592652}")"
-        
-    Destinationfile="$Distortdir/distorted$Imagecount.tif"
-    multicore "$Convert $Image -virtual-pixel transparent -distort SRT '0,0 1 $Degree $Xoffset,$Yoffset' $Destinationfile" "$Destinationfile" || return 1
-    showpercent "$Imagecount" "$Imagenumber"
+    echo "$(basename "$Image") $Xoffset $Yoffset $Degree" >> $Distortlogfile
   done
-  multicore_wait || return 1
-      
-  # crop greatest common inner rectangle of distorted images
-  Cropminimage="$Cachedir/distorted.min.mpc"
-  nice convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
-  case $Cropinteractive in
-    yes) notify-send "align_vidstab(): Ready for interactive crop"
-         Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")" || return 1 ;;
-    *)   Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")" || return 1 ;;
-  esac
   
-  Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
-  Rotate="${Rotate:-0}"
-  Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
-      
-  [ "$Cropgeometry" ] || {
-    failure "align_vidstab: crop geometry is empty"
-    return 1
-  }
-      
-  note "align_vidstab: Cropping aligned images to $Cropgeometry (shakiness=$Shakiness)"
-  Imagelist="$(fileglob "$Sourcedir/$Sourcefileglob")"
-  Imagecount=0
-  for Image in $(fileglob "$Distortdir/*"); do
-    Imagecount="$((Imagecount+1))"
-    Destinationfile="$(sed "${Imagecount}q;d" <<< "$Imagelist")"
-    Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
-    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
-    showpercent "$Imagecount" "$Imagenumber"
-  done
-  multicore_wait || return 1
-            
-  showimage "$Cropminimage.trim_hard.png"
-  return 0    
+  return 0
 }
-
 align_ais() {
 
   local $Batchlocal
@@ -912,7 +980,6 @@ align_ais() {
   done
   multicore_wait || return 1
 }
-
 align_ais2() {
 
   local $Batchlocal
@@ -1001,7 +1068,6 @@ $Imagelist2"
   done
   multicore_wait || return 1
 }
-
 animation() {
   # Generate animated GIF from stackshot.
   # Helps to visualize diferent layers and gives some 3D effect
@@ -1228,11 +1294,10 @@ $Position"
   done
   multicore_wait || return 1
 }
-
 compose() {
   local $Batchlocal
   local Evalmaxfile Evalminfile Minfile Maxfile 
-  local Destinationfilebasename
+  local Destinationfilebasename Imageformat
   local i Count
   
   parse_batchoptions "$@" || return 1
@@ -1254,13 +1319,14 @@ compose() {
     [ -z "$Maxfile" ] && break
     Destinationfilebasename="$(sed 's/.max.*//' <<< "$Maxfile")"
     Destinationfilebasename="$(basename "$Destinationfilebasename")"
+    Imageformat="$(get_extension "$Maxfile")"
     
     for Functionmode in bumpmap colorburn difference linearburn linearlight modulate multiply overlay pegtoplight; do
       Count="$((Count + 1))"
       
       ifcmdbreak && return 1
     
-      Destinationfile="$Destinationdir/$Destinationfilebasename.${Functionmode}1.jpg"
+      Destinationfile="$Destinationdir/$Destinationfilebasename.${Functionmode}1.$Imageformat"
       $Convert "$Minfile" "$Maxfile" -compose "$Functionmode" -composite "$Destinationfile"
       note "compose $Functionmode: $Destinationfile"
       showimage "$Destinationfile"
@@ -1268,11 +1334,11 @@ compose() {
       case $Functionmode in
         linearburn|multiply) ;;  # skip second compose for modes with identical result
         difference)
-          $Convert "$Destinationfile" -negate "$Destinationdir/$Destinationfilebasename.${Functionmode}1-negate.jpg"
-          showimage "$Destinationdir/$Destinationfilebasename.${Functionmode}1-negate.jpg"
+          $Convert "$Destinationfile" -negate "$Destinationdir/$Destinationfilebasename.${Functionmode}1-negate.$Imageformat"
+          showimage "$Destinationdir/$Destinationfilebasename.${Functionmode}1-negate.$Imageformat"
         ;;
         *)
-          Destinationfile="$Destinationdir/$Destinationfilebasename.${Functionmode}2.jpg"
+          Destinationfile="$Destinationdir/$Destinationfilebasename.${Functionmode}2.$Imageformat"
           $Convert "$Maxfile" "$Minfile" -compose "$Functionmode" -composite "$Destinationfile"
           echo "$Destinationfile"
           showimage "$Destinationfile"
@@ -1284,7 +1350,6 @@ compose() {
   done
   return 0
 }
-
 crop() {
   # crop area of image sequence
   # -m  even|shrink|geometry|interactive
@@ -1354,7 +1419,6 @@ crop() {
   historyentry "# crop geometry: $Cropgeometry rotation: $Rotate"
   return 0
 }
-
 cuberotate() {
   local $Batchlocal
   local $Imagelocal
@@ -1440,9 +1504,40 @@ cuberotate() {
     ;;
   esac
 }
+distort() {
+  # distort images.
+  # -o must point to a file contaiing the distortion parameters in the form:
+  #    Imagename Xoffset Yoffset Rotation
+  
+  local $Batchlocal
+  local $Imagelocal
+  local Xoffset Yoffset Degree
+  local Distortfile
 
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+
+  Distortfile="$Functionoption"
+  
+  Imagecount=0
+  for Image in $Imagelist; do
+    Imagecount="$((Imagecount + 1))"  
+    Xoffset=0
+    Yoffset=0
+    Degree=0
+    Line="$(grep "$(basename "$Image")" "$Distortfile")"
+    Xoffset="$(cut -d' ' -f2 <<< "$Line")"
+    Yoffset="$(cut -d' ' -f3 <<< "$Line")"
+    Degree="$(cut  -d' ' -f4 <<< "$Line")"
+  
+    Destinationfile="$Destinationdir/$(basename "$Image")"
+    multicore "$Convert $Image -virtual-pixel transparent -distort SRT '0,0 1 $Degree $Xoffset,$Yoffset' $Destinationfile" "$Destinationfile" || return 1
+    showpercent "$Imagecount" "$Imagenumber"
+  done
+  multicore_wait || return 1
+}
 evaluate() {
-  # Evaluate image stack.
+  # Evaluate image stack min/max/mean/median
   
   local $Batchlocal
   local Destinationfilebasename Imageformat Count
@@ -1476,7 +1571,6 @@ evaluate() {
   showimage "$Destinationfile"
   return 0
 }
-
 fuse() {
   # fuse stackshot of images with enfuse
   
@@ -1564,7 +1658,6 @@ fuse() {
   showimage "$Destinationfile"
   return 0
 }
-
 imageformat() {
   local $Batchlocal
   local $Imagelocal
@@ -1600,7 +1693,6 @@ imageformat() {
   multicore_wait || return 1
   
 }
-
 lightbalance() {
   # simulate a HDR image with multiple exposures combined to one image with balanced light.
   # To achieve this some brightened and darkened images are generated with IM and combined with enfuse.
@@ -1662,7 +1754,6 @@ lightbalance() {
   done
   multicore_wait || return 1
 }
-
 ruler() {
   local $Batchlocal
   local $Imagelocal
@@ -1680,7 +1771,6 @@ ruler() {
   multicore_wait || return 1
   return 0
 }
-
 undo() {
   local $Batchlocal
   local Undocache
@@ -1696,7 +1786,6 @@ undo() {
   
   myrmdir "$Undocache"
 }
-
 video() {
   # Generate video of stackshot showing focus changes
   local $Batchlocal
@@ -1732,7 +1821,6 @@ $(tac <<< "$Imagelist")"
   showpercent 100 100
   showimage $Destinationfile
 }
-
 whitebalance() {
   # whitebalance sequence of images
   # -m  reference geometry
@@ -1811,7 +1899,6 @@ whitebalance() {
   multicore_wait || return 1
   return 0
 }
-
 wizard() {
   # Wrapper for ImageMagick convert to work on folders
   # Args:
@@ -1902,7 +1989,7 @@ imageproperties() {
     1) Meanimage="$Imagelist" ;;
     *)
       note "imageproperties(): Generating mean image"
-      Meanimage="$Cachedir/mean.jpg"
+      Meanimage="$Cachedir/mean.png"
       convert $Imagelist -evaluate-sequence mean "$Meanimage" || return 1
       showimage "$Meanimage"
     ;;
@@ -1926,7 +2013,6 @@ Imagemaxlevelblue=%[fx:maxima.b*100]
 $Imageproperties"
   eval $Imageproperties
 }
-
 calc_evengeometry() {
   local Geometry XY W H
   Geometry="${1:-}"
@@ -1940,7 +2026,6 @@ calc_evengeometry() {
   Geometry="${W}x${H}+${XY}"
   echo $Geometry
 }
-
 trim_hard() {
   # Function: Trim all border with transparency from image $1
   # Results in a maximal inner rectangle without border color.
@@ -2205,7 +2290,6 @@ fuse_declare() {
   fuse_storevalue 20 lcescale 4
   fuse_storevalue 20 lcefactor 4
 }
-
 fuse_getname() {
   local Number Mode
   local Line Value Name
@@ -2247,7 +2331,6 @@ fuse_getname() {
   esac
   echo  "$Name"
 }
-
 fuse_defaultvalue() {
   # define default enfuse settings
   local Entry
@@ -2269,7 +2352,6 @@ fuse_defaultvalue() {
     set*)                 echo "" ;;
   esac
 }
-
 fuse_getvalue() {
   local Number Entry Mode Entryoption Value Combovalues Combo
   Number="${1:-}"
@@ -2348,7 +2430,6 @@ fuse_getvalue() {
     ;;
   esac
 }
-
 fuse_storevalue() {
   local Number Entry Value Content
   
@@ -2364,7 +2445,6 @@ $Line")"
   echo "$Content" > $Enfuseconfigfile
   return 0
 }
-
 fuse_glob() {
   local Count Glob
   case "${1:-}" in
@@ -2419,7 +2499,6 @@ multicore() {
   
   return 0
 }
-
 multicore_wait() {
   local Process
   for Process in $(seq $Multicore_maxprocesses); do
@@ -2437,7 +2516,6 @@ multicore_wait() {
   Multicore_processcount=0
   return 0
 }
-
 multicore_waitprocess() {
   while sleep 0.2 ; do
     ps -p "${1:-}" >/dev/null || break
@@ -2446,7 +2524,6 @@ multicore_waitprocess() {
   wait "${1:-}"
   return $?
 }
-
 multicore_break() {
   local Process
   for Process in $(seq $Multicore_maxprocesses); do
@@ -2567,8 +2644,8 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           lightbalanceevaluate                                  -> @button="evaluate" ;
           lightbalancefuse                                      -> @button="fuse" ;
           lightbalance:beside         "lightbalance"            -> "on" | ! "";
-        align_vidstabline:beside                              -> align_vidstab align_vidstabcombo align_vidstabbutton ;
-          align_vidstabcombo          "crop interactive"        -> "interactive" | ! "";
+        align_vidstabline:beside                              -> align_vidstab align_vidstabmodecombo align_vidstabbutton ;
+          align_vidstabmodecombo:beside                         -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
           align_vidstabbutton                                   -> @button="magick" ;
           align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | "";
         align_aisline:beside                                  -> align_ais align_aismodecombo align_aiscombo align_aisbutton ;
@@ -2643,7 +2720,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           cuberotatemagick                                      -> @button="magick" ;
           cuberotate:beside           "cuberotate"              -> "" ;
         imageformatline:beside                                -> imageformat imageformatcombo imageformatmagick imageformatfuse imageformatevaluate;
-          imageformatcombo                                      -> @combow('$Imageformatcombo')="TIFF" ;
+          imageformatcombo                                      -> @combow('$Imageformatcombo')="TIF" ;
           imageformatmagick                                     -> @button="magick" ;
           imageformatevaluate                                   -> @button="evaluate" ;
           imageformatfuse                                       -> @button="fuse" ;
@@ -2666,7 +2743,6 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           deleteallbutvideo                                      -> @button="all but video";
   '
 }
-
 sendkaptain() {
   # send messages to kaptain over its stdin
 #  note "Send to kaptain: $1"
@@ -2674,7 +2750,6 @@ sendkaptain() {
   #testvar pidkaptain || return 1
   echo "${1:-}" >>${Kaptainstdinfile}
 }
-
 askkaptain() {
   # ask kaptain for value of $1
   local Wait Answer
@@ -2698,7 +2773,6 @@ askkaptain() {
   [ -z "$Answer" ] && return 1
   return 0
 }
-
 pipekaptain() {
   # provide script for interactive kaptain option --pipe
   # Needs containing variables to be set beforehand.
@@ -2768,7 +2842,6 @@ kaptain_update() {
   # update preview
   kaptain_update_preview
 }
-
 kaptain_update_preview() {
   local Stackdir Currentimage Image Cachedir Imagelist Imagenumber
   
@@ -2812,7 +2885,6 @@ kaptain_update_preview() {
   
   return 1
 }
-
 showpercent() {
   local Percent Part Full Percentimage
   
@@ -3010,7 +3082,6 @@ $Entrylist
   storeinfo drop stackshot_selector
   [ "$Refresh" = "yes" ] && stackshot_selector
 }
-
 fuse_config() {
   local Cachedir Stackdir
   local Count Setcount Line Image Imagelist Commentfile Button Argument Currentfuse=1 Fusemode Fuseskip
@@ -3196,7 +3267,6 @@ start 'stackfuser enfuse settings' -> frameset;
   rm $Cachedir/gui_fuse.+
   storeinfo drop fuse_config
 }
-
 cropgeometry_interactive() {
   # Interactive dialog to choose a crop geometry
   #   $1   Image to crop.
@@ -3403,10 +3473,6 @@ start 'Choose geometry' -> frameset ;
   ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
   rm $Cachedir/gui_crop.*
   
-  note "trim_hard(): final check"
-  nice convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
-  Cropgeometry="$(trim_hard "$Cropimagempc" "$Cropgeometry")" # final check
-  
   [ "$Return" = "0" ] && {
     [ "$Rotate" = "0" ] && echo "$Cropgeometry" || echo "$Cropgeometry:$Rotate"
     return 0
@@ -3501,17 +3567,13 @@ parse_kaptainsignal() {
     ;;
     
     align_vidstabbutton)
-      Functionoption="$(askkaptain "align_vidstabcombo")"
-      cmd -f align_vidstab -m "10" -o "$Functionoption" -t "$Stackdir"
-      cmd -f align_vidstab -m "5"  -o ""                -t "$Stackdir"
-      cmd -f align_vidstab -m "1"  -o ""                -t "$Stackdir"
+      Functionmode="$(askkaptain "align_vidstabmodecombo")"
+      cmd -f align_vidstab -m "$Functionmode" -t "$Stackdir"
     ;;
     align_aisbutton)
       Functionmode="$(askkaptain "align_aismodecombo")"
       Functionoption="$(askkaptain "align_aiscombo")"
       cmd -f align_ais -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
-      #cmd -f align_vidstab -m "5"  -o ""                -t "$Stackdir"
-      #cmd -f align_vidstab -m "1"  -o ""                -t "$Stackdir"
     ;;
     
     runbatch1) 
@@ -3537,7 +3599,6 @@ parse_kaptainsignal() {
     ;;
   esac
 }
-
 cmd() {
   local Arg Command
   for Arg in "$@"; do
@@ -3545,11 +3606,9 @@ cmd() {
   done
   echo "$Command" >> $Commandstackfile
 }
-
 ifcmdbreak() {
   storeinfo test cmdbreak && return 0 || return 1
 }
-
 stack_cmd() {
   local Command Commandpid Return
   while :; do
@@ -3583,7 +3642,6 @@ stack_cmd() {
     }
   done < <(tail -f $Commandstackfile)
 }
-
 parse_cmd() {
   local $Batchlocal
   local Commandline Return= 
@@ -3691,7 +3749,6 @@ TIF"
   done
   Imageformatcombo="${Imageformatcombo#,}"
 }
-
 create_cachefiles() {
   mkdir -p $Maincachedir
   mkdir -p $Thumbnaildir
@@ -3705,7 +3762,6 @@ create_cachefiles() {
   
   touch    $Enfuseconfigfile
 }
-
 check_dependencies() {
   local Dependency
   for Dependency in kaptain convert enfuse ffmpeg geeqie ufraw-batch viewnior align_image_stack $Imgruler; do
@@ -3713,7 +3769,6 @@ check_dependencies() {
   done
   ffmpeg 2>&1 | grep -q libvidstab || failure "Dependency libvidstab in ffmpeg not found. Please install ffmpeg with vidstab."
 }
-
 finish() {
   local Line Pid Comm
 
@@ -3728,7 +3783,6 @@ finish() {
   rm -R $Maincachedir
   exit 0
 }
-
 main() {
   local Kaptainpid Kaptainsignal Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptaingrammarfile
   trap finish EXIT
@@ -3749,8 +3803,6 @@ main() {
   fuse_declare
   [ -e "$Configfile" ] && source "$Configfile"
 
-  
-   
   # start kaptain
   Kaptaingrammarfile="$Maincachedir/gui_main.kaptain.grammar"
   Kaptainstdinfile="$Maincachedir/gui_main.kaptain.stdin" 
