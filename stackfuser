@@ -716,12 +716,15 @@ align_vidstab() {
 
   local $Batchlocal
   local $Imagelocal
-  local Framedir Distortdir Distortlogfile
+  local Framedir Distortdir Distortlogfile Cropminimage Commonareaimage
   local Xoffset Yoffset Degree
-  local Cropminimage Commonareaimage
+  local Iterations
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
+  
+  Functionmode="${Functionmode:-crop}"
+  Iterations="${Functionoption:-3}"
   
   # cache setup
   Framedir="$Cachedir/frames"
@@ -752,15 +755,19 @@ align_vidstab() {
   distort -o "$Cachedir/align.10.log" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir" || return 1
   showpercent 30 100
   
-  mycp "$Distortdir/*" "$Framedir"
-  align_vidstab_ffmpeg -o "5"  -s "$Framedir" -g "*" -c "$Cachedir" || return 1
-  note "align_vidstab: Distorting frames (Shakiness=5)"
-  distort -o "$Cachedir/align.5.log" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir" || return 1
-  showpercent 50 100  
+  [ "$Iterations" -ge "2" ] && {
+    mycp "$Distortdir/*" "$Framedir"
+    align_vidstab_ffmpeg -o "5"  -s "$Framedir" -g "*" -c "$Cachedir" || return 1
+    note "align_vidstab: Distorting frames (Shakiness=5)"
+    distort -o "$Cachedir/align.5.log" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir" || return 1
+    showpercent 50 100  
+  }
   
-  mycp "$Distortdir/*" "$Framedir"
-  align_vidstab_ffmpeg -o "1"  -s "$Framedir" -g "*" -c "$Cachedir" || return 1
-  showpercent 60 100
+  [ "$Iterations" -ge "3" ] && {
+    mycp "$Distortdir/*" "$Framedir"
+    align_vidstab_ffmpeg -o "1"  -s "$Framedir" -g "*" -c "$Cachedir" || return 1
+    showpercent 60 100
+  }
   
   myrm "$Framedir/*"
   case $Imageformat in
@@ -782,7 +789,7 @@ align_vidstab() {
     Xoffset=0
     Yoffset=0
     Degree=0
-    for Logfile in $Cachedir/align.10.log $Cachedir/align.5.log $Cachedir/align.1.log; do
+    for Logfile in $(find $Cachedir/align.*.log); do
       Line="$(sed "${Imagecount}q;d" "$Logfile")"
       Xoffset="$(awk "BEGIN {print $Xoffset + $(cut -d' ' -f2 <<< "$Line") }" )"
       Yoffset="$(awk "BEGIN {print $Yoffset + $(cut -d' ' -f3 <<< "$Line") }" )"
@@ -2644,8 +2651,9 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           lightbalanceevaluate                                  -> @button="evaluate" ;
           lightbalancefuse                                      -> @button="fuse" ;
           lightbalance:beside         "lightbalance"            -> "on" | ! "";
-        align_vidstabline:beside                              -> align_vidstab align_vidstabmodecombo align_vidstabbutton ;
-          align_vidstabmodecombo:beside                         -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
+        align_vidstabline:beside                              -> align_vidstab align_vidstabmodecombo align_vidstabcombo align_vidstabbutton ;
+          align_vidstabmodecombo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
+          align_vidstabcombo:beside   "Iterations:"             -> @combo("1","2","3")="3";
           align_vidstabbutton                                   -> @button="magick" ;
           align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | "";
         align_aisline:beside                                  -> align_ais align_aismodecombo align_aiscombo align_aisbutton ;
@@ -3568,7 +3576,8 @@ parse_kaptainsignal() {
     
     align_vidstabbutton)
       Functionmode="$(askkaptain "align_vidstabmodecombo")"
-      cmd -f align_vidstab -m "$Functionmode" -t "$Stackdir"
+      Functionoption="$(askkaptain "align_vidstabcombo")"
+      cmd -f align_vidstab -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
     ;;
     align_aisbutton)
       Functionmode="$(askkaptain "align_aismodecombo")"
