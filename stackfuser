@@ -649,30 +649,20 @@ getfunctionsettings() {
   Functionoption="$(askkaptain -c ${Function}combo)"
 }
 runbatch1() {
-  local Function Functionmode Functionoption Stackdir
-  Stackdir="${1:-}"
-  Function="crop"
-  askkaptain $Function > /dev/null && {
-    getfunctionsettings
-    cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
-  }
-  Function="lightbalance"
-  askkaptain $Function > /dev/null && {
-    getfunctionsettings
-    cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
-  }
-  cmd -f wizard -o "$(getbatch1)" -t "$Stackdir"
-}
-runbatch2() {
   local Function Functionmode Functionoption
   local Iterate
-  for Function in whitebalance align_vidstab align_ais ; do
+  for Function in crop whitebalance lightbalance align_ais align_vidstab; do
     askkaptain -c $Function > /dev/null && {
       getfunctionsettings
       cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
     }
   done
   return 0
+}
+runbatch2() {
+  local Function Functionmode Functionoption Stackdir
+  Stackdir="${1:-}"
+  cmd -f wizard -o "$(getbatch1)" -t "$Stackdir"
 }
 runbatch3() {
   askkaptain evaluate1 >/dev/null        && cmd -f evaluate -m all -t "$Stackdir"
@@ -749,6 +739,10 @@ align_vidstab() {
   multicore_wait || return 1
   Cropgeometry=""
   showpercent 10 100
+  
+  note "align_vidstab: Balancing video frame brightness"
+  whitebalance -m "full" -o "mean" -s "$Framedir" -g "*" -d "$Framedir" -c "$Cachedir"
+  showpercent 20 100
   
   align_vidstab_ffmpeg -o "10" -s "$Framedir" -g "*" -c "$Cachedir" || return 1
   note "align_vidstab: Distorting frames (Shakiness=10)"
@@ -1391,7 +1385,6 @@ crop() {
     interactive) 
 #      Image="$Cachedir/crop.min.jpg"
       Image="$Cachedir/crop.min.mpc"
-      showpercent 1 100
       note "crop $Functionmode: Generating min image"
       nice convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Functionoption")"
@@ -1583,12 +1576,14 @@ fuse() {
   
   local $Batchlocal 
   local $Imagelocal
+  local $Imagepropertieslocal
   local Destinationfilebasename
   local Fusemode Fuseoption Modelist Modenumber Count
   #local Layertif Filesize
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
+  imageproperties
   
   Destinationfilebasename="${Destinationfile:-fuse}"
   Fusemode="${Functionmode:-1}"
@@ -1867,7 +1862,7 @@ whitebalance() {
         return 1
       }
     ;;
-    *)           Cropgeometry="$Functionmode" ;;
+    *) Cropgeometry="$Functionmode" ;;
   esac
   
   [ "$Referencecolor" = "mean" ] && {
@@ -2551,7 +2546,7 @@ kaptaingrammar() {
 
 start "stackfuser '$Version'"     -> tabset bottomframe;
   
-  bottomframe                       -> dirframe statusframe ;  
+  bottomframe                       -> showresultframe dirframe statusframe ;
     dirframe:beside                    -> choosedirguibutton choosedir refreshbutton;
       choosedirguibutton                 -> @button="Stackshot directory:" ;
       choosedir                          -> @directory="'$Projecthome'" ;
@@ -2565,9 +2560,48 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
     batchtab "Image batch processing" -> batchoptionframe ;
       batchoptionframe:beside            -> batchframeleft  batchframeright;
         batchframeleft:framed              -> batchblock1 batchblock2 ;
-        batchframeright:framed             -> batchblock3 runbatchframe showresultframe;
+        batchframeright:framed             -> batchblock3 runbatchframe showdirframe;
+          
+      batchblock1 "batch block 1: crop and balance directory magick" -> cropline whitebalanceline lightbalanceline align_aisline align_vidstabline;
+        meanbalanceline:beside                                -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
+          meanbalancemodecombo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
+          meanbalancemagick                                     -> @button="magick" ;
+          meanbalanceevaluate                                   -> @button="evaluate" ;
+          meanbalancefuse                                       -> @button="fuse" ;
+          meanbalance:beside          "meanbalance"             ->  "on"  | ! "";
+        whitebalanceline:beside                               -> whitebalance whitebalancemodecombo whitebalancecombo whitebalancemagick whitebalancefuse whitebalanceevaluate;
+          whitebalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
+          whitebalancecombo                                     -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#CCCCCC" ;
+          whitebalancemagick                                    -> @button="magick" ;
+          whitebalanceevaluate                                  -> @button="evaluate" ;
+          whitebalancefuse                                      -> @button="fuse" ;
+          whitebalance:beside         "whitebalance"            ->  "on"  | ! "";
+        cropline:beside                                       -> crop cropmodecombo cropcombo cropmagick cropfuse cropevaluate;
+          cropmodecombo                                         -> @combo("interactive","shrink","even","geometry")="interactive" ;
+          cropcombo                                             -> @combow("","1","2","5","10","200x200+15+15")="" ;
+          cropmagick                                            -> @button="magick" ;
+          cropevaluate                                          -> @button="evaluate" ;
+          cropfuse                                              -> @button="fuse" ;
+          crop:beside                 "crop + rotate"           -> "on" | ! "";
+        lightbalanceline:beside                               -> lightbalance lightbalancemodecombo lightbalancecombo lightbalancemagick lightbalancefuse lightbalanceevaluate;
+          lightbalancemodecombo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
+          lightbalancecombo                                     -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
+          lightbalancemagick                                    -> @button="magick" ;
+          lightbalanceevaluate                                  -> @button="evaluate" ;
+          lightbalancefuse                                      -> @button="fuse" ;
+          lightbalance:beside         "lightbalance"            -> "on" | ! "";
+        align_vidstabline:beside                              -> align_vidstab align_vidstabmodecombo align_vidstabcombo align_vidstabbutton ;
+          align_vidstabmodecombo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
+          align_vidstabcombo:beside   "Iterations:"             -> @combo("1","2","3")="3";
+          align_vidstabbutton                                   -> @button="magick" ;
+          align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | "";
+        align_aisline:beside                                  -> align_ais align_aismodecombo align_aiscombo align_aisbutton ;
+          align_aismodecombo          "demagnifier"             -> "m"  | ! "";
+          align_aiscombo              "crop interactive"        -> "interactive" | ! "";
+          align_aisbutton                                       -> @button="magick" ;
+          align_ais:beside            "align with align_image_stack" -> "on" | ! "";
       
-      batchblock1 "batch block 1: prepare stackshot images in directory magick" -> cropline lightbalanceline @text="imagemagick convert options" gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline applyallline;
+      batchblock2 "batch block 2: imagemagick operations on directory magick" -> gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline;
         gammaline:beside                                      -> gamma gammamagick gammafuse gammaevaluate;
           gammacombo                                            -> @combow("auto","0.2","0.3","0.4","0.454545","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
           gammamagick                                           -> @button="magick" ;
@@ -2616,51 +2650,12 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           wizardmagick                                          -> @button="magick" ;
           wizardevaluate                                        -> @button="evaluate" ;
           wizardfuse                                            -> @button="fuse" ;
-          wizard:beside               "convert"                 -> wizardcombo | ! "" ;
+          wizard:beside               ""                        -> wizardcombo | ! "" ;
         applyallline:beside                                   -> applyall applyallmagick applyallfuse applyallevaluate;
           applyallmagick                                        -> @button="magick" ;
           applyallevaluate                                      -> @button="evaluate" ;
           applyallfuse                                          -> @button="fuse" ;
-          applyall:beside             "Apply all convert options"  -> "" ;
-          
-      batchblock2 "batch block 2: post processing directory magick" -> whitebalanceline meanbalanceline align_vidstabline align_aisline ;
-        meanbalanceline:beside                                -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
-          meanbalancemodecombo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
-          meanbalancemagick                                     -> @button="magick" ;
-          meanbalanceevaluate                                   -> @button="evaluate" ;
-          meanbalancefuse                                       -> @button="fuse" ;
-          meanbalance:beside          "meanbalance"             ->  "on"  | ! "";
-        whitebalanceline:beside                               -> whitebalance whitebalancemodecombo whitebalancecombo whitebalancemagick whitebalancefuse whitebalanceevaluate;
-          whitebalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
-          whitebalancecombo                                     -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#999999" ;
-          whitebalancemagick                                    -> @button="magick" ;
-          whitebalanceevaluate                                  -> @button="evaluate" ;
-          whitebalancefuse                                      -> @button="fuse" ;
-          whitebalance:beside         "whitebalance"            ->  "on"  | ! "";
-        cropline:beside                                       -> crop cropmodecombo cropcombo cropmagick cropfuse cropevaluate;
-          cropmodecombo                                         -> @combo("interactive","shrink","even","geometry")="interactive" ;
-          cropcombo                                             -> @combow("","1","2","5","10","200x200+15+15")="" ;
-          cropmagick                                            -> @button="magick" ;
-          cropevaluate                                          -> @button="evaluate" ;
-          cropfuse                                              -> @button="fuse" ;
-          crop:beside                 "crop + rotate"           -> "on" | ! "";
-        lightbalanceline:beside                               -> lightbalance lightbalancemodecombo lightbalancecombo lightbalancemagick lightbalancefuse lightbalanceevaluate;
-          lightbalancemodecombo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
-          lightbalancecombo                                     -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
-          lightbalancemagick                                    -> @button="magick" ;
-          lightbalanceevaluate                                  -> @button="evaluate" ;
-          lightbalancefuse                                      -> @button="fuse" ;
-          lightbalance:beside         "lightbalance"            -> "on" | ! "";
-        align_vidstabline:beside                              -> align_vidstab align_vidstabmodecombo align_vidstabcombo align_vidstabbutton ;
-          align_vidstabmodecombo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
-          align_vidstabcombo:beside   "Iterations:"             -> @combo("1","2","3")="3";
-          align_vidstabbutton                                   -> @button="magick" ;
-          align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | "";
-        align_aisline:beside                                  -> align_ais align_aismodecombo align_aiscombo align_aisbutton ;
-          align_aismodecombo          "demagnifier"             -> "m"  | ! "";
-          align_aiscombo              "crop interactive"        -> "interactive" | ! "";
-          align_aisbutton                                       -> @button="magick" ;
-          align_ais:beside            "align with align_image_stack" -> "on" | ! "";
+          applyall:beside             "Apply all imagemagick options"  -> "" ;
         
       batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose;
         fuseline:beside                                       -> fuse fuseconfig @fill fusemodecombo fusemagick;
@@ -2687,21 +2682,29 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           runbatchprocessing                                    -> @button="Run selected batch blocks";
           cmdbreak                                              -> @button="break" ;
         
-      showresultframe "Show results"                        -> showimagebuttons show_video showdirline killviewnior;
-        showimagebuttons:beside                               -> showimagemagickeval showimagefuseeval ;
-          showimagemagickeval                                 -> @combo("magick.max","magick.mean","magick.median","magick.min")="magick.max" ;
-          showimagefuseeval                                   -> @combo("fuse.max","fuse.mean","fuse.median","fuse.min")="fuse.median" ;
-        show_video                                          -> @combo("-");
-        showdirline                                         -> @text="Directories" showdirline1 showdirline2 ;
-          showdirline1:beside                                 -> opendirbutton showstackshot showmagick ;
-            opendirbutton                                       -> @button="FM";
-            showstackshot                                       -> @button="stackshot";
-            showmagick                                          -> @button="magick";
-          showdirline2:beside                                 -> showfuse showcompose showevaluate;
-            showfuse                                            -> @button="fuse";
-            showcompose                                         -> @button="compose";
-            showevaluate                                        -> @button="evaluate";
+      showdirframe "Show directories and videos"          -> showdirline killviewnior show_video;
+        showdirline                                         -> showdirline1 showdirline2 ;
+          showdirline1:beside                                 -> showdirfm showdirstackshot showdirmagick ;
+            showdirfm                                           -> @button="FM";
+            showdirstackshot                                    -> @button="stackshot";
+            showdirmagick                                       -> @button="magick";
+          showdirline2:beside                                 -> showdirfuse showdircompose showdirevaluate;
+            showdirfuse                                         -> @button="fuse";
+            showdircompose                                      -> @button="compose";
+            showdirevaluate                                     -> @button="evaluate";
         killviewnior                                          -> @action("killall viewnior ffplay")="killall viewnior ffplay";
+        show_video                                            -> @combo("-");
+        
+      showresultframe                                       -> showresultline;
+        showresultline:beside "Show results:"                 -> showmagick_max showmagick_min showmagick_mean showmagick_median @fill showfuse_max showfuse_min showfuse_mean showfuse_median;
+          showmagick_max                                        -> @button="magick.max";
+          showmagick_min                                        -> @button="magick.min";
+          showmagick_mean                                       -> @button="magick.mean";
+          showmagick_median                                     -> @button="magick.median";
+          showfuse_max                                          -> @button="fuse.max";
+          showfuse_min                                          -> @button="fuse.min";
+          showfuse_mean                                         -> @button="fuse.mean";
+          showfuse_median                                       -> @button="fuse.median";
         
     specialtab:framed "Special operations" -> specialframe @fill deleteframe;
       specialframe "Special operations" -> rulerline videoline animationline cuberotateline imageformatline undoline ;
@@ -2715,7 +2718,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
         animationline:beside                                  -> animation animationmodecombo animationfusecombo animationcombo animationmagick;
           animationmodecombo:beside                             -> @combo("quick","smooth")="smooth";
           animationcombo:beside       "Distortion:"             -> @combow("15","20","25","30","40","50","75","100","150")="30";
-          animationfusecombo:beside   "fuse:"                   -> @combow('$Fusemodecombo')="fuse18";
+          animationfusecombo:beside   "fuse:"                   -> @combow('$Fusemodecombo')="fuse01";
           animationmagick                                       -> @button="magick" ;
           animation:beside            "animated video"          -> "" ;
         videoline:beside                                      -> video videomodecombo videocombo videomagick;
@@ -2739,7 +2742,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           undofuse                                              -> @button="fuse" ;
           undo                        "undo last step"          -> "" ;
     
-      deleteframe                  "Delete results"         -> deletebuttons; 
+      deleteframe                  "Delete directories"      -> deletebuttons; 
         deletebuttons:beside                                   -> deletebackups deletemagick deleteevaluate deletecompose deletefuse deletevideo deleteall deleteallbutvideo;
           deletebackups                                          -> @button="backups + cache";
           deleteevaluate                                         -> @button="evaluate";
@@ -2806,11 +2809,11 @@ kaptain_update() {
   sendkaptain "choosedir='$Stackdir'"
   
   # show directory buttons
-  [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showstackshot='stackshot'"       || sendkaptain "showstackshot='-'"
-  [ -d "$Stackdir/magick" ]                       && sendkaptain "showmagick='magick'"             || sendkaptain "showmagick='-'"
-  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showevaluate='evaluate'"         || sendkaptain "showevaluate='-'"
-  [ -d "$Stackdir/compose" ]                      && sendkaptain "showcompose='compose'"           || sendkaptain "showcompose='-'"
-  [ -d "$Stackdir/fuse" ]                         && sendkaptain "showfuse='fuse'"                 || sendkaptain "showfuse='-'"
+  [ -d "$Stackdir/stackshot" ]                    && sendkaptain "showdirstackshot='stackshot'"       || sendkaptain "showdirstackshot='-'"
+  [ -d "$Stackdir/magick" ]                       && sendkaptain "showdirmagick='magick'"             || sendkaptain "showdirmagick='-'"
+  [ -d "$Stackdir/evaluate" ]                     && sendkaptain "showdirevaluate='evaluate'"         || sendkaptain "showdirevaluate='-'"
+  [ -d "$Stackdir/compose" ]                      && sendkaptain "showdircompose='compose'"           || sendkaptain "showdircompose='-'"
+  [ -d "$Stackdir/fuse" ]                         && sendkaptain "showdirfuse='fuse'"                 || sendkaptain "showdirfuse='-'"
   
   # show delete buttons
   check_dirglob "$Stackdir/*.bak" ]               && sendkaptain "deletebackups='backups + cache'" || sendkaptain "deletebackups='-'"
@@ -2830,16 +2833,28 @@ kaptain_update() {
   [ -z "$Comboline" ] && Comboline="'-'"
   sendkaptain "show_video($Comboline)=''"
   
-  # evaluate reults
+  # evaluate results
   check_fileglob "$Stackdir/evaluate/*.magick.*" && {
-    sendkaptain 'showimagemagickeval("magick.max","magick.mean","magick.median","magick.min")="magick.max"'
+    sendkaptain "showmagick_max='magick.max'"
+    sendkaptain "showmagick_min='magick.min'"
+    sendkaptain "showmagick_mean='magick.mean'"
+    sendkaptain "showmagick_median='magick.median'"
   } || {
-    sendkaptain 'showimagemagickeval("-")="-"'
+    sendkaptain "showmagick_max='-'"
+    sendkaptain "showmagick_min='-'"
+    sendkaptain "showmagick_mean='-'"
+    sendkaptain "showmagick_median='-'"
   }
   check_fileglob "$Stackdir/evaluate/*.fuse.*" && {
-    sendkaptain 'showimagefuseeval("fuse.max","fuse.mean","fuse.median","fuse.min")="fuse.median"'
+    sendkaptain "showfuse_max='fuse.max'"
+    sendkaptain "showfuse_min='fuse.min'"
+    sendkaptain "showfuse_mean='fuse.mean'"
+    sendkaptain "showfuse_median='fuse.median'"
   } || {
-    sendkaptain 'showimagefuseeval("-")="-"'
+    sendkaptain "showfuse_max='-'"
+    sendkaptain "showfuse_min='-'"
+    sendkaptain "showfuse_mean='-'"
+    sendkaptain "showfuse_median='-'"
   }
   
   Cmdstatus="$(storeinfo dump status)"
@@ -3523,12 +3538,16 @@ parse_kaptainsignal() {
       Image="$Stackdir/video/*.$Image*"
       showimage "$(fileglob "$Image")"
     ;;
-    showimage*)
-      Image="$(cut -d: -f2 <<< "$Kaptainsignal")"
-      showimage "$(fileglob "$Stackdir/evaluate/*$Image*")"
+    showmagick*|showfuse*)
+      #Image="$(cut -d: -f2 <<< "$Kaptainsignal")"
+      Image="$(cut -d: -f1 <<< "$Kaptainsignal")"
+      Image="${Image#show}"
+      Image="$(tr "_" "." <<< "$Image")"
+      Image="$(fileglob "$Stackdir/evaluate/*$Image*")"
+      showimage "$Image"
     ;;
-    show*)
-      showimage "$Stackdir/${Kaptainsignal#show}/*"
+    showdir*)
+      showimage "$Stackdir/${Kaptainsignal#showdir}/*"
     ;;
     
     fuseconfig)
