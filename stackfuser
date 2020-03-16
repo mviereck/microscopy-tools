@@ -278,7 +278,7 @@ setup_workdir() {
   #   Targetdir      Target directory [+glob] to check.
   #                  Can already be in an ardustack-structure or an arbitrary one.
   #                  Location of $Destinationdir depends on detected directory structure.
-  #   Functionoption   Mode of Function
+  #   Opt2   Mode of Function
   # Sets variables:
   #   Sourcedir                 Source directory within $Targetdir
   #   Sourcefileglob            Glob to get files. Mostly just "*"
@@ -344,7 +344,7 @@ setup_workdir() {
         mycp "$Targetstackshotdir/$Sourcefileglob" "$Targetmagickdir"
         :
       } || {
-        imageformat -o "tif" -s "$Targetstackshotdir" -g "$Sourcefileglob" -d "$Targetmagickdir"
+        imageformat -2 "tif" -s "$Targetstackshotdir" -g "$Sourcefileglob" -d "$Targetmagickdir"
       }
     }
   }
@@ -440,7 +440,7 @@ showimage() {
     0) 
       failure "showimage: Not found: ${1:-}"
       Image="$(storeinfo dump notfoundimage)"
-      [ -e "$Image" ] || convert -size 300x200 xc:red -fill black -pointsize 20 -gravity center -draw "text 0,0 'image not found'" "$Image"
+      [ -e "$Image" ] || $Convert -size 300x200 xc:red -fill black -pointsize 20 -gravity center -draw "text 0,0 'image not found'" "$Image"
       geeqie -t -r File:"$Image"
       #sendkaptain "showimage('')=''" 
       #sendkaptain "showimagename=''"
@@ -450,11 +450,20 @@ showimage() {
     1) 
       Image="$Imagelist"
       #Shrinkimage="$Maincachedir/showimage.png"
-      #convert "$Image" -scale 800x800\> "$Shrinkimage" 
+      #$Convert "$Image" -scale 800x800\> "$Shrinkimage" 
       #sendkaptain "showimage('$Shrinkimage')=''" 
       #sendkaptain "showimagename='$(shortpath "$Image")'"
-      case "$(rev <<< "$Image" | cut -d. -f1 | rev)" in
-        gif|mp4|webm) 
+      case "$(get_extension "$Image")" in
+        gif)
+          case $(identify "$Image" | grep -c GIF) in
+            1) 
+              geeqie -t -r File:"$Image" 
+              storeinfo   "showimage=$Image"
+            ;;
+            *) showvideo "$Image" ;;
+          esac
+        ;;
+        mp4|webm) 
           showvideo "$Image" 
         ;;
         *)       
@@ -512,12 +521,12 @@ batch_function() {
   
   case "$Function" in
     brightness|contrast|gamma|level|prepare|sharpen|statistic|stretch|wizard)
-      Functionoption="$Functionmode $Functionoption"
-      Functionmode="$Function"
+      Opt2="$Opt2"
+      Opt1="$Function"
       Function="wizard"
     ;;
   esac
-  Functionoption="${Functionoption# }"
+  Opt2="${Opt2# }"
   
   checkvar           -D "$Function" Sourcedir      "$Sourcedir"        || return 1
   checkvar           -d "$Function" Destinationdir "$Destinationdir"   || return 1
@@ -526,25 +535,25 @@ batch_function() {
     *) checkvar         $Function Sourcefileglob   "$Sourcefileglob"   || return 1 ;;
   esac
   case $Function in
-    wizard) checkvar    $Function Functionmode     "$Functionmode"     || return 1 ;;
+    wizard) checkvar    $Function Opt1     "$Opt1"     || return 1 ;;
   esac
   case $Function in
     align*|crop|undo|whitebalance)
       checkvar       -d $Function Cachedir         "$Cachedir"         || return 1 ;;
   esac
   
-  [ -z "$Functionmode" ] && case "$Function" in
-    compose|evaluate|fuse) Functionmode="all" ;;
+  [ -z "$Opt1" ] && case "$Function" in
+    compose|evaluate|fuse) Opt1="all" ;;
   esac
   
-  note "$Function $Functionmode $Functionoption"
+  note "$Function $Opt1 $Opt2"
   storeinfo "cmd=$@"
   storeinfo "cmd_source=$Sourcedir"
   storeinfo "cmd_destination=$Destinationdir"
   storeinfo "cmd_cache=$Cachedir"
   cd "$Cachedir"
-  verbose "batch_function(): $Function -m '$Functionmode' -o '$Functionoption' -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfile' -c '$Cachedir'"
-  $Function -m "$Functionmode" -o "$Functionoption" -s "$Sourcedir" -g "$Sourcefileglob" -d "$Destinationdir" -b "$Destinationfile" -c "$Cachedir"
+  verbose "batch_function(): $Function -1 '$Opt1' -2 '$Opt2' -3 '$Opt3' -4 '$Opt4' -5 '$Opt5' -6 '$Opt6' -7 '$Opt7' -8 '$Opt8' -9 '$Opt9' -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfile' -c '$Cachedir'"
+  $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -s "$Sourcedir" -g "$Sourcefileglob" -d "$Destinationdir" -b "$Destinationfile" -c "$Cachedir"
   Return=$?
   cd "$Targetdir"
   storeinfo drop cmd
@@ -553,9 +562,9 @@ batch_function() {
   storeinfo drop cmd_cache
   
   [ "$Return" = "0" ] && {
-    note "Ready: $Function $Functionmode $Functionoption"
+    note "Ready: $Function $Opt1 $Opt2"
   } || {
-    failure "ERROR in $Function $Functionmode $Functionoption: $(basename "$Sourcedir") -> $(basename "$Destinationdir")"
+    failure "ERROR in $Function $Opt1 $Opt2: $(basename "$Sourcedir") -> $(basename "$Destinationdir")"
     case $Function in
       animation) ;;
       compose|evaluate|fuse) undo -s "$Destinationdir.bak" -d "$Destinationdir" -c "$Cachedir" ;;
@@ -587,10 +596,10 @@ batch_function() {
 parse_batchoptions() {
   # To be called by batch functions to parse options.
   # Include this local line in the calling function:
-  #   local Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Functionmode Functionoption
+  #   local Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Opt1 Opt2
 
   local Shortoptions Longoptions Parsedoptions
-  Shortoptions="b:c:d:f:g:m:o:s:t:"
+  Shortoptions="b:c:d:f:g:m:o:s:t:1:2:3:4:5:6:7:8:9:"
   Longoptions=""
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@" )"
@@ -605,8 +614,15 @@ parse_batchoptions() {
       -b) Destinationfile="${2:-}" ;;
       -c) Cachedir="${2:-}" ;;
       -f) Function="${2:-}" ;;
-      -m) Functionmode="${2:-}" ;;
-      -o) Functionoption="${2:-}" ;;
+      -1) Opt1="${2:-}" ;;
+      -2) Opt2="${2:-}" ;;
+      -3) Opt3="${2:-}" ;;
+      -4) Opt4="${2:-}" ;;
+      -5) Opt5="${2:-}" ;;
+      -6) Opt6="${2:-}" ;;
+      -7) Opt7="${2:-}" ;;
+      -8) Opt8="${2:-}" ;;
+      -9) Opt9="${2:-}" ;;
       --) ;;
       *) 
         failure "Unbekannte Option ${1:-} ($Function)" 
@@ -631,7 +647,7 @@ getbatch1() {
       brightness) Line="-brightness-contrast" ;;
       contrast)   Line="-sigmoidal-contrast" ;;
       sharpen)    Line="-adaptive-sharpen" ;;
-      statistic)  Line="-statistic" ; Argument="$(askkaptain statisticmodecombo) $(askkaptain statisticcombo)" ;;
+      statistic)  Line="-statistic" ; Argument="$(askkaptain statisticopt1combo) $(askkaptain statisticopt2combo)" ;;
       stretch)    Line="-contrast-stretch" ;;
       wizard)     Line="" ;;
       *)          Line="-$Line" ;;
@@ -645,35 +661,44 @@ getbatch1() {
   echo "$Command"
 }
 getfunctionsettings() {
-  Functionmode="$(askkaptain -c ${Function}modecombo)"
-  Functionoption="$(askkaptain -c ${Function}combo)"
+  local Function
+  Function="${1:-none}"
+  Opt1="$(askkaptain -c ${Function}opt1combo)"
+  Opt2="$(askkaptain -c ${Function}opt2combo)"
+  Opt3="$(askkaptain -c ${Function}opt3combo)"
+  Opt4="$(askkaptain -c ${Function}opt4combo)"
+  Opt5="$(askkaptain -c ${Function}opt5combo)"
+  Opt6="$(askkaptain -c ${Function}opt6combo)"
+  Opt7="$(askkaptain -c ${Function}opt7combo)"
+  Opt8="$(askkaptain -c ${Function}opt8combo)"
+  Opt9="$(askkaptain -c ${Function}opt9combo)"
 }
 runbatch1() {
-  local Function Functionmode Functionoption
+  local $Batchlocal
   local Iterate
   for Function in crop whitebalance lightbalance align_ais align_vidstab; do
     askkaptain -c $Function > /dev/null && {
-      getfunctionsettings
-      cmd -f "$Function" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+      getfunctionsettings $Function
+      cmd -f "$Function" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Stackdir"
     }
   done
   return 0
 }
 runbatch2() {
-  local Function Functionmode Functionoption Stackdir
+  local $Batchlocal
   Stackdir="${1:-}"
-  cmd -f wizard -o "$(getbatch1)" -t "$Stackdir"
+  cmd -f wizard -1 "$(getbatch1)" -t "$Stackdir"
 }
 runbatch3() {
-  askkaptain evaluate1 >/dev/null        && cmd -f evaluate -m all -t "$Stackdir"
-  askkaptain fuse >/dev/null             && cmd -f fuse -m $(askkaptain fusemodecombo) -t "$Stackdir"
+  askkaptain evaluate1 >/dev/null        && cmd -f evaluate -1 all -t "$Stackdir"
+  askkaptain fuse >/dev/null             && cmd -f fuse -1 $(askkaptain fuseopt1combo) -t "$Stackdir"
   askkaptain evaluate2 >/dev/null &&  {
-    Functionoption=$(askkaptain evaluatecombo)
-    cmd -f evaluatefuse -m all -t "$Stackdir" -g "$(fuse_glob $Functionoption)"
+    Opt2=$(askkaptain evaluateopt2combo)
+    cmd -f evaluatefuse -1 all -t "$Stackdir" -g "$(fuse_glob $Opt2)"
   }
-  askkaptain sharpen_evaluate >/dev/null && cmd -f sharpenevaluate -o 3x1 -t "$Stackdir"
+  askkaptain sharpen_evaluate >/dev/null && cmd -f sharpenevaluate -2 3x1 -t "$Stackdir"
   askkaptain compose >/dev/null          && cmd -f compose -t "$Stackdir"
-  
+  askkaptain deletebackups2 >/dev/null   && cmd -f deletebackups -t "$Stackdir"
   cmd -f showimage -s "$Stackdir/evaluate" -g "*fuse.median*"
 }
 setup_imagelist() {
@@ -713,8 +738,8 @@ align_vidstab() {
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
   
-  Functionmode="${Functionmode:-crop}"
-  Iterations="${Functionoption:-3}"
+  Opt1="${Opt1:-crop}"
+  Iterations="${Opt2:-3}"
   
   # cache setup
   Framedir="$Cachedir/frames"
@@ -733,7 +758,7 @@ align_vidstab() {
   for Image in $Imagelist; do
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$Framedir/frame$(zeronumber $Imagecount).png"
-    multicore "convert $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Convert $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
@@ -741,25 +766,25 @@ align_vidstab() {
   showpercent 10 100
   
   note "align_vidstab: Balancing video frame brightness"
-  whitebalance -m "full" -o "mean" -s "$Framedir" -g "*" -d "$Framedir" -c "$Cachedir"
+  whitebalance -1 "full" -2 "mean" -s "$Framedir" -g "*" -d "$Framedir" -c "$Cachedir"
   showpercent 20 100
   
-  align_vidstab_ffmpeg -o "10" -s "$Framedir" -g "*" -c "$Cachedir" || return 1
+  align_vidstab_ffmpeg -2 "10" -s "$Framedir" -g "*" -c "$Cachedir" || return 1
   note "align_vidstab: Distorting frames (Shakiness=10)"
-  distort -o "$Cachedir/align.10.log" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir" || return 1
+  distort -2 "$Cachedir/align.10.log" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir" || return 1
   showpercent 30 100
   
   [ "$Iterations" -ge "2" ] && {
     mycp "$Distortdir/*" "$Framedir"
-    align_vidstab_ffmpeg -o "5"  -s "$Framedir" -g "*" -c "$Cachedir" || return 1
+    align_vidstab_ffmpeg -2 "5"  -s "$Framedir" -g "*" -c "$Cachedir" || return 1
     note "align_vidstab: Distorting frames (Shakiness=5)"
-    distort -o "$Cachedir/align.5.log" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir" || return 1
+    distort -2 "$Cachedir/align.5.log" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir" || return 1
     showpercent 50 100  
   }
   
   [ "$Iterations" -ge "3" ] && {
     mycp "$Distortdir/*" "$Framedir"
-    align_vidstab_ffmpeg -o "1"  -s "$Framedir" -g "*" -c "$Cachedir" || return 1
+    align_vidstab_ffmpeg -2 "1"  -s "$Framedir" -g "*" -c "$Cachedir" || return 1
     showpercent 60 100
   }
   
@@ -769,13 +794,13 @@ align_vidstab() {
       mycp "$Sourcedir/$Sourcefileglob" "$Framedir"
     ;;
     *)
-      imageformat -m "tif" -s "$Sourcedir" -g "$Sourcefileglob" -d "$Framedir" -c "$Cachedir"
+      imageformat -1 "tif" -s "$Sourcedir" -g "$Sourcefileglob" -d "$Framedir" -c "$Cachedir"
     ;;
   esac
   showpercent 70 100
   
   echo "# Image | Xoffset | Yoffset | Degree" > $Distortlogfile
-  echo "# convert Image -virtual-pixel transparent -distort SRT '0,0 1 Degree Xoffset,Yoffset' out.png" >> $Distortlogfile
+  echo "# $Convert Image -virtual-pixel transparent -distort SRT '0,0 1 Degree Xoffset,Yoffset' out.png" >> $Distortlogfile
   Imagecount=0
   for Image in $(fileglob "$Framedir/*") ; do
     Imagecount="$((Imagecount+1))"
@@ -794,17 +819,17 @@ align_vidstab() {
   
   note "align_vidstab: Distorting source images"
   rm $Distortdir/*
-  distort -o "$Distortlogfile" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir"
+  distort -2 "$Distortlogfile" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir"
   showpercent 80 100
 
-  case $Functionmode in
+  case $Opt1 in
     crop|crop_interactive|common_area) 
       note "align_vidstab: Generating min image"
-      nice convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
+      $Convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
     ;;
   esac
   
-  case $Functionmode in
+  case $Opt1 in
     crop) 
       Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")" || return 1 
     ;;
@@ -815,11 +840,11 @@ align_vidstab() {
     distort_only) ;;
     common_area) 
       note "align_vidstab: Generating mask image"
-      nice convert $Cropminimage -threshold 0% $Commonareaimage || return 1
+      $Convert $Cropminimage -threshold 0% $Commonareaimage || return 1
     ;;
   esac
   
-  case $Functionmode in
+  case $Opt1 in
     crop|crop_interactive) 
       Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
       Rotate="${Rotate:-0}"
@@ -843,7 +868,7 @@ align_vidstab() {
     Imagecount="$((Imagecount+1))"
     Destinationfile="$(sed "${Imagecount}q;d" <<< "$Imagelist")"
     Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
-    case $Functionmode in
+    case $Opt1 in
       crop|crop_interactive) 
         multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
       ;;
@@ -858,7 +883,7 @@ align_vidstab() {
   done
   multicore_wait || return 1
 
-  case $Functionmode in
+  case $Opt1 in
     crop)             showimage "$Cropminimage.trim_hard.png" ;;
     crop_interactive) showimage "$Cachedir/cropgeometry.gui.tif" ;;
     common_area)      showimage "$Commonareaimage" ;;
@@ -867,7 +892,7 @@ align_vidstab() {
 }
 align_vidstab_ffmpeg() {
   # Align images with ffmpeg/vidstab
-  # Generates file $Cachedir/align.$Functionoption.log containing the calculated distortion parameters.
+  # Generates file $Cachedir/align.$Opt2.log containing the calculated distortion parameters.
   # -o  Shakiness 1-10 (low to high)
   # -s  Sourcedir must contain files of form frame0001.png
   
@@ -885,7 +910,7 @@ align_vidstab_ffmpeg() {
   cd $Cachedir
   
   # settings
-  Shakiness="${Functionoption:-1}"
+  Shakiness="${Opt2:-1}"
   Stepsize=6
   
   # cache setup
@@ -943,18 +968,18 @@ align_ais() {
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
   
-  [ "$Functionmode" ] && Functionmode="-m"
+  [ "$Opt1" ] && Opt1="-m"
 
   Distortdir=$Cachedir/distort
   mkdir $Distortdir
   
-  nice align_image_stack -l $Functionmode --gpu -a $Distortdir/align --use-given-order $Imagelist || return 1
+  nice align_image_stack -l $Opt1 --gpu -a $Distortdir/align --use-given-order $Imagelist || return 1
 
   Alignlist="$(fileglob "$Distortdir/*")"
 
   # crop greatest common inner rectangle of distorted images
   Cropminimage="$Cachedir/distorted.min.mpc"
-  nice convert $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
+  $Convert $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
   case $Cropinteractive in
     yes) notify-send "align_ais: Ready for interactive crop"
          Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
@@ -993,7 +1018,7 @@ align_ais2() {
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
   
-  [ "$Functionmode" ] && Functionmode="-m"
+  [ "$Opt1" ] && Opt1="-m"
   
   Part1dir=$Cachedir/part1
   Part2dir=$Cachedir/part2
@@ -1015,8 +1040,8 @@ $Imagelist1"
   echo "List2:
 $Imagelist2"
   showpercent busy
-  multicore "nice align_image_stack -l $Functionmode --gpu -a $Part1dir/align --use-given-order $Imagelist1" || return 1
-  multicore "nice align_image_stack -l $Functionmode --gpu -a $Part2dir/align --use-given-order $Imagelist2" || return 1
+  multicore "nice align_image_stack -l $Opt1 --gpu -a $Part1dir/align --use-given-order $Imagelist1" || return 1
+  multicore "nice align_image_stack -l $Opt1 --gpu -a $Part2dir/align --use-given-order $Imagelist2" || return 1
   multicore_wait || return 1
 
   Alignlist="$(fileglob "$Part1dir/*")"
@@ -1040,7 +1065,7 @@ $Imagelist2"
 
   # crop greatest common inner rectangle of distorted images
   Cropminimage="$Cachedir/distorted.min.mpc"
-  nice convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
+  $Convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
   case $Cropinteractive in
     yes) notify-send "align_ais: Ready for interactive crop"
          Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
@@ -1097,13 +1122,11 @@ animation() {
   setup_imagelist         || return 1
   
   # settings
-  Rendermode="$(cut -d: -f1  <<<"$Functionmode")"
-  Fusemode="$(cut -s -d: -f2 <<<"$Functionmode")"
-  Rendermode="${Rendermode:-quick}"
-  Fusemode="${Fusemode:-4}"
-  Distortion="${Functionoption:-25}"
+  Rendermode="${Opt1:-quick}"
+  Fusemode="${Opt2:-1}"
+  Distortion="${Opt3:-25}"
   Staticlayer="1/4"
-  Format="webm"
+  Format="${Opt9:-webm}"
   Appendfirstframe="no"
   Destinationfilebasename="${Destinationfile:-animation}"
   
@@ -1228,7 +1251,7 @@ $Position"
   Count=-$((Imagenumber * $Staticlayer))  # negative start value causes movement of lowest layer
   for Image in $Imagelist; do
     Count="$((Count +1))"
-    Convertline="nice convert $Image -write mpr:image +delete"
+    Convertline="$Convert $Image -write mpr:image +delete"
     for Position in $Positionlist; do
       Distortdir="$Cachedir/distort.$Position"
       Distortimage="$Distortdir/$(basename $Image)"   
@@ -1255,8 +1278,8 @@ $Position"
     mkdir -p "$Fusedir"
     Imagebasename="animation.$Position"
     case $Fusemode in
-      all|set*) ( showpercent() { : ; } ; fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode -c $Distortcachedir ) || return 1 ;; 
-      *)                       multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -m $Fusemode -c $Distortcachedir"  || return 1 ;;
+      all|set*) ( showpercent() { : ; } ; fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -1 $Fusemode -c $Distortcachedir ) || return 1 ;; 
+      *)                       multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -1 $Fusemode -c $Distortcachedir"  || return 1 ;;
     esac
     showpercent $Iteration $Iterationnumber
   done
@@ -1267,10 +1290,10 @@ $Position"
     Iteration=$((Iteration + 1))
     Distortdir="$Cachedir/distort.$Position"
     Fusedir="$Distortdir/fuse"
-    Destinationfile="$Cachedir/animation.$Position.median.jpg"
+    Destinationfile="$Cachedir/animation.$Position.median.gif"
     note "animation: Generating $(basename $Destinationfile)"
-    #multicore "nice convert $Fusedir/* -evaluate-sequence median -gravity center -stroke black -fill black -pointsize 24 -draw 'text 0,0 \"$Position\"' $Destinationfile" "$Destinationfile" || return 1
-    multicore "nice convert $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
+    #multicore "$Convert $Fusedir/* -evaluate-sequence median -gravity center -stroke black -fill black -pointsize 24 -draw 'text 0,0 \"$Position\"' $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Convert $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
     showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
@@ -1280,17 +1303,21 @@ $Position"
     Iteration=$((Iteration + 1))
     Imagelistfile="$Cachedir/imagelist.${Sequencename[$Count]}"
     :> $Imagelistfile
+    Imagelist=""
     [ "$Appendfirstframe" = "yes" ] && Sequence[$Count]="${Sequence[$Count]} $(cut -d' ' -f1 <<< "${Sequence[$Count]}")"
     
     for Position in ${Sequence[$Count]}; do
       Image="$(fileglob "$Cachedir/*.$Position.median.*")"
       echo "file '$Image'" >> "$Imagelistfile"
+      Imagelist="$Imagelist $Image"
     done
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Sequencename[$Count]}.$(fuse_getname $Fusemode shortcut).$Distortion.$Format"
 
     note "animation: Generating $(basename $Destinationfile)."
-    multicore "nice ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1
-    
+    case $Format in
+      gif) multicore "nice gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount forever --output $Destinationfile $Imagelist" "$Destinationfile" || return 1 ;;
+      *)   multicore "nice ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1 ;;
+    esac
     showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
@@ -1322,25 +1349,25 @@ compose() {
     Destinationfilebasename="$(basename "$Destinationfilebasename")"
     Imageformat="$(get_extension "$Maxfile")"
     
-    for Functionmode in bumpmap colorburn difference linearburn linearlight modulate multiply overlay pegtoplight; do
+    for Opt1 in bumpmap colorburn difference linearburn linearlight modulate multiply overlay pegtoplight; do
       Count="$((Count + 1))"
       
       ifcmdbreak && return 1
     
-      Destinationfile="$Destinationdir/$Destinationfilebasename.${Functionmode}1.$Imageformat"
-      $Convert "$Minfile" "$Maxfile" -compose "$Functionmode" -composite "$Destinationfile"
-      note "compose $Functionmode: $Destinationfile"
+      Destinationfile="$Destinationdir/$Destinationfilebasename.${Opt1}1.$Imageformat"
+      $Convert "$Minfile" "$Maxfile" -compose "$Opt1" -composite "$Destinationfile"
+      note "compose $Opt1: $Destinationfile"
       showimage "$Destinationfile"
   
-      case $Functionmode in
+      case $Opt1 in
         linearburn|multiply) ;;  # skip second compose for modes with identical result
         difference)
-          $Convert "$Destinationfile" -negate "$Destinationdir/$Destinationfilebasename.${Functionmode}1-negate.$Imageformat"
-          showimage "$Destinationdir/$Destinationfilebasename.${Functionmode}1-negate.$Imageformat"
+          $Convert "$Destinationfile" -negate "$Destinationdir/$Destinationfilebasename.${Opt1}1-negate.$Imageformat"
+          showimage "$Destinationdir/$Destinationfilebasename.${Opt1}1-negate.$Imageformat"
         ;;
         *)
-          Destinationfile="$Destinationdir/$Destinationfilebasename.${Functionmode}2.$Imageformat"
-          $Convert "$Maxfile" "$Minfile" -compose "$Functionmode" -composite "$Destinationfile"
+          Destinationfile="$Destinationdir/$Destinationfilebasename.${Opt1}2.$Imageformat"
+          $Convert "$Maxfile" "$Minfile" -compose "$Opt1" -composite "$Destinationfile"
           echo "$Destinationfile"
           showimage "$Destinationfile"
         ;;
@@ -1367,7 +1394,7 @@ crop() {
   Rotatedir="$Cachedir/rotate"
   mkdir -p $Rotatedir
   
-  case $Functionmode in
+  case $Opt1 in
     even)
       Newwidth=$((Imagewidth/2))
       Newwidth=$((Newwidth*2))
@@ -1376,18 +1403,18 @@ crop() {
       Cropgeometry="${Newwidth}x${Newheight}+0+0"
     ;;
     shrink) 
-      Shrink="$Functionoption"
+      Shrink="$Opt2"
       Cropgeometry="$((Imagewidth - $((Shrink * 2))))x$((Imageheight - $((Shrink * 2))))+$Shrink+$Shrink"
     ;;
     geometry)
-      Cropgeometry="$Functionoption"
+      Cropgeometry="$Opt2"
     ;;
     interactive) 
 #      Image="$Cachedir/crop.min.jpg"
       Image="$Cachedir/crop.min.mpc"
-      note "crop $Functionmode: Generating min image"
-      nice convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
-      Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Functionoption")"
+      note "crop $Opt1: Generating min image"
+      $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
+      Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Opt2")"
       Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
       Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
     ;;
@@ -1395,17 +1422,17 @@ crop() {
   
   Rotate="${Rotate:-0}"
   [ "$Cropgeometry" ] || {
-    failure "crop $Functionmode: crop geometry is empty"
+    failure "crop $Opt1: crop geometry is empty"
     return 1
   }
   
   [ "$Cropgeometry" = "${Imagewidth}x${Imageheight}+0+0" ] && [ "$Rotate" = "0" ] && {
-    note "crop $Functionmode: Images already have desired geometry: $Cropgeometry"
+    note "crop $Opt1: Images already have desired geometry: $Cropgeometry"
     mycp "$Sourcedir/$Sourcefileglob" "$Destinationdir"
     return
   }
   
-  note "crop $Functionmode: Cropping images with rotation $Rotate and geometry $Cropgeometry"
+  note "crop $Opt1: Cropping images with rotation $Rotate and geometry $Cropgeometry"
   Imagecount="0"
   for Image in $Imagelist; do
     Imagecount="$((Imagecount+1))"
@@ -1427,39 +1454,39 @@ cuberotate() {
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
     
-  case $Functionmode in
+  case $Opt1 in
     top|bottom) Linenumber="$Imageheight" ;;
     left|right) Linenumber="$Imagewidth" ;;
   esac
   
-  case $Functionmode in
+  case $Opt1 in
     top|bottom|left|right)
-      note "cuberotate $Functionmode: Splitting images into rows or columns"
+      note "cuberotate $Opt1: Splitting images into rows or columns"
       Imagecount=0
       for Image in $Imagelist; do
         Imagecount="$((Imagecount+1))"
         mkdir $Cachedir/split$Imagecount
-        case $Functionmode in
+        case $Opt1 in
           top|bottom) Cropgeometry="0x1" ;;
           left|right) Cropgeometry="1x0" ;;
         esac
-        multicore "nice convert $Image -crop $Cropgeometry $Cachedir/split$Imagecount/line%d.mpc" || return 1
+        multicore "$Convert $Image -crop $Cropgeometry $Cachedir/split$Imagecount/line%d.mpc" || return 1
         showpercent $Imagecount $((Imagenumber*2))
       done
       multicore_wait
       
-      note "cuberotate $Functionmode: Appending lines to rotated image"
+      note "cuberotate $Opt1: Appending lines to rotated image"
       for Linecount in $(seq $Linenumber); do
         Linelist=""
         for Imagecount in $(seq $Imagenumber); do
-          case $Functionmode in
+          case $Opt1 in
             left|top)     Linelist="$Linelist $Cachedir/split$((Imagenumber-Imagecount+1))/line$((Linecount-1)).mpc" ;;
             right|bottom) Linelist="$Linelist $Cachedir/split${Imagecount}/line$((Linenumber-Linecount)).mpc" ;;
           esac
         done
-        Destinationfile="$Destinationdir/cube${Functionmode}$(printnum $Linecount 4).jpg"
+        Destinationfile="$Destinationdir/cube${Opt1}$(printnum $Linecount 4).jpg"
         
-        case $Functionmode in
+        case $Opt1 in
           top|bottom) multicore "$Convert $Linelist -append $Destinationfile" "$Destinationfile" || return 1 ;;
           left|right) multicore "$Convert $Linelist +append $Destinationfile" "$Destinationfile" || return 1 ;;
         esac
@@ -1472,9 +1499,9 @@ cuberotate() {
       for Image in $Imagelist; do
         Destinationfile="$(head -n $((Imagenumber - Imagecount)) <<< "$Imagelist" | tail -1)"
         Destinationfile="$(basename "$Destinationfile")"
-        note "cuberotate $Functionmode: Generating $Destinationfile"
+        note "cuberotate $Opt1: Generating $Destinationfile"
         Destinationfile="$Destinationdir/$Destinationfile"
-        case $Functionmode in
+        case $Opt1 in
           reverse-order)
             multicore "cp -T    $Image       $Destinationfile" "$Destinationfile" 16 || return 1
           ;;
@@ -1495,9 +1522,9 @@ cuberotate() {
       for Image in $Imagelist; do
         Imagecount="$((Imagecount+1))"
         Destinationfile="$(basename $Image)"
-        note "cuberotate $Functionmode: Generating $Destinationfile"
+        note "cuberotate $Opt1: Generating $Destinationfile"
         Destinationfile="$Destinationdir/$Destinationfile"
-        multicore "$Convert $Image -rotate $Functionmode $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Convert $Image -rotate $Opt1 $Destinationfile" "$Destinationfile" || return 1
         showpercent $Imagecount $Imagenumber
       done
       multicore_wait || return 1
@@ -1517,7 +1544,7 @@ distort() {
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
 
-  Distortfile="$Functionoption"
+  Distortfile="$Opt2"
   
   Imagecount=0
   for Image in $Imagelist; do
@@ -1545,27 +1572,27 @@ evaluate() {
   parse_batchoptions "$@" || return 1
   
   Destinationfilebasename="${Destinationfile:-evaluate}"  
-  Functionmode="${Functionmode:-all}"
+  Opt1="${Opt1:-all}"
   Imageformat="$(get_extension "$(fileglob "$Sourcedir/$Sourcefileglob")")"
   
-  case "$Functionmode" in
+  case "$Opt1" in
     all)
       Count=0
-      for Functionmode in min mean max median; do
+      for Opt1 in min mean max median; do
         Count="$((Count + 1))"
-        multicore "evaluate -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Functionmode'" || return 1
+        multicore "evaluate -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfilebasename' -1 '$Opt1'" || return 1
         showpercent "$Count" "4"
       done
       multicore_wait || return 1
     ;;
     min|max|mean|median) ;;
-    *) failure "evaluate: Unknown function mode $Functionmode" ; return 1 ;;
+    *) failure "evaluate: Unknown function mode $Opt1" ; return 1 ;;
   esac
   
-  Destinationfile="$Destinationdir/$Destinationfilebasename.$Functionmode.$Imageformat"
-  note "evaluate: $Functionmode $Destinationfilebasename"
-  $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Functionmode "$Destinationfile" || {
-    failure "evaluate $Functionmode: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all source images must be of same size."
+  Destinationfile="$Destinationdir/$Destinationfilebasename.$Opt1.$Imageformat"
+  note "evaluate: $Opt1 $Destinationfilebasename"
+  $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Opt1 "$Destinationfile" || {
+    failure "evaluate $Opt1: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all source images must be of same size."
     return 1
   }
   showimage "$Destinationfile"
@@ -1577,23 +1604,46 @@ fuse() {
   local $Batchlocal 
   local $Imagelocal
   local $Imagepropertieslocal
-  local Destinationfilebasename
+  local Destinationfilebasename Stretchdir Stretch
   local Fusemode Fuseoption Modelist Modenumber Count
   #local Layertif Filesize
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
-  imageproperties
   
   Destinationfilebasename="${Destinationfile:-fuse}"
-  Fusemode="${Functionmode:-1}"
-  Fuseoption="${Functionoption:-}"
+  Fusemode="${Opt1:-1}"
+  Fuseoption="${Opt2:-}"
+  Extension="${Opt9:-$Imageformat}"
+  Stretch="no" # experimental
+  
+  Fusedir="$Cachedir/fuse"
+  mkdir p "$Fusedir"
+  Stretchdir="$Cachedir/stretch"
+  mkdir -p "$Stretchdir"
+  Unstretchfile="$Cachedir/unstretch"
+  :> $Unstretchfile
+  
+  [ "$Stretch" = "yes" ] && [ "$Stretchdir" != "$Sourcedir" ] && {
+    imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir" || return 1
+    echo "-channel red +level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green +level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue +level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel" > "$Unstretchfile"
+        
+    note "fuse: stretching colors to maximal contrast"
+    Imagecount=0
+    for Image in $Imagelist; do
+      Imagecount="$((Imagecount + 1))"
+      Destinationfile="$Stretchdir/stretch$(zeronumber $Imagecount).png"
+      multicore "$Convert $Image -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
+      showpercent "$Imagecount" "$Imagenumber"
+    done
+    multicore_wait || return 1
+  }
   
   case $Fusemode in
     all|set*)
       #Layertif="$Cachedir/layer.tif"
       #note "fuse $Fusemode: Generating layered tif image"         ### FIXME Damaging other file formats?
-      #nice convert $(echo $Imagelist) "$Layertif" || return 1
+      #$Convert $(echo $Imagelist) "$Layertif" || return 1
       #Filesize="$(du -k "$Layertif" | awk '{print $1}')"
       case $Fusemode in
         all) 
@@ -1607,15 +1657,15 @@ fuse() {
       esac
       Modenumber="$(wc -w <<< "$Modelist")"
       
-      #convert "$(head -n1 <<< "$Imagelist")" "$Cachedir/stackfuser-test.gif"
+      #$Convert "$(head -n1 <<< "$Imagelist")" "$Cachedir/stackfuser-test.gif"
       #Imagememsize="$(du -k $Cachedir/memsizetest.gif | awk '{print $1}')"
       Imagememsize="$((Imagewidth*Imageheight*16/8/1000))"
   
       Count=0
       for Fusemode in $Modelist; do
         Count="$((Count+1))"
-#        multicore "fuse -s '$(dirname "$Layertif")' -g '$(basename "$Layertif")' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Fusemode' -o '$Fuseoption'" "" "$((Filesize*3))" || return 1
-        multicore "fuse -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfilebasename' -m '$Fusemode' -o '$Fuseoption'" "" "$((Imagememsize*Imagenumber*3))" || return 1
+#        multicore "fuse -s '$(dirname "$Layertif")' -g '$(basename "$Layertif")' -d '$Destinationdir' -b '$Destinationfilebasename' -1 '$Fusemode' -2 '$Fuseoption'" "" "$((Filesize*3))" || return 1
+        multicore "fuse -s '$Stretchdir' -g '$Sourcefileglob' -d '$Destinationdir' -c '$Cachedir' -b '$Destinationfilebasename' -1 '$Fusemode' -2 '$Fuseoption' -9 '$Extension'" "" "$((Imagememsize*Imagenumber*3))" || return 1
         showpercent "$Count" "$Modenumber"
       done
       multicore_wait || return 1
@@ -1627,17 +1677,17 @@ fuse() {
     ;;
   esac
   
-  Destinationfile="$Destinationdir/$Destinationfilebasename.$(fuse_getname $Fusemode shortcut).${Imageformat}"
+  Destinationfile="$Destinationfilebasename.$(fuse_getname $Fusemode shortcut).${Extension}"
   case $Fuseoption in
     skip)
-      [ -e "$Destinationfile" ] && {
-        note "fuse: Skipping $Fusemode: already exists: $(basename $Destinationfile)"
+      [ -e "$Destinationdir/$Destinationfile" ] && {
+        note "fuse: Skipping $Fusemode: already exists: $Destinationfile"
         showimage "$Destinationfile"
         return 0
       }
     ;;
   esac
-  note "fuse $Fusemode: Creating $(basename "$Destinationfile")"
+  note "fuse $Fusemode: Creating $Destinationfile"
 
   # Collect options
   Enfuseoptions=""
@@ -1647,17 +1697,20 @@ fuse() {
   verbose "fuse $Fusemode: $Enfuseoptions"
   
   # Fuse
-  { nice enfuse $Enfuseoptions --output="$Destinationfile" $(echo $Imagelist) 2>&1 || {
+  { nice enfuse $Enfuseoptions --output="$Fusedir/$Destinationfile" $(echo $Imagelist) 2>&1 || {
       failure "fuse $Fusemode failed"
       return 1  ### FIXME seems not to return!?
     } 
   } | grep -v -E 'assuming all pixels should contribute|alpha channel|loading next image|no usable resolution found'
-        
+  showimage "$Fusedir/$Destinationfile"
+  
+  
   # Write enfuse options into EXIF data of image
-  exiv2 -M"set Exif.Photo.UserComment Comment charset=Ascii enfuse $(echo $Enfuseoptions)" "$Destinationfile"  || return 1
-
-  #note "fuse $Fusemode is ready: ${Destinationfile}"
-  showimage "$Destinationfile"
+  exiv2 -M"set Exif.Photo.UserComment Comment charset=Ascii enfuse $(echo $Enfuseoptions)" "$Fusedir/$Destinationfile"  || return 1
+  
+  $Convert  "$Fusedir/$Destinationfile" $(cat $Unstretchfile) "$Destinationdir/$Destinationfile" || return 1
+  
+  showimage "$Destinationdir/$Destinationfile"
   return 0
 }
 imageformat() {
@@ -1670,7 +1723,7 @@ imageformat() {
   
   Sourceformat="$(head -n1 <<< "$Imagelist" | rev | cut -d. -f1 | rev)"
   Sourceformat="${Sourceformat,,}"
-  Destinationformat="${Functionoption:-tif}"
+  Destinationformat="${Opt9:-tif}"
   Destinationformat="${Destinationformat,,}"
   
   [ "$Sourceformat" = "$Destinationformat" ] && {
@@ -1706,25 +1759,25 @@ lightbalance() {
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
   
-  Functionmode="${Functionmode:-level}"
-  Functionoption="${Functionoption:-50%}"
-  Functionoption="${Functionoption%"%"}"
+  Opt1="${Opt1:-level}"
+  Opt2="${Opt2:-50%}"
+  Opt2="${Opt2%"%"}"
   
-  Darkpercent="$(awk   "BEGIN {print  100-$Functionoption}")"
-  Brightpercent="$(awk "BEGIN {print  100+$Functionoption}")"
-  Darkfactor="$(awk    "BEGIN {print (100-$Functionoption)/100}")"
-  Brightfactor="$(awk  "BEGIN {print (100+$Functionoption)/100}")"
+  Darkpercent="$(awk   "BEGIN {print  100-$Opt2}")"
+  Brightpercent="$(awk "BEGIN {print  100+$Opt2}")"
+  Darkfactor="$(awk    "BEGIN {print (100-$Opt2)/100}")"
+  Brightfactor="$(awk  "BEGIN {print (100+$Opt2)/100}")"
   #Brightfactor="$(awk  "BEGIN {print  1/$Darkfactor}")"
 
   for Image in $Imagelist; do
     Imagecount=$((Imagecount+1))
     Destinationfile="$(basename $Image)"
-    Convertline="nice convert $Image -write mpr:image +delete"  
+    Convertline="$Convert $Image -write mpr:image +delete"  
     Convertline="$Convertline     \( mpr:image                                           -write $Cachedir/$Destinationfile.exp.source.tif \)" 
-    case $Functionmode in
+    case $Opt1 in
       brightness)    
-        Convertline="$Convertline \( mpr:image -brightness-contrast  ${Functionoption}%  -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
-        Convertline="$Convertline \( mpr:image -brightness-contrast -${Functionoption}%  -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
+        Convertline="$Convertline \( mpr:image -brightness-contrast  ${Opt2}%  -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
+        Convertline="$Convertline \( mpr:image -brightness-contrast -${Opt2}%  -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
       ;;
       modulate)    
         Convertline="$Convertline \( mpr:image -modulate ${Brightpercent}%               -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
@@ -1767,7 +1820,7 @@ ruler() {
   for Image in $Imagelist; do
     Imagecount="$((Imagecount+1))"
     Destinationfile="$Destinationdir/$(basename $Image)"
-    multicore "$Imgruler -m $Functionmode -t '$Functionoption' -o $Destinationfile $Image" "$Destinationfile" || return 1
+    multicore "$Imgruler -m $Opt1 -t '$Opt2' -o $Destinationfile $Image" "$Destinationfile" || return 1
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
@@ -1793,33 +1846,58 @@ video() {
   local $Batchlocal
   local $Imagelocal
   local Imagelistfile
-  local Framerate Format
+  local Framerate Format Framedir Frame
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
 
-  Functionmode="${Functionmode:-in_and_out}"
-  Framerate="${Functionoption:-10}"
-  Format="webm"
+  Opt1="${Opt1:-in_and_out}"
+  Framerate="${Opt2:-10}"
+  Format="${Opt9:-webm}"
   
-  Destinationfile="$Destinationdir/$Destinationfile.focus.$Functionmode.$Framerate.$Format"
+  Destinationfile="$Destinationdir/$Destinationfile.focus.$Opt1.$Framerate.$Format"
+  Framedir="$Cachedir/frames"
+  mkdir -p $Framedir
   Imagelistfile="$Cachedir/imagelist"
   
-  case $Functionmode in
+  case $Opt1 in
     in) ;;
     out) Imagelist="$(tac <<< "$Imagelist")";;
-    in_and_out) Imagelist="$Imagelist
+    in_and_out) 
+      Imagelist="$Imagelist
 $(tac <<< "$Imagelist")"
+      Imagenumber="$((Imagenumber*2))"
+    ;;
+    *)
+      failure "Unknown video mode $Opt1"
+      return 1
     ;;
   esac
   
-  :> "$Imagelistfile"
-  for Image in $Imagelist; do
-    echo "file '$Image'" >> $Imagelistfile
-  done
+  case $Format in
+    gif) Imageformat="gif" ;;
+  esac
   
+  note "video: Preparing frames"
+  Imagecount=0
+  for Image in $Imagelist; do
+    Imagecount="$((Imagecount+1))"
+    #echo "file '$Image'" >> $Imagelistfile
+    Frame="$Framedir/frame$(zeronumber $Imagecount).$Imageformat"
+    case $Format in
+      gif) multicore "$Convert $Image $Frame" "$Image" || return 1 ;;
+      *)   multicore "cp -T    $Image $Frame" "$Image" || return 1 ;;
+    esac
+    showpercent $Imagecount $Imagenumber
+  done
+  multicore_wait || return 1
+  
+  note "video: Generating $Format video $Opt1"
   showpercent busy
-  nice ffmpeg -y -hide_banner -nostdin -safe "0" -r $Framerate -f concat -i $Imagelistfile $Destinationfile || return 1
+  case $Format in
+    gif) nice gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount forever --output $Destinationfile $(fileglob "$Framedir/*") ;;
+    *)   nice ffmpeg -y -hide_banner -nostdin  -r $Framerate -f image2 -start_number 1 -i $Framedir/frame%04d.$Imageformat $Destinationfile || return 1 ;;
+  esac
   showpercent 100 100
   showimage $Destinationfile
 }
@@ -1838,13 +1916,13 @@ whitebalance() {
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
     
-  Functionmode="${Functionmode:-topleft}"
-  Referencecolor="${Functionoption:-#BBBBBB}"
+  Opt1="${Opt1:-topleft}"
+  Referencecolor="${Opt2:-#BBBBBB}"
   
   Meancolorimage="$Cachedir/meancolor.mpc"
   Referencecolorimage="$Cachedir/referencecolor.mpc"
   
-  case $Functionmode in
+  case $Opt1 in
     topleft)     Cropgeometry="10x10+5+5" ;;
     topright)    Cropgeometry="10x10+$((Imagewidth-15))+5" ;;
     bottomleft)  Cropgeometry="10x10+5+$((Imageheight-15))" ;;
@@ -1862,20 +1940,20 @@ whitebalance() {
         return 1
       }
     ;;
-    *) Cropgeometry="$Functionmode" ;;
+    *) Cropgeometry="$Opt1" ;;
   esac
   
   [ "$Referencecolor" = "mean" ] && {
     Image="$Cachedir/whitebalance.mean.mpc"
     note "whitebalance: Generating mean image"
-    nice convert $(fileglob "$Sourcedir/$Sourcefileglob") -crop "$Cropgeometry" -evaluate-sequence mean "$Image"
+    $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -crop "$Cropgeometry" -evaluate-sequence mean "$Image"
     Referencecolor=$($Convert "$Image" -filter box -resize 1x1! -format "%[pixel:u]" info:)
   }
   
-  nice convert -size 1x1 xc:"$Referencecolor" $Referencecolorimage
-  Refred="$(convert   $Referencecolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
-  Refgreen="$(convert $Referencecolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
-  Refblue="$(convert  $Referencecolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
+  $Convert -size 1x1 xc:"$Referencecolor" $Referencecolorimage
+  Refred="$($Convert   $Referencecolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
+  Refgreen="$($Convert $Referencecolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
+  Refblue="$($Convert  $Referencecolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
 
   historyentry "# whitebalance geometry: $Cropgeometry"
 
@@ -1885,11 +1963,11 @@ whitebalance() {
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
     
-    nice convert $Image -crop $Cropgeometry -resize 1x1! "$Meancolorimage"
+    $Convert $Image -crop $Cropgeometry -resize 1x1! "$Meancolorimage"
     
-    Meanred="$(convert   $Meancolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
-    Meangreen="$(convert $Meancolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
-    Meanblue="$(convert  $Meancolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
+    Meanred="$($Convert   $Meancolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
+    Meangreen="$($Convert $Meancolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
+    Meanblue="$($Convert  $Meancolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
     
     [ "$Meanred"   = "0" ] && Partred=255   || Partred="$(awk   "BEGIN { print $Refred   / $Meanred }")"
     [ "$Meangreen" = "0" ] && Partgreen=255 || Partgreen="$(awk "BEGIN { print $Refgreen / $Meangreen }")"
@@ -1905,66 +1983,60 @@ wizard() {
   # Wrapper for ImageMagick convert to work on folders
   # Args:
   #  mandatory:
-  #   -m Functionmode
+  #   -m Opt1
   #   -s Sourcedir
   #   -d Destinationdir
   #  optional:
   #   -g Sourcefileglob
-  #   -o Functionoption
+  #   -o Opt2
   
   local $Batchlocal
   local $Imagelocal
   local $Imagepropertieslocal
-  local Meanimage Gamma 
+  local Options 
 
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
-  [ "$Functionoption" ] || case "$Function" in
-    brightness) Functionoption="10x10" ;;
-    contrast)   Functionoption="3x50%" ;;
-    gamma)      Functionoption="auto" ;;
-    level)      Functionoption="auto" ;;
-    sharpen)    Functionoption="6x2" ;;
-    statistic)  Functionoption="median 5" ;;
-    stretch)    Functionoption="auto" ;;
+  [ "$Opt2" ] || case "$Opt1" in
+    brightness) Opt2="10x10" ;;
+    contrast)   Opt2="3x50%" ;;
+    gamma)      Opt2="auto" ;;
+    level)      Opt2="auto" ;;
+    sharpen)    Opt2="6x2" ;;
+    statistic)  Opt2="median 5" ;;
+    stretch)    Opt2="auto" ;;
   esac
 
-  [ "$Functionmode" = "stretch" ] && Functionmode="contrast-stretch"
-  case "$Functionmode" in
+  [ "$Opt1" = "stretch" ] && Opt1="contrast-stretch"
+  case "$Opt1" in
     level|gamma|contrast-stretch) 
-      case "$Functionoption" in
-        auto|"") Functionmode="-auto-$Functionmode" ; Functionoption="" ;;
+      case "$Opt2" in
+        auto|"") Opt1="-auto-$Opt1" ; Opt2="" ;;
         max) 
-          Functionmode="-contrast-stretch max"
-          Functionoption=""
+          Opt1="-contrast-stretch max"
+          Opt2=""
         ;;
-        *)       Functionmode="-$Functionmode" ;;
+        *)       Opt1="-$Opt1" ;;
       esac
     ;;
-    brightness)  Functionmode="-brightness-contrast" ;;
-    contrast)    Functionmode="-sigmoidal-contrast" ;;
-    statistic)   Functionmode="-statistic" ;;
-    sharpen)     Functionmode="-adaptive-sharpen" ;;
-    wizard)      Functionmode="" ;;
+    brightness)  Opt1="-brightness-contrast" ;;
+    contrast)    Opt1="-sigmoidal-contrast" ;;
+    statistic)   Opt1="-statistic" ;;
+    sharpen)     Opt1="-adaptive-sharpen" ;;
+    wizard)      Opt1="" ;;
   esac
+  Options="$Opt1 $Opt2"
   
-  grep -q -E "auto-gamma|auto-level|auto-contrast-stretch|contrast-stretch max" <<< "$Functionmode $Functionoption" && {
-    imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir" || return 1
-    Functionmode="$(sed   "s/-auto-gamma/-gamma $Imageautogamma/ ; 
+  Options="$(sed "s/-auto-gamma/-gamma $Imageautogamma/ ; 
                            s/-auto-contrast-stretch/-contrast-stretch ${Imageminlevel}x${Imagemaxlevel}/ ; 
-                           s/-contrast-stretch max/-channel red -contrast-stretch ${Imageminlevelred}x${Imagemaxlevelred} +channel -channel green -contrast-stretch ${Imageminlevelgreen}x${Imagemaxlevelgreen} +channel -channel blue -contrast-stretch ${Imageminlevelblue}x${Imagemaxlevelblue} +channel/ ; 
-                           s/-auto-level/-level ${Imageminlevel}%x${Imagemaxlevel}%/"    <<< "$Functionmode")"
-    Functionoption="$(sed "s/-auto-gamma/-gamma $Imageautogamma/ ; 
-                           s/-auto-contrast-stretch/-contrast-stretch ${Imageminlevel}x${Imagemaxlevel}/ ; 
-                           s/-contrast-stretch max/-channel red -contrast-stretch ${Imageminlevelred}x${Imagemaxlevelred} +channel -channel green -contrast-stretch ${Imageminlevelgreen}x${Imagemaxlevelgreen} +channel -channel blue -contrast-stretch ${Imageminlevelblue}x${Imagemaxlevelblue} +channel/ ; 
-                           s/-auto-level/-level ${Imageminlevel}%x${Imagemaxlevel}%/"    <<< "$Functionoption")"
-  }
-  note "wizard: $Functionmode $Functionoption"
+                           s/-contrast-stretch max/-channel red -contrast-stretch ${Imageminlevelred}x${Imagemaxlevelred} -channel green -contrast-stretch ${Imageminlevelgreen}x${Imagemaxlevelgreen} -channel blue -contrast-stretch ${Imageminlevelblue}x${Imagemaxlevelblue} +channel/ ; 
+                           s/-auto-level/-level ${Imageminlevel}%x${Imagemaxlevel}%/"    <<< "$Options")"
+  note "wizard: $Options"
   Imagecount=0
   for Image in $Imagelist; do
     Imagecount="$((Imagecount + 1 ))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
-    multicore "$Convert $Image $Functionmode $Functionoption $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Convert $Image $Options $Destinationfile" "$Destinationfile" || return 1
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
@@ -1992,12 +2064,12 @@ imageproperties() {
     *)
       note "imageproperties(): Generating mean image"
       Meanimage="$Cachedir/mean.png"
-      convert $Imagelist -evaluate-sequence mean "$Meanimage" || return 1
+      $Convert $Imagelist -evaluate-sequence mean "$Meanimage" || return 1
       showimage "$Meanimage"
     ;;
   esac
 
-  Imageproperties="$(convert "$Meanimage" -format '
+  Imageproperties="$($Convert "$Meanimage" -format '
 Imagemean=%[mean]
 Imagequantumrange=%[fx:quantumrange]
 Imageautogamma=%[fx:log(mean)/log(0.5)]
@@ -2055,7 +2127,7 @@ trim_hard() {
   # check source for mpc format, convert if not
   [ "$Sourceimage" = "${Sourceimage%.mpc}" ] && {
     Sourceimagempc="$Sourceimage.mpc"
-    nice convert "$Sourceimage" "$Sourceimagempc"
+    $Convert "$Sourceimage" "$Sourceimagempc"
   } || {
     Sourceimagempc="$Sourceimage"
   }
@@ -2063,12 +2135,12 @@ trim_hard() {
   
   # Generate alpha mask image in imagemagick memory format for fastest possible access
   Imagemask="$Sourceimage.mask.mpc"
-  nice convert "$Sourceimagempc" -alpha extract "$Imagemask"
+  $Convert "$Sourceimagempc" -alpha extract "$Imagemask"
   
   note "trim_hard(): Searching for inner rectangle of $(basename $Image)"
   
-  Imagewidth=$(convert  -format '%w'  $Imagemask info:)
-  Imageheight=$(convert -format '%h'  $Imagemask info:)
+  Imagewidth=$($Convert  -format '%w'  $Imagemask info:)
+  Imageheight=$($Convert -format '%h'  $Imagemask info:)
   Left=0
   Top=0
   Right=$((Imagewidth-1))
@@ -2076,7 +2148,7 @@ trim_hard() {
   
   # First cut with regular trim to save some time.
   # Add a colored border so trim uses the desired color. Afterward remove border from canvas to get correct geometry values. 
-  Line="$(nice convert "$Sourceimagempc" -bordercolor "$Trimcolor" -border 1x1  -trim -set page '%[fx:page.width-2]x%[fx:page.height-2]+%[fx:page.x-1]+%[fx:page.y-1]' info:)"
+  Line="$($Convert "$Sourceimagempc" -bordercolor "$Trimcolor" -border 1x1  -trim -set page '%[fx:page.width-2]x%[fx:page.height-2]+%[fx:page.x-1]+%[fx:page.y-1]' info:)"
   Left="$(awk '{print $4}' <<< "$Line" | cut -d+ -f2)"
   Top="$(awk '{print $4}' <<< "$Line" | cut -d+ -f3)"
   Right="$(awk '{print $3}' <<< "$Line" | cut -dx -f1)"
@@ -2100,10 +2172,10 @@ trim_hard() {
   # - Repeat check with new geometry
   while :; do
     # Get part of non-$Trimcolor at each side
-    [ "$Skipleft" ]   || nice convert $Imagemask -crop 1x$((Bottom-Top+1))+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleleft    & pid1=$!
-    [ "$Skipright" ]  || nice convert $Imagemask -crop 1x$((Bottom-Top+1))+$Right+$Top   +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleright   & pid2=$!
-    [ "$Skiptop" ]    || nice convert $Imagemask -crop $((Right-Left+1))x1+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilletop     & pid3=$!
-    [ "$Skipbottom" ] || nice convert $Imagemask -crop $((Right-Left+1))x1+$Left+$Bottom +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permillebottom  & pid4=$!
+    [ "$Skipleft" ]   || $Convert $Imagemask -crop 1x$((Bottom-Top+1))+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleleft    & pid1=$!
+    [ "$Skipright" ]  || $Convert $Imagemask -crop 1x$((Bottom-Top+1))+$Right+$Top   +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleright   & pid2=$!
+    [ "$Skiptop" ]    || $Convert $Imagemask -crop $((Right-Left+1))x1+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilletop     & pid3=$!
+    [ "$Skipbottom" ] || $Convert $Imagemask -crop $((Right-Left+1))x1+$Left+$Bottom +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permillebottom  & pid4=$!
     wait $pid1
     wait $pid2
     wait $pid3
@@ -2155,7 +2227,7 @@ $Permillebottom" | sort -n | head -n1)
       Loopcount=$((Loopcount+1))
       [ "$Loopcount" = "10" ] && {
         Loopcount=0
-        nice convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
+        $Convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
         showimage $Cropgeometryimage
         eval "$Addcommand"
       }
@@ -2164,7 +2236,7 @@ $Permillebottom" | sort -n | head -n1)
 
   # show result
   showpercent 100 100
-  nice convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
+  $Convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
   showimage $Cropgeometryimage
   
   # Output of result
@@ -2186,10 +2258,10 @@ fuse_declare() {
   
   Fuseoptions="exposureweight saturationweight contrastweight entropyweight blendmask grayprojector levels contrastwindowsize contrastmincurvature contrastedgescale"
   Fusearguments="$Fuseoptions lcescale lcefactor"
-#  Fusemodecombo="'all','set$(seq -s "','set" $Fusesetnumber)','$(seq -s "','" $Fusemodenumber)'"
-  Fusemodecombo="'all','set$(seq -s "','set" $Fusesetnumber)'"
+#  Fuseopt1combo="'all','set$(seq -s "','set" $Fusesetnumber)','$(seq -s "','" $Fusemodenumber)'"
+  Fuseopt1combo="'all','set$(seq -s "','set" $Fusesetnumber)'"
   for Count in $(seq $Fusemodenumber); do
-    Fusemodecombo="$Fusemodecombo,'$(fuse_getname $Count shortcut)'"
+    Fuseopt1combo="$Fuseopt1combo,'$(fuse_getname $Count shortcut)'"
   done
   
   # set1
@@ -2563,115 +2635,111 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
         batchframeright:framed             -> batchblock3 runbatchframe showdirframe;
           
       batchblock1 "batch block 1: crop and balance directory magick" -> cropline whitebalanceline lightbalanceline align_aisline align_vidstabline;
-        meanbalanceline:beside                                -> meanbalance meanbalancemodecombo meanbalancemagick meanbalancefuse meanbalanceevaluate;
-          meanbalancemodecombo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
+        meanbalanceline:beside                                -> meanbalance meanbalanceopt1combo meanbalancemagick meanbalancefuse meanbalanceevaluate;
+          meanbalanceopt1combo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
           meanbalancemagick                                     -> @button="magick" ;
           meanbalanceevaluate                                   -> @button="evaluate" ;
           meanbalancefuse                                       -> @button="fuse" ;
           meanbalance:beside          "meanbalance"             ->  "on"  | ! "";
-        whitebalanceline:beside                               -> whitebalance whitebalancemodecombo whitebalancecombo whitebalancemagick whitebalancefuse whitebalanceevaluate;
-          whitebalancemodecombo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
-          whitebalancecombo                                     -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#CCCCCC" ;
+        whitebalanceline:beside                               -> whitebalance whitebalanceopt1combo whitebalanceopt2combo whitebalancemagick whitebalancefuse whitebalanceevaluate;
+          whitebalanceopt1combo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
+          whitebalanceopt2combo                                 -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#CCCCCC" ;
           whitebalancemagick                                    -> @button="magick" ;
           whitebalanceevaluate                                  -> @button="evaluate" ;
           whitebalancefuse                                      -> @button="fuse" ;
           whitebalance:beside         "whitebalance"            ->  "on"  | ! "";
-        cropline:beside                                       -> crop cropmodecombo cropcombo cropmagick cropfuse cropevaluate;
-          cropmodecombo                                         -> @combo("interactive","shrink","even","geometry")="interactive" ;
-          cropcombo                                             -> @combow("","1","2","5","10","200x200+15+15")="" ;
+        cropline:beside                                       -> crop cropopt1combo cropopt2combo cropmagick cropfuse cropevaluate;
+          cropopt1combo                                         -> @combo("interactive","shrink","even","geometry")="interactive" ;
+          cropopt2combo                                         -> @combow("","1","2","5","10","200x200+15+15")="" ;
           cropmagick                                            -> @button="magick" ;
           cropevaluate                                          -> @button="evaluate" ;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
-        lightbalanceline:beside                               -> lightbalance lightbalancemodecombo lightbalancecombo lightbalancemagick lightbalancefuse lightbalanceevaluate;
-          lightbalancemodecombo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
-          lightbalancecombo                                     -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
+        lightbalanceline:beside                               -> lightbalance lightbalanceopt1combo lightbalanceopt2combo lightbalancemagick lightbalancefuse lightbalanceevaluate;
+          lightbalanceopt1combo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
+          lightbalanceopt2combo                                 -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
           lightbalancemagick                                    -> @button="magick" ;
           lightbalanceevaluate                                  -> @button="evaluate" ;
           lightbalancefuse                                      -> @button="fuse" ;
           lightbalance:beside         "lightbalance"            -> "on" | ! "";
-        align_vidstabline:beside                              -> align_vidstab align_vidstabmodecombo align_vidstabcombo align_vidstabbutton ;
-          align_vidstabmodecombo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
-          align_vidstabcombo:beside   "Iterations:"             -> @combo("1","2","3")="3";
+        align_vidstabline:beside                              -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabbutton ;
+          align_vidstabopt1combo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
+          align_vidstabopt2combo:beside   "Iterations:"         -> @combo("1","2","3")="3";
           align_vidstabbutton                                   -> @button="magick" ;
           align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | "";
-        align_aisline:beside                                  -> align_ais align_aismodecombo align_aiscombo align_aisbutton ;
-          align_aismodecombo          "demagnifier"             -> "m"  | ! "";
-          align_aiscombo              "crop interactive"        -> "interactive" | ! "";
+        align_aisline:beside                                  -> align_ais align_aisopt1combo align_aisopt2combo align_aisbutton ;
+          align_aisopt1combo          "demagnifier"             -> "m"  | ! "";
+          align_aisopt2combo          "crop interactive"        -> "interactive" | ! "";
           align_aisbutton                                       -> @button="magick" ;
           align_ais:beside            "align with align_image_stack" -> "on" | ! "";
       
       batchblock2 "batch block 2: imagemagick operations on directory magick" -> gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline;
         gammaline:beside                                      -> gamma gammamagick gammafuse gammaevaluate;
-          gammacombo                                            -> @combow("auto","0.2","0.3","0.4","0.454545","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
+          gammaopt1combo                                        -> @combow("auto","0.2","0.3","0.4","0.454545","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
           gammamagick                                           -> @button="magick" ;
           gammaevaluate                                         -> @button="evaluate" ;
           gammafuse                                             -> @button="fuse" ;
-          gamma:beside                "gamma"                   -> gammacombo | "";
+          gamma:beside                "gamma"                   -> gammaopt1combo | "";
         levelline:beside                                      -> level levelmagick levelfuse levelevaluate;
-          levelcombo                                            -> @combow("auto","5%","10%","15%","20%","25%","30%")="auto" ;
+          levelopt1combo                                        -> @combow("auto","5%","10%","15%","20%","25%","30%")="auto" ;
           levelmagick                                           -> @button="magick" ;
           levelevaluate                                         -> @button="evaluate" ;
           levelfuse                                             -> @button="fuse" ;
-          level:beside                "level"                   -> levelcombo | ! "";
+          level:beside                "level"                   -> levelopt1combo | ! "";
         contrastline:beside                                   -> contrast contrastmagick contrastfuse contrastevaluate;
-          contrastcombo                                         -> @combow("2x50%","3x50%","4x50%","5x50%","3x30%","3x70%")="3x50%" ;
+          contrastopt1combo                                     -> @combow("2x50%","3x50%","4x50%","5x50%","3x30%","3x70%")="5x50%" ;
           contrastmagick                                        -> @button="magick" ;
           contrastevaluate                                      -> @button="evaluate" ;
           contrastfuse                                          -> @button="fuse" ;
-          contrast:beside             "sigmoidal-contrast"      -> contrastcombo | "";
+          contrast:beside             "sigmoidal-contrast"      -> contrastopt1combo | "";
         sharpenline:beside                                    -> sharpen sharpenmagick sharpenfuse sharpenevaluate;
-          sharpencombo                                          -> @combow("3x1","6x2","8x4","12x6")="8x4" ;
+          sharpenopt1combo                                      -> @combow("3x1","6x2","8x4","12x6")="8x4" ;
           sharpenmagick                                         -> @button="magick" ;
           sharpenevaluate                                       -> @button="evaluate" ;
           sharpenfuse                                           -> @button="fuse" ;
-          sharpen:beside              "adaptive-sharpen"        -> sharpencombo | "";
-        statisticline:beside                                  -> statistic statisticmodecombo statisticcombo statisticmagick statisticfuse statisticevaluate;
-          statisticmodecombo                                    -> @combow("gradient","maximum","minimum","mean","median","mode","nonpeak","rms","standarddeviation")="median" ;
-          statisticcombo                                        -> @combow("1","2","3","4","5","6","7","8","9","10")="5" ;
+          sharpen:beside              "adaptive-sharpen"        -> sharpenopt1combo | "";
+        statisticline:beside                                  -> statistic statisticopt1combo statisticopt2combo statisticmagick statisticfuse statisticevaluate;
+          statisticopt1combo                                    -> @combow("gradient","maximum","minimum","mean","median","mode","nonpeak","rms","standarddeviation")="median" ;
+          statisticopt2combo                                    -> @combow("1","2","3","4","5","6","7","8","9","10")="5" ;
           statisticmagick                                       -> @button="magick" ;
           statisticevaluate                                     -> @button="evaluate" ;
           statisticfuse                                         -> @button="fuse" ;
           statistic:beside            "statistic"               -> "on" | ! "";
         brightnessline:beside                                 -> brightness brightnessmagick brightnessfuse brightnessevaluate;
-          brightnesscombo                                       -> @combow("0x5","0x10","0x15","5x0","5x5","5x10","5x15","10x0","10x5","10x10","15x15","20x20")="10x10" ;
+          brightnessopt1combo                                   -> @combow("0x5","0x10","0x15","5x0","5x5","5x10","5x15","10x0","10x5","10x10","15x15","20x20")="10x10" ;
           brightnessmagick                                      -> @button="magick" ;
           brightnessevaluate                                    -> @button="evaluate" ;
           brightnessfuse                                        -> @button="fuse" ;
-          brightness:beside           "brightness-contrast"     -> brightnesscombo | ! "";
+          brightness:beside           "brightness-contrast"     -> brightnessopt1combo | ! "";
         stretchline:beside                                    -> stretch stretchmagick stretchfuse stretchevaluate;
-          stretchcombo                                          -> @combow("auto","2%x1%","1%","2%","3%","4%","5%","10%","15%","20%","max")="max" ;
+          stretchopt1combo                                      -> @combow("auto","2%x1%","1%","2%","3%","4%","5%","10%","15%","20%","max")="max" ;
           stretchmagick                                         -> @button="magick" ;
           stretchevaluate                                       -> @button="evaluate" ;
           stretchfuse                                           -> @button="fuse" ;
-          stretch:beside              "stretch-contrast"        -> stretchcombo | ! "";
+          stretch:beside              "stretch-contrast"        -> stretchopt1combo | ! "";
         wizardline:beside                                     -> wizard wizardmagick wizardfuse wizardevaluate;
-          wizardcombo                                           -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 3","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
+          wizardopt1combo                                       -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 3","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
           wizardmagick                                          -> @button="magick" ;
           wizardevaluate                                        -> @button="evaluate" ;
           wizardfuse                                            -> @button="fuse" ;
-          wizard:beside               ""                        -> wizardcombo | ! "" ;
-        applyallline:beside                                   -> applyall applyallmagick applyallfuse applyallevaluate;
-          applyallmagick                                        -> @button="magick" ;
-          applyallevaluate                                      -> @button="evaluate" ;
-          applyallfuse                                          -> @button="fuse" ;
-          applyall:beside             "Apply all imagemagick options"  -> "" ;
+          wizard:beside               ""                        -> wizardopt1combo | ! "" ;
         
-      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose;
-        fuseline:beside                                       -> fuse fuseconfig @fill fusemodecombo fusemagick;
+      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose deletebackups2;
+        fuseline:beside                                       -> fuse fuseconfig @fill fuseopt1combo fusemagick;
           fuseconfig                                            -> @button="fuse" ;
-          fusemodecombo                                         -> @combo('$Fusemodecombo')="set1" ;
+          fuseopt1combo                                         -> @combo('$Fuseopt1combo')="set1" ;
           fusemagick                                            -> @button="magick";
           fuse:beside                                           -> "on" | "" ;
-        evaluateline1:beside                                    -> evaluate1 evaluatemagick ;
+        evaluateline1:beside                                  -> evaluate1 evaluatemagick ;
           evaluatemagick                                        -> @button="magick" ;
           evaluate1:beside            "evaluate"                -> "on" | "";
-        evaluateline2:beside                                    -> evaluate2 evaluatecombo evaluatefuse;
+        evaluateline2:beside                                  -> evaluate2 evaluateopt2combo evaluatefuse;
           evaluatefuse                                          -> @button="fuse" ;
-          evaluatecombo                                         -> @combo('$Fusemodecombo')="all" ;
+          evaluateopt2combo                                     -> @combo('$Fuseopt1combo')="all" ;
           evaluate2:beside            "evaluate"                -> "on" | "";
-        sharpen_evaluate:beside       "sharpen 3x1"             -> @button="evaluate" "on" | "";
-        compose:beside                "compose"                 -> @button="evaluate" "on" | "";
+        sharpen_evaluate:beside       "sharpen 3x1"           -> @button="evaluate" "on" | "";
+        compose:beside                "compose"               -> @button="evaluate" "on" | "";
+        deletebackups2:beside         "delete"                -> @button="backups + cache" "on" | "";
 
       runbatchframe "Batch processing" -> batchblockline batchallline;
         batchblockline -> runbatch1 runbatch2 runbatch3;
@@ -2682,7 +2750,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           runbatchprocessing                                    -> @button="Run selected batch blocks";
           cmdbreak                                              -> @button="break" ;
         
-      showdirframe "Show directories and videos"          -> showdirline killviewnior show_video;
+      showdirframe "Show directories"                     -> showdirline killviewnior ;
         showdirline                                         -> showdirline1 showdirline2 ;
           showdirline1:beside                                 -> showdirfm showdirstackshot showdirmagick ;
             showdirfm                                           -> @button="FM";
@@ -2693,14 +2761,14 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
             showdircompose                                      -> @button="compose";
             showdirevaluate                                     -> @button="evaluate";
         killviewnior                                          -> @action("killall viewnior ffplay")="killall viewnior ffplay";
-        show_video                                            -> @combo("-");
         
       showresultframe                                       -> showresultline;
-        showresultline:beside "Show results:"                 -> showmagick_max showmagick_min showmagick_mean showmagick_median @fill showfuse_max showfuse_min showfuse_mean showfuse_median;
+        showresultline:beside                                   -> showmagick_max showmagick_min showmagick_mean showmagick_median show_video showfuse_max showfuse_min showfuse_mean showfuse_median;
           showmagick_max                                        -> @button="magick.max";
           showmagick_min                                        -> @button="magick.min";
           showmagick_mean                                       -> @button="magick.mean";
           showmagick_median                                     -> @button="magick.median";
+          show_video                                            -> @combo("-");
           showfuse_max                                          -> @button="fuse.max";
           showfuse_min                                          -> @button="fuse.min";
           showfuse_mean                                         -> @button="fuse.mean";
@@ -2709,29 +2777,31 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
     specialtab:framed "Special operations" -> specialframe @fill deleteframe;
       specialframe "Special operations" -> rulerline videoline animationline cuberotateline imageformatline undoline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
-          rulermodecombo                                        -> @combo("100c","100p","100z","40c","40p","40z","20c","20p","20z","10c","10p","10z")="100z" ;
-          rulercombo:beside           "Title:"                  -> @string ;
+          ruleropt1combo                                        -> @combo("100c","100p","100z","40c","40p","40z","20c","20p","20z","10c","10p","10z")="100z" ;
+          ruleropt2combo:beside       "Title:"                  -> @string ;
           rulermagick                                           -> @button="magick" ;
           rulerevaluate                                         -> @button="evaluate" ;
           rulerfuse                                             -> @button="fuse" ;
-          ruler:beside                "micrometer"              -> "" rulermodecombo rulercombo;
-        animationline:beside                                  -> animation animationmodecombo animationfusecombo animationcombo animationmagick;
-          animationmodecombo:beside                             -> @combo("quick","smooth")="smooth";
-          animationcombo:beside       "Distortion:"             -> @combow("15","20","25","30","40","50","75","100","150")="30";
-          animationfusecombo:beside   "fuse:"                   -> @combow('$Fusemodecombo')="fuse01";
+          ruler:beside                "micrometer"              -> "" ruleropt1combo ruleropt2combo;
+        animationline:beside                                  -> animation animationopt1combo animationopt2combo animationopt3combo animationopt9combo animationmagick;
+          animationopt1combo:beside                             -> @combo("quick","smooth")="smooth";
+          animationopt2combo:beside   "fuse:"                   -> @combow('$Fuseopt1combo')="fuse01";
+          animationopt3combo:beside   "Distortion:"             -> @combow("15","20","25","30","40","50","75","100","150")="30";
+          animationopt9combo:beside   "Format:"                 -> @combow("webm","mp4","gif")="webm";
           animationmagick                                       -> @button="magick" ;
           animation:beside            "animated video"          -> "" ;
-        videoline:beside                                      -> video videomodecombo videocombo videomagick;
-          videomodecombo:beside                                 -> @combo("in","out","in_and_out")="in_and_out";
-          videocombo:beside           "Framerate:"              -> @combow("2","3","4","5","7","10","15","20","25","30")="10";
+        videoline:beside                                      -> video videoopt1combo videoopt2combo videoopt9combo videomagick;
+          videoopt1combo:beside                                 -> @combo("in","out","in_and_out")="in_and_out";
+          videoopt2combo:beside       "Framerate:"              -> @combow("2","3","4","5","7","10","15","20","25","30")="10";
+          videoopt9combo:beside       "Format:"                 -> @combow("webm","mp4","gif")="webm";
           videomagick                                           -> @button="magick" ;
           video:beside                "focus video"             -> "" ;
-        cuberotateline:beside                                 -> cuberotate cuberotatemodecombo cuberotatemagick;
-          cuberotatemodecombo:beside                            -> @combo("90","180","270","reverse-order","back-left","back-top","left","right","top","bottom")="reverse-order";
+        cuberotateline:beside                                 -> cuberotate cuberotateopt1combo cuberotatemagick;
+          cuberotateopt1combo:beside                            -> @combo("90","180","270","reverse-order","back-left","back-top","left","right","top","bottom")="reverse-order";
           cuberotatemagick                                      -> @button="magick" ;
           cuberotate:beside           "cuberotate"              -> "" ;
-        imageformatline:beside                                -> imageformat imageformatcombo imageformatmagick imageformatfuse imageformatevaluate;
-          imageformatcombo                                      -> @combow('$Imageformatcombo')="TIF" ;
+        imageformatline:beside                                -> imageformat imageformatopt9combo imageformatmagick imageformatfuse imageformatevaluate;
+          imageformatopt9combo                                  -> @combow('$Imageformatcombo')="TIF" ;
           imageformatmagick                                     -> @button="magick" ;
           imageformatevaluate                                   -> @button="evaluate" ;
           imageformatfuse                                       -> @button="fuse" ;
@@ -2927,10 +2997,10 @@ showpercent() {
   Percentimage="$Percentcachedir/$Percentimage"
 
   [ -e "$Percentimage" ] || case "$Part" in
-    idle)  convert -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"     "$Percentimage" ;;
-    busy)  convert -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'" "$Percentimage" ;;
-    error) convert -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"    "$Percentimage" ;;
-    *)     convert -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
+    idle)  $Convert -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"     "$Percentimage" ;;
+    busy)  $Convert -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'" "$Percentimage" ;;
+    error) $Convert -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"    "$Percentimage" ;;
+    *)     $Convert -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
   esac
   sendkaptain "cmdpercent('$Percentimage')=''"
 }
@@ -2963,7 +3033,7 @@ stackshot_selector() {
   
   # generate empty X image for unfused stackshots
   Emptyimage=$Thumbnaildir/empty.png
-  [ -e "$Emptyimage" ] || convert caption:X $Emptyimage
+  [ -e "$Emptyimage" ] || $Convert caption:X $Emptyimage
   
   # get list of stackshot dirs and median images
   Dirlist="$(find -name stackshot -type d | sed s%/stackshot%% | sort -V)"
@@ -2987,9 +3057,9 @@ $Image"
     #Md5="$(md5sum "$Image" | cut -d' ' -f1)"
     Md5="$(md5sum <<< "$(ls --full-time "$Image")" | cut -d' ' -f1)"
     Destinationfile=$Thumbnaildir/$(basename "$Image").$Md5.png
-    #[ -e "$Destinationfile" ] || convert "$Image" -resize 256x256 "$Destinationfile"
+    #[ -e "$Destinationfile" ] || $Convert "$Image" -resize 256x256 "$Destinationfile"
     [ -e "$Destinationfile" ] || {
-      nice convert "$Image" -scale 256x256 "$Destinationfile"
+      $Convert "$Image" -scale 256x256 "$Destinationfile"
       ### FIXME delete old thumbnail
     }
     
@@ -3197,8 +3267,8 @@ start 'stackfuser enfuse settings' -> frameset;
       exivcomment                                                 -> @text='' ;
         
     runfuseframe 'fuse'  -> runfuseline ;
-      runfuseline:beside -> runcombo runskip runbutton ;
-        runcombo                                                    -> @combo('current',$Fusemodecombo)='current' ;
+      runfuseline:beside -> runopt2combo runskip runbutton ;
+        runopt2combo                                                    -> @combo('current',$Fuseopt1combo)='current' ;
         runskip                    'fuse only missing'              -> 'skip' | ! '' ;
         runbutton                                                   -> @button='Run enfuse' ;
       
@@ -3263,12 +3333,12 @@ start 'stackfuser enfuse settings' -> frameset;
           storeinfo "refreshgui_fuse=yes"
         ;;
         runbutton)
-          Fusemode="$(askkaptain runcombo)"
+          Fusemode="$(askkaptain runopt2combo)"
           [ "$Fusemode" = "current" ] && Fusemode="$Currentfuse"
           Fuseskip="$(askkaptain runskip)"
 
           sendkaptain "runbutton='*** BUSY ***'"
-          parse_cmd -f fuse -m "$Fusemode" -o "$Fuseskip" -t "$Stackdir"
+          parse_cmd -f fuse -1 "$Fusemode" -2 "$Fuseskip" -t "$Stackdir"
           sendkaptain "runbutton='Run enfuse'"
           storeinfo "refreshgui_fuse=yes"
         ;;
@@ -3324,7 +3394,7 @@ cropgeometry_interactive() {
   # check source for mpc format, convert if not
   [ "$Image" = "${Image%.mpc}" ] && {
     Imagempc="$Cachedir/cropgeometry.source.mpc"
-    nice convert "$Image" "$Imagempc"
+    $Convert "$Image" "$Imagempc"
   } || {
     Imagempc="$Image"
   }
@@ -3333,8 +3403,8 @@ cropgeometry_interactive() {
   Rotate=0
   Refresh="yes"
 
-  Imagewidth=$(convert  -format '%w'  $Imagempc info:)
-  Imageheight=$(convert -format '%h'  $Imagempc info:)
+  Imagewidth=$($Convert  -format '%w'  $Imagempc info:)
+  Imageheight=$($Convert -format '%h'  $Imagempc info:)
     
   grep -q "x" <<< "$Cropgeometry" && grep -q "+" <<< "$Cropgeometry" && {
     CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
@@ -3417,7 +3487,7 @@ start 'Choose geometry' -> frameset ;
     [ "$Refresh" = "yes" ] && {
       Cropgeometry="${CropW}x${CropH}+$CropX+$CropY"
       showpercent 10 100
-      nice convert $Imagempc -background '#00000000' -rotate $Rotate +repage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropgeometryimage"
+      $Convert $Imagempc -background '#00000000' -rotate $Rotate +repage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropgeometryimage"
       showpercent 60 100
       showimage "$Cropgeometryimage"
       #echo "geometry='$Cropgeometry'" >&${Kaptainstdin}
@@ -3426,8 +3496,8 @@ start 'Choose geometry' -> frameset ;
       showpercent 100 100
     }
 
-    Imagewidth=$(convert  -format '%w'  $Cropgeometryimage info:)
-    Imageheight=$(convert -format '%h'  $Cropgeometryimage info:)
+    Imagewidth=$($Convert  -format '%w'  $Cropgeometryimage info:)
+    Imageheight=$($Convert -format '%h'  $Cropgeometryimage info:)
     
     read -t1 Kaptainsignal
     
@@ -3464,7 +3534,7 @@ start 'Choose geometry' -> frameset ;
           }
         ;;
         trim)
-          nice convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
+          $Convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
           Cropgeometry="$(trim_hard "$Cropimagempc" "$Cropgeometry" )"
           [ "$Cropgeometry" ] && {
             CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
@@ -3507,7 +3577,8 @@ start 'Choose geometry' -> frameset ;
 
 parse_kaptainsignal() {
   local Kaptainsignal
-  local Command Argument Functionmode Functionoption Stackdir Newstackdir Projecthome
+  local $Batchlocal
+  local Command Argument Stackdir Newstackdir Projecthome
   local Image
   
   Kaptainsignal="${1:-}"
@@ -3527,9 +3598,6 @@ parse_kaptainsignal() {
     choosedirguibutton)
       stackshot_selector &
     ;;
-    opendirbutton)
-      xdg-open "${Stackdir:-$Projecthome}" &
-    ;;
     delete*) 
       cmd -f $(tr -d ":" <<< "$Kaptainsignal") -t "$Stackdir"
     ;;
@@ -3539,12 +3607,14 @@ parse_kaptainsignal() {
       showimage "$(fileglob "$Image")"
     ;;
     showmagick*|showfuse*)
-      #Image="$(cut -d: -f2 <<< "$Kaptainsignal")"
       Image="$(cut -d: -f1 <<< "$Kaptainsignal")"
       Image="${Image#show}"
       Image="$(tr "_" "." <<< "$Image")"
       Image="$(fileglob "$Stackdir/evaluate/*$Image*")"
       showimage "$Image"
+    ;;
+    showdirfm)
+      xdg-open "${Stackdir:-$Projecthome}" &
     ;;
     showdir*)
       showimage "$Stackdir/${Kaptainsignal#showdir}/*"
@@ -3554,18 +3624,18 @@ parse_kaptainsignal() {
       fuse_config &
     ;;
     fuse*)
-      Functionmode=$(askkaptain fusemodecombo)
-      cmd -f $Kaptainsignal -t $Stackdir -m $Functionmode    
+      Opt1=$(askkaptain fuseopt1combo)
+      cmd -f $Kaptainsignal -t $Stackdir -1 $Opt1    
     ;;
     evaluatemagick|compose)
       cmd -f $Kaptainsignal -t $Stackdir
     ;;
     evaluatefuse)
-      Functionoption=$(askkaptain evaluatecombo)
-      cmd -f $Kaptainsignal -t "$Stackdir" -g "$(fuse_glob $Functionoption)"
+      Opt2=$(askkaptain evaluateopt2combo)
+      cmd -f $Kaptainsignal -t "$Stackdir" -g "$(fuse_glob $Opt2)"
     ;;
     sharpen_evaluate)
-      cmd -f sharpenevaluate -o 3x1 -t "$Stackdir"
+      cmd -f sharpenevaluate -2 3x1 -t "$Stackdir"
     ;;
     
     *magick|*compose|*evaluate|*fuse)
@@ -3574,53 +3644,67 @@ parse_kaptainsignal() {
       Command="${Command%evaluate}"
       Command="${Command%evaluate}"
       Command="${Command%fuse}"
-      Functionmode="$(askkaptain -c "${Command}modecombo")"
-      Functionoption="$(askkaptain -c "${Command}combo")"
+      getfunctionsettings $Command
       case "$Command" in
-        applyall) 
-          Functionoption="$(getbatch1)" ### FIXME convert options only
-          Kaptainsignal="wizard${Kaptainsignal#applyall}"
-        ;;
         meanbalance)
-          Functionoption="mean"
+          Opt2="mean"
           Kaptainsignal="whitebalance${Kaptainsignal#meanbalance}"
         ;;
-        animation)
-          Functionmode="${Functionmode}:$(askkaptain "animationfusecombo")"
       esac
       Command="${Command%_}"
       
-      cmd -f "$Kaptainsignal" -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+      cmd -f "$Kaptainsignal" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9"  -t "$Stackdir"
+    
+    ;;
+    
+    *magick|*compose|*evaluate|*fuse)
+      Command="$Kaptainsignal"
+      Command="${Command%magick}"
+      Command="${Command%evaluate}"
+      Command="${Command%evaluate}"
+      Command="${Command%fuse}"
+      getfunctionsettings $Command
+      case "$Command" in
+        meanbalance)
+          Opt2="mean"
+          Kaptainsignal="whitebalance${Kaptainsignal#meanbalance}"
+        ;;
+        animation)
+          Opt1="${Opt1}:$(askkaptain "animationfuseopt2combo")"
+      esac
+      Command="${Command%_}"
+      
+      cmd -f "$Kaptainsignal" -1 "$Opt1" -2 "$Opt2" -t "$Stackdir"
     ;;
     
     align_vidstabbutton)
-      Functionmode="$(askkaptain "align_vidstabmodecombo")"
-      Functionoption="$(askkaptain "align_vidstabcombo")"
-      cmd -f align_vidstab -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+      Opt1="$(askkaptain "align_vidstabopt1combo")"
+      Opt2="$(askkaptain "align_vidstabopt2combo")"
+      cmd -f align_vidstab -1 "$Opt1" -2 "$Opt2" -t "$Stackdir"
     ;;
     align_aisbutton)
-      Functionmode="$(askkaptain "align_aismodecombo")"
-      Functionoption="$(askkaptain "align_aiscombo")"
-      cmd -f align_ais -m "$Functionmode" -o "$Functionoption" -t "$Stackdir"
+      Opt1="$(askkaptain "align_aisopt1combo")"
+      Opt2="$(askkaptain "align_aisopt2combo")"
+      cmd -f align_ais -1 "$Opt1" -2 "$Opt2" -t "$Stackdir"
     ;;
     
     runbatch1) 
       runbatch1 "$Stackdir"
-      cmd -f notify -o "Batch 1 is ready."
+      cmd -f notify -1 "Batch 1 is ready."
     ;;
     runbatch2) 
       runbatch2 "$Stackdir"
-      cmd -f notify -o "Batch 2 is ready."
+      cmd -f notify -1 "Batch 2 is ready."
     ;;
     runbatch3) 
       runbatch3 "$Stackdir"
-      cmd -f notify -o "Batch 3 is ready."
+      cmd -f notify -1 "Batch 3 is ready."
     ;;
     runbatchprocessing)
       askkaptain "runbatch1" >/dev/null && runbatch1 "$Stackdir"
       askkaptain "runbatch2" >/dev/null && runbatch2 "$Stackdir"
       askkaptain "runbatch3" >/dev/null && runbatch3 "$Stackdir"
-      cmd -f notify -o "Batch all is ready."
+      cmd -f notify -1 "Batch all is ready."
     ;;
     *)
       verbose "Unknown signal: $Kaptainsignal"
@@ -3681,28 +3765,28 @@ parse_cmd() {
   case "$Function" in
     deleteall)         myrmdir "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" "$Targetdir/video" ; Return=0 ;;
     deleteallbutvideo) myrmdir "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" ; Return=0 ;;
-    deletebackups)     myrmdir "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
+    deletebackups*)    myrmdir "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
     delete*)           myrmdir "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
     align_*)
-      batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
+      batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Targetdir"
       Return=$?
     ;;
     animation*|brightness*|contrast*|crop*|cuberotate*|imageformat*|lightbalance*|gamma*|level*|prepare*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
-      batch_function -f $Function -m "$Functionmode" -o "$Functionoption" -t "$Targetdir"
+      batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Targetdir"
       Return=$?
     ;;
     evaluate*|compose*|fuse*)
-      batch_function -f $Function -m "${Functionmode:-all}" -o "$Functionoption" -t "$Targetdir" -g "$Sourcefileglob"
+      batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Targetdir" -g "$Sourcefileglob"
       Return=$?
     ;;
     note)
-      note "$Functionoption"
+      note "$Opt1"
       Return=0
     ;;
     notify)
-      notify "$Functionoption"
+      notify "$Opt1"
       Return=0
     ;;
     showimage)
@@ -3753,11 +3837,15 @@ declare_variables() {
   Multicore_minram=250000
   Multicore_maxprocesses=$Multicore_maxprocesses
   
-  Batchlocal="Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Functionmode Functionoption"
-  Imagelocal="Image Imagelist Imagewidth Imageheight Imageformat Imagememsize Imagecount Imagenumber Imageraw Cropgeometry"
+  Batchlocal="Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Opt1 Opt2 Opt3 Opt4 Opt5 Opt6 Opt7 Opt8 Opt9"
+  Imagelocal="Image Imagelist Imagewidth Imageheight Imageformat Imagememsize Imagecount Imagenumber Imageraw Cropgeometry Extension"
   Imagepropertieslocal="Imagemean Imagequantumrange Imageautogamma Imageminlevel Imagemaxlevel Imageminlevelred Imagemaxlevelred Imageminlevelgreen Imagemaxlevelgreen Imageminlevelblue Imagemaxlevelblue"
 
-  Convert="nice convert -quality 100%"
+  #Convert="nice convert -quality 100%"
+  command -v convert             >/dev/null && Convert=convert
+  command -v convert-im6.q16     >/dev/null && Convert=convert-im6.q16
+  command -v convert-im6.q16hdri >/dev/null && Convert=convert-im6.q16hdri
+  Convert="nice $Convert -quality 100%"
 
   Commandstackfile=$Maincachedir/command.stack
   Wizardlogfile=$Maincachedir/stackfuser.log
@@ -3769,7 +3857,7 @@ declare_variables() {
   Imgruler="$(command -v imgruler)"
   [ -z "$Imgruler" ] && Imgruler="$(dirname $0)/imgruler"
   
-  Imageformatlist="$(convert -list format | grep " rw" | cut -c1-9 | tr -d ' ')
+  Imageformatlist="$($Convert -list format | grep " rw" | cut -c1-9 | tr -d ' ')
 TIF"
   Imageformatlist="$(sort <<< "$Imageformatlist")"
   for Line in $Imageformatlist; do
@@ -3826,7 +3914,7 @@ main() {
   storeinfo "gallerydir=$Gallerydir"
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
-  storeinfo "rmcache=yes"
+  #storeinfo "rmcache=yes"
   
   fuse_declare
   [ -e "$Configfile" ] && source "$Configfile"
