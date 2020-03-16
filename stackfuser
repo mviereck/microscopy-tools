@@ -566,7 +566,7 @@ batch_function() {
   } || {
     failure "ERROR in $Function $Opt1 $Opt2: $(basename "$Sourcedir") -> $(basename "$Destinationdir")"
     case $Function in
-      animation) ;;
+      animation|video) ;;
       compose|evaluate|fuse) undo -s "$Destinationdir.bak" -d "$Destinationdir" -c "$Cachedir" ;;
       *)                     undo -s "$Sourcedir"          -d "$Destinationdir" -c "$Cachedir" ;;
     esac
@@ -1315,7 +1315,7 @@ $Position"
 
     note "animation: Generating $(basename $Destinationfile)."
     case $Format in
-      gif) multicore "nice gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount forever --output $Destinationfile $Imagelist" "$Destinationfile" || return 1 ;;
+      gif) multicore "nice gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount=forever --output $Destinationfile $Imagelist" "$Destinationfile" || return 1 ;;
       *)   multicore "nice ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1 ;;
     esac
     showpercent $Iteration $Iterationnumber
@@ -1895,7 +1895,7 @@ $(tac <<< "$Imagelist")"
   note "video: Generating $Format video $Opt1"
   showpercent busy
   case $Format in
-    gif) nice gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount forever --output $Destinationfile $(fileglob "$Framedir/*") ;;
+    gif) nice gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount=forever --output $Destinationfile $(fileglob "$Framedir/*") ;;
     *)   nice ffmpeg -y -hide_banner -nostdin  -r $Framerate -f image2 -start_number 1 -i $Framedir/frame%04d.$Imageformat $Destinationfile || return 1 ;;
   esac
   showpercent 100 100
@@ -2851,6 +2851,8 @@ askkaptain() {
     Answer="$(cat "$Kaptainanswerfile")"
     [ -n "$Answer" ] && echo "$Answer" && break
   done
+  
+  :> $Kaptainanswerfile
   [ -z "$Answer" ] && return 1
   return 0
 }
