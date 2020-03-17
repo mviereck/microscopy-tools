@@ -518,18 +518,19 @@ batch_function() {
     ;;
   esac
   Function="${Function%_}"
-  
   case "$Function" in
     brightness|contrast|gamma|level|prepare|sharpen|statistic|stretch|wizard)
       Opt2="$Opt1 $Opt2 $Opt3"
       Opt3=""
       Opt2="${Opt2# }"
+      Opt2="${Opt2# }"
+      Opt2="${Opt2% }"
       Opt2="${Opt2% }"
       Opt1="$Function"
       Function="wizard"
     ;;
   esac
-  
+
   checkvar           -D "$Function" Sourcedir      "$Sourcedir"        || return 1
   checkvar           -d "$Function" Destinationdir "$Destinationdir"   || return 1
   case $Function in
@@ -678,7 +679,7 @@ getfunctionsettings() {
 runbatch1() {
   local $Batchlocal
   local Iterate
-  for Function in crop whitebalance lightbalance align_ais align_vidstab; do
+  for Function in crop whitebalance align_ais align_vidstab; do
     askkaptain -c $Function > /dev/null && {
       getfunctionsettings $Function
       cmd -f "$Function" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Stackdir"
@@ -1639,6 +1640,8 @@ fuse() {
       showpercent "$Imagecount" "$Imagenumber"
     done
     multicore_wait || return 1
+  } || {
+    [ "$Stretchdir" != "$Sourcedir" ] && mycp "$Sourcedir/$Sourcefileglob" "$Stretchdir"
   }
   
   case $Fusemode in
@@ -2027,12 +2030,16 @@ wizard() {
     sharpen)     Opt1="-adaptive-sharpen" ;;
     wizard)      Opt1="" ;;
   esac
-  Options="$Opt1 $Opt2"
+  Options="$Opt1 $Opt2 $Opt3"
   
-  Options="$(sed "s/-auto-gamma/-gamma $Imageautogamma/ ; 
+  grep -q -E "auto-gamma|auto-level|auto-contrast-stretch|contrast-stretch max" <<< "$Options" && {
+    imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir" || return 1
+    Options="$(sed "s/-auto-gamma/-gamma $Imageautogamma/ ; 
                            s/-auto-contrast-stretch/-contrast-stretch ${Imageminlevel}x${Imagemaxlevel}/ ; 
                            s/-contrast-stretch max/-channel red -contrast-stretch ${Imageminlevelred}x${Imagemaxlevelred} -channel green -contrast-stretch ${Imageminlevelgreen}x${Imagemaxlevelgreen} -channel blue -contrast-stretch ${Imageminlevelblue}x${Imagemaxlevelblue} +channel/ ; 
                            s/-auto-level/-level ${Imageminlevel}%x${Imagemaxlevel}%/"    <<< "$Options")"
+  }
+  
   note "wizard: $Options"
   Imagecount=0
   for Image in $Imagelist; do
@@ -2620,7 +2627,7 @@ kaptaingrammar() {
 
 start "stackfuser '$Version'"     -> tabset bottomframe;
   
-  bottomframe                       -> showresultframe dirframe statusframe ;
+  bottomframe                       -> showdirframe showresultframe dirframe statusframe ;
     dirframe:beside                    -> choosedirguibutton choosedir refreshbutton;
       choosedirguibutton                 -> @button="Stackshot directory:" ;
       choosedir                          -> @directory="'$Projecthome'" ;
@@ -2634,9 +2641,9 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
     batchtab "Image batch processing" -> batchoptionframe ;
       batchoptionframe:beside            -> batchframeleft  batchframeright;
         batchframeleft:framed              -> batchblock1 batchblock2 ;
-        batchframeright:framed             -> batchblock3 runbatchframe showdirframe;
+        batchframeright:framed             -> batchblock3 runbatchframe cmdbreak;
           
-      batchblock1 "batch block 1: crop and balance directory magick" -> cropline whitebalanceline lightbalanceline align_aisline align_vidstabline;
+      batchblock1 "batch block 1: crop and balance directory magick" -> cropline whitebalanceline align_aisline align_vidstabline;
         meanbalanceline:beside                                -> meanbalance meanbalanceopt1combo meanbalancemagick meanbalancefuse meanbalanceevaluate;
           meanbalanceopt1combo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
           meanbalancemagick                                     -> @button="magick" ;
@@ -2657,13 +2664,6 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           cropevaluate                                          -> @button="evaluate" ;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
-        lightbalanceline:beside                               -> lightbalance lightbalanceopt1combo lightbalanceopt2combo lightbalancemagick lightbalancefuse lightbalanceevaluate;
-          lightbalanceopt1combo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
-          lightbalanceopt2combo                                 -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
-          lightbalancemagick                                    -> @button="magick" ;
-          lightbalanceevaluate                                  -> @button="evaluate" ;
-          lightbalancefuse                                      -> @button="fuse" ;
-          lightbalance:beside         "lightbalance"            -> "on" | ! "";
         align_vidstabline:beside                              -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabbutton ;
           align_vidstabopt1combo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
           align_vidstabopt2combo:beside   "Iterations:"         -> @combo("1","2","3")="3";
@@ -2724,7 +2724,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           wizardmagick                                          -> @button="magick" ;
           wizardevaluate                                        -> @button="evaluate" ;
           wizardfuse                                            -> @button="fuse" ;
-          wizard:beside               ""                        -> wizardopt1combo | ! "" ;
+          wizard:beside               "(free option typing)"    -> wizardopt1combo | ! "" ;
         
       batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose deletebackups2;
         fuseline:beside                                       -> fuse fuseconfig @fill fuseopt1combo fusemagick;
@@ -2748,24 +2748,23 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           runbatch1:beside            "batch block 1"           -> "batchblock1" | "" @button="run";
           runbatch2:beside            "batch block 2"           -> "batchblock2" | "" @button="run";
           runbatch3:beside            "batch block 3"           -> "batchblock3" | "" @button="run";
-        batchallline:beside -> runbatchprocessing cmdbreak ;
+        batchallline:beside -> runbatchprocessing ;
           runbatchprocessing                                    -> @button="Run selected batch blocks";
-          cmdbreak                                              -> @button="break" ;
+          
+      cmdbreak:beside "Stop current actions"                -> @button="break" ;
         
-      showdirframe "Show directories"                     -> showdirline killviewnior ;
-        showdirline                                         -> showdirline1 showdirline2 ;
-          showdirline1:beside                                 -> showdirfm showdirstackshot showdirmagick ;
-            showdirfm                                           -> @button="FM";
-            showdirstackshot                                    -> @button="stackshot";
-            showdirmagick                                       -> @button="magick";
-          showdirline2:beside                                 -> showdirfuse showdircompose showdirevaluate;
-            showdirfuse                                         -> @button="fuse";
-            showdircompose                                      -> @button="compose";
-            showdirevaluate                                     -> @button="evaluate";
-        killviewnior                                          -> @action("killall viewnior ffplay")="killall viewnior ffplay";
+      showdirframe                                          -> showdirline  ;
+        showdirline:beside "Show directories:"                -> showdirfm showdirstackshot showdirmagick showdirfuse showdircompose showdirevaluate @fill killviewnior;
+          showdirfm                                             -> @button="File Manager";
+          showdirstackshot                                      -> @button="stackshot";
+          showdirmagick                                         -> @button="magick";
+          showdirfuse                                           -> @button="fuse";
+          showdircompose                                        -> @button="compose";
+          showdirevaluate                                       -> @button="evaluate";
+          killviewnior                                          -> @action("killall viewnior ffplay")="killall viewnior ffplay";
         
       showresultframe                                       -> showresultline;
-        showresultline:beside                                   -> showmagick_max showmagick_min showmagick_mean showmagick_median show_video showfuse_max showfuse_min showfuse_mean showfuse_median;
+        showresultline:beside                                 -> showmagick_max showmagick_min showmagick_mean showmagick_median show_video showfuse_max showfuse_min showfuse_mean showfuse_median;
           showmagick_max                                        -> @button="magick.max";
           showmagick_min                                        -> @button="magick.min";
           showmagick_mean                                       -> @button="magick.mean";
@@ -2777,7 +2776,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           showfuse_median                                       -> @button="fuse.median";
         
     specialtab:framed "Special operations" -> specialframe @fill deleteframe;
-      specialframe "Special operations" -> rulerline videoline animationline cuberotateline imageformatline undoline ;
+      specialframe "Special operations" -> rulerline videoline animationline cuberotateline lightbalanceline imageformatline undoline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
           ruleropt1combo                                        -> @combo("100c","100p","100z","40c","40p","40z","20c","20p","20z","10c","10p","10z")="100z" ;
           ruleropt2combo:beside       "Title:"                  -> @string ;
@@ -2804,6 +2803,13 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           cuberotateopt1combo:beside                            -> @combo("90","180","270","reverse-order","back-left","back-top","left","right","top","bottom")="reverse-order";
           cuberotatemagick                                      -> @button="magick" ;
           cuberotate:beside           "cuberotate"              -> "" ;
+        lightbalanceline:beside                               -> lightbalance lightbalanceopt1combo lightbalanceopt2combo lightbalancemagick lightbalancefuse lightbalanceevaluate;
+          lightbalanceopt1combo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
+          lightbalanceopt2combo                                 -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
+          lightbalancemagick                                    -> @button="magick" ;
+          lightbalanceevaluate                                  -> @button="evaluate" ;
+          lightbalancefuse                                      -> @button="fuse" ;
+          lightbalance:beside         "lightbalance"            -> "" ;
         imageformatline:beside                                -> imageformat imageformatopt9combo imageformatmagick imageformatfuse imageformatevaluate;
           imageformatopt9combo                                  -> @combow('$Imageformatcombo')="TIF" ;
           imageformatmagick                                     -> @button="magick" ;
