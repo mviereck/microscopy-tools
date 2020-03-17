@@ -104,26 +104,26 @@ imgruler() {
   # check options
   while getopts ":u:w:h:n:o:c:p:b:x:y:m:f:t:" Option; do
     case "$Option" in
-      u)                                       # Unit size and identifier, e.g. 5µm
+      u)                                              # Unit size and identifier, e.g. 5µm
          Elementunit="$(echo "${OPTARG:-}" | sed 's/[.0-9]*//g')"
          Elementsize="${OPTARG%$Elementunit}"
       ;;
-      w) Elementwidth="${OPTARG:-}"  ;;       # Pixel width of one element. Floating values allowed.
-      h) Elementheight="${OPTARG:-}" ;;       # Pixel height of one element.
-      n) Elementcount="${OPTARG:-}" ;;        # Number of desired elements (=length of ruler)
+      w) Elementwidth="${OPTARG:-$Elementwidth}"  ;;   # Pixel width of one element. Floating values allowed.
+      h) Elementheight="${OPTARG:-$Elementheight}" ;;  # Pixel height of one element.
+      n) Elementcount="${OPTARG:-$Elementcount}" ;;    # Number of desired elements (=length of ruler)
       
-      x) Xpos="${OPTARG:-}" ;;                # X position of ruler
-      y) Ypos="${OPTARG:-}" ;;                # Y position of ruler
+      x) Xpos="${OPTARG:-}" ;;                         # X position of ruler
+      y) Ypos="${OPTARG:-}" ;;                         # Y position of ruler
       
-      t) Title="${OPTARG:-}" ;;               # Title
-      p) Pointsize="${OPTARG:-}" ;;           # Font point size
-      f) Font="${OPTARG:-}" ;;                # Font
-      c) Color="${OPTARG:-}" ;;               # Color of ruler
-      b) Background="${OPTARG:-}" ;;          # Background color for ruler-only images
+      t) Title="${OPTARG:-$Title}" ;;                  # Title
+      p) Pointsize="${OPTARG:-$Pointsize}" ;;          # Font point size
+      f) Font="${OPTARG:-$Font}" ;;                    # Font
+      c) Color="${OPTARG:-$Color}" ;;                  # Color of ruler
+      b) Background="${OPTARG:-$Background}" ;;        # Background color for ruler-only images
       
-      m) imgruler_calibrated "${OPTARG:-}" ;; # Set parameters predefined in ruler_calibrated()
+      m) imgruler_calibrated "${OPTARG:-}" ;;          # Set parameters predefined in ruler_calibrated()
       
-      o) Destinationfile="${OPTARG:-}" ;;     # Output file.
+      o) Destinationfile="${OPTARG:-}" ;;              # Output file.
       
       ?) echo "ERROR: Unkown option: -$OPTARG
 " >&2
