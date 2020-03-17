@@ -521,12 +521,14 @@ batch_function() {
   
   case "$Function" in
     brightness|contrast|gamma|level|prepare|sharpen|statistic|stretch|wizard)
-      Opt2="$Opt2"
+      Opt2="$Opt1 $Opt2 $Opt3"
+      Opt3=""
+      Opt2="${Opt2# }"
+      Opt2="${Opt2% }"
       Opt1="$Function"
       Function="wizard"
     ;;
   esac
-  Opt2="${Opt2# }"
   
   checkvar           -D "$Function" Sourcedir      "$Sourcedir"        || return 1
   checkvar           -d "$Function" Destinationdir "$Destinationdir"   || return 1
@@ -1820,7 +1822,7 @@ ruler() {
   for Image in $Imagelist; do
     Imagecount="$((Imagecount+1))"
     Destinationfile="$Destinationdir/$(basename $Image)"
-    multicore "$Imgruler -m $Opt1 -t '$Opt2' -o $Destinationfile $Image" "$Destinationfile" || return 1
+    multicore "$Imgruler -m $Opt1 -t '$Opt2' -c '$Opt3' -n '$Opt4' -o $Destinationfile $Image" "$Destinationfile" || return 1
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
@@ -2779,10 +2781,12 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
           ruleropt1combo                                        -> @combo("100c","100p","100z","40c","40p","40z","20c","20p","20z","10c","10p","10z")="100z" ;
           ruleropt2combo:beside       "Title:"                  -> @string ;
+          ruleropt3combo:beside       "Color:"                  -> @combo("black","white","red","green","blue")="black" ;
+          ruleropt4combo:beside       "Elements:"               -> @combow("10","20","30","40","50","60","70","80","90","100","")="" ;
           rulermagick                                           -> @button="magick" ;
           rulerevaluate                                         -> @button="evaluate" ;
           rulerfuse                                             -> @button="fuse" ;
-          ruler:beside                "micrometer"              -> "" ruleropt1combo ruleropt2combo;
+          ruler:beside                "micrometer"              -> "" ruleropt1combo ruleropt2combo ruleropt3combo ruleropt4combo;
         animationline:beside                                  -> animation animationopt1combo animationopt2combo animationopt3combo animationopt9combo animationmagick;
           animationopt1combo:beside                             -> @combo("quick","smooth")="smooth";
           animationopt2combo:beside   "fuse:"                   -> @combow('$Fuseopt1combo')="fuse01";
@@ -3647,36 +3651,8 @@ parse_kaptainsignal() {
       Command="${Command%evaluate}"
       Command="${Command%fuse}"
       getfunctionsettings $Command
-      case "$Command" in
-        meanbalance)
-          Opt2="mean"
-          Kaptainsignal="whitebalance${Kaptainsignal#meanbalance}"
-        ;;
-      esac
       Command="${Command%_}"
-      
       cmd -f "$Kaptainsignal" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9"  -t "$Stackdir"
-    
-    ;;
-    
-    *magick|*compose|*evaluate|*fuse)
-      Command="$Kaptainsignal"
-      Command="${Command%magick}"
-      Command="${Command%evaluate}"
-      Command="${Command%evaluate}"
-      Command="${Command%fuse}"
-      getfunctionsettings $Command
-      case "$Command" in
-        meanbalance)
-          Opt2="mean"
-          Kaptainsignal="whitebalance${Kaptainsignal#meanbalance}"
-        ;;
-        animation)
-          Opt1="${Opt1}:$(askkaptain "animationfuseopt2combo")"
-      esac
-      Command="${Command%_}"
-      
-      cmd -f "$Kaptainsignal" -1 "$Opt1" -2 "$Opt2" -t "$Stackdir"
     ;;
     
     align_vidstabbutton)
@@ -3800,7 +3776,6 @@ parse_cmd() {
     ;;
   esac
  
-  #kaptain_update
   storeinfo "refreshgui_main=yes"
 
   case $Return in
