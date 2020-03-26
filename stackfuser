@@ -487,8 +487,9 @@ batch_function() {
   # Apply image processing function $1 on all possible source dirs in target directory $2, options in $3
 
   local $Batchlocal
-  local Sourcedirchecklist Return=0
+  local Return=0
   local Gallerydir
+  local Startzeit
 
   parse_batchoptions "$@"                  || return 1
   storeinfo test stackshotdir_valid        || {
@@ -531,6 +532,7 @@ batch_function() {
     ;;
   esac
 
+  ### FIXME
   checkvar           -D "$Function" Sourcedir      "$Sourcedir"        || return 1
   checkvar           -d "$Function" Destinationdir "$Destinationdir"   || return 1
   case $Function in
@@ -556,18 +558,18 @@ batch_function() {
   storeinfo "cmd_cache=$Cachedir"
   cd "$Cachedir"
   verbose "batch_function(): $Function -1 '$Opt1' -2 '$Opt2' -3 '$Opt3' -4 '$Opt4' -5 '$Opt5' -6 '$Opt6' -7 '$Opt7' -8 '$Opt8' -9 '$Opt9' -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfile' -c '$Cachedir'"
+  Startzeit="$(date +%s)"
   $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -s "$Sourcedir" -g "$Sourcefileglob" -d "$Destinationdir" -b "$Destinationfile" -c "$Cachedir"
   Return=$?
+  note "Ready: $Function $Opt1 $Opt2 $Opt3 $Opt4; time: $(( $(date +%s) -Startzeit ))s."
   cd "$Targetdir"
   storeinfo drop cmd
   storeinfo drop cmd_source
   storeinfo drop cmd_destination
   storeinfo drop cmd_cache
   
-  [ "$Return" = "0" ] && {
-    note "Ready: $Function $Opt1 $Opt2"
-  } || {
-    failure "ERROR in $Function $Opt1 $Opt2: $(basename "$Sourcedir") -> $(basename "$Destinationdir")"
+  [ "$Return" = "0" ] || {
+    failure "ERROR in $Function $Opt1 $Opt2 $Opt3: $(basename "$Sourcedir") -> $(basename "$Destinationdir")"
     case $Function in
       animation|video) ;;
       compose|evaluate|fuse) undo -s "$Destinationdir.bak" -d "$Destinationdir" -c "$Cachedir" ;;
@@ -591,7 +593,7 @@ batch_function() {
       [ -d "$Gallerydir" ] && ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Gallerydir"
     }
   }
-  verbose "batch_function: $Function: return $Return"
+  verbose "batch_function(): $Function: return $Return"
   [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "fuse" ] && storeinfo "refreshgui_fuse=yes"
 
   return $Return
@@ -702,6 +704,7 @@ runbatch3() {
   askkaptain sharpen_evaluate >/dev/null && cmd -f sharpenevaluate -2 3x1 -t "$Stackdir"
   askkaptain compose >/dev/null          && cmd -f compose -t "$Stackdir"
   askkaptain deletebackups2 >/dev/null   && cmd -f deletebackups -t "$Stackdir"
+  askkaptain deletemagick2  >/dev/null   && cmd -f deletemagick -t "$Stackdir"
   cmd -f showimage -s "$Stackdir/evaluate" -g "*fuse.median*"
 }
 setup_imagelist() {
@@ -2726,7 +2729,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           wizardfuse                                            -> @button="fuse" ;
           wizard:beside               "(free option typing)"    -> wizardopt1combo | ! "" ;
         
-      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose deletebackups2;
+      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose deletebackups2 deletemagick2;
         fuseline:beside                                       -> fuse fuseconfig @fill fuseopt1combo fusemagick;
           fuseconfig                                            -> @button="fuse" ;
           fuseopt1combo                                         -> @combo('$Fuseopt1combo')="set1" ;
@@ -2739,9 +2742,10 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           evaluatefuse                                          -> @button="fuse" ;
           evaluateopt2combo                                     -> @combo('$Fuseopt1combo')="all" ;
           evaluate2:beside            "evaluate"                -> "on" | "";
-        sharpen_evaluate:beside       "sharpen 3x1"           -> @button="evaluate" "on" | "";
-        compose:beside                "compose"               -> @button="evaluate" "on" | "";
+        sharpen_evaluate:beside       "sharpen 3x1"           -> @button="evaluate" "on"        | "";
+        compose:beside                "compose"               -> @button="evaluate" "on"        | "";
         deletebackups2:beside         "delete"                -> @button="backups + cache" "on" | "";
+        deletemagick2:beside          "delete"                -> @button="magick" "on"          | ! "";
 
       runbatchframe "Batch processing" -> batchblockline batchallline;
         batchblockline -> runbatch1 runbatch2 runbatch3;
@@ -2776,16 +2780,16 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           showfuse_median                                       -> @button="fuse.median";
         
     specialtab:framed "Special operations" -> specialframe @fill deleteframe;
-      specialframe "Special operations" -> rulerline videoline animationline cuberotateline lightbalanceline imageformatline undoline ;
+      specialframe "Special operations" -> imageformatline videoline animationline cuberotateline lightbalanceline rulerline undoline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
-          ruleropt1combo                                        -> @combo("100c","100p","100z","40c","40p","40z","20c","20p","20z","10c","10p","10z")="100z" ;
+          ruleropt1combo                                        -> @combo('$Imgrulermodecombo')="100z" ;
           ruleropt2combo:beside       "Title:"                  -> @string ;
           ruleropt3combo:beside       "Color:"                  -> @combo("black","white","red","green","blue")="black" ;
           ruleropt4combo:beside       "Elements:"               -> @combow("10","20","30","40","50","60","70","80","90","100","")="" ;
           rulermagick                                           -> @button="magick" ;
           rulerevaluate                                         -> @button="evaluate" ;
           rulerfuse                                             -> @button="fuse" ;
-          ruler:beside                "micrometer"              -> "" ruleropt1combo ruleropt2combo ruleropt3combo ruleropt4combo;
+          ruler:beside                "ruler"                 -> "" ruleropt1combo ruleropt2combo ruleropt3combo ruleropt4combo;
         animationline:beside                                  -> animation animationopt1combo animationopt2combo animationopt3combo animationopt9combo animationmagick;
           animationopt1combo:beside                             -> @combo("quick","smooth")="smooth";
           animationopt2combo:beside   "fuse:"                   -> @combow('$Fuseopt1combo')="fuse01";
@@ -3594,6 +3598,9 @@ parse_kaptainsignal() {
   local Image
   
   Kaptainsignal="${1:-}"
+  Kaptainsignal="$(cut -d: -f1 <<< "$Kaptainsignal")"
+  Kaptainsignal="$(tr -d "[:digit:]" <<< "$Kaptainsignal")"
+  Kaptainsignal="${Kaptainsignal%button}"
   Stackdir="$(storeinfo dump stackshotdir)"
   Projecthome="$(storeinfo dump projecthome)"
   
@@ -3607,7 +3614,7 @@ parse_kaptainsignal() {
       note "Sending BREAK to current action"
       storeinfo "cmdbreak=yes"
     ;;
-    choosedirguibutton)
+    choosedirgui)
       stackshot_selector &
     ;;
     delete*) 
@@ -3635,13 +3642,6 @@ parse_kaptainsignal() {
     fuseconfig)
       fuse_config &
     ;;
-    fuse*)
-      Opt1=$(askkaptain fuseopt1combo)
-      cmd -f $Kaptainsignal -t $Stackdir -1 $Opt1    
-    ;;
-    evaluatemagick|compose)
-      cmd -f $Kaptainsignal -t $Stackdir
-    ;;
     evaluatefuse)
       Opt2=$(askkaptain evaluateopt2combo)
       cmd -f $Kaptainsignal -t "$Stackdir" -g "$(fuse_glob $Opt2)"
@@ -3650,7 +3650,7 @@ parse_kaptainsignal() {
       cmd -f sharpenevaluate -2 3x1 -t "$Stackdir"
     ;;
     
-    *magick|*compose|*evaluate|*fuse)
+    *magick|*compose|*evaluate|*fuse|fuse|evaluatemagick|compose|align_vidstab|align_ais)
       Command="$Kaptainsignal"
       Command="${Command%magick}"
       Command="${Command%evaluate}"
@@ -3659,17 +3659,6 @@ parse_kaptainsignal() {
       getfunctionsettings $Command
       Command="${Command%_}"
       cmd -f "$Kaptainsignal" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9"  -t "$Stackdir"
-    ;;
-    
-    align_vidstabbutton)
-      Opt1="$(askkaptain "align_vidstabopt1combo")"
-      Opt2="$(askkaptain "align_vidstabopt2combo")"
-      cmd -f align_vidstab -1 "$Opt1" -2 "$Opt2" -t "$Stackdir"
-    ;;
-    align_aisbutton)
-      Opt1="$(askkaptain "align_aisopt1combo")"
-      Opt2="$(askkaptain "align_aisopt2combo")"
-      cmd -f align_ais -1 "$Opt1" -2 "$Opt2" -t "$Stackdir"
     ;;
     
     runbatch1) 
@@ -3745,24 +3734,18 @@ parse_cmd() {
   verbose "parse_cmd(): $*"
   parse_batchoptions "$@" || return 1
   Commandline="$@"
+  
+  Functon="$(tr -d "[:digit:]" <<< "$Function")" 
     
   case "$Function" in
     deleteall)         myrmdir "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" "$Targetdir/video" ; Return=0 ;;
     deleteallbutvideo) myrmdir "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" ; Return=0 ;;
-    deletebackups*)    myrmdir "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
+    deletebackups)     myrmdir "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
     delete*)           myrmdir "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
-    align_*)
-      batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Targetdir"
-      Return=$?
-    ;;
-    animation*|brightness*|contrast*|crop*|cuberotate*|imageformat*|lightbalance*|gamma*|level*|prepare*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
+    align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|fuse*|imageformat*|lightbalance*|gamma*|level*|prepare*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
       batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Targetdir"
-      Return=$?
-    ;;
-    evaluate*|compose*|fuse*)
-      batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Targetdir" -g "$Sourcefileglob"
       Return=$?
     ;;
     note)
@@ -3838,7 +3821,14 @@ declare_variables() {
   Storepidfile=$Maincachedir/store.pid
     
   Imgruler="$(command -v imgruler)"
+  Imgrulermodes=
+  Imgrulermodecombo=
   [ -z "$Imgruler" ] && Imgruler="$(dirname $0)/imgruler"
+  Imgrulermodes="$(source $Imgruler >/dev/null ; declare -f imgruler_calibrated | grep -v ";" | grep -v "()" | grep ")" | tr -d ") " )"
+  for Line in $Imgrulermodes; do
+    Imgrulermodecombo="$Imgrulermodecombo,'$Line'"
+  done
+  Imgrulermodecombo="${Imgrulermodecombo#,}"
   
   Imageformatlist="$($Convert -list format | grep " rw" | cut -c1-9 | tr -d ' ')
 TIF"
@@ -3956,7 +3946,9 @@ main "$@"
 finish
 
 ##### ToDo ####
-# applyall: convert options only
+# crop option for align_ais
+# improve lightbalance
+# check webm quality
 # crop: Do not crop if geometry is same as image
 # configuration dialog:
 #  - project directory
