@@ -644,7 +644,7 @@ parse_batchoptions() {
   #! check_fileglob "$Sourcedir/$Sourcefileglob" && failure "$Function: No source files found: $Sourcedir/$Sourcefileglob"  && return 1
   return 0
 }
-getbatch1() {
+getbatchone() {
   local Command= Line Argument
   for Line in gamma level contrast sharpen brightness stretch statistic wizard; do
     Argument="$(askkaptain "$Line")"
@@ -678,7 +678,7 @@ getfunctionsettings() {
   Opt8="$(askkaptain -c ${Function}opt8combo)"
   Opt9="$(askkaptain -c ${Function}opt9combo)"
 }
-runbatch1() {
+runbatchone() {
   local $Batchlocal
   local Iterate
   for Function in crop whitebalance align_ais align_vidstab; do
@@ -689,17 +689,17 @@ runbatch1() {
   done
   return 0
 }
-runbatch2() {
+runbatchtwo() {
   local $Batchlocal
   Stackdir="${1:-}"
-  cmd -f wizard -1 "$(getbatch1)" -t "$Stackdir"
+  cmd -f wizard -1 "$(getbatchone)" -t "$Stackdir"
 }
-runbatch3() {
+runbatchthree() {
   askkaptain evaluate1 >/dev/null        && cmd -f evaluate -1 all -t "$Stackdir"
   askkaptain fuse >/dev/null             && cmd -f fuse -1 $(askkaptain fuseopt1combo) -t "$Stackdir"
   askkaptain evaluate2 >/dev/null &&  {
-    Opt2=$(askkaptain evaluateopt2combo)
-    cmd -f evaluatefuse -1 all -t "$Stackdir" -g "$(fuse_glob $Opt2)"
+    Opt1=$(askkaptain evaluateopt1combo)
+    cmd -f evaluatefuse -1 all -t "$Stackdir" -g "$(fuse_glob $Opt1)"
   }
   askkaptain sharpen_evaluate >/dev/null && cmd -f sharpenevaluate -2 3x1 -t "$Stackdir"
   askkaptain compose >/dev/null          && cmd -f compose -t "$Stackdir"
@@ -1167,7 +1167,7 @@ animation() {
     smooth)
       Raster="3"
       Framerate="8"
-      Sequencenumber="3"
+      Sequencenumber="6"
                    
       Sequencename[1]="dagaz"
       Sequence[1]="0x0  -1x1 -2x2 -3x3
@@ -1182,23 +1182,39 @@ animation() {
       Sequencename[3]="circle_right"
       Sequence[3]="-3x0 -3x-1 -2x-2 -1x-3 0x-3 1x-3 2x-2 3x-1 3x0 3x1  2x2  1x3  0x3  -1x3  -2x2  -3x1"
       
+      Sequencename[4]="left_right"
+      Sequence[4]="-5x0  -4x0  -3x0  -2x0  -1x0   0x0    1x0   2x0   3x0   4x0   5x0
+                    5x0   4x0   3x0   2x0   1x0   0x0   -1x0  -2x0  -3x0  -4x0  -5x0"
+      
+      Sequencename[5]="up_down"
+      Sequence[5]=" 0x-5  0x-4  0x-3  0x-2  0x-1  0x0    0x1   0x2   0x3   0x4   0x5
+                    0x5   0x4   0x3   0x2   0x1   0x0    0x-1  0x-2  0x-3  0x-4  0x-5"
+      
+      Sequencename[6]="cross"
+      Sequence[6]="                               0x0    0x1   0x2   0x3   0x4
+                    0x5   0x4   0x3   0x2   0x1   0x0    0x-1  0x-2  0x-3  0x-4
+                    0x-5  0x-4  0x-3  0x-2  0x-1  0x0
+                                                  0x0    1x0   2x0   3x0   4x0
+                    5x0   4x0   3x0   2x0   1x0   0x0   -1x0  -2x0  -3x0  -4x0
+                   -5x0  -4x0  -3x0  -2x0  -1x0   0x0"
+      
       #disabled
-      Sequencename[4]="eight_small"
-      Sequence[4]="0x0  -1x0  -1x-1  0x-1  1x-1  1x0
+      Sequencename[7]="eight_small"
+      Sequence[7]="0x0  -1x0  -1x-1  0x-1  1x-1  1x0
                    0x0  -1x0  -1x1   0x1   1x1   1x0"
       
-      Sequencename[5]="eight"
-      Sequence[5]="0x0  -1x0  -2x0  -3x-1  -3x-2  -2x-3  -1x-3  0x-3  1x-3  2x-3  3x-2  3x-1  2x0  1x0
+      Sequencename[8]="eight"
+      Sequence[8]="0x0  -1x0  -2x0  -3x-1  -3x-2  -2x-3  -1x-3  0x-3  1x-3  2x-3  3x-2  3x-1  2x0  1x0
                    0x0  -1x0  -2x0  -3x1   -3x2   -2x3   -1x3   0x3   1x3   2x3   3x2   3x1   2x0  1x0"
             
-      Sequencename[6]="knot"
-      Sequence[6]="0x0 -1x0 -2x0 -3x-1 -3x-2 -2x-3 -1x-3 0x-2 0x-1
+      Sequencename[9]="knot"
+      Sequence[9]="0x0 -1x0 -2x0 -3x-1 -3x-2 -2x-3 -1x-3 0x-2 0x-1
                    0x0  0x1  0x2  1x3   2x3   3x2   3x1  2x0  1x0
                    0x0 -1x0 -2x0 -3x1  -3x2  -2x3  -1x3  0x2  0x1
                    0x0  0x-1 0x-2 1x-3  2x-3  3x-2  3x-1 2x0  1x0"
   
-      Sequencename[7]="knot_small"
-      Sequence[7]="0x0  0x-1 -1x-1 -1x0  
+      Sequencename[10]="knot_small"
+      Sequence[10]="0x0  0x-1 -1x-1 -1x0  
                    0x0  1x0   1x1   0x1
                    0x0  0x-1  1x-1  1x0
                    0x0 -1x0  -1x1   0x1"
@@ -1580,7 +1596,7 @@ evaluate() {
   Destinationfilebasename="${Destinationfile:-evaluate}"  
   Opt1="${Opt1:-all}"
   Imageformat="$(get_extension "$(fileglob "$Sourcedir/$Sourcefileglob")")"
-  
+
   case "$Opt1" in
     all)
       Count=0
@@ -1624,7 +1640,7 @@ fuse() {
   Stretch="no" # experimental
   
   Fusedir="$Cachedir/fuse"
-  mkdir p "$Fusedir"
+  mkdir -p "$Fusedir"
   Stretchdir="$Cachedir/stretch"
   mkdir -p "$Stretchdir"
   Unstretchfile="$Cachedir/unstretch"
@@ -2275,106 +2291,6 @@ fuse_declare() {
   for Count in $(seq $Fusemodenumber); do
     Fuseopt1combo="$Fuseopt1combo,'$(fuse_getname $Count shortcut)'"
   done
-  
-  # set1
-  for Count in 1 2 3 4 5 6 7 8 9 15 16 17 20 ; do
-    fuse_storevalue $Count set1 !
-  done
-  # set2
-  for Count in 1 2 3 ; do
-    fuse_storevalue $Count set2 !
-  done
-  # set3
-  for Count in 4 5 6 ; do
-    fuse_storevalue $Count set3 !
-  done
-  
-  # Default Fuse modes
-  # 1)
-  # 2)
-  fuse_storevalue 2 saturationweight 0.1
-  # 3)
-  fuse_storevalue 3 contrastwindowsize 7
-  # 4)
-  fuse_storevalue 4 contrastwindowsize 7
-  fuse_storevalue 4 saturationweight 0.1
-  # 5) 
-  fuse_storevalue 5 contrastwindowsize 15
-  # 6)
-  fuse_storevalue 6 contrastwindowsize 15
-  fuse_storevalue 6 saturationweight 0.1
-  # 7) 
-  fuse_storevalue 7 contrastwindowsize 23
-  # 8)
-  fuse_storevalue 8 contrastwindowsize 23
-  fuse_storevalue 8 saturationweight 0.1
-  # 9)
-  fuse_storevalue 9 contrastedgescale 0.8
-  fuse_storevalue 9 lcescale 16
-  fuse_storevalue 9 lcefactor 7
-  # Contrastedgescale="0.8:2000%:300%"
-  ##Contrastmincurvature="+8.0%"
-  # 10)
-  fuse_storevalue 10 contrastedgescale 0.8
-  fuse_storevalue 10 lcescale 4
-  fuse_storevalue 10 lcefactor 25
-  #Contrastedgescale="0.8:500%:500%"
-  ##Contrastmincurvature="+8.0%"
-  # 11)
-  fuse_storevalue 11 contrastedgescale 1.2
-  fuse_storevalue 11 lcescale 16
-  fuse_storevalue 11 lcefactor 4
-  ##Contrastmincurvature="+5.0%"
-  # 12)
-  fuse_storevalue 12 contrastedgescale 1.2
-  fuse_storevalue 12 lcescale 8
-  fuse_storevalue 12 lcefactor 4
-  ##Contrastmincurvature="+5.0%"
-  ##Saturationweight="0.1"
-  # 13)
-  fuse_storevalue 13 contrastedgescale 1.6
-  fuse_storevalue 13 lcescale 16
-  fuse_storevalue 13 lcefactor 4
-  ##Contrastmincurvature="+3.0%"
-  # 14)
-  fuse_storevalue 14 contrastedgescale 1.6
-  fuse_storevalue 14 lcescale 8
-  fuse_storevalue 14 lcefactor 4
-  ##Contrastmincurvature="+3.0%"
-  ##Saturationweight="0.1"
-  # 15)
-  fuse_storevalue 15 contrastedgescale 1.6
-  fuse_storevalue 15 lcescale 16
-  fuse_storevalue 15 lcefactor 10
-  ##Contrastmincurvature="+6.0%"
-  # 16)
-  fuse_storevalue 16 contrastedgescale 1.6
-  fuse_storevalue 16 lcescale 8
-  fuse_storevalue 16 lcefactor 10
-  ##Contrastmincurvature="+8.0%"
-  ##Saturationweight="0.1"
-  # 17)
-  fuse_storevalue 17 contrastedgescale 2.0
-  fuse_storevalue 17 lcescale 10
-  fuse_storevalue 17 lcefactor 25
-  ##Contrastedgescale="2.0:500%:500%"
-  ##Contrastmincurvature="+2.0%"
-  # 18)
-  fuse_storevalue 18 contrastedgescale 1.2
-  fuse_storevalue 18 lcescale 16
-  fuse_storevalue 18 lcefactor 4
-  fuse_storevalue 18 contrastwindowsize 9
-  fuse_storevalue 18 contrastmincurvature 8
-  # 19)
-  fuse_storevalue 19 contrastedgescale 1.2
-  fuse_storevalue 19 lcescale 16
-  fuse_storevalue 19 lcefactor 4
-  fuse_storevalue 19 contrastwindowsize 23
-  fuse_storevalue 19 contrastmincurvature 8
-  # 20)
-  fuse_storevalue 20 contrastedgescale 3.0
-  fuse_storevalue 20 lcescale 4
-  fuse_storevalue 20 lcefactor 4
 }
 fuse_getname() {
   local Number Mode
@@ -2416,6 +2332,109 @@ fuse_getname() {
     ;;
   esac
   echo  "$Name"
+}
+fuse_defaultconfig() {
+  # set1
+  for Count in 1 2 3 4 5 6 7 8 9 15 16 17 20 ; do
+    fuse_storevalue $Count set1 !
+  done
+  # set2
+  for Count in 1 2 3 ; do
+    fuse_storevalue $Count set2 !
+  done
+  # set3
+  for Count in 4 5 6 ; do
+    fuse_storevalue $Count set3 !
+  done
+  
+  # Default Fuse modes
+  # 1)
+  # 2)
+  fuse_storevalue 2 contrastwindowsize 9
+  # 3)
+  fuse_storevalue 3 contrastwindowsize 15
+  # 4)
+  fuse_storevalue 4 saturationweight 0.1
+  # 5) 
+  fuse_storevalue 5 contrastwindowsize 9
+  fuse_storevalue 5 saturationweight 0.1
+  # 6)
+  fuse_storevalue 6 contrastwindowsize 15
+  fuse_storevalue 6 saturationweight 0.1
+  # 7) 
+  fuse_storevalue 7 contrastedgescale 0.8
+  # 8)
+  fuse_storevalue 8 contrastedgescale 0.8
+  fuse_storevalue 8 lcescale 7
+  fuse_storevalue 8 lcefactor 1
+  # 9)
+  fuse_storevalue 9 contrastedgescale 0.8
+  fuse_storevalue 9 lcescale 30
+  fuse_storevalue 9 lcefactor 10
+  # 10)
+  fuse_storevalue 10 contrastedgescale 1.2
+  #fuse_storevalue 10 lcescale 4
+  #fuse_storevalue 10 lcefactor 25
+  # 11)
+  fuse_storevalue 11 contrastedgescale 1.2
+  fuse_storevalue 11 lcescale 7
+  fuse_storevalue 11 lcefactor 1
+  # 12)
+  fuse_storevalue 12 contrastedgescale 1.2
+  fuse_storevalue 12 lcescale 30
+  fuse_storevalue 12 lcefactor 10
+  # 13)
+  fuse_storevalue 13 contrastedgescale 1.8
+  #fuse_storevalue 13 lcescale 16
+  #fuse_storevalue 13 lcefactor 4
+  # 14)
+  fuse_storevalue 14 contrastedgescale 1.8
+  fuse_storevalue 14 lcescale 5
+  fuse_storevalue 14 lcefactor 1
+  # 15)
+  fuse_storevalue 15 contrastedgescale 1.8
+  fuse_storevalue 15 lcescale 30
+  fuse_storevalue 15 lcefactor 5
+  # 16)
+  fuse_storevalue 16 contrastedgescale 2.2
+  #fuse_storevalue 16 lcescale 8
+  #fuse_storevalue 16 lcefactor 10
+  # 17)
+  fuse_storevalue 17 contrastedgescale 2.2
+  fuse_storevalue 17 lcescale 5
+  fuse_storevalue 17 lcefactor 10
+  # 18)
+  fuse_storevalue 18 contrastedgescale 2.2
+  fuse_storevalue 18 lcescale 7
+  fuse_storevalue 18 lcefactor 30
+  # 19)
+  fuse_storevalue 19 contrastedgescale 1.5
+  #fuse_storevalue 19 lcescale 16
+  #fuse_storevalue 19 lcefactor 4
+  # 20)
+  fuse_storevalue 20 contrastedgescale 1.5
+  fuse_storevalue 20 lcescale 5
+  fuse_storevalue 20 lcefactor 1
+  # 21)
+  fuse_storevalue 21 contrastedgescale 1.5
+  fuse_storevalue 21 lcescale 10
+  fuse_storevalue 21 lcefactor 4
+  # 22)
+  fuse_storevalue 22 contrastedgescale 3.0
+  fuse_storevalue 22 lcescale 15
+  fuse_storevalue 22 lcefactor 1
+  # 23)
+  fuse_storevalue 23 contrastedgescale 4.0
+  fuse_storevalue 23 lcescale 1
+  fuse_storevalue 23 lcefactor 2
+  # 24)
+  fuse_storevalue 24 contrastedgescale 5.0
+  fuse_storevalue 24 lcescale 1
+  fuse_storevalue 24 lcefactor 1
+  # 25)
+  fuse_storevalue 25 contrastedgescale 5.0
+  fuse_storevalue 25 lcescale 50
+  fuse_storevalue 25 lcefactor 2
 }
 fuse_defaultvalue() {
   # define default enfuse settings
@@ -2464,9 +2483,9 @@ fuse_getvalue() {
     levels)               Combovalues="empty $(seq 29)" ;;
     contrastwindowsize)   Combovalues="empty 3 5 7 9 11 13 15 17 19 21 23 25 27 29" ;;
     contrastmincurvature) Combovalues="empty 0 0.1 0.5 1 2 3 5 7.5 8 10" ;;
-    contrastedgescale)    Combovalues="empty 0 0.1 0.2 0.3 0.4 0.5 0.8 1.0 1.2 1.4 1.6 1.8 2.0 2.5 3.0" ;;
-    lcescale)             Combovalues="empty 0 2 4 6 8 10 15 16 20 25" ;;
-    lcefactor)            Combovalues="empty 0 2 4 6 7 8 10 12 25" ;;
+    contrastedgescale)    Combovalues="empty 0 0.1 0.2 0.3 0.4 0.5 0.8 1.0 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 2.0 2.2 2.5 3.0 4.0 5.0" ;;
+    lcescale)             Combovalues="empty 0 1 2 3 4 5 6 7 8 9 10 12 15 18 20 25 30 40 50" ;;
+    lcefactor)            Combovalues="empty 0 1 2 3 4 5 6 7 8 9 10 12 15 18 20 25 30 40 50" ;;
   esac
   
   
@@ -2500,6 +2519,9 @@ fuse_getvalue() {
           esac
         ;;
         lcescale|lcefactor) echo "" ;;
+        contrastwindowsize)
+          [ "$Value" = "5" ] || echo "$Entryoption=$Value" 
+        ;;
         *) 
           echo "$Entryoption=$Value" 
         ;;
@@ -2723,7 +2745,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           stretchfuse                                           -> @button="fuse" ;
           stretch:beside              "stretch-contrast"        -> stretchopt1combo | ! "";
         wizardline:beside                                     -> wizard wizardmagick wizardfuse wizardevaluate;
-          wizardopt1combo                                       -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 3","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
+          wizardopt1combo                                       -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 0","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
           wizardmagick                                          -> @button="magick" ;
           wizardevaluate                                        -> @button="evaluate" ;
           wizardfuse                                            -> @button="fuse" ;
@@ -2738,9 +2760,9 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
         evaluateline1:beside                                  -> evaluate1 evaluatemagick ;
           evaluatemagick                                        -> @button="magick" ;
           evaluate1:beside            "evaluate"                -> "on" | "";
-        evaluateline2:beside                                  -> evaluate2 evaluateopt2combo evaluatefuse;
+        evaluateline2:beside                                  -> evaluate2 evaluateopt1combo evaluatefuse;
           evaluatefuse                                          -> @button="fuse" ;
-          evaluateopt2combo                                     -> @combo('$Fuseopt1combo')="all" ;
+          evaluateopt1combo                                     -> @combo('$Fuseopt1combo')="all" ;
           evaluate2:beside            "evaluate"                -> "on" | "";
         sharpen_evaluate:beside       "sharpen 3x1"           -> @button="evaluate" "on"        | "";
         compose:beside                "compose"               -> @button="evaluate" "on"        | "";
@@ -2748,10 +2770,10 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
         deletemagick2:beside          "delete"                -> @button="magick" "on"          | ! "";
 
       runbatchframe "Batch processing" -> batchblockline batchallline;
-        batchblockline -> runbatch1 runbatch2 runbatch3;
-          runbatch1:beside            "batch block 1"           -> "batchblock1" | "" @button="run";
-          runbatch2:beside            "batch block 2"           -> "batchblock2" | "" @button="run";
-          runbatch3:beside            "batch block 3"           -> "batchblock3" | "" @button="run";
+        batchblockline -> runbatchone runbatchtwo runbatchthree;
+          runbatchone:beside            "batch block 1"           -> "batchblock1" | "" @button="run";
+          runbatchtwo:beside            "batch block 2"           -> "batchblock2" | "" @button="run";
+          runbatchthree:beside            "batch block 3"           -> "batchblock3" | "" @button="run";
         batchallline:beside -> runbatchprocessing ;
           runbatchprocessing                                    -> @button="Run selected batch blocks";
           
@@ -3643,40 +3665,40 @@ parse_kaptainsignal() {
       fuse_config &
     ;;
     evaluatefuse)
-      Opt2=$(askkaptain evaluateopt2combo)
-      cmd -f $Kaptainsignal -t "$Stackdir" -g "$(fuse_glob $Opt2)"
+      Opt1=$(askkaptain evaluateopt1combo)
+      cmd -f $Kaptainsignal -t "$Stackdir" -g "$(fuse_glob $Opt1)"
     ;;
     sharpen_evaluate)
       cmd -f sharpenevaluate -2 3x1 -t "$Stackdir"
     ;;
     
-    *magick|*compose|*evaluate|*fuse|fuse|evaluatemagick|compose|align_vidstab|align_ais)
+    *magick|*compose|*evaluate|*fuse|evaluatemagick|compose|align_vidstab|align_ais)
       Command="$Kaptainsignal"
-      Command="${Command%magick}"
-      Command="${Command%evaluate}"
       Command="${Command%evaluate}"
       Command="${Command%fuse}"
+      Command="${Command%magick}"
+      [ -z "$Command" ] && Command="$Kaptainsignal"
       getfunctionsettings $Command
       Command="${Command%_}"
       cmd -f "$Kaptainsignal" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9"  -t "$Stackdir"
     ;;
     
-    runbatch1) 
-      runbatch1 "$Stackdir"
+    runbatchone) 
+      runbatchone "$Stackdir"
       cmd -f notify -1 "Batch 1 is ready."
     ;;
-    runbatch2) 
-      runbatch2 "$Stackdir"
+    runbatchtwo) 
+      runbatchtwo "$Stackdir"
       cmd -f notify -1 "Batch 2 is ready."
     ;;
-    runbatch3) 
-      runbatch3 "$Stackdir"
+    runbatchthree) 
+      runbatchthree "$Stackdir"
       cmd -f notify -1 "Batch 3 is ready."
     ;;
     runbatchprocessing)
-      askkaptain "runbatch1" >/dev/null && runbatch1 "$Stackdir"
-      askkaptain "runbatch2" >/dev/null && runbatch2 "$Stackdir"
-      askkaptain "runbatch3" >/dev/null && runbatch3 "$Stackdir"
+      askkaptain "runbatchone" >/dev/null && runbatchone "$Stackdir"
+      askkaptain "runbatchtwo" >/dev/null && runbatchtwo "$Stackdir"
+      askkaptain "runbatchthree" >/dev/null && runbatchthree "$Stackdir"
       cmd -f notify -1 "Batch all is ready."
     ;;
     *)
@@ -3735,7 +3757,7 @@ parse_cmd() {
   parse_batchoptions "$@" || return 1
   Commandline="$@"
   
-  Functon="$(tr -d "[:digit:]" <<< "$Function")" 
+  Function="$(tr -d "[:digit:]" <<< "$Function")" 
     
   case "$Function" in
     deleteall)         myrmdir "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" "$Targetdir/video" ; Return=0 ;;
@@ -3745,7 +3767,7 @@ parse_cmd() {
    
     align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|fuse*|imageformat*|lightbalance*|gamma*|level*|prepare*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
-      batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Targetdir"
+      batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -g "$Sourcefileglob" -t "$Targetdir"
       Return=$?
     ;;
     note)
@@ -3890,6 +3912,7 @@ main() {
   #storeinfo "rmcache=yes"
   
   fuse_declare
+  [ -e "$Enfuseconfigfile" ] || fuse_defaultconfig
   [ -e "$Configfile" ] && source "$Configfile"
 
   # start kaptain
