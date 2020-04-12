@@ -2335,16 +2335,20 @@ fuse_getname() {
 }
 fuse_defaultconfig() {
   # set1
-  for Count in 1 2 3 4 5 6 7 8 9 15 16 17 20 ; do
+  for Count in 1 2 3 4 5 6 12 14 15 16 18 21 ; do
     fuse_storevalue $Count set1 !
   done
   # set2
-  for Count in 1 2 3 ; do
+  for Count in 7 8 9 10 11 12 13 14 15 17 20 21; do
     fuse_storevalue $Count set2 !
   done
-  # set3
-  for Count in 4 5 6 ; do
-    fuse_storevalue $Count set3 !
+  # set4
+  for Count in 1 4 9 10 11 12 18 20 ; do
+    fuse_storevalue $Count set4 !
+  done
+  # set5
+  for Count in 1 4 9 10 11 12 14 15 18 20 ; do
+    fuse_storevalue $Count set5 !
   done
   
   # Default Fuse modes
@@ -2754,7 +2758,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
       batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose deletebackups2 deletemagick2;
         fuseline:beside                                       -> fuse fuseconfig @fill fuseopt1combo fusemagick;
           fuseconfig                                            -> @button="fuse" ;
-          fuseopt1combo                                         -> @combo('$Fuseopt1combo')="set1" ;
+          fuseopt1combo                                         -> @combo('$Fuseopt1combo')="set5" ;
           fusemagick                                            -> @button="magick";
           fuse:beside                                           -> "on" | "" ;
         evaluateline1:beside                                  -> evaluate1 evaluatemagick ;
@@ -3871,7 +3875,7 @@ create_cachefiles() {
   :>       $Storeinfofile
   :>       $Storepidfile
   
-  touch    $Enfuseconfigfile
+  #touch    $Enfuseconfigfile
 }
 check_dependencies() {
   local Dependency
