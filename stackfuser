@@ -3618,13 +3618,14 @@ start 'Choose geometry' -> frameset ;
 #### headquarter
 
 parse_kaptainsignal() {
-  local Kaptainsignal
+  local Kaptainsignal Kaptainsignalsuffix
   local $Batchlocal
   local Command Argument Stackdir Newstackdir Projecthome
   local Image
   
   Kaptainsignal="${1:-}"
-  Kaptainsignal="$(cut -d: -f1 <<< "$Kaptainsignal")"
+  Kaptainsignalsuffix="$(cut -d: -f2 <<< "$Kaptainsignal")"
+  Kaptainsignal="$(cut       -d: -f1 <<< "$Kaptainsignal")"
   Kaptainsignal="$(tr -d "[:digit:]" <<< "$Kaptainsignal")"
   Kaptainsignal="${Kaptainsignal%button}"
   Stackdir="$(storeinfo dump stackshotdir)"
@@ -3647,12 +3648,11 @@ parse_kaptainsignal() {
       cmd -f $(tr -d ":" <<< "$Kaptainsignal") -t "$Stackdir"
     ;;
     show_video*)
-      Image="$(echo "$Kaptainsignal" | cut -d: -f2-)"
+      Image="$Kaptainsignalsuffix"
       Image="$Stackdir/video/*.$Image*"
       showimage "$(fileglob "$Image")"
     ;;
     showmagick*|showfuse*)
-      Image="$(cut -d: -f1 <<< "$Kaptainsignal")"
       Image="${Image#show}"
       Image="$(tr "_" "." <<< "$Image")"
       Image="$(fileglob "$Stackdir/evaluate/*$Image*")"

@@ -1276,7 +1276,7 @@ main() {
   
   declare_variables
   
-  mkdir    "$Maincachedir"
+  mkdir -p "$Maincachedir"
   mkdir -p "$Percentcachedir"
   :> $Storepidfile
   mkfifo "$Devicemessagefifo"
