@@ -56,6 +56,7 @@ Dependencies:
  - `imagemagick`
  - [`imgruler`](#imgruler)
  - [`kaptain`](https://github.com/mviereck/kaptain)
+ - `ufraw`
  - `viewnior`
  
 ## stackshooter
