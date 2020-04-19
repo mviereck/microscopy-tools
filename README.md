@@ -73,6 +73,7 @@ Dependencies:
  - `gphoto2`
  - `align_image_stack` (hugin tools)
  - [`kaptain`](https://github.com/mviereck/kaptain)
+ - `xinput`
  
 ## camcfg
 `dialog` frontend for `gphoto2` camera configuration. Reads possible configurations of a camera and provides a dialog in terminal to choose desired settings. Beta stage, already useable.
