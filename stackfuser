@@ -198,7 +198,7 @@ check_stackdir() {
 fileglob() {
   # echos files only for glob $1
   #local Path Glob 
-  local Filelist
+  local Filelist Whitespace
   
   #[ -d "${1:-}" ] && {
   #  Path="${1:-}"
@@ -209,8 +209,12 @@ fileglob() {
   #}
   #Path="$(realpath "$Path")"
   
+  [ "${1:-}" = "-w" ] && Whitespace="yes" && shift
+  
   Filelist="$(eval find ${1:-} -maxdepth 0 -type f 2>/dev/null)"
   Filelist="$(sort -V <<< "$Filelist")"
+  
+  [ "$Whitespace" ] && Filelist="$(echo $Filelist)"
   
   [ "$Filelist" ] && echo "$Filelist" || return 1
 }
@@ -581,16 +585,23 @@ batch_function() {
   
   [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluate" ] && {
     storeinfo "refreshgui_selector=yes"
+    # link magick.max
+    ls $Destinationdir/*magick.max* >/dev/null 2>&1 && {
+      ln -f $(fileglob "$Destinationdir/*.magick.max.*") "$Destinationdir/../"
+    }
+    # link fuse.median results
     ls $Destinationdir/*fuse.median* >/dev/null 2>&1 && {
       [ -d "$Destinationdir/../stackshot" ] && {
         # link fuse.median result into parent directory
-        ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../"
+        for Set in $(seq $Fusesetnumber); do
+          ln -f $(fileglob "$Destinationdir/*.fuse.median.set${Set}.*") "$Destinationdir/../"
+        done
         # link into project dir
-        ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Destinationdir/../../"
+        ln -f $(fileglob "$Destinationdir/*.fuse.median.*" | head -n1) "$Destinationdir/../../"
       }
       # link fuse.median result into $Gallerydir directory
       Gallerydir="$(storeinfo dump gallerydir)"
-      [ -d "$Gallerydir" ] && ln -f $(fileglob "$Destinationdir/*fuse.median*") "$Gallerydir"
+      [ -d "$Gallerydir" ] && ln -f $(fileglob "$Destinationdir/*.fuse.median.*" | head -n1) "$Gallerydir"
     }
   }
   verbose "batch_function(): $Function: return $Return"
@@ -695,13 +706,13 @@ runbatchtwo() {
   cmd -f wizard -1 "$(getbatchone)" -t "$Stackdir"
 }
 runbatchthree() {
-  askkaptain evaluate1 >/dev/null        && cmd -f evaluate -1 all -t "$Stackdir"
-  askkaptain fuse >/dev/null             && cmd -f fuse -1 $(askkaptain fuseopt1combo) -t "$Stackdir"
-  askkaptain evaluate2 >/dev/null &&  {
-    Opt1=$(askkaptain evaluateopt1combo)
-    cmd -f evaluatefuse -1 all -t "$Stackdir" -g "$(fuse_glob $Opt1)"
-  }
-  askkaptain sharpen_evaluate >/dev/null && cmd -f sharpenevaluate -2 3x1 -t "$Stackdir"
+  askkaptain evaluate1 >/dev/null        && cmd -f evaluatemagick -t "$Stackdir"
+  askkaptain fuse >/dev/null             && cmd -f fuse -1 "all" -t "$Stackdir"
+  askkaptain evaluate2 >/dev/null        && cmd -f evaluatefuse -t "$Stackdir"
+#  askkaptain evaluate2 >/dev/null &&  {
+#    Opt1=$(askkaptain evaluateopt1combo)
+#    cmd -f evaluatefuse -1 all -t "$Stackdir" -g "$(fuse_glob $Opt1)"
+#  }
   askkaptain compose >/dev/null          && cmd -f compose -t "$Stackdir"
   askkaptain deletebackups2 >/dev/null   && cmd -f deletebackups -t "$Stackdir"
   askkaptain deletemagick2  >/dev/null   && cmd -f deletemagick -t "$Stackdir"
@@ -1586,39 +1597,37 @@ distort() {
   multicore_wait || return 1
 }
 evaluate() {
-  # Evaluate image stack min/max/mean/median
-  
   local $Batchlocal
-  local Destinationfilebasename Imageformat Count
+  local $Imagelocal
+  local Destinationfilebasename Set Mode Showimage
   
   parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
   
-  Destinationfilebasename="${Destinationfile:-evaluate}"  
-  Opt1="${Opt1:-all}"
-  Imageformat="$(get_extension "$(fileglob "$Sourcedir/$Sourcefileglob")")"
-
-  case "$Opt1" in
-    all)
-      Count=0
-      for Opt1 in min mean max median; do
-        Count="$((Count + 1))"
-        multicore "evaluate -s '$Sourcedir' -g '$Sourcefileglob' -d '$Destinationdir' -b '$Destinationfilebasename' -1 '$Opt1'" || return 1
-        showpercent "$Count" "4"
+  Destinationfilebasename="$Destinationfile"
+  case "$(basename $Sourcedir)" in
+    fuse)
+      for Set in $(seq $Fusesetnumber); do
+        Sourcefileglob="$(fuse_glob set${Set})"
+        for Mode in min mean max median; do
+          Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.set${Set}.${Imageformat}"
+          multicore "$Convert $(fileglob -w "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" || return 1 
+        done
+        multicore_wait || return 1
+        showpercent $Set $Fusesetnumber
+      done
+    ;;
+    magick)
+      for Mode in min mean max median; do
+        Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.${Imageformat}"
+        [ "$Mode" = "max" ] && Showimage="$Destinationfile"
+        multicore "$Convert $(echo $Imagelist) -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" || return 1
       done
       multicore_wait || return 1
-    ;;
-    min|max|mean|median) ;;
-    *) failure "evaluate: Unknown function mode $Opt1" ; return 1 ;;
+      showimage "$Showimage"
+      ;;
+    *) warning "evaluate(): Undefined handling for source $Sourcedir" ; return 1 ;;
   esac
-  
-  Destinationfile="$Destinationdir/$Destinationfilebasename.$Opt1.$Imageformat"
-  note "evaluate: $Opt1 $Destinationfilebasename"
-  $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Opt1 "$Destinationfile" || {
-    failure "evaluate $Opt1: ERROR in excuting convert. Please check policy restrictions of ImageMagick. Note that all source images must be of same size."
-    return 1
-  }
-  showimage "$Destinationfile"
-  return 0
 }
 fuse() {
   # fuse stackshot of images with enfuse
@@ -2342,6 +2351,10 @@ fuse_defaultconfig() {
   for Count in 7 8 9 10 11 12 13 14 15 17 20 21; do
     fuse_storevalue $Count set2 !
   done
+  # set3
+  for Count in 7 8 9 10 11 12 13 14 16 17 19 20 22; do
+    fuse_storevalue $Count set3 !
+  done
   # set4
   for Count in 1 4 9 10 11 12 18 20 ; do
     fuse_storevalue $Count set4 !
@@ -2560,7 +2573,7 @@ $Line")"
 fuse_glob() {
   local Count Glob
   case "${1:-}" in
-    all) echo "*" ;;
+    all|setall) echo "*" ;;
     set*) 
       for Count in $(seq $Fusemodenumber); do
         [ "$(fuse_getvalue $Count ${1:-} value)" ] && Glob="${Glob},*$(fuse_getname $Count shortcut)*"
@@ -2670,7 +2683,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
     batchtab "Image batch processing" -> batchoptionframe ;
       batchoptionframe:beside            -> batchframeleft  batchframeright;
         batchframeleft:framed              -> batchblock1 batchblock2 ;
-        batchframeright:framed             -> batchblock3 runbatchframe cmdbreak;
+        batchframeright:framed             -> batchblock3 runbatchframe stopframe;
           
       batchblock1 "batch block 1: crop and balance directory magick" -> cropline whitebalanceline align_aisline align_vidstabline;
         meanbalanceline:beside                                -> meanbalance meanbalanceopt1combo meanbalancemagick meanbalancefuse meanbalanceevaluate;
@@ -2755,56 +2768,59 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           wizardfuse                                            -> @button="fuse" ;
           wizard:beside               "(free option typing)"    -> wizardopt1combo | ! "" ;
         
-      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 sharpen_evaluate compose deletebackups2 deletemagick2;
-        fuseline:beside                                       -> fuse fuseconfig @fill fuseopt1combo fusemagick;
-          fuseconfig                                            -> @button="fuse" ;
-          fuseopt1combo                                         -> @combo('$Fuseopt1combo')="set5" ;
+      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 compose deletebackups2 deletemagick2;
+        fuseline:beside                                       -> fuse fuseconfig @fill fusemagick;
+          fuseconfig                                            -> @button="config" ;
           fusemagick                                            -> @button="magick";
-          fuse:beside                                           -> "on" | "" ;
+          fuse:beside                 "fuse"                    -> "on" | "" ;
         evaluateline1:beside                                  -> evaluate1 evaluatemagick ;
           evaluatemagick                                        -> @button="magick" ;
           evaluate1:beside            "evaluate"                -> "on" | "";
-        evaluateline2:beside                                  -> evaluate2 evaluateopt1combo evaluatefuse;
+        evaluateline2:beside                                  -> evaluate2 evaluatefuse;
           evaluatefuse                                          -> @button="fuse" ;
-          evaluateopt1combo                                     -> @combo('$Fuseopt1combo')="all" ;
           evaluate2:beside            "evaluate"                -> "on" | "";
-        sharpen_evaluate:beside       "sharpen 3x1"           -> @button="evaluate" "on"        | "";
         compose:beside                "compose"               -> @button="evaluate" "on"        | "";
         deletebackups2:beside         "delete"                -> @button="backups + cache" "on" | "";
         deletemagick2:beside          "delete"                -> @button="magick" "on"          | ! "";
 
-      runbatchframe "Batch processing" -> batchblockline batchallline;
-        batchblockline -> runbatchone runbatchtwo runbatchthree;
-          runbatchone:beside            "batch block 1"           -> "batchblock1" | "" @button="run";
-          runbatchtwo:beside            "batch block 2"           -> "batchblock2" | "" @button="run";
-          runbatchthree:beside            "batch block 3"           -> "batchblock3" | "" @button="run";
+      runbatchframe "Batch processing"                      -> batchblockline batchallline;
+        batchblockline                                        -> runbatchone runbatchtwo runbatchthree;
+          runbatchone:beside          "batch block 1"           -> "batchblock1" | "" @button="run";
+          runbatchtwo:beside          "batch block 2"           -> "batchblock2" | "" @button="run";
+          runbatchthree:beside        "batch block 3"           -> "batchblock3" | "" @button="run";
         batchallline:beside -> runbatchprocessing ;
           runbatchprocessing                                    -> @button="Run selected batch blocks";
-          
-      cmdbreak:beside "Stop current actions"                -> @button="break" ;
+      
+      stopframe "Stop actions"                                -> stopline;
+        stopline                                                -> cmdbreak killviewnior;
+          cmdbreak                                                -> @button="stop current batch" ;
+          killviewnior                                            -> @action("killall viewnior ffplay")="killall viewnior ffplay";
         
       showdirframe                                          -> showdirline  ;
-        showdirline:beside "Show directories:"                -> showdirfm showdirstackshot showdirmagick showdirfuse showdircompose showdirevaluate @fill killviewnior;
+        showdirline:beside "Show directories:"                -> showdirfm showdirstackshot showdirmagick showdirfuse showdircompose showdirevaluate @fill ;
           showdirfm                                             -> @button="File Manager";
           showdirstackshot                                      -> @button="stackshot";
           showdirmagick                                         -> @button="magick";
           showdirfuse                                           -> @button="fuse";
           showdircompose                                        -> @button="compose";
           showdirevaluate                                       -> @button="evaluate";
-          killviewnior                                          -> @action("killall viewnior ffplay")="killall viewnior ffplay";
         
       showresultframe                                       -> showresultline;
-        showresultline:beside                                 -> showmagick_max showmagick_min showmagick_mean showmagick_median show_video showfuse_max showfuse_min showfuse_mean showfuse_median;
+        showresultline:beside "Main results:"                 -> 
+  '
+  for Set in $(seq $Fusesetnumber); do
+    echo "showset${Set}"
+  done
+  echo 'showmagick_max showmagick_min show_video;
           showmagick_max                                        -> @button="magick.max";
           showmagick_min                                        -> @button="magick.min";
-          showmagick_mean                                       -> @button="magick.mean";
-          showmagick_median                                     -> @button="magick.median";
-          show_video                                            -> @combo("-");
-          showfuse_max                                          -> @button="fuse.max";
-          showfuse_min                                          -> @button="fuse.min";
-          showfuse_mean                                         -> @button="fuse.mean";
-          showfuse_median                                       -> @button="fuse.median";
+          show_video:beside "Videos:"                           -> @combo("----------------------------------------");
+  '
+  for Set in $(seq $Fusesetnumber); do
+    echo "showset${Set}                                         -> @button=\"set${Set}\";"
+  done
         
+  echo '
     specialtab:framed "Special operations" -> specialframe @fill deleteframe;
       specialframe "Special operations" -> imageformatline videoline animationline cuberotateline lightbalanceline rulerline undoline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
@@ -2949,14 +2965,17 @@ kaptain_update() {
   check_fileglob "$Stackdir/evaluate/*.magick.*" && {
     sendkaptain "showmagick_max='magick.max'"
     sendkaptain "showmagick_min='magick.min'"
-    sendkaptain "showmagick_mean='magick.mean'"
-    sendkaptain "showmagick_median='magick.median'"
+    #sendkaptain "showmagick_mean='magick.mean'"
+    #sendkaptain "showmagick_median='magick.median'"
   } || {
     sendkaptain "showmagick_max='-'"
     sendkaptain "showmagick_min='-'"
-    sendkaptain "showmagick_mean='-'"
-    sendkaptain "showmagick_median='-'"
+    #sendkaptain "showmagick_mean='-'"
+    #sendkaptain "showmagick_median='-'"
   }
+  for Set in $(seq $Fusesetnumber); do
+    check_fileglob "$Stackdir/evaluate/*.fuse.set${Set}.median.*" && sendkaptain "showset${Set}='set${Set}'" || sendkaptain "showset${Set}='-'" 
+  done
   check_fileglob "$Stackdir/evaluate/*.fuse.*" && {
     sendkaptain "showfuse_max='fuse.max'"
     sendkaptain "showfuse_min='fuse.min'"
@@ -2983,6 +3002,7 @@ kaptain_update_preview() {
   # check if currently in valid dir, otherwise clear display
   storeinfo test stackshotdir_valid || {
     storeinfo drop showimage
+    showimage notfound
     return 0
   }
 
@@ -2992,14 +3012,14 @@ kaptain_update_preview() {
   Currentimage="$(storeinfo dump showimage)"
   grep -q "$Stackdir" <<< "$Currentimage" && [ -e "$Currentimage" ] && showimage "$Currentimage" && return 0
   
-  # check for results
-  Image="$(fileglob "$Stackdir/evaluate/*fuse.median*")"
-  [ -e "$Image" ] && showimage "$Image" && return 0
-  
-  Image="$(fileglob "$Stackdir/evaluate/*magick.max*")"
+  # check for a result to show
+  Image="$(fileglob "$Stackdir/evaluate/*fuse.median*" | head -n1)"
   [ -e "$Image" ] && showimage "$Image" && return 0
   
   Image="$(fileglob "$Stackdir/*fuse.median*" | head -n1)"
+  [ -e "$Image" ] && showimage "$Image" && return 0
+  
+  Image="$(fileglob "$Stackdir/evaluate/*magick.max*")"
   [ -e "$Image" ] && showimage "$Image" && return 0
 
   Imagelist="$(fileglob "$Stackdir/magick/*")"
@@ -3626,7 +3646,7 @@ parse_kaptainsignal() {
   Kaptainsignal="${1:-}"
   Kaptainsignalsuffix="$(cut -d: -f2 <<< "$Kaptainsignal")"
   Kaptainsignal="$(cut       -d: -f1 <<< "$Kaptainsignal")"
-  Kaptainsignal="$(tr -d "[:digit:]" <<< "$Kaptainsignal")"
+  #Kaptainsignal="$(tr -d "[:digit:]" <<< "$Kaptainsignal")"
   Kaptainsignal="${Kaptainsignal%button}"
   Stackdir="$(storeinfo dump stackshotdir)"
   Projecthome="$(storeinfo dump projecthome)"
@@ -3652,12 +3672,22 @@ parse_kaptainsignal() {
       Image="$Stackdir/video/*.$Image*"
       showimage "$(fileglob "$Image")"
     ;;
-    showmagick*|showfuse*)
-      Image="${Image#show}"
+    showmagick*)
+      Image="${Kaptainsignal#show}"
       Image="$(tr "_" "." <<< "$Image")"
       Image="$(fileglob "$Stackdir/evaluate/*$Image*")"
       showimage "$Image"
     ;;
+    showset*)
+      Image="${Kaptainsignal#show}"
+      Image="$(fileglob "$Stackdir/evaluate/*.fuse.$Image.median.*")"
+      showimage "$Image"
+    ;;
+    #showfuse*)
+    #  Image="$(cut -d "_" -f2 <<< "$Kaptainsignal")"
+    #  Image="$(fileglob "$Stackdir/evaluate/*.fuse.*.$Image.*")"
+    #  showimage "$Image"
+    #;;
     showdirfm)
       xdg-open "${Stackdir:-$Projecthome}" &
     ;;
@@ -3667,13 +3697,6 @@ parse_kaptainsignal() {
     
     fuseconfig)
       fuse_config &
-    ;;
-    evaluatefuse)
-      Opt1=$(askkaptain evaluateopt1combo)
-      cmd -f $Kaptainsignal -t "$Stackdir" -g "$(fuse_glob $Opt1)"
-    ;;
-    sharpen_evaluate)
-      cmd -f sharpenevaluate -2 3x1 -t "$Stackdir"
     ;;
     
     *magick|*compose|*evaluate|*fuse|evaluatemagick|compose|align_vidstab|align_ais)
