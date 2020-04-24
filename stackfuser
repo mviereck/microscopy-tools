@@ -2787,14 +2787,15 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           cmdbreak                                                -> @button="stop current batch" ;
           killviewnior                                            -> @action("killall viewnior ffplay")="killall viewnior ffplay";
         
-      showdirframe                                          -> showdirline  ;
-        showdirline:beside "Show directories:"                -> showdirfm showdirstackshot showdirmagick showdirfuse showdircompose showdirevaluate @fill ;
+      showdirframe                                          -> showdirline ;
+        showdirline:beside "Show directories:"                -> showdirfm showdirstackshot showdirmagick showdirfuse showdircompose showdirevaluate @fill show_video ;
           showdirfm                                             -> @button="File Manager";
           showdirstackshot                                      -> @button="stackshot";
           showdirmagick                                         -> @button="magick";
           showdirfuse                                           -> @button="fuse";
           showdircompose                                        -> @button="compose";
           showdirevaluate                                       -> @button="evaluate";
+        show_video:beside "Videos:"                           -> @combo("----------------------------------------");
         
       showresultframe                                       -> showresultline;
         showresultline:beside "Main results:"                 -> 
@@ -2802,10 +2803,9 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
   for Set in $(seq $Fusesetnumber); do
     echo "showset${Set}"
   done
-  echo 'showmagick_max showmagick_min show_video;
+  echo 'showmagick_max showmagick_min;
           showmagick_max                                        -> @button="magick.max";
           showmagick_min                                        -> @button="magick.min";
-          show_video:beside "Videos:"                           -> @combo("----------------------------------------");
   '
   for Set in $(seq $Fusesetnumber); do
     echo "showset${Set}                                         -> @button=\"set${Set}\";"
@@ -2965,7 +2965,7 @@ kaptain_update() {
     #sendkaptain "showmagick_median='-'"
   }
   for Set in $(seq $Fusesetnumber); do
-    check_fileglob "$Stackdir/evaluate/*.fuse.set${Set}.median.*" && sendkaptain "showset${Set}='set${Set}'" || sendkaptain "showset${Set}='-'" 
+    check_fileglob "$Stackdir/evaluate/*.fuse.median.set${Set}.*" && sendkaptain "showset${Set}='set${Set}'" || sendkaptain "showset${Set}='-'" 
   done
   check_fileglob "$Stackdir/evaluate/*.fuse.*" && {
     sendkaptain "showfuse_max='fuse.max'"
@@ -3004,10 +3004,10 @@ kaptain_update_preview() {
   grep -q "$Stackdir" <<< "$Currentimage" && [ -e "$Currentimage" ] && showimage "$Currentimage" && return 0
   
   # check for a result to show
-  Image="$(fileglob "$Stackdir/evaluate/*fuse.median*" | head -n1)"
+  Image="$(fileglob "$Stackdir/evaluate/*fuse.median.*" | head -n1)"
   [ -e "$Image" ] && showimage "$Image" && return 0
   
-  Image="$(fileglob "$Stackdir/*fuse.median*" | head -n1)"
+  Image="$(fileglob "$Stackdir/*.fuse.median.*" | head -n1)"
   [ -e "$Image" ] && showimage "$Image" && return 0
   
   Image="$(fileglob "$Stackdir/evaluate/*magick.max*")"
@@ -3682,7 +3682,7 @@ parse_kaptainsignal() {
     ;;
     showset*)
       Image="${Kaptainsignal#show}"
-      Image="$(fileglob "$Stackdir/evaluate/*.fuse.$Image.median.*")"
+      Image="$(fileglob "$Stackdir/evaluate/*.fuse.median.${Image}.*")"
       showimage "$Image"
     ;;
     #showfuse*)
