@@ -730,6 +730,8 @@ setup_imagelist() {
   Imagewidth=$($Convert  -format '%w' "$Image" info:)
   Imageheight=$($Convert -format '%h' "$Image" info:)
   Imageformat="$(get_extension        "$Image")"
+  Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
+  Imagelistmemsize="$((Imagememsize*Imagenumber/1000))"
   LC_ALL=C file $Image | grep -q "raw image" && Imageraw="yes" || Imageraw="no"
   Image=""
   Imagecount=0
@@ -1609,9 +1611,12 @@ evaluate() {
     fuse)
       for Set in $(seq $Fusesetnumber); do
         Sourcefileglob="$(fuse_glob set${Set})"
+        Imagelist="$(fileglob -w "$Sourcedir/$Sourcefileglob")"
+        Imagenumber="$(wc -w <<< "$Imagelist")"
+        Imagelistmemsize="$(Imagewidth*Imageheight*Magickpixelmemory*Imagenumber/1000)"
         for Mode in min mean max median; do
           Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.set${Set}.${Imageformat}"
-          multicore "$Convert $(fileglob -w "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" || return 1 
+          multicore "$Convert $(fileglob -w "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1 
         done
         multicore_wait || return 1
         showpercent $Set $Fusesetnumber
@@ -1621,7 +1626,7 @@ evaluate() {
       for Mode in min mean max median; do
         Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.${Imageformat}"
         [ "$Mode" = "max" ] && Showimage="$Destinationfile"
-        multicore "$Convert $(echo $Imagelist) -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Convert $(echo $Imagelist) -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1
       done
       multicore_wait || return 1
       showimage "$Showimage"
@@ -1692,7 +1697,7 @@ fuse() {
       
       #$Convert "$(head -n1 <<< "$Imagelist")" "$Cachedir/stackfuser-test.gif"
       #Imagememsize="$(du -k $Cachedir/memsizetest.gif | awk '{print $1}')"
-      Imagememsize="$((Imagewidth*Imageheight*16/8/1000))"
+      Imagememsize="$((Imagewidth*Imageheight*16/8/1000))" ### FIXME
   
       Count=0
       for Fusemode in $Modelist; do
@@ -2087,7 +2092,6 @@ imageproperties() {
   local $Batchlocal
   local $Imagelocal
   local Meanimage Imageproperties
-  #local Imagemean Imagequantumrange Imageautogamma Imageminlevel Imagemaxlevel Imageminlevelred Imagemaxlevelred Imageminlevelgreen Imagemaxlevelgreen Imageminlevelblue Imagemaxlevelblue
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -3855,7 +3859,7 @@ declare_variables() {
   Multicore_maxprocesses=$Multicore_maxprocesses
   
   Batchlocal="Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Opt1 Opt2 Opt3 Opt4 Opt5 Opt6 Opt7 Opt8 Opt9"
-  Imagelocal="Image Imagelist Imagewidth Imageheight Imageformat Imagememsize Imagecount Imagenumber Imageraw Cropgeometry Extension"
+  Imagelocal="Image Imagelist Imagewidth Imageheight Imageformat Imagememsize Imagelistmemsize Imagecount Imagenumber Imageraw Cropgeometry Extension"
   Imagepropertieslocal="Imagemean Imagequantumrange Imageautogamma Imageminlevel Imagemaxlevel Imageminlevelred Imagemaxlevelred Imageminlevelgreen Imagemaxlevelgreen Imageminlevelblue Imagemaxlevelblue"
 
   #Convert="nice convert -quality 100%"
@@ -3863,6 +3867,11 @@ declare_variables() {
   command -v convert-im6.q16     >/dev/null && Convert=convert-im6.q16
   command -v convert-im6.q16hdri >/dev/null && Convert=convert-im6.q16hdri
   Convert="nice $Convert -quality 100%"
+  Magickversion="$($Convert -version)"
+  grep -q " Q8 "   <<< "$Magickversion" && Magickpixelmemory="4"
+  grep -q " Q16 "  <<< "$Magickversion" && Magickpixelmemory="8"
+  grep -q " HDRI " <<< "$Magickversion" && Magickpixelmemory="16"
+
 
   Commandstackfile=$Maincachedir/command.stack
   Wizardlogfile=$Maincachedir/stackfuser.log
