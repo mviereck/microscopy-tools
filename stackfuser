@@ -1701,6 +1701,7 @@ fuse() {
       #Imagememsize="$(du -k $Cachedir/memsizetest.gif | awk '{print $1}')"
       Imagememsize="$((Imagewidth*Imageheight*8/1000))" ### FIXME
       Imagelistmemsize="$((Imagememsize*Imagenumber))"
+      Imagelistmemsize="$((Imagelistmemsize*11/10))"
       Count=0
       for Fusemode in $Modelist; do
         Count="$((Count+1))"
@@ -2590,13 +2591,19 @@ multicore() {
   # Run multicore_wait afterwards to wait for the last processes to finish.
   
   local Process
-  local Mem_needed
+  local Mem_needed Zram
   
   [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
     multicore_wait || return 1
   }
   
-  [ "$Multicore_processcount" = "0" ] && Multicore_memorymax="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
+  [ "$Multicore_processcount" = "0" ] && {
+    Multicore_memorymax="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
+    while read Line; do
+      Zram="$(awk '{print ($3 - $4)/1000}' <<< "$Line")"
+      Multicore_memorymax="$((Multicore_memorymax + Zram))"
+    done < <(/sbin/swapon --bytes | grep zram)
+  }
   
   Mem_needed=0
   for Process in $(seq $Multicore_maxprocesses); do
