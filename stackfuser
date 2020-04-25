@@ -2600,7 +2600,8 @@ multicore() {
   [ "$Multicore_processcount" = "0" ] && {
     Multicore_memorymax="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
     while read Line; do
-      Zram="$(awk '{print ($3 - $4)/1000}' <<< "$Line")"
+      Zram="$(awk '{print ($3 - $4)}' <<< "$Line")"
+      Zram="$((Zram/1000))"
       Multicore_memorymax="$((Multicore_memorymax + Zram))"
     done < <(/sbin/swapon --bytes | grep zram)
   }
