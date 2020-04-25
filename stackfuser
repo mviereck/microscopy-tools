@@ -737,11 +737,13 @@ setup_imagelist() {
   Imagecount=0
   Cropgeometry=""
   verbose "setup_imagelist(): $Sourcedir
-  Image number: $Imagenumber
-  Image width : $Imagewidth
-  Image height: $Imageheight
-  Image format: $Imageformat
-  Raw image:    $Imageraw"
+  Image number:   $Imagenumber
+  Image width :   $Imagewidth
+  Image height:   $Imageheight
+  Image format:   $Imageformat
+  Image mem size: $Imagememsize
+  List  mem size: $Imagelistmemsize
+  Raw image:      $Imageraw"
 }
 
 #### image sequence operations
@@ -1697,13 +1699,13 @@ fuse() {
       
       #$Convert "$(head -n1 <<< "$Imagelist")" "$Cachedir/stackfuser-test.gif"
       #Imagememsize="$(du -k $Cachedir/memsizetest.gif | awk '{print $1}')"
-      Imagememsize="$((Imagewidth*Imageheight*16/8/1000))" ### FIXME
-  
+      Imagememsize="$((Imagewidth*Imageheight*16/1000))" ### FIXME
+      Imagelistmemsize="$((Imagememsize*Imagenumber))"
       Count=0
       for Fusemode in $Modelist; do
         Count="$((Count+1))"
 #        multicore "fuse -s '$(dirname "$Layertif")' -g '$(basename "$Layertif")' -d '$Destinationdir' -b '$Destinationfilebasename' -1 '$Fusemode' -2 '$Fuseoption'" "" "$((Filesize*3))" || return 1
-        multicore "fuse -s '$Stretchdir' -g '$Sourcefileglob' -d '$Destinationdir' -c '$Cachedir' -b '$Destinationfilebasename' -1 '$Fusemode' -2 '$Fuseoption' -9 '$Extension'" "" "$((Imagememsize*Imagenumber*3))" || return 1
+        multicore "fuse -s '$Stretchdir' -g '$Sourcefileglob' -d '$Destinationdir' -c '$Cachedir' -b '$Destinationfilebasename' -1 '$Fusemode' -2 '$Fuseoption' -9 '$Extension'" "" "$Imagelistmemsize" || return 1
         showpercent "$Count" "$Modenumber"
       done
       multicore_wait || return 1
