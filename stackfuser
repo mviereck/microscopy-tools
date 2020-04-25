@@ -3866,8 +3866,8 @@ declare_variables() {
   command -v convert             >/dev/null && Convert=convert
   command -v convert-im6.q16     >/dev/null && Convert=convert-im6.q16
   command -v convert-im6.q16hdri >/dev/null && Convert=convert-im6.q16hdri
-  Convert="nice $Convert -quality 100%"
   Magickversion="$($Convert -version)"
+  Convert="nice $Convert -quality 100%"
   grep -q " Q8 "   <<< "$Magickversion" && Magickpixelmemory="4"
   grep -q " Q16 "  <<< "$Magickversion" && Magickpixelmemory="8"
   grep -q " HDRI " <<< "$Magickversion" && Magickpixelmemory="16"
