@@ -1615,7 +1615,7 @@ evaluate() {
         Sourcefileglob="$(fuse_glob set${Set})"
         Imagelist="$(fileglob -w "$Sourcedir/$Sourcefileglob")"
         Imagenumber="$(wc -w <<< "$Imagelist")"
-        Imagelistmemsize="$(Imagewidth*Imageheight*Magickpixelmemory*Imagenumber/1000)"
+        Imagelistmemsize="$((Imagewidth*Imageheight*Magickpixelmemory*Imagenumber/1000))"
         for Mode in min mean max median; do
           Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.set${Set}.${Imageformat}"
           multicore "$Convert $(fileglob -w "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1 
