@@ -731,7 +731,7 @@ setup_imagelist() {
   Imageheight=$($Convert -format '%h' "$Image" info:)
   Imageformat="$(get_extension        "$Image")"
   Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
-  Imagelistmemsize="$((Imagememsize*Imagenumber/1000))"
+  Imagelistmemsize="$((Imagememsize*Imagenumber))"
   LC_ALL=C file $Image | grep -q "raw image" && Imageraw="yes" || Imageraw="no"
   Image=""
   Imagecount=0
@@ -2603,6 +2603,7 @@ multicore() {
   Mem_needed="$((Mem_needed+${3:-0}))"
   [ "$Mem_needed" -gt "$Multicore_memorymax" ] && {
     note "multicore: Low memory. Waiting for $Multicore_processcount running processes to finish. Need: $Mem_needed, Available: $Multicore_memorymax"
+    [ "$Mem_needed" -gt "$Multicore_memorymax" ] && [ "$Multicore_processcount" = "0" ] && note "multicore: Likely hard disk cache will be used and slow down the calculation."
     multicore_wait || return 1
   }
   
@@ -3839,6 +3840,8 @@ declare_variables() {
   Maincachedir="$Cachebasedir/stackfuser"
   Percentcachedir="$Cachebasedir/percent"
   Thumbnaildir="$Cachebasedir/thumbnails"
+  Magickcachedir="$Maincachedir/imagemagick.cache"
+  export MAGICK_TMPDIR="$Magickcachedir"
   
   Configdir="$HOME/.config/stackshots"
   Configfile="$Configdir/stackfuser.cfg"
@@ -3903,6 +3906,7 @@ create_cachefiles() {
   mkdir -p $Thumbnaildir
   mkdir -p $Percentcachedir
   mkdir -p $Configdir
+  mkdir -p $Magickcachedir
   
   :>       $Wizardlogfile
   :>       $Commandstackfile
