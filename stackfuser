@@ -1699,7 +1699,7 @@ fuse() {
       
       #$Convert "$(head -n1 <<< "$Imagelist")" "$Cachedir/stackfuser-test.gif"
       #Imagememsize="$(du -k $Cachedir/memsizetest.gif | awk '{print $1}')"
-      Imagememsize="$((Imagewidth*Imageheight*16/1000))" ### FIXME
+      Imagememsize="$((Imagewidth*Imageheight*8/1000))" ### FIXME
       Imagelistmemsize="$((Imagememsize*Imagenumber))"
       Count=0
       for Fusemode in $Modelist; do
