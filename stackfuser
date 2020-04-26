@@ -379,11 +379,13 @@ setup_workdir() {
       Sourcedir="$Targetmagickdir"
       Destinationdir="$Targetnewdir"
       Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
+      mkdir -p $Targetcomposedir
     ;;
     evaluatefuse)
       Sourcedir="$Targetfusedir"
       Destinationdir="$Targetnewdir"
       Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
+      mkdir -p $Targetcomposedir
     ;;
     compose)
       Sourcedir="$Targetevaluatedir"
@@ -446,17 +448,11 @@ showimage() {
       Image="$(storeinfo dump notfoundimage)"
       [ -e "$Image" ] || $Convert -size 300x200 xc:red -fill black -pointsize 20 -gravity center -draw "text 0,0 'image not found'" "$Image"
       geeqie -t -r File:"$Image"
-      #sendkaptain "showimage('')=''" 
-      #sendkaptain "showimagename=''"
       storeinfo drop showimage
       return 1
     ;;
     1) 
       Image="$Imagelist"
-      #Shrinkimage="$Maincachedir/showimage.png"
-      #$Convert "$Image" -scale 800x800\> "$Shrinkimage" 
-      #sendkaptain "showimage('$Shrinkimage')=''" 
-      #sendkaptain "showimagename='$(shortpath "$Image")'"
       case "$(get_extension "$Image")" in
         gif)
           case $(identify "$Image" | grep -c GIF) in
@@ -709,11 +705,6 @@ runbatchthree() {
   askkaptain evaluate1 >/dev/null        && cmd -f evaluatemagick -t "$Stackdir"
   askkaptain fuse >/dev/null             && cmd -f fuse -1 "all" -t "$Stackdir"
   askkaptain evaluate2 >/dev/null        && cmd -f evaluatefuse -t "$Stackdir"
-#  askkaptain evaluate2 >/dev/null &&  {
-#    Opt1=$(askkaptain evaluateopt1combo)
-#    cmd -f evaluatefuse -1 all -t "$Stackdir" -g "$(fuse_glob $Opt1)"
-#  }
-  askkaptain compose >/dev/null          && cmd -f compose -t "$Stackdir"
   askkaptain deletebackups2 >/dev/null   && cmd -f deletebackups -t "$Stackdir"
   askkaptain deletemagick2  >/dev/null   && cmd -f deletemagick -t "$Stackdir"
   cmd -f showimage -s "$Stackdir/evaluate" -g "*fuse.median*"
@@ -1359,62 +1350,6 @@ $Position"
   done
   multicore_wait || return 1
 }
-compose() {
-  local $Batchlocal
-  local Evalmaxfile Evalminfile Minfile Maxfile 
-  local Destinationfilebasename Imageformat
-  local i Count
-  
-  parse_batchoptions "$@" || return 1
-  
-  Evalmaxfile[0]="$(fileglob "$Sourcedir/*magick.max*")"
-  Evalminfile[0]="$(fileglob "$Sourcedir/*magick.min*")"
-  Evalmaxfile[1]="$(fileglob "$Sourcedir/*fuse.max*")"
-  Evalminfile[1]="$(fileglob "$Sourcedir/*fuse.min*")"
-  
-  [ -z "${Evalmaxfile[0]}${Evalmaxfile[1]}" ] && {
-    failure "compose: No source found. Please run evaluate first."
-    return 1
-  }
-
-  Count=0
-  for i in 0 1 ; do
-    Maxfile="${Evalmaxfile[$i]}"
-    Minfile="${Evalminfile[$i]}"
-    [ -z "$Maxfile" ] && break
-    Destinationfilebasename="$(sed 's/.max.*//' <<< "$Maxfile")"
-    Destinationfilebasename="$(basename "$Destinationfilebasename")"
-    Imageformat="$(get_extension "$Maxfile")"
-    
-    for Opt1 in bumpmap colorburn difference linearburn linearlight modulate multiply overlay pegtoplight; do
-      Count="$((Count + 1))"
-      
-      ifcmdbreak && return 1
-    
-      Destinationfile="$Destinationdir/$Destinationfilebasename.${Opt1}1.$Imageformat"
-      $Convert "$Minfile" "$Maxfile" -compose "$Opt1" -composite "$Destinationfile"
-      note "compose $Opt1: $Destinationfile"
-      showimage "$Destinationfile"
-  
-      case $Opt1 in
-        linearburn|multiply) ;;  # skip second compose for modes with identical result
-        difference)
-          $Convert "$Destinationfile" -negate "$Destinationdir/$Destinationfilebasename.${Opt1}1-negate.$Imageformat"
-          showimage "$Destinationdir/$Destinationfilebasename.${Opt1}1-negate.$Imageformat"
-        ;;
-        *)
-          Destinationfile="$Destinationdir/$Destinationfilebasename.${Opt1}2.$Imageformat"
-          $Convert "$Maxfile" "$Minfile" -compose "$Opt1" -composite "$Destinationfile"
-          echo "$Destinationfile"
-          showimage "$Destinationfile"
-        ;;
-      esac
-      
-      showpercent "$Count" "18"
-    done
-  done
-  return 0
-}
 crop() {
   # crop area of image sequence
   # -m  even|shrink|geometry|interactive
@@ -1604,6 +1539,7 @@ evaluate() {
   local $Batchlocal
   local $Imagelocal
   local Destinationfilebasename Set Mode Showimage
+  local Maxfile Minfile
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1618,23 +1554,32 @@ evaluate() {
         Imagelistmemsize="$((Imagewidth*Imageheight*Magickpixelmemory*Imagenumber/1000))"
         for Mode in min mean max median; do
           Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.set${Set}.${Imageformat}"
+          [ "$Mode" = "max" ] && Maxfile="$Destinationfile"
+          [ "$Mode" = "min" ] && Minfile="$Destinationfile"
+          [ "$Mode" = "median" ] && [ "$Set" = "set1" ] && Showimage="$Destinationfile"
           multicore "$Convert $(fileglob -w "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1 
         done
         multicore_wait || return 1
+        compose -1 "$Maxfile" -2 "$Minfile" -9 "$Imageformat" -d "$Destinationdir/../compose" -b "$Destinationfilebasename.set${Set}" || return 1
         showpercent $Set $Fusesetnumber
       done
+      showimage "$Showimage"
     ;;
     magick)
       for Mode in min mean max median; do
         Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.${Imageformat}"
+        [ "$Mode" = "max" ] && Maxfile="$Destinationfile"
+        [ "$Mode" = "min" ] && Minfile="$Destinationfile"
         [ "$Mode" = "max" ] && Showimage="$Destinationfile"
         multicore "$Convert $(echo $Imagelist) -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1
       done
       multicore_wait || return 1
+      compose -1 "$Maxfile" -2 "$Minfile" -9 "$Imageformat" -d "$Destinationdir/../compose" -b "$Destinationfilebasename" || return 1
       showimage "$Showimage"
       ;;
     *) warning "evaluate(): Undefined handling for source $Sourcedir" ; return 1 ;;
   esac
+  return 0
 }
 fuse() {
   # fuse stackshot of images with enfuse
@@ -2143,6 +2088,49 @@ calc_evengeometry() {
   H=$((H*2))
   Geometry="${W}x${H}+${XY}"
   echo $Geometry
+}
+compose() {
+  local $Batchlocal
+  local $Imagelocal
+  local Minfile Maxfile Mode
+  local Destinationfilebasename
+  local Count
+  
+  parse_batchoptions "$@" || return 1
+  
+  Maxfile="${Opt1:-EMPTY}"
+  Minfile="${Opt2:-EMPTY}"
+  grep -q "EMPTY" <<< "$Maxfile $Minfile" && {
+    failure "compose: No max/min files specified."
+    return 1
+  }
+  Imageformat="${Opt9:-}"
+  [ -z "$Imageformat" ] && Imageformat="$(get_extension "$Maxfile")"
+  Destinationfilebasename="${Destinationfile:-compose}"
+    
+  Count=0
+  for Mode in bumpmap colorburn difference linearburn linearlight modulate multiply overlay pegtoplight; do
+    Count="$((Count + 1))"
+    ifcmdbreak && return 1
+    
+    Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}1.$Imageformat"
+    multicore "$Convert $Minfile $Maxfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
+  
+    case $Mode in
+      linearburn|multiply) ;;  # skip second compose for modes with identical result
+      difference)
+        multicore "$Convert $Destinationfile -negate $Destinationdir/$Destinationfilebasename.${Mode}1-negate.$Imageformat" "$Destinationdir/$Destinationfilebasename.${Mode}1-negate.$Imageformat" || return 1
+      ;;
+      *)
+        Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}2.$Imageformat"
+        multicore "$Convert $Maxfile $Minfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
+      ;;
+    esac
+    multicore_wait
+      
+    #showpercent "$Count" "18"
+  done
+  return 0
 }
 trim_hard() {
   # Function: Trim all border with transparency from image $1
@@ -2774,7 +2762,7 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
           wizardfuse                                            -> @button="fuse" ;
           wizard:beside               "(free option typing)"    -> wizardopt1combo | ! "" ;
         
-      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 compose deletebackups2 deletemagick2;
+      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 deletebackups2 deletemagick2;
         fuseline:beside                                       -> fuse fuseconfig @fill fusemagick;
           fuseconfig                                            -> @button="config" ;
           fusemagick                                            -> @button="magick";
@@ -2785,7 +2773,6 @@ start "stackfuser '$Version'"     -> tabset bottomframe;
         evaluateline2:beside                                  -> evaluate2 evaluatefuse;
           evaluatefuse                                          -> @button="fuse" ;
           evaluate2:beside            "evaluate"                -> "on" | "";
-        compose:beside                "compose"               -> @button="evaluate" "on"        | "";
         deletebackups2:beside         "delete"                -> @button="backups + cache" "on" | "";
         deletemagick2:beside          "delete"                -> @button="magick" "on"          | ! "";
 
@@ -3700,11 +3687,6 @@ parse_kaptainsignal() {
       Image="$(fileglob "$Stackdir/evaluate/*.fuse.median.${Image}.*")"
       showimage "$Image"
     ;;
-    #showfuse*)
-    #  Image="$(cut -d "_" -f2 <<< "$Kaptainsignal")"
-    #  Image="$(fileglob "$Stackdir/evaluate/*.fuse.*.$Image.*")"
-    #  showimage "$Image"
-    #;;
     showdirfm)
       xdg-open "${Stackdir:-$Projecthome}" &
     ;;
@@ -3716,7 +3698,7 @@ parse_kaptainsignal() {
       fuse_config &
     ;;
     
-    *magick|*compose|*evaluate|*fuse|evaluatemagick|compose|align_vidstab|align_ais)
+    *magick|*compose|*evaluate|*fuse|evaluatemagick|align_vidstab|align_ais)
       Command="$Kaptainsignal"
       Command="${Command%evaluate}"
       Command="${Command%fuse}"
