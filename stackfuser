@@ -2286,7 +2286,7 @@ fuse_declare() {
   local Count
   
   Fusemodenumber=25
-  Fusesetnumber=5
+  Fusesetnumber=9
   
   Fuseoptions="exposureweight saturationweight contrastweight entropyweight blendmask grayprojector levels contrastwindowsize contrastmincurvature contrastedgescale"
   Fusearguments="$Fuseoptions lcescale lcefactor"
@@ -2339,24 +2339,40 @@ fuse_getname() {
 }
 fuse_defaultconfig() {
   # set1
-  for Count in 1 2 3 5 6 13 14 20 21 ; do
+  for Count in $(seq $Fusemodenumber); do
     fuse_storevalue $Count set1 !
   done
   # set2
-  for Count in 1 2 3 4 5 6 10 12 14 15 17 20 21 ; do
+  for Count in 1 2 3 5 6 13 14 20 21 ; do
     fuse_storevalue $Count set2 !
   done
   # set3
-  for Count in 1 4 9 10 11 12 14 15 17 20 ; do
+  for Count in 1 2 3 4 5 6 10 12 14 15 17 20 21 ; do
     fuse_storevalue $Count set3 !
   done
   # set4
-  for Count in 7 8 9  11 12 13 14 15 16 17 20 21 22; do
+  for Count in 1 4 9 10 11 12 14 15 17 20 ; do
     fuse_storevalue $Count set4 !
   done
   # set5
-  for Count in 1 2 3 4 5 6; do
+  for Count in 7 8 9  11 12 13 14 15 16 17 20 21 22; do
     fuse_storevalue $Count set5 !
+  done
+  # set6
+  for Count in 1 2 3 4 5 6; do
+    fuse_storevalue $Count set6 !
+  done
+  # set7
+  for Count in 1; do
+    fuse_storevalue $Count set7 !
+  done
+  # set8
+  for Count in 2; do
+    fuse_storevalue $Count set8 !
+  done
+  # set9
+  for Count in 3; do
+    fuse_storevalue $Count set9 !
   done
   
   # Default fuse modes
