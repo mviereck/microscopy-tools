@@ -168,7 +168,7 @@ check_stackdir() {
     Newstackdir="${Newstackdir%/stackshot}"
     Stackdirvalid="yes"
   }
-  
+    
   storeinfo "stackshotdir=$Newstackdir"
   case "$Stackdirvalid" in
     yes)
@@ -191,7 +191,7 @@ check_stackdir() {
       storeinfo drop stackshotdir_valid
       storeinfo drop history
       storeinfo "projectname=np"
-      return 1
+      [ "$(storeinfo dump allow_dir_invalid)" = "yes" ] && return 0 || return 1
     ;;
   esac
 }
@@ -499,13 +499,12 @@ batch_function() {
   local Startzeit
 
   parse_batchoptions "$@"                  || return 1
-  storeinfo test stackshotdir_valid        || {
-    failure "batch_function(): Invalid directory: $(storeinfo dump stackshotdir)"  
-    return 1
-  }
-
   checkvar -d batch Targetdir "$Targetdir" || return 1
   checkvar    batch Function  "$Function"  || return 1
+  check_stackdir "$Targetdir" || {
+    failure "batch_function(): Invalid directory: $Targetdir"  
+    return 1
+  }
   
   ifcmdbreak && return 1
   
@@ -593,23 +592,28 @@ batch_function() {
   storeinfo test rmcache && rm -R "$Cachedir"
   
   [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluate" ] && {
-    storeinfo "refreshgui_selector=yes"
-    # link magick.max
-    ls $Destinationdir/*magick.max* >/dev/null 2>&1 && {
-      ln -f $(fileglob "$Destinationdir/*.magick.max.*") "$Destinationdir/../"
-    }
-    # link fuse.median results
-    ls $Destinationdir/*fuse.median* >/dev/null 2>&1 && {
-      [ -d "$Destinationdir/../stackshot" ] && {
+    
+    storeinfo test stackshotdir_valid && {
+      # link magick.max
+      ls $Destinationdir/*magick.max* >/dev/null 2>&1 && {
+        ln -f $(fileglob "$Destinationdir/*.magick.max.*") "$Destinationdir/../"
+      }
+    
+      # link fuse.median results
+      ls $Destinationdir/*fuse.median* >/dev/null 2>&1 && {
         # link fuse.median result into parent directory
         for Set in $(seq $Fusesetnumber); do
           Image="$(fileglob "$Destinationdir/*.fuse.median.set${Set}.*")"
           [ -e "$Image" ] && ln -f "$Image" "$Destinationdir/../"
         done
+        
         # link into project dir
-        Image="$(find $Destinationdir/*.fuse.median.set2.* $Destinationdir/*.fuse.median.* -type f | head -n1)"
-        [ -e "$Image" ] && ln -f "$Image" "$Destinationdir/../../"
+        [ "$(storeinfo dump projectname)" != "np" ] && {
+          Image="$(find $Destinationdir/*.fuse.median.set2.* $Destinationdir/*.fuse.median.* -type f | head -n1)"
+          [ -e "$Image" ] && ln -f "$Image" "$Destinationdir/../../"
+        }
       }
+      
       # link fuse.median result into $Gallerydir directory
       Gallerydir="$(storeinfo dump gallerydir)"
       [ -d "$Gallerydir" ] && {
@@ -2034,7 +2038,7 @@ wizard() {
   esac
   Options="$Opt1 $Opt2 $Opt3"
   
-  grep -q -E "auto-gamma|auto-level|auto-contrast-stretch|contrast-stretch max" <<< "$Options" && {
+  [ "$Sourcedir" = "$Targetmagickdir" ] && grep -q -E "auto-gamma|auto-level|auto-contrast-stretch|contrast-stretch max" <<< "$Options" && {
     imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir" || return 1
     Options="$(sed "s/-auto-gamma/-gamma $Imageautogamma/ ; 
                            s/-auto-contrast-stretch/-contrast-stretch ${Imageminlevel}x${Imagemaxlevel}/ ; 
@@ -2698,7 +2702,7 @@ start "stackfuser '$Version'"  -> frameset;
     bottomframe                    -> dirframe statusframe ;
     
   dirframe:beside                    -> choosedirguibutton choosedir refreshbutton;
-    choosedirguibutton                 -> @button="Stackshot directory:" ;
+    choosedirguibutton                 -> @button="Stackshot selector" ;
     choosedir                          -> @directory="'$Projecthome'" ;
     refreshbutton                      -> @button="refresh" ;
   statusframe                        -> wizardstatusline ;
@@ -2706,7 +2710,7 @@ start "stackfuser '$Version'"  -> frameset;
       cmdpercent                         -> @icon ;
       wizardlog                          -> @text="" ;
 
-  tabset:tabbed                     -> batchtab specialtab showresulttab;
+  tabset:tabbed                     -> batchtab specialtab configtab showresulttab;
     batchtab "Image batch processing" -> batchoptionframe ;
       batchoptionframe:beside            -> batchframeleft  batchframeright;
         batchframeleft:framed              -> batchblock1 batchblock2 ;
@@ -2881,8 +2885,38 @@ start "stackfuser '$Version'"  -> frameset;
           deleteall                                              -> @button="all";
           deleteallbutvideo                                      -> @button="all but video";
           
+    configtab                         "Configuration"        -> configframe;
+      configframe                                              -> storagebasedirtext storagebasedir allownonconformant gallerydir @fill;
+        storagebasedirtext                                     -> @text="stackfuser expects a directory structure like the one created by stackshooter. \n\
+Basically an otherwise empty parent directory should contain a folder literally called \"stackshot\" that contains the source images.\n\
+You can define the storage base dir where all those parent directories are stored. \n\
+This is especially useful for the \"stackshot selector\" button you can see at the left bottom.\n\
+The directory structure is:\n\
+  [storage base dir]\n\
+                  [projectname]\n\
+                               [stackname]\n\
+                                          stackshot\n\
+                                                   img001.jpg\n\
+                                                   img002.jpg\n\
+                                                   ...\n\
+                               [stackname2]\n\
+                                          stackshot\n\
+                                                   img001.jpg\n\
+                                                   img002.jpg\n\
+                                                   ...\n\
+                  [stackname_without_project_above]\n\
+                               stackshot\n\
+                                        img001.jpg\n\
+                                        img002.jpg\n\
+                                        ...\n\
+" ;
+        storagebasedir:beside         "Storage base dir:"                                                                       -> @directory="'$(storeinfo dump projecthome)'";
+        allownonconformant:beside     "Allow stackshots outside of Storage base dir and without directory \"stackshot\"."       -> "yes" | '$( [ "$(storeinfo dump allow_dir_invalid)" = "no" ] && echo "!")' "no" ;
+        gallerydir:beside             "Gallery directory where one result of each stackshot in the storage base dir is shown:"  -> @directory="'$(storeinfo dump gallerydir)'";
+
+          
     showresulttab:framed              "Results"          -> showsetframe showcomposeframe showdirvideoframe;
-      showsetframe:beside:framed "Evaluate results of fuse image sets" -> showmaxline showminline showmeanline showmedianline;'
+      showsetframe:beside:framed      "Evaluate results of fuse image sets" -> showmaxline showminline showmeanline showmedianline;'
       
   echo -n 'showmaxline:double         "MAX"                  -> '
   for Set in $(seq $Fusesetnumber); do
@@ -3062,14 +3096,14 @@ kaptain_update() {
 kaptain_update_preview() {
   local Stackdir Currentimage Image Cachedir Imagelist Imagenumber
   
+  Stackdir="$(storeinfo dump stackshotdir)"
+
   # check if currently in valid dir, otherwise clear display
-  storeinfo test stackshotdir_valid || {
+  check_stackdir "$Stackdir" || {
     storeinfo drop showimage
     showimage notfound
     return 0
   }
-
-  Stackdir="$(storeinfo dump stackshotdir)"
   
   # check if an image of current stackdir is shown
   Currentimage="$(storeinfo dump showimage)"
@@ -3089,7 +3123,7 @@ kaptain_update_preview() {
   [ -e "$Image" ] && showimage "$Image" && return 0
 
   Imagelist="$(fileglob "$Stackdir/magick/*")"
-  [ "$Imagelist" ] &&{
+  [ "$Imagelist" ] && {
     Imagenumber="$(grep -c . <<< "$Imagelist")"
     Image="$(head -n$((Imagenumber/2)) <<< "$Imagelist" | tail -n1)"
     showimage "$Image"
@@ -3097,13 +3131,20 @@ kaptain_update_preview() {
   }
   
   Imagelist="$(fileglob "$Stackdir/stackshot/*")"
-  [ "$Imagelist" ] &&{
+  [ "$Imagelist" ] && {
     Imagenumber="$(grep -c . <<< "$Imagelist")"
     Image="$(head -n$((Imagenumber/2)) <<< "$Imagelist" | tail -n1)"
     showimage "$Image"
     return 0
   }
   
+  Imagelist="$(fileglob "$Stackdir/*")"
+  [ "$Imagelist" ] && {
+    Imagenumber="$(grep -c . <<< "$Imagelist")"
+    Image="$(head -n$((Imagenumber/2)) <<< "$Imagelist" | tail -n1)"
+    showimage "$Image"
+    return 0
+  }
   return 1
 }
 showpercent() {
@@ -3728,6 +3769,20 @@ parse_kaptainsignal() {
   Stackdir="$(storeinfo dump stackshotdir)"
   Projecthome="$(storeinfo dump projecthome)"
   
+  case $Kaptainsignalsuffix in
+    on|off)
+      case $Kaptainsignal in
+        allownonconformant)
+          case $Kaptainsignalsuffix in
+            on)  storeinfo "allow_dir_invalid=yes" ;;
+            off) storeinfo "allow_dir_invalid=no" ;;
+          esac
+        ;;
+      esac
+      return 0
+    ;;
+  esac
+  
   case $Kaptainsignal in
     refreshbutton) 
       #kaptain_update
@@ -3832,6 +3887,8 @@ ifcmdbreak() {
 }
 stack_cmd() {
   local Command Commandpid Return
+  trap "storeinfo cmdbreak=yes ; storeinfo exit=yes" SIGINT
+
   while :; do
     read -t1 Command
     storeinfo test cmdbreak && {
@@ -3924,7 +3981,6 @@ declare_variables() {
   export MAGICK_TMPDIR="$Magickcachedir"
   
   Configdir="$HOME/.config/stackshots"
-  Configfile="$Configdir/stackfuser.cfg"
   Enfuseconfigfile="$Configdir/stackfuser.enfuse.cfg"
   
   Projecthome="$HOME/Bilder/stackshots"
@@ -3960,7 +4016,7 @@ declare_variables() {
   Wizardlogfile=$Maincachedir/stackfuser.log
   Wizardmessagefile=$Maincachedir/stackfuser.message.log
   
-  Storeinfofile=$Maincachedir/store.info
+  Storeinfofile=$Configdir/stackfuser.cfg
   Storepidfile=$Maincachedir/store.pid
     
   Imgruler="$(command -v imgruler)"
@@ -3992,9 +4048,10 @@ create_cachefiles() {
   mkdir -p $Configdir
   mkdir -p $Magickcachedir
   
+  touch    $Storeinfofile
+  
   :>       $Wizardlogfile
   :>       $Commandstackfile
-  :>       $Storeinfofile
   :>       $Storepidfile
   
   #touch    $Enfuseconfigfile
@@ -4009,7 +4066,7 @@ check_dependencies() {
 finish() {
   local Line Pid Comm
 
-  trap - EXIT
+  trap - SIGINT
 
   while read Line; do
     Pid="$(awk  '{print $1}' <<< "$Line")"
@@ -4022,7 +4079,8 @@ finish() {
 }
 main() {
   local Kaptainpid Kaptainsignal Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptaingrammarfile
-  trap finish EXIT
+  #trap finish EXIT
+  trap "storeinfo cmdbreak=yes ; storeinfo exit=yes" SIGINT
   
   # init
   declare_variables
@@ -4030,16 +4088,17 @@ main() {
   check_dependencies
     
   storeinfo "cache=$Maincachedir"
-  storeinfo "projecthome=$Projecthome"
-  storeinfo "stackshotdir=$Projecthome"
-  storeinfo "gallerydir=$Gallerydir"
+  storeinfo test projecthome  || storeinfo "projecthome=$Projecthome"
+  storeinfo test stackshotdir || storeinfo "stackshotdir=$Projecthome"
+  storeinfo test gallerydir   || storeinfo "gallerydir=$Gallerydir"
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
+  storeinfo test allow_dir_invalid || storeinfo "allow_dir_invalid=yes"
   #storeinfo "rmcache=yes"
-  
+  storeinfo drop exit
+
   fuse_declare
   [ -e "$Enfuseconfigfile" ] || fuse_defaultconfig
-  [ -e "$Configfile" ] && source "$Configfile"
 
   # start kaptain
   Kaptaingrammarfile="$Maincachedir/gui_main.kaptain.grammar"
@@ -4047,7 +4106,7 @@ main() {
   Kaptainstdoutfile="$Maincachedir/gui_main.kaptain.stdout"
   Kaptainanswerfile="$Maincachedir/gui_main.kaptain.reply"
   Kaptainpipefile="$Maincachedir/gui_main.kaptain.pipe.sh"
-  
+
   kaptaingrammar > $Kaptaingrammarfile
   nl -ba $Kaptaingrammarfile
   :>     "$Kaptainstdinfile"
@@ -4063,6 +4122,7 @@ main() {
 
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
+    storeinfo test exit && break
     storeinfo test refreshgui_main && {
       storeinfo drop refreshgui_main
       kaptain_update
@@ -4070,8 +4130,6 @@ main() {
     read -t1 Kaptainsignal
     [ "$Kaptainsignal" ] && {
       echo "Signal from kaptain: $Kaptainsignal"
-      grep -q ":on"      <<< "$Kaptainsignal" && Kaptainsignal=""
-      grep -q ":off"     <<< "$Kaptainsignal" && Kaptainsignal=""
       grep -q "combo"    <<< "$Kaptainsignal" && Kaptainsignal=""
       grep -q ":pressed" <<< "$Kaptainsignal" && {
         Stackdir="$(askkaptain choosedir)"
@@ -4081,6 +4139,10 @@ main() {
           storeinfo "refreshgui_fuse=yes"
           #kaptain_update
         }
+        Gallerydir="$(askkaptain gallerydir)"
+        storeinfo "gallerydir=$Gallerydir"
+        storeinfo "allow_dir_invalid=$(askkaptain allownonconformant)"
+        storeinfo "projecthome=$(askkaptain storagebasedir)"
       }
       Kaptainsignal="${Kaptainsignal%:pressed}"
     }
@@ -4089,6 +4151,12 @@ main() {
   
   ps -p $Kaptainpid >/dev/null && kill $Kaptainpid
   rm $Maincachedir/gui_main.*
+  
+  trap - SIGINT
+  while [ "$(storeinfo dump status)" = "work" ]; do
+    echo "Waiting for current batch to terminate ..."
+    sleep 1
+  done
 }
 
 main "$@"
