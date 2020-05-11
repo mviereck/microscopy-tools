@@ -3784,7 +3784,7 @@ parse_kaptainsignal() {
   esac
   
   case $Kaptainsignal in
-    refreshbutton) 
+    refresh) 
       #kaptain_update
       note "Refreshing GUI and preview"
       storeinfo drop showimage
@@ -4088,13 +4088,14 @@ main() {
   check_dependencies
     
   storeinfo "cache=$Maincachedir"
-  storeinfo test projecthome  || storeinfo "projecthome=$Projecthome"
-  storeinfo test stackshotdir || storeinfo "stackshotdir=$Projecthome"
-  storeinfo test gallerydir   || storeinfo "gallerydir=$Gallerydir"
+  storeinfo test projecthome       || storeinfo "projecthome=$Projecthome"
+  storeinfo test stackshotdir      || storeinfo "stackshotdir=$Projecthome"
+  storeinfo test gallerydir        || storeinfo "gallerydir=$Gallerydir"
+  storeinfo test allow_dir_invalid || storeinfo "allow_dir_invalid=yes"
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
-  storeinfo test allow_dir_invalid || storeinfo "allow_dir_invalid=yes"
   #storeinfo "rmcache=yes"
+  storeinfo drop cmdbreak
   storeinfo drop exit
 
   fuse_declare
@@ -4118,7 +4119,7 @@ main() {
   storepid $Kaptainpid
 
   storeinfo "refreshgui_main=yes"
-  stack_cmd    & storepid $!
+  stack_cmd & storepid $!
 
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
@@ -4153,6 +4154,8 @@ main() {
   rm $Maincachedir/gui_main.*
   
   trap - SIGINT
+  storeinfo cmdbreak=yes
+  storeinfo exit=yes
   while [ "$(storeinfo dump status)" = "work" ]; do
     echo "Waiting for current batch to terminate ..."
     sleep 1
