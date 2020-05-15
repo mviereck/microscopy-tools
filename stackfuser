@@ -4075,7 +4075,6 @@ finish() {
   done <$Storepidfile
 
   rm -R $Maincachedir
-  exit 0
 }
 main() {
   local Kaptainpid Kaptainsignal Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptaingrammarfile
@@ -4095,9 +4094,12 @@ main() {
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
   #storeinfo "rmcache=yes"
+  
   storeinfo drop cmdbreak
   storeinfo drop exit
-
+  storeinfo drop stackshot_selector
+  storeinfo drop fuse_config
+  
   fuse_declare
   [ -e "$Enfuseconfigfile" ] || fuse_defaultconfig
 
@@ -4164,17 +4166,16 @@ main() {
 
 main "$@"
 finish
+exit 0
 
 ##### ToDo ####
 # crop option for align_ais
+# align_vidstab: select area for alignment
 # improve lightbalance
 # check webm quality
 # crop: Do not crop if geometry is same as image
 # configuration dialog:
-#  - project directory
-#  - gallery directory
 #  - number of threads
-#  - checkbutton: "allow invalid directory structure"
 #  - checkbutton: "keep cache"
 # storepid(): store name, too, check in finish()
 # cli support
