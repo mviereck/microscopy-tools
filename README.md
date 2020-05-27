@@ -4,14 +4,23 @@ Tools for microscopy and image focus stacking.
 
  - Tools ready for use:
    - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image (Terminal)
- - Tools in active development, beta stage:
-   - [`stackfuser`](#stackfuser): Combine focus stack images. (GUI)
+ - Tools in active development:
+   - [`imfuse`](#imfuse): Fuse focus stackshot images with imagemagick. (Terminal)
+   - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
    - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
    
 `stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
 However, if you are already interested to try them out, please give me some feedback in the [issue tracker](https://github.com/mviereck/microscopy-tools/issues) and I'll help to set them up.
 
+## imfuse
+
+Fuse focus stackshot images with ImageMagick. (Terminal)
+
+Dependencies:
+ - `imagemagick`
+ - `geeqie` (optional)
+ - `enfuse` (optional)
 
 ## imgruler
 
