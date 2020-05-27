@@ -7,6 +7,7 @@ Tools for microscopy and image focus stacking.
  - Tools in active development:
    - [`imfuse`](#imfuse): Fuse focus stackshot images with imagemagick. (Terminal)
    - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
+ - Tools awaiting further development:
    - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
    
