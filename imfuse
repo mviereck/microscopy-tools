@@ -1,0 +1,563 @@
+#! /bin/bash
+
+# imfuse
+Version="0.1"
+
+usage() {
+  echo "imfuse v$Version - combine focus stackshot images to an overall sharp image.
+Aims to be similar to enfuse, but with the help of ImageMagick.
+
+Dependencies:
+  imagemagick      Mandatory (command 'convert' or 'magick').
+  geeqie           Optional, used by option -V, --showimage.
+  enfuse           Optional, used by option --enfuse.
+
+Usage:
+  imfuse [OPTIONS] -- image1 image2 image3 ...
+
+General options:
+     --cachedir=DIR          Specify a cache folder.
+ -h, --help                  Show this help and exit.
+     --list                  Print available methods and exit.
+ -o, --output=FILE           Specify result image.
+ -v, --verbose               Show verbose output.
+     --version               Show imfuse version and exit.
+ -V, --showimage             Show intermediate results with geeqie.
+ 
+Mask generating methods: (Default: --statistic)
+     --blur                  Difference of -blur.
+                             Takes options: 
+                               --radius           Default: 0
+                               --sigma1           Default: 3
+                               --sigma2           Default: 1.6*sigma1
+     --compass               Compass edge detection. 
+     --dog                   Difference of Gaussians.
+                             Takes options: 
+                               --radius           Default: 0
+                               --sigma1           Default: 0.5
+                               --sigma2           Default: 1.6*sigma1
+     --enfuse [=ENFUSEARGS]  Uses external binary enfuse.
+                             Takes options: 
+                               --radius           Default: 5
+                               --mode=soft|hard   Default: soft
+                             Optionally add custom enfuse options ENFUSEARGS.
+                             
+     --freichen              Frei-Chen edge detection. 
+     --kirsch                Kirsch edge detection. 
+     --laplacian
+     --log                   Logarithm of Gaussian.
+                             Takes options: 
+                               --radius           Default: 0
+                               --sigma1           Default: 0.5
+     --max                   Maximal values in sequence. 
+                             Fast and pretty result.
+     --mean                  Average of sequence. 
+                             Useful to combine imfuse results.
+     --median                Middle values in sequence. 
+                             Useful to combine imfuse results.
+     --min                   Minimal values in sequence. 
+     --prewitt               Prewitt edge detection. 
+     --roberts               Roberts edge detection. 
+     --sobel                 Sobel edge detection. 
+     --statistic             ImageMagick option -statistic.
+                             Takes options:
+                               --radius           Default: 5
+                               --mode=MODE        Default: standarddeviation
+                                 MODE is one of:
+                                      gradient|grad
+                                      maximum|max
+                                      mean
+                                      median
+                                      minimum|min
+                                      mode
+                                      nonpeak
+                                      rms
+                                      standarddeviation|dev
+     --unsharp               Difference of -unsharp.
+                             Takes options: 
+                               --radius           Default: 0
+                               --sigma1           Default: 3
+                               --sigma2           Default: 1.6*sigma1
+                                      
+
+Method settings: (Effect depends on method, see above.)
+ -r, --radius=RADIUS         Automatically chooses a radius if RADIUS=0
+ -s, --sigma, --sigma1=SIGMA
+ -S, --sigma2=SIGMA
+ -m, --mode=MODE
+ 
+Method independent adjustments:
+     --addmax                Add a maximum image of source images to image list.
+     --addmean               Begin with a mean image of source images.
+     --addmin                Add a minimum image of source images to image list.
+     --gray                  Use grayscaled images for mask generation.
+     
+One way to pretty results:
+  imfuse -V --max IMAGELIST
+  imfuse -V --radius=3 IMAGELIST
+  imfuse -V --radius=5 IMAGELIST
+  imfuse -V --radius=7 IMAGELIST
+  imfuse -V --radius=9 IMAGELIST
+  imfuse -V --mean imfuse.*
+"
+}
+
+### Messages
+
+error() {
+  echo "imfuse ERROR: $*" >&2
+  exit 1
+}
+note() {
+  echo "imfuse note: $*"
+  return 0
+}
+verbose() {
+  [ "$Verbose" = "yes" ] && echo "imfuse: $*"
+  return 0
+}
+showimage() {
+  [ "$Showimage" = "yes" ] && geeqie -t -r File:"${1:-}" &
+  return 0
+}
+
+### Fuse focus stackshot
+
+fuse_focus_stackshot()  {
+  # fuse focus image stackshot.
+  # Based on snibgo's focus stacking script at http://im.snibgo.com/focstack.htm
+  
+  local Image Count
+  local Sourcemask Resultmask Diffmask 
+  local Maskgenerator Maskgenerator2
+  local Writesourcemask Writeresultmask Writediffmask
+  
+  # Use first image as base of result
+  $Convert $(head -n1 <<< "$Imagelist") "$Resultimage"
+  Imagelist="$(tail -n+2 <<< "$Imagelist")"
+  
+  # Interate on rest of image list
+  Count=1
+  for Sourceimage in $Imagelist; do
+    Count="$((Count+1))"
+    Sourcemask="$Cachedir/mask.${Count}.source.tif"
+    Resultmask="$Cachedir/mask.${Count}.result.tif"
+    Diffmask="$Cachedir/mask.${Count}.diff.tif"
+    [ "$Savemasks" = "yes" ] && {
+      Writesourcemask="-write $Sourcemask"
+      Writeresultmask="-write $Resultmask"
+      Writediffmask="-write $Diffmask"
+    }
+    
+    verbose "Processing Image $Count / $Imagenumber with method $Method: $Sourceimage" 
+    
+    # Mask generating ImageMagick options
+    # Most of them are based on edge detection: http://www.imagemagick.org/Usage/convolve/#edgedet
+    Maskgenerator=""
+    Maskgenerator2=""
+    case $Method in
+      blur)
+        # Compare two blurred images with different sigma.
+        # Concept and result is similar to Difference of Gaussian (DoG). Using -gaussian-blur gives same as DoG.
+        # Code based on https://im.snibgo.com/simpalign.htm#twoBlrDiff.bat
+        Maskgenerator="( -clone 0 -blur ${Radius}x${Sigma1} ) \
+                       ( -clone 0 -blur ${Radius}x${Sigma2} ) \
+                       -delete 0 \
+                       -compose Difference -composite"
+#                       -grayscale RMS"
+      ;;
+      blur2)
+        Maskgenerator="( -clone 0 -blur ${Radius}x${Sigma1} ) \
+                       ( -clone 0 -blur ${Radius}x${Sigma2} ) \
+                       -delete 0 \
+                       -compose Mathematics -define compose:args=0,-4,4,0.5 -composite \
+                       -grayscale RMS"
+      ;;
+      compass)
+        Maskgenerator="-define convolve:scale=50%! \
+                       -bias 50% \
+                       -morphology Convolve Compass" ### FIXME
+      ;;
+      dog) # DoG: Difference of Gaussian
+        # This will generate a 'DoG' or "Difference of Gaussians" kernel in which 
+        # the gaussian generated by 'sigma1' will have the gaussian generated by 'sigma2' subtracted from it. 
+        # Normally 'sigma2' is the larger so that the 'central peak' of the kernel is positive. 
+        # Reversing the two numbers will effectivally negate the resulting kernel. 
+        # By generating two 'Gaussian' kernels of slightly different sigma values (in a ratio of approximatally 1.6), 
+        # and subtracting them from each other you can actually generate a close approximation of a Laplacian of a Gaussian. 
+        Maskgenerator="-bias 50% \
+                       -morphology Convolve DoG:$Radius,$Sigma1,$Sigma2"
+      ;;
+      enfuse) # enfuse masks instead of ImageMagick
+        (
+          cd "$Cachedir" 
+          enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 \
+               --save-masks \
+               --hard-mask \
+               --contrast-window-size=$Radius \
+               -o enfuse-out.tif \
+               $Addoptions \
+               "$Sourceimage" "$Resultimage" \
+               2>&1 | grep -v -E 'no usable resolution|loading next image|will assume 300 dpi|assuming all pixels|does not have an alpha channel'
+          mv ${Mode}mask-1.tif $Sourcemask
+          mv ${Mode}mask-2.tif $Resultmask
+          rm softmask-1.tif softmask-2.tif hardmask-1.tif hardmask-2.tif enfuse-out.tif 2>/dev/null
+        )
+        Maskgenerator=" -delete 0 $Sourcemask"
+        Maskgenerator2="-delete 0 $Resultmask"
+      ;;
+      experimental)
+        Maskgenerator="( -clone 0 -blur ${Radius}x${Sigma1} ) \
+                       ( -clone 0 -blur ${Radius}x${Sigma2} ) \
+                       -delete 0 \
+                       -compose Difference -composite \
+                       "
+      ;;
+      freichen)
+        Maskgenerator="-define convolve:scale=50%! \
+                       -define morphology:compose=Lighten \
+                       -bias 50% \
+                       -morphology Convolve FreiChen:>" ### FIXME allow more modes
+      ;;
+      kirsch)
+        Maskgenerator="-define convolve:scale=50%! \
+                       -bias 50% \
+                       -morphology Convolve Kirsch" ### FIXME
+      ;;
+      laplacian)
+        Maskgenerator="-bias 50% \
+                       -define convolve:scale=! \
+                       -morphology Convolve Laplacian:$Mode"
+      ;;
+      log)  # LoG: Laplacian of Gaussian
+        Maskgenerator="-bias 50% \
+                       -morphology Convolve LoG:${Radius}x${Sigma}"
+      ;;
+      prewitt)
+        Maskgenerator="-define convolve:scale=50%! \
+                       -bias 50% \
+                       -morphology Convolve Prewitt" ### FIXME
+      ;;
+      roberts)
+        Maskgenerator="-define morphology:compose=Lighten \
+                       -bias 50% \
+                       -morphology Convolve Roberts:@"
+      ;;
+      sobel)
+        Maskgenerator="-define convolve:scale=! \
+                       -bias 50% \
+                       -define morphology:compose=Lighten \
+                       -morphology Convolve Sobel:>"
+      ;;
+      statistic)
+        Maskgenerator="-statistic $Mode ${Radius}x${Radius}"
+      ;;
+      unsharp)
+        Maskgenerator="( -clone 0 -unsharp ${Radius}x${Sigma1} ) \
+                       ( -clone 0 -unsharp ${Radius}x${Sigma2} ) \
+                       -delete 0 \
+                       -compose Difference -composite \
+                       -grayscale RMS"
+      ;;
+    esac
+    Maskgenerator2="${Maskgenerator2:-$Maskgenerator}"
+    
+    # Apply masks to fuse current source image with result image
+    $Convert \
+      $Sourceimage -write mpr:sourceimage $Graycolorspace $Maskgenerator                   -write mpr:sourcemask $Writesourcemask -delete 0 \
+      $Resultimage -write mpr:resultimage $Graycolorspace $Maskgenerator2                  -write mpr:resultmask $Writeresultmask -delete 0 \
+      mpr:sourcemask mpr:resultmask -compose MinusDst -composite -fill white +opaque black -write mpr:diffmask   $Writediffmask   -delete 0 \
+      mpr:sourceimage \
+      mpr:resultimage \
+      mpr:diffmask \
+      -alpha off \
+      -compose Over -composite \
+      "$Resultimage"
+      
+    showimage "$Resultimage"
+  done
+  
+  return 0
+}
+
+### main
+
+declare_variables() {
+  Addoptions=""
+  Convert=""
+  Graycolorspace=""
+  Imagelist=""
+  Imagenumber=""
+  Addmax=""
+  Addmean="no"
+  Method=""
+  Methodlist="blur
+compass
+dog
+enfuse
+freichen
+kirsch
+laplacian
+log
+prewitt
+roberts
+sobel
+statistic"
+  Addmin=""
+  Mode=""
+  Outputimage=""
+  Savemask="no"
+  Showimage="no"
+  Cachedir=""
+  Radius=""
+  Sigma1=""
+  Sigma2=""
+  Verbose="no"
+  return 0
+}
+parse_options() {
+  local Shortoptions Longoptions Parsedoptions Parsererror Parsererrorfile
+  
+  Shortoptions="hm:o:r:s:S:vV"
+  Longoptions="cachedir:,help,list,verbose,version,output:,showimage"
+  Longoptions="$Longoptions,addmax,addmean,addmin,gray,grey,mode:,radius:,sigma:,sigma1:,sigma2:"
+  Longoptions="$Longoptions,blur,compass,dog,enfuse::,experimental,freichen,kirsch,laplacian,log,prewitt,roberts,sobel,statistic::,unsharp"  
+  Longoptions="$Longoptions,max,min,mean,median"  
+
+  Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
+  Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@" 2>"$Parsererrorfile")"
+  [ -e $Parsererrorfile ] && Parsererror="$(cat "$Parsererrorfile")" && rm "$Parsererrorfile"
+  [ "$Parsererror" ] && error "$Parsererror"
+  eval set -- "$Parsedoptions"
+  
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --help)              usage ; exit ;;
+      --list)              echo "$Methodlist"; exit 0 ;;
+      --gray|--grey)       Graycolorspace="yes" ;;
+      --addmax)            Addmax="yes" ;;
+      --addmean)           Addmean="yes" ;;
+      --addmin)            Addmin="yes" ;;
+      --mode)              Mode="${2:-$Mode}" ; shift ;;
+      -o|--output)         Outputimage="${2:-}" ; shift ;;
+      -V|--showimage)      Showimage="yes" ;;
+      -s|--sigma|--sigma1) Sigma1="${2:-}" ; shift ;;
+      -S|--sigma2)         Sigma2="${2:-}" ; shift ;;
+      -r|--radius)         Radius="${2:-}" ; shift ;;
+      --cachedir)          Cachedir="${2:-}" ; Savemask="yes" ; shift ;;
+      -v|--verbose)        Verbose="yes" ;;
+         --version)        echo "imfuse v$Version"; exit 0 ;;
+      --blur|--compass|--dog|--enfuse|--experimental|--freichen|--kirsch|--laplacian|--log|--max|--mean|--median|--min|--prewitt|--roberts|--sobel|--statistic|--unsharp) 
+        Method="${1#--}" 
+        [ "$Method" = "enfuse" ]    && Addoptions="${2:-}" && shift
+        [ "$Method" = "statistic" ] && Mode="${2:-$Mode}"  && shift
+      ;;  
+      --) ;;
+      *) Imagelist="$Imagelist
+$(realpath "${1:-}")" ;;
+    esac
+    shift
+  done
+  return 0
+}
+check_options() {
+  [ -z "$Imagelist" ] && error "No images specified"
+  
+  # --method
+  case $Method in
+    enfuse)
+      command -v enfuse >/dev/null || error "--enfuse: command enfuse not found. Please install enfuse."
+    ;;
+    "")
+      Method="statistic"
+      note "Setting --$Method"
+    ;;
+  esac
+  
+  # --sigma1
+  case $Method in
+    experimental) ;;
+    blur|dog|log|unsharp)
+      [ -z "$Sigma1" ] && {
+        Sigma1="0.5"
+        note "Setting --sigma=$Sigma1"
+      }
+    ;;
+    *)
+      [ -n "$Sigma1" ] && {
+        note "Not used with --method=$Method: --sigma=$Sigma1"
+        Sigma1=""
+      }
+    ;;
+  esac
+  
+  # --sigma2
+  case $Method in
+    experimental) ;;
+    blur|dog|unsharp)
+      [ -z "$Sigma2" ] && {
+        Sigma2="$(awk "BEGIN {print $Sigma1 * 1.6}")"
+        note "Setting --sigma2=$Sigma2"
+      }
+    ;;
+    *)
+      [ -n "$Sigma2" ] && {
+        note "Not used with --method=$Method: --sigma2=$Sigma2"
+        Sigma2=""
+      }
+    ;;
+  esac
+  
+  # --mode
+  case $Method in
+    experimental) ;;
+    laplacian)
+      [ -z "$Mode" ] && {
+        Mode="0"
+        note "Setting --mode=$Mode"
+      }
+    ;;
+    enfuse)
+      case $Mode in
+        soft|hard) ;;
+        "")
+          Mode="soft"
+          note "Setting --mode=$Mode"
+        ;;
+        *)
+          Mode="soft"
+          note "--enfuse accepts modes 'hard' or 'soft'.
+  Setting --mode=$Mode"
+        ;;
+      esac
+    ;;
+    statistic)
+      case $Mode in
+        gradient|maximum|minimum|mean|median|mode|nonpeak|rms|standarddeviation) ;;
+        dev|standard-deviation)  Mode="standarddeviation" ;;
+        grad) Mode="gradient" ;;
+        max)  Mode="maximum" ;;
+        min)  Mode="minimum" ;;
+        "")
+          Mode="standarddeviation"
+          note "Setting --mode=$Mode"
+        ;;
+        *)
+          note "--statistic: unknown mode $Mode.
+  Setting --mode=standarddeviation"
+          Mode="standarddeviation"
+        ;;
+      esac
+    ;;
+    *)
+      [ -n "$Mode" ] && {
+        note "Not used with --method=$Method: --mode=$Mode"
+        Mode=""
+      }
+    ;;
+  esac
+  
+  # --radius
+  grep -q "\." <<< "$Radius" && {
+    Radius="0"
+    note "--radius takes integer values only.
+  Setting --radius=0 (auto)"
+  }
+  [ -z "$Radius" ] && Radius="0"
+  case $Method in
+    enfuse) 
+      [ "$Radius" = "0" ] && Radius="5"
+      [ "$Radius" -lt "3" ] && {
+        note "--enfuse needs a radius of at least 3.
+  Setting --radius=3"
+      }
+      [ "$((Radius%2))" -eq 0 ] && {
+        Radius="$((Radius+1))"
+        note "--enfuse needs an odd value for --radius.
+  Setting --radius=$Radius"
+      }
+    ;;
+    statistic)
+      [ "$Radius" = "0" ] && {
+        Radius="5"
+        note "Setting --radius=$Radius"
+      }
+    ;;
+  esac
+  
+  # --gray
+  [ "$Graycolorspace" = "yes" ] && Graycolorspace="-colorspace gray"
+  
+  # --cachedir
+  [ -z "$Cachedir" ] && Cachedir="/tmp/imfuse.$RANDOM"
+  Cachedir="$(realpath "$Cachedir")"
+  
+  #--output
+  [ -z "$Outputimage" ] && {
+    case $Method in
+      blur|dog|unsharp)             Outputimage="imfuse.${Method}.${Radius}x${Sigma1}-${Radius}x${Sigma2}.tif" ;;
+      laplacian)                    Outputimage="imfuse.${Method}.${Mode}.tif" ;;
+      statistic)                    Outputimage="imfuse.${Method}.${Mode}.${Radius}.tif" ;;
+      log)                          Outputimage="imfuse.${Method}.${Radius}x${Sigma1}.tif";;
+      *)                            Outputimage="imfuse.${Method}.tif" ;;
+    esac
+    note "Setting --output=$Outputimage"
+  }
+  Resultimage="$Cachedir/imfuse.result.tif"
+  Outputimage="$(realpath $Outputimage)"
+  
+  return 0
+}
+main() {
+  #set -eu
+  
+  declare_variables
+  parse_options "$@"
+  check_options
+  
+  Imagelist="$(grep -v -x "" <<< "$Imagelist")"
+  Imagenumber="$(grep -c "." <<< "$Imagelist")"
+  
+  command -v convert >/dev/null && Convert="convert"
+  command -v magick  >/dev/null && Convert="magick"
+  [ -z "$Convert" ] && error "Neither command convert nor magick found. Please install ImageMagick."
+  
+  mkdir -p $Cachedir
+  
+  # --addmean
+  [ "$Addmean" = "yes" ] && {
+    $Convert $(echo $Imagelist) -evaluate-sequence mean $Cachedir/mean.tif
+    Imagelist="$Cachedir/mean.tif
+$Imagelist"
+  }
+  # --addmin
+  [ "$Addmin" = "yes" ] && {
+    $Convert $(echo $Imagelist) -evaluate-sequence min $Cachedir/min.tif
+    Imagelist="$Cachedir/min.tif
+$Imagelist"
+  }
+  # --addmax
+  [ "$Addmax" = "yes" ] && {
+    $Convert $(echo $Imagelist) -evaluate-sequence max $Cachedir/max.tif
+    Imagelist="$Cachedir/max.tif
+$Imagelist"
+  }
+ 
+  case $Method in
+    max|min|mean|median)
+      $Convert $(echo $Imagelist) -evaluate-sequence $Method $Resultimage
+    ;;
+    *)
+      fuse_focus_stackshot
+    ;;
+  esac
+  
+  cp "$Resultimage" "$Outputimage"
+  showimage "$Outputimage"
+  
+  [ "$Savemask" = "no" ] && rm -R "$Cachedir"
+  
+  return 0
+}
+
+main "$@"
