@@ -39,12 +39,15 @@ Mask generating methods: (Default: --statistic)
      --enfuse [=ENFUSEARGS]  Uses external binary enfuse.
                              Takes options: 
                                --radius           Default: 5
-                               --mode=soft|hard   Default: soft
                              Optionally add custom enfuse options ENFUSEARGS.
-                             
+                             One of interest is '--hard-mask'.
+                             --radius sets --contrast-window-size=RADIUS.
+     --free='IMOPTION'       Custom ImageMagick option IMOPTION 
+                             for mask generation. Default: '-edge 2'
      --freichen              Frei-Chen edge detection. 
      --kirsch                Kirsch edge detection. 
-     --laplacian
+     --laplacian [=MODE]     Laplacian edge detection.
+                             MODE is the kernel number to use.
      --log                   Logarithm of Gaussian.
                              Takes options: 
                                --radius           Default: 0
@@ -59,11 +62,10 @@ Mask generating methods: (Default: --statistic)
      --prewitt               Prewitt edge detection. 
      --roberts               Roberts edge detection. 
      --sobel                 Sobel edge detection. 
-     --statistic             ImageMagick option -statistic.
+     --statistic [=MODE]     ImageMagick option -statistic.
                              Takes options:
-                               --radius           Default: 5
-                               --mode=MODE        Default: standarddeviation
-                                 MODE is one of:
+                               --radius           Default: 6
+                             Argument MODE is one of:
                                       gradient|grad
                                       maximum|max
                                       mean
@@ -73,6 +75,11 @@ Mask generating methods: (Default: --statistic)
                                       nonpeak
                                       rms
                                       standarddeviation|dev
+                             Default: standarddeviation
+                             Hints: maximum: use --addmin
+                                             try --mode=6
+                                    minimum: use --addmax
+                                    standarddeviation: try --mode=2
      --unsharp               Difference of -unsharp.
                              Takes options: 
                                --radius           Default: 0
@@ -82,21 +89,28 @@ Mask generating methods: (Default: --statistic)
 
 Method settings: (Effect depends on method, see above.)
  -r, --radius=RADIUS         Automatically chooses a radius if RADIUS=0
- -s, --sigma, --sigma1=SIGMA
- -S, --sigma2=SIGMA
- -m, --mode=MODE
+ -s, --sigma=SIGMA1
+ -S, --sigma2=SIGMA2         Default: SIGMA2=SIGMA1*1.6
  
 Method independent adjustments:
      --addmax                Add a maximum image of source images to image list.
      --addmean               Begin with a mean image of source images.
      --addmin                Add a minimum image of source images to image list.
-     --gray                  Use grayscaled images for mask generation.
+     --gray                  Convert to grayscale before mask generation.
+ -m, --mode FUSEMODE         Method to fuse images based on generated masks.
+                             FUSEMODE can be:
+                             1 : prefer sharp areas of source images
+                             2 : prefer sharp areas of intermediate result
+                             3 : provide source masks to enfuse
+                             4 : provide diff masks to enfuse
+                             5 : combine 1+2, multiply max+min
+                             6 : combine 1+2  with evaluate max
+                             5 : combine 1+2  with evaluate min
      
 One way to pretty results:
   imfuse -V --max IMAGELIST
   imfuse -V --radius=3 IMAGELIST
-  imfuse -V --radius=5 IMAGELIST
-  imfuse -V --radius=7 IMAGELIST
+  imfuse -V --radius=6 IMAGELIST
   imfuse -V --radius=9 IMAGELIST
   imfuse -V --mean imfuse.*
 "
@@ -105,11 +119,12 @@ One way to pretty results:
 ### Messages
 
 error() {
-  echo "imfuse ERROR: $*" >&2
-  exit 1
+  [ -z "$Error" ] && echo "imfuse ERROR: $*" >&2
+  Error=1
+  #exit 1
 }
 note() {
-  echo "imfuse note: $*"
+  [ -z "$Error" ] && echo "imfuse note: $*"
   return 0
 }
 verbose() {
@@ -121,31 +136,371 @@ showimage() {
   return 0
 }
 
+### Misch
+
+printnum(){
+  # print number $1 with leading zeroes.
+  # $1 number
+  # $2 digits. Default: 3
+  printf %0${2:-3}d "${1:-0}"
+}
+trap_sigint() {
+  error "Received SIGINT"
+}
+
 ### Fuse focus stackshot
 
 fuse_focus_stackshot()  {
   # fuse focus image stackshot.
   # Based on snibgo's focus stacking script at http://im.snibgo.com/focstack.htm
   
-  local Image Count
-  local Sourcemask Resultmask Diffmask 
+  local Count Number Firstimage 
+  local Sourcemask Resultmask Diffmask Resultcount Sourcecount
   local Maskgenerator Maskgenerator2
-  local Writesourcemask Writeresultmask Writediffmask
+  local Writesourcemask Writeresultmask Writediffmask Writesourcecount Writeresultcount
   
   # Use first image as base of result
-  $Convert $(head -n1 <<< "$Imagelist") "$Resultimage"
-  Imagelist="$(tail -n+2 <<< "$Imagelist")"
+  Firstimage="$(head -n1 <<< "$Imagelist")"
+  $Convert "$Firstimage" "$Resultimage" || error "Error while reading first image"
+  
+  showimage "$Resultimage"
   
   # Interate on rest of image list
-  Count=1
+#  Count=1
+#  for Sourceimage in $(grep -v -x "$Firstimage" <<< "$Imagelist"); do
+  Count=0
+  for Sourceimage in $Imagelist; do
+    [ "$Error" ] && break
+    Count="$((Count+1))"
+    Number="$(printnum $Count $Imagenumberlength)"
+    Sourcemask="$Cachedir/${Number}.mask.source.tif"
+    Sourcecount="$Cachedir/${Number}.source.tif"
+    Resultmask="$Cachedir/${Number}.mask.result.tif"
+    Resultcount="$Cachedir/${Number}.result.tif"
+    Diffmask="$Cachedir/${Number}.mask.diff.tif"
+    [ "$Savemask" = "yes" ] && {
+      Writesourcemask="-write $Sourcemask"
+      Writesourcecount="-write $Sourcecount"
+      Writeresultmask="-write $Resultmask"
+      Writeresultcount="-write $Resultcount"
+      Writediffmask="-write $Diffmask"
+    }
+    
+    verbose "Processing Image $Count / $Imagenumber with method $Method in fuse mode $Mode: $Sourceimage" 
+    
+    # Mask generating ImageMagick options
+    # Most of them are based on edge detection: http://www.imagemagick.org/Usage/convolve/#edgedet
+    Maskgenerator=""
+    Maskgenerator2=""
+    case $Method in
+      blur)
+        # Compare two blurred images with different sigma.
+        # Concept and result is similar to Difference of Gaussian (DoG). Using -gaussian-blur gives same as DoG.
+        # Code based on https://im.snibgo.com/simpalign.htm#twoBlrDiff.bat
+        Maskgenerator="( -clone 0 -blur ${Radius}x${Sigma1} )
+                       ( -clone 0 -blur ${Radius}x${Sigma2} )
+                       -delete 0
+                       -compose Difference -composite"
+#                       -grayscale RMS"
+      ;;
+      blur2)
+        Maskgenerator="( -clone 0 -blur ${Radius}x${Sigma1} )
+                       ( -clone 0 -blur ${Radius}x${Sigma2} )
+                       -delete 0
+                       -compose Mathematics -define compose:args=0,-4,4,0.5 -composite
+                       -grayscale RMS"
+      ;;
+      compass)
+        Maskgenerator="-define convolve:scale=50%!
+                       -define convolve:bias=50%
+                       -morphology Convolve Compass" ### FIXME
+      ;;
+      dog) # DoG: Difference of Gaussian
+        # This will generate a 'DoG' or "Difference of Gaussians" kernel in which 
+        # the gaussian generated by 'sigma1' will have the gaussian generated by 'sigma2' subtracted from it. 
+        # Normally 'sigma2' is the larger so that the 'central peak' of the kernel is positive. 
+        # Reversing the two numbers will effectivally negate the resulting kernel. 
+        # By generating two 'Gaussian' kernels of slightly different sigma values (in a ratio of approximatally 1.6), 
+        # and subtracting them from each other you can actually generate a close approximation of a Laplacian of a Gaussian. 
+        Maskgenerator="-define convolve:bias=50%
+                       -morphology Convolve DoG:$Radius,$Sigma1,$Sigma2"
+      ;;
+      enfuse) # masks generated by enfuse instead by ImageMagick
+        (
+          cd "$Cachedir" 
+          enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 \
+               --save-masks \
+               --contrast-window-size=$Radius \
+               -o enfuse-out.tif \
+               $Maskgeneratorargument \
+               "$Sourceimage" "$Resultimage" \
+               2>&1 | grep -v -E 'no usable resolution|loading next image|will assume 300 dpi|assuming all pixels|does not have an alpha channel'
+          grep -q "hard-mask" <<< "$Maskgeneratorargument" && {
+            mv hardmask-1.tif $Sourcemask
+            mv hardmask-2.tif $Resultmask
+          } || {
+            mv softmask-1.tif $Sourcemask
+            mv softmask-2.tif $Resultmask
+          }
+          rm softmask-1.tif softmask-2.tif hardmask-1.tif hardmask-2.tif enfuse-out.tif 2>/dev/null
+        )
+        # workaround to put results into magick command
+        Maskgenerator=" -delete 0 $Sourcemask" 
+        Maskgenerator2="-delete 0 $Resultmask"
+      ;;
+      experimental)
+        Maskgenerator="-edge $Radius"
+      ;;
+      free)
+        Maskgenerator="$Maskgeneratorargument"
+      ;;
+      freichen)
+        Maskgenerator="-define convolve:scale=50%!
+                       -define morphology:compose=Lighten
+                       -define convolve:bias=50%
+                       -morphology Convolve FreiChen:>" ### FIXME allow more modes
+      ;;
+      kirsch)
+        Maskgenerator="-define convolve:scale=50%!
+                       -define convolve:bias=50%
+                       -morphology Convolve Kirsch" ### FIXME
+      ;;
+      laplacian)
+        Maskgenerator="-define convolve:bias=50%
+                       -define convolve:scale=!
+                       -morphology Convolve Laplacian:$Maskgeneratorargument"
+      ;;
+      log)  # LoG: Laplacian of Gaussian
+        Maskgenerator="-define convolve:bias=50% \
+                       -morphology Convolve LoG:${Radius}x${Sigma1}"
+      ;;
+      prewitt)
+        Maskgenerator="-define convolve:scale=50%!
+                       -define convolve:bias=50%
+                       -morphology Convolve Prewitt" ### FIXME
+      ;;
+      roberts)
+        Maskgenerator="-define morphology:compose=Lighten
+                       -define convolve:bias=50%
+                       -morphology Convolve Roberts:@"
+      ;;
+      sobel)
+        Maskgenerator="-define convolve:scale=!
+                       -define convolve:bias=50%
+                       -define morphology:compose=Lighten
+                       -morphology Convolve Sobel:>"
+      ;;
+      statistic)
+        Maskgenerator="-statistic $Maskgeneratorargument ${Radius}x${Radius}"
+      ;;
+      unsharp)
+        Maskgenerator="( -clone 0 -unsharp ${Radius}x${Sigma1} )
+                       ( -clone 0 -unsharp ${Radius}x${Sigma2} )
+                       -delete 0
+                       -compose Difference -composite
+                       -grayscale RMS"
+      ;;
+    esac
+    Maskgenerator2="${Maskgenerator2:-$Maskgenerator}" # workaround for --enfuse. Otherwise Maskgenerator==Maskgenerator2
+    Maskgenerator="$(echo $Maskgenerator)"
+    Maskgenerator2="$(echo $Maskgenerator2)"
+    
+    # Apply masks to fuse current source image with result image
+    case $Mode in
+      1)
+        # prefer source over result
+        $Convert \
+          $Sourceimage -write mpr:sourceimage $Writesourcecount $Graycolorspace $Maskgenerator  -write mpr:sourcemask $Writesourcemask -delete 0 \
+          $Resultimage -write mpr:resultimage                   $Graycolorspace $Maskgenerator2 -write mpr:resultmask $Writeresultmask -delete 0 \
+          mpr:sourcemask mpr:resultmask -compose MinusDst -composite -fill white +opaque black  -write mpr:diffmask   $Writediffmask   -delete 0 \
+          mpr:sourceimage \
+          mpr:resultimage \
+          mpr:diffmask \
+          -alpha off -compose Over -composite \
+          $Writeresultcount \
+          "$Resultimage" || error "Error in fuse"
+        showimage $Resultimage
+      ;;
+      2)
+        # prefer result over source
+        $Convert \
+          $Sourceimage -write mpr:sourceimage $Writesourcecount $Graycolorspace $Maskgenerator  -write mpr:sourcemask $Writesourcemask -delete 0 \
+          $Resultimage -write mpr:resultimage                   $Graycolorspace $Maskgenerator2 -write mpr:resultmask $Writeresultmask -delete 0 \
+          mpr:resultmask mpr:sourcemask -compose MinusDst -composite -fill white +opaque black  -write mpr:diffmask   $Writediffmask   -delete 0 \
+          mpr:resultimage \
+          mpr:sourceimage \
+          mpr:diffmask \
+          -alpha off -compose Over -composite \
+          $Writeresultcount \
+          "$Resultimage" || error "Error in fuse"
+        showimage $Resultimage
+      ;;
+      3)
+        # enfuse source masks
+        $Convert \
+          $Sourceimage                        $Writesourcecount $Graycolorspace $Maskgenerator -colorspace gray $Sourcemask || error "Error in mask generation"
+        showimage $Sourcemask
+      ;;
+      4)
+        $Convert \
+          $Sourceimage                        $Writesourcecount $Graycolorspace $Maskgenerator  -write mpr:sourcemask $Writesourcemask -delete 0 \
+          $Resultimage                                          $Graycolorspace $Maskgenerator2 -write mpr:resultmask $Writeresultmask -delete 0 \
+          mpr:sourcemask mpr:resultmask -compose MinusDst -composite -fill white +opaque black  -colorspace gray      $Diffmask
+        showimage $Diffmask
+      ;;
+      5)
+        # combine mode 1+2: multiply max+min
+        $Convert \
+          $Sourceimage -write mpr:sourceimage $Writesourcecount \
+            $Graycolorspace $Maskgenerator  \
+            -write mpr:sourcemask \
+            -delete 0 \
+          $Resultimage -write mpr:resultimage \
+            $Graycolorspace $Maskgenerator2 -write mpr:resultmask \
+            -delete 0 \
+          mpr:sourcemask mpr:resultmask \
+            -compose MinusDst -composite -fill white +opaque black  \
+            -write mpr:diffmask \
+            -delete 0 \
+          mpr:sourceimage mpr:resultimage mpr:diffmask \
+            -alpha off -compose Over -composite \
+            -write mpr:result1 \
+            -delete 0 \
+          mpr:resultmask mpr:sourcemask \
+            -compose MinusDst -composite -fill white +opaque black \
+            -write mpr:diffmask                   \
+            -delete 0 \
+          mpr:resultimage mpr:sourceimage mpr:diffmask \
+            -alpha off -compose Over -composite \
+            -write mpr:result2 \
+            -delete 0 \
+          mpr:result1 mpr:result2 \
+            -evaluate-sequence min \
+            -write mpr:resultmin \
+            -delete 0 \
+          mpr:result1 mpr:result2 \
+            -evaluate-sequence max \
+            -write mpr:resultmax \
+            -delete 0 \
+          mpr:resultmin mpr:resultmax \
+            -evaluate-sequence multiply \
+            -gamma 2 \
+          "$Resultimage" || error "Error in fuse"
+        showimage $Resultimage
+      ;;
+      6)
+        # combine mode 1+2: max
+        $Convert \
+          $Sourceimage -write mpr:sourceimage $Writesourcecount \
+            $Graycolorspace $Maskgenerator  \
+            -write mpr:sourcemask \
+            -delete 0 \
+          $Resultimage -write mpr:resultimage \
+            $Graycolorspace $Maskgenerator2 -write mpr:resultmask \
+            -delete 0 \
+          mpr:sourcemask mpr:resultmask \
+            -compose MinusDst -composite -fill white +opaque black  \
+            -write mpr:diffmask \
+            -delete 0 \
+          mpr:sourceimage mpr:resultimage mpr:diffmask \
+            -alpha off -compose Over -composite \
+            -write mpr:result1 \
+            -delete 0 \
+          mpr:resultmask mpr:sourcemask \
+            -compose MinusDst -composite -fill white +opaque black \
+            -write mpr:diffmask                   \
+            -delete 0 \
+          mpr:resultimage mpr:sourceimage mpr:diffmask \
+            -alpha off -compose Over -composite \
+            -write mpr:result2 \
+            -delete 0 \
+          mpr:result1 mpr:result2 \
+            -evaluate-sequence max \
+          "$Resultimage" || error "Error in fuse"
+        showimage $Resultimage
+      ;;
+      7)
+        # combine mode 1+2: min
+        $Convert \
+          $Sourceimage -write mpr:sourceimage $Writesourcecount \
+            $Graycolorspace $Maskgenerator  \
+            -write mpr:sourcemask \
+            -delete 0 \
+          $Resultimage -write mpr:resultimage \
+            $Graycolorspace $Maskgenerator2 -write mpr:resultmask \
+            -delete 0 \
+          mpr:sourcemask mpr:resultmask \
+            -compose MinusDst -composite -fill white +opaque black  \
+            -write mpr:diffmask \
+            -delete 0 \
+          mpr:sourceimage mpr:resultimage mpr:diffmask \
+            -alpha off -compose Over -composite \
+            -write mpr:result1 \
+            -delete 0 \
+          mpr:resultmask mpr:sourcemask \
+            -compose MinusDst -composite -fill white +opaque black \
+            -write mpr:diffmask                   \
+            -delete 0 \
+          mpr:resultimage mpr:sourceimage mpr:diffmask \
+            -alpha off -compose Over -composite \
+            -write mpr:result2 \
+            -delete 0 \
+          mpr:result1 mpr:result2 \
+            -evaluate-sequence min \
+          "$Resultimage" || error "Error in fuse"
+        showimage $Resultimage
+      ;;
+    esac
+  done
+  [ "$Error" ] && return "${Error:-0}"
+  case $Mode in
+    3)
+      enfuse --load-masks=$Cachedir/%n.mask.source.tif -o $Resultimage $Imagelist || error "Error in enfuse"
+    ;;
+    4)
+      enfuse --load-masks=:$Cachedir/%n.mask.diff.tif --hard-mask  -o $Resultimage $Imagelist || error "Error in enfuse"
+    ;;
+  esac
+  
+  return "${Error:-0}"
+}
+fuse_focus_stackshot_bak()  {
+  # fuse focus image stackshot.
+  # Based on snibgo's focus stacking script at http://im.snibgo.com/focstack.htm
+  
+  local Sourceimage Count Command Firstimage Commandmode
+  local Sourcemask Resultmask Diffmask Resultcount Sourcecount
+  local Maskgenerator Maskgenerator2
+  local Writesourcemask Writeresultmask Writediffmask Writesourcecount Writeresultcount
+  
+  # Use first image as base of result
+  Firstimage="$(head -n1 <<< "$Imagelist")"
+  $Convert "$Firstimage" "$Resultimage"
+  
+  Commandmode="iterative"
+  
+  Command="$Convert
+$Firstimage
+  -write mpr:resultimage -delete 0"
+  
+  showimage "$Resultimage"
+  
+  # Interate on rest of image list
+#  Count=1
+#  for Sourceimage in $(grep -v -x "$Firstimage" <<< "$Imagelist"); do
+  Count=0
   for Sourceimage in $Imagelist; do
     Count="$((Count+1))"
-    Sourcemask="$Cachedir/mask.${Count}.source.tif"
-    Resultmask="$Cachedir/mask.${Count}.result.tif"
-    Diffmask="$Cachedir/mask.${Count}.diff.tif"
-    [ "$Savemasks" = "yes" ] && {
+    Sourcemask="$Cachedir/${Count}.mask.source.tif"
+    Sourcecount="$Cachedir/${Count}.source.tif"
+    Resultmask="$Cachedir/${Count}.mask.result.tif"
+    Resultcount="$Cachedir/${Count}.result.tif"
+    Diffmask="$Cachedir/${Count}.mask.diff.tif"
+    [ "$Savemask" = "yes" ] && {
       Writesourcemask="-write $Sourcemask"
+      Writesourcecount="-write $Sourcecount"
       Writeresultmask="-write $Resultmask"
+      Writeresultcount="-write $Resultcount"
       Writediffmask="-write $Diffmask"
     }
     
@@ -160,22 +515,22 @@ fuse_focus_stackshot()  {
         # Compare two blurred images with different sigma.
         # Concept and result is similar to Difference of Gaussian (DoG). Using -gaussian-blur gives same as DoG.
         # Code based on https://im.snibgo.com/simpalign.htm#twoBlrDiff.bat
-        Maskgenerator="( -clone 0 -blur ${Radius}x${Sigma1} ) \
-                       ( -clone 0 -blur ${Radius}x${Sigma2} ) \
-                       -delete 0 \
+        Maskgenerator="( -clone 0 -blur ${Radius}x${Sigma1} )
+                       ( -clone 0 -blur ${Radius}x${Sigma2} )
+                       -delete 0
                        -compose Difference -composite"
 #                       -grayscale RMS"
       ;;
       blur2)
-        Maskgenerator="( -clone 0 -blur ${Radius}x${Sigma1} ) \
-                       ( -clone 0 -blur ${Radius}x${Sigma2} ) \
-                       -delete 0 \
-                       -compose Mathematics -define compose:args=0,-4,4,0.5 -composite \
+        Maskgenerator="( -clone 0 -blur ${Radius}x${Sigma1} )
+                       ( -clone 0 -blur ${Radius}x${Sigma2} )
+                       -delete 0
+                       -compose Mathematics -define compose:args=0,-4,4,0.5 -composite
                        -grayscale RMS"
       ;;
       compass)
-        Maskgenerator="-define convolve:scale=50%! \
-                       -bias 50% \
+        Maskgenerator="-define convolve:scale=50%!
+                       -define convolve:bias=50%
                        -morphology Convolve Compass" ### FIXME
       ;;
       dog) # DoG: Difference of Gaussian
@@ -185,116 +540,172 @@ fuse_focus_stackshot()  {
         # Reversing the two numbers will effectivally negate the resulting kernel. 
         # By generating two 'Gaussian' kernels of slightly different sigma values (in a ratio of approximatally 1.6), 
         # and subtracting them from each other you can actually generate a close approximation of a Laplacian of a Gaussian. 
-        Maskgenerator="-bias 50% \
+        Maskgenerator="-define convolve:bias=50%
                        -morphology Convolve DoG:$Radius,$Sigma1,$Sigma2"
       ;;
-      enfuse) # enfuse masks instead of ImageMagick
+      enfuse) # masks generated by enfuse instead by ImageMagick
         (
           cd "$Cachedir" 
           enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 \
                --save-masks \
-               --hard-mask \
                --contrast-window-size=$Radius \
                -o enfuse-out.tif \
-               $Addoptions \
+               $Maskgeneratorargument \
                "$Sourceimage" "$Resultimage" \
                2>&1 | grep -v -E 'no usable resolution|loading next image|will assume 300 dpi|assuming all pixels|does not have an alpha channel'
-          mv ${Mode}mask-1.tif $Sourcemask
-          mv ${Mode}mask-2.tif $Resultmask
+          grep -q "hard-mask" <<< "$Maskgeneratorargument" && {
+            mv hardmask-1.tif $Sourcemask
+            mv hardmask-2.tif $Resultmask
+          } || {
+            mv softmask-1.tif $Sourcemask
+            mv softmask-2.tif $Resultmask
+          }
           rm softmask-1.tif softmask-2.tif hardmask-1.tif hardmask-2.tif enfuse-out.tif 2>/dev/null
         )
-        Maskgenerator=" -delete 0 $Sourcemask"
+        # workaround to put results into magick command
+        Maskgenerator=" -delete 0 $Sourcemask" 
         Maskgenerator2="-delete 0 $Resultmask"
       ;;
       experimental)
-        Maskgenerator="( -clone 0 -blur ${Radius}x${Sigma1} ) \
-                       ( -clone 0 -blur ${Radius}x${Sigma2} ) \
-                       -delete 0 \
-                       -compose Difference -composite \
-                       "
+        Maskgenerator="-edge $Radius"
+      ;;
+      free)
+        Maskgenerator="$Maskgeneratorargument"
       ;;
       freichen)
-        Maskgenerator="-define convolve:scale=50%! \
-                       -define morphology:compose=Lighten \
-                       -bias 50% \
+        Maskgenerator="-define convolve:scale=50%!
+                       -define morphology:compose=Lighten
+                       -define convolve:bias=50%
                        -morphology Convolve FreiChen:>" ### FIXME allow more modes
       ;;
       kirsch)
-        Maskgenerator="-define convolve:scale=50%! \
-                       -bias 50% \
+        Maskgenerator="-define convolve:scale=50%!
+                       -define convolve:bias=50%
                        -morphology Convolve Kirsch" ### FIXME
       ;;
       laplacian)
-        Maskgenerator="-bias 50% \
-                       -define convolve:scale=! \
-                       -morphology Convolve Laplacian:$Mode"
+        Maskgenerator="-define convolve:bias=50%
+                       -define convolve:scale=!
+                       -morphology Convolve Laplacian:$Maskgeneratorargument"
       ;;
       log)  # LoG: Laplacian of Gaussian
-        Maskgenerator="-bias 50% \
-                       -morphology Convolve LoG:${Radius}x${Sigma}"
+        Maskgenerator="-define convolve:bias=50% \
+                       -morphology Convolve LoG:${Radius}x${Sigma1}"
       ;;
       prewitt)
-        Maskgenerator="-define convolve:scale=50%! \
-                       -bias 50% \
+        Maskgenerator="-define convolve:scale=50%!
+                       -define convolve:bias=50%
                        -morphology Convolve Prewitt" ### FIXME
       ;;
       roberts)
-        Maskgenerator="-define morphology:compose=Lighten \
-                       -bias 50% \
+        Maskgenerator="-define morphology:compose=Lighten
+                       -define convolve:bias=50%
                        -morphology Convolve Roberts:@"
       ;;
       sobel)
-        Maskgenerator="-define convolve:scale=! \
-                       -bias 50% \
-                       -define morphology:compose=Lighten \
+        Maskgenerator="-define convolve:scale=!
+                       -define convolve:bias=50%
+                       -define morphology:compose=Lighten
                        -morphology Convolve Sobel:>"
       ;;
       statistic)
-        Maskgenerator="-statistic $Mode ${Radius}x${Radius}"
+        Maskgenerator="-statistic $Maskgeneratorargument ${Radius}x${Radius}"
       ;;
       unsharp)
-        Maskgenerator="( -clone 0 -unsharp ${Radius}x${Sigma1} ) \
-                       ( -clone 0 -unsharp ${Radius}x${Sigma2} ) \
-                       -delete 0 \
-                       -compose Difference -composite \
+        Maskgenerator="( -clone 0 -unsharp ${Radius}x${Sigma1} )
+                       ( -clone 0 -unsharp ${Radius}x${Sigma2} )
+                       -delete 0
+                       -compose Difference -composite
                        -grayscale RMS"
       ;;
     esac
-    Maskgenerator2="${Maskgenerator2:-$Maskgenerator}"
+    Maskgenerator2="${Maskgenerator2:-$Maskgenerator}" # workaround for --enfuse. Otherwise Maskgenerator==Maskgenerator2
+    Maskgenerator="$(echo $Maskgenerator)"
+    Maskgenerator2="$(echo $Maskgenerator2)"
     
-    # Apply masks to fuse current source image with result image
-    $Convert \
-      $Sourceimage -write mpr:sourceimage $Graycolorspace $Maskgenerator                   -write mpr:sourcemask $Writesourcemask -delete 0 \
-      $Resultimage -write mpr:resultimage $Graycolorspace $Maskgenerator2                  -write mpr:resultmask $Writeresultmask -delete 0 \
-      mpr:sourcemask mpr:resultmask -compose MinusDst -composite -fill white +opaque black -write mpr:diffmask   $Writediffmask   -delete 0 \
-      mpr:sourceimage \
-      mpr:resultimage \
-      mpr:diffmask \
-      -alpha off \
-      -compose Over -composite \
-      "$Resultimage"
-      
-    showimage "$Resultimage"
+    case $Commandmode in
+      iterative)
+        # Apply masks to fuse current source image with result image
+        $Convert \
+          $Sourceimage -write mpr:sourceimage $Writesourcecount $Graycolorspace $Maskgenerator  -write mpr:sourcemask $Writesourcemask -delete 0 \
+          $Resultimage -write mpr:resultimage                   $Graycolorspace $Maskgenerator2 -write mpr:resultmask $Writeresultmask -delete 0 \
+          mpr:sourcemask mpr:resultmask -compose MinusDst -composite -fill white +opaque black  -write mpr:diffmask   $Writediffmask   -delete 0 \
+          mpr:sourceimage \
+          mpr:resultimage \
+          mpr:diffmask \
+          -alpha off \
+          -compose Over -composite \
+          $Writeresultcount \
+          "$Resultimage"
+      ;;
+      chain)
+        Command="$Command
+$Sourceimage 
+  -write mpr:sourceimage $Graycolorspace 
+  $Maskgenerator                   
+  -write mpr:sourcemask $Writesourcemask -delete 0
+mpr:resultimage $Graycolorspace 
+  $Maskgenerator2
+  -write mpr:resultmask $Writeresultmask -delete 0
+mpr:sourcemask mpr:resultmask
+  -compose MinusDst -composite -fill white +opaque black
+  -write mpr:diffmask   $Writediffmask   -delete 0
+mpr:sourceimage mpr:resultimage mpr:diffmask
+  -alpha off
+  -compose Over -composite
+  -write mpr:resultimage
+  -delete 0"
+      [ "$Showimage" = "yes" ] && Command="$Command
+mpr:resultimage 
+  -write $Resultimage 
+  -delete 0"
+      [ "$Savemask" = "yes" ] && Command="$Command
+mpr:resultimage 
+  $Writeresultcount
+  -delete 0
+mpr:sourceimage 
+  $Writesourcecount 
+  -delete 0
+xc:gray -geometry 640x480 -write mpr:empty -delete 0--1
+mpr:sourceimage mpr:empty mpr:diffmask
+  -alpha off
+  -compose Over -composite
+  -write $Sourcecount.over.tif
+  -delete 0"
+      ;;
+    esac
   done
   
+  case $Commandmode in
+    chain)
+      Command="$Command
+mpr:resultimage 
+  $Resultimage"
+      verbose "$Command"
+      Command="$(echo $Command)"
+      $Command
+    ;;
+  esac
   return 0
 }
 
 ### main
 
 declare_variables() {
-  Addoptions=""
+  Addmax="no"
+  Addmean="no"
+  Addmin="no"
   Convert=""
+  Error=""
   Graycolorspace=""
   Imagelist=""
   Imagenumber=""
-  Addmax=""
-  Addmean="no"
   Method=""
   Methodlist="blur
 compass
 dog
 enfuse
+free
 freichen
 kirsch
 laplacian
@@ -303,8 +714,8 @@ prewitt
 roberts
 sobel
 statistic"
-  Addmin=""
-  Mode=""
+  Maskgeneratorargument=""
+  Mode="1"
   Outputimage=""
   Savemask="no"
   Showimage="no"
@@ -321,7 +732,7 @@ parse_options() {
   Shortoptions="hm:o:r:s:S:vV"
   Longoptions="cachedir:,help,list,verbose,version,output:,showimage"
   Longoptions="$Longoptions,addmax,addmean,addmin,gray,grey,mode:,radius:,sigma:,sigma1:,sigma2:"
-  Longoptions="$Longoptions,blur,compass,dog,enfuse::,experimental,freichen,kirsch,laplacian,log,prewitt,roberts,sobel,statistic::,unsharp"  
+  Longoptions="$Longoptions,blur::,compass::,dog::,enfuse::,experimental::,free::,freichen::,kirsch::,laplacian::,log::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
   Longoptions="$Longoptions,max,min,mean,median"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
@@ -331,6 +742,7 @@ parse_options() {
   eval set -- "$Parsedoptions"
   
   while [ $# -gt 0 ]; do
+    [ "$Error" ] && break
     case "${1:-}" in
       --help)              usage ; exit ;;
       --list)              echo "$Methodlist"; exit 0 ;;
@@ -347,18 +759,20 @@ parse_options() {
       --cachedir)          Cachedir="${2:-}" ; Savemask="yes" ; shift ;;
       -v|--verbose)        Verbose="yes" ;;
          --version)        echo "imfuse v$Version"; exit 0 ;;
-      --blur|--compass|--dog|--enfuse|--experimental|--freichen|--kirsch|--laplacian|--log|--max|--mean|--median|--min|--prewitt|--roberts|--sobel|--statistic|--unsharp) 
-        Method="${1#--}" 
-        [ "$Method" = "enfuse" ]    && Addoptions="${2:-}" && shift
-        [ "$Method" = "statistic" ] && Mode="${2:-$Mode}"  && shift
+      --blur|--compass|--dog|--enfuse|--experimental|--free|--freichen|--kirsch|--laplacian|--log|--max|--mean|--median|--min|--prewitt|--roberts|--sobel|--statistic|--unsharp)
+        Method="${1#--}"
+        Maskgeneratorargument="${2:-}"  && shift
       ;;  
       --) ;;
-      *) Imagelist="$Imagelist
-$(realpath "${1:-}")" ;;
+      *)
+        Imagelist="$Imagelist
+$(realpath "${1:-}")" 
+        [ -f "${1:-}" ] || error "File not found: ${1:-}"
+      ;;
     esac
     shift
   done
-  return 0
+  return ${Error:-0}
 }
 check_options() {
   [ -z "$Imagelist" ] && error "No images specified"
@@ -408,51 +822,43 @@ check_options() {
     ;;
   esac
   
-  # --mode
+  # Method argument
   case $Method in
     experimental) ;;
     laplacian)
-      [ -z "$Mode" ] && {
-        Mode="0"
-        note "Setting --mode=$Mode"
+      [ -z "$Maskgeneratorargument" ] && {
+        Maskgeneratorargument="0"
+        note "Setting --$Method=$Maskgeneratorargument"
       }
     ;;
-    enfuse)
-      case $Mode in
-        soft|hard) ;;
-        "")
-          Mode="soft"
-          note "Setting --mode=$Mode"
-        ;;
-        *)
-          Mode="soft"
-          note "--enfuse accepts modes 'hard' or 'soft'.
-  Setting --mode=$Mode"
-        ;;
-      esac
+    free)
+      [ -z "$Maskgeneratorargument" ] && {
+        Maskgeneratorargument="-edge 2"
+        note "Setting --$Method='$Maskgeneratorargument'"
+      }
     ;;
     statistic)
-      case $Mode in
+      case $Maskgeneratorargument in
         gradient|maximum|minimum|mean|median|mode|nonpeak|rms|standarddeviation) ;;
-        dev|standard-deviation)  Mode="standarddeviation" ;;
-        grad) Mode="gradient" ;;
-        max)  Mode="maximum" ;;
-        min)  Mode="minimum" ;;
+        dev|standard-deviation)  Maskgeneratorargument="standarddeviation" ;;
+        grad) Maskgeneratorargument="gradient" ;;
+        max)  Maskgeneratorargument="maximum" ;;
+        min)  Maskgeneratorargument="minimum" ;;
         "")
-          Mode="standarddeviation"
-          note "Setting --mode=$Mode"
+          Maskgeneratorargument="standarddeviation"
+          note "Setting --$Method=$Maskgeneratorargument"
         ;;
         *)
-          note "--statistic: unknown mode $Mode.
-  Setting --mode=standarddeviation"
-          Mode="standarddeviation"
+          note "--statistic: unknown argument $Maskgeneratorargument.
+  Setting --$Method=standarddeviation"
+          Maskgeneratorargument="standarddeviation"
         ;;
       esac
     ;;
     *)
-      [ -n "$Mode" ] && {
-        note "Not used with --method=$Method: --mode=$Mode"
-        Mode=""
+      [ -n "$Maskgeneratorargument" ] && {
+        note "Arguments not used in --$Method=$Maskgeneratorargument"
+        Maskgeneratorargument=""
       }
     ;;
   esac
@@ -466,7 +872,10 @@ check_options() {
   [ -z "$Radius" ] && Radius="0"
   case $Method in
     enfuse) 
-      [ "$Radius" = "0" ] && Radius="5"
+      [ "$Radius" = "0" ] && {
+        Radius="5"
+        note "Setting --radius=$Radius"
+      }
       [ "$Radius" -lt "3" ] && {
         note "--enfuse needs a radius of at least 3.
   Setting --radius=3"
@@ -479,9 +888,19 @@ check_options() {
     ;;
     statistic)
       [ "$Radius" = "0" ] && {
-        Radius="5"
+        Radius="7"
         note "Setting --radius=$Radius"
       }
+    ;;
+  esac
+  
+  # --mode
+  false && case $Mode in
+    1|2|3|4|5) ;;
+    *) 
+      note "Invalid --mode=$Mode
+  Setting --mode=1"
+      Mode=1
     ;;
   esac
   
@@ -495,11 +914,12 @@ check_options() {
   #--output
   [ -z "$Outputimage" ] && {
     case $Method in
-      blur|dog|unsharp)             Outputimage="imfuse.${Method}.${Radius}x${Sigma1}-${Radius}x${Sigma2}.tif" ;;
-      laplacian)                    Outputimage="imfuse.${Method}.${Mode}.tif" ;;
-      statistic)                    Outputimage="imfuse.${Method}.${Mode}.${Radius}.tif" ;;
-      log)                          Outputimage="imfuse.${Method}.${Radius}x${Sigma1}.tif";;
-      *)                            Outputimage="imfuse.${Method}.tif" ;;
+      blur|dog|unsharp)             Outputimage="imfuse.${Method}.${Radius}x${Sigma1}-${Radius}x${Sigma2}.m${Mode}.tif" ;;
+      enfuse)                       Outputimage="imfuse.${Method}.r${Radius}.m${Mode}.tif";;
+      laplacian)                    Outputimage="imfuse.${Method}.${Maskgeneratorargument}.m${Mode}.tif" ;;
+      statistic)                    Outputimage="imfuse.${Method}.${Maskgeneratorargument}.r${Radius}.m${Mode}.tif" ;;
+      log)                          Outputimage="imfuse.${Method}.${Radius}x${Sigma1}.m${Mode}.tif";;
+      *)                            Outputimage="imfuse.${Method}.m${Mode}.tif" ;;
     esac
     note "Setting --output=$Outputimage"
   }
@@ -510,6 +930,7 @@ check_options() {
 }
 main() {
   #set -eu
+  trap trap_sigint SIGINT
   
   declare_variables
   parse_options "$@"
@@ -517,47 +938,50 @@ main() {
   
   Imagelist="$(grep -v -x "" <<< "$Imagelist")"
   Imagenumber="$(grep -c "." <<< "$Imagelist")"
+  Imagenumberlength="${#Imagenumber}"
   
   command -v convert >/dev/null && Convert="convert"
   command -v magick  >/dev/null && Convert="magick"
   [ -z "$Convert" ] && error "Neither command convert nor magick found. Please install ImageMagick."
   
-  mkdir -p $Cachedir
+  [ "$Error" ] && return 1
+  mkdir -p $Cachedir || error "Error creating cache folder $Cachedir"
   
   # --addmean
   [ "$Addmean" = "yes" ] && {
-    $Convert $(echo $Imagelist) -evaluate-sequence mean $Cachedir/mean.tif
+    $Convert $(echo $Imagelist) -evaluate-sequence mean $Cachedir/mean.tif || error "Error in --addmean"
     Imagelist="$Cachedir/mean.tif
 $Imagelist"
   }
   # --addmin
   [ "$Addmin" = "yes" ] && {
-    $Convert $(echo $Imagelist) -evaluate-sequence min $Cachedir/min.tif
+    $Convert $(echo $Imagelist) -evaluate-sequence min $Cachedir/min.tif || error "Error in --addmin"
     Imagelist="$Cachedir/min.tif
 $Imagelist"
   }
   # --addmax
   [ "$Addmax" = "yes" ] && {
-    $Convert $(echo $Imagelist) -evaluate-sequence max $Cachedir/max.tif
+    $Convert $(echo $Imagelist) -evaluate-sequence max $Cachedir/max.tif || error "Error in --addmax"
     Imagelist="$Cachedir/max.tif
 $Imagelist"
   }
  
   case $Method in
     max|min|mean|median)
-      $Convert $(echo $Imagelist) -evaluate-sequence $Method $Resultimage
+      $Convert $(echo $Imagelist) -evaluate-sequence $Method $Resultimage  || error "Error in --$Method"
     ;;
     *)
-      fuse_focus_stackshot
+      fuse_focus_stackshot  || error "Error while fusing stackshot"
     ;;
   esac
   
-  cp "$Resultimage" "$Outputimage"
+  [ "$Error" ] && return 1
+  cp "$Resultimage" "$Outputimage"  || error "Error in --addmax"
   showimage "$Outputimage"
-  
-  [ "$Savemask" = "no" ] && rm -R "$Cachedir"
-  
-  return 0
+    
+  return "${Error:-0}"
 }
 
 main "$@"
+[ "$Savemask" = "no" ] && [ -d "$Cachedir" ] && rm -R "$Cachedir"
+exit "${Error:-0}"
