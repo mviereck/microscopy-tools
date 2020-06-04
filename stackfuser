@@ -1007,11 +1007,14 @@ align_ais() {
   Distortdir=$Cachedir/distort
   mkdir $Distortdir
   
-  nice align_image_stack -l $Opt1 --gpu -a $Distortdir/align --use-given-order $Imagelist || return 1
+  note "align_ais(): Running align_image_stack now. That will take a while."
+#  nice align_image_stack -v -v -v -v -v -l $Opt1 -a $Distortdir/align --use-given-order $Imagelist || return 1
+  nice align_image_stack -v -v -v -v -v $Opt1 -a $Distortdir/align -p $Cachedir/controlpoints.pto $Imagelist || return 1
 
   Alignlist="$(fileglob "$Distortdir/*")"
 
   # crop greatest common inner rectangle of distorted images
+  note "align_ais(): Generating min image of aligned images."
   Cropminimage="$Cachedir/distorted.min.mpc"
   $Convert $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
   case $Cropinteractive in
@@ -1029,7 +1032,7 @@ align_ais() {
     return 1
   }
   
-  note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeoemtry"
+  note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeometry"
   Imagecount=0
   for Image in $Alignlist; do
     Imagecount="$((Imagecount + 1))"
@@ -1708,11 +1711,20 @@ fuse() {
   verbose "fuse $Fusemode: $Enfuseoptions"
   
   # Fuse
-  { nice enfuse $Enfuseoptions --output="$Fusedir/$Destinationfile" $(echo $Imagelist) 2>&1 || {
-      failure "fuse $Fusemode failed"
-      return 1  ### FIXME seems not to return!?
-    } 
-  } | grep -v -E 'assuming all pixels should contribute|alpha channel|loading next image|no usable resolution found'
+  Fusebackend=enfuse
+  case $Fusebackend in
+    enfuse)
+      { nice enfuse $Enfuseoptions --output="$Fusedir/$Destinationfile" $(echo $Imagelist) 2>&1 || {
+          failure "fuse $Fusemode failed"
+          return 1  ### FIXME seems not to return!?
+        } 
+      } | grep -v -E 'assuming all pixels should contribute|alpha channel|loading next image|no usable resolution found'
+    ;;
+    imfuse)
+      mkdir -p $Cachedir/$Fusemode
+      imfuse --enfuse="$Enfuseoptions" --output="$Fusedir/$Destinationfile" --save-masks=$Cachedir/$Fusemode $(echo $Imagelist) || return 1
+    ;;
+  esac
   showimage "$Fusedir/$Destinationfile"
   
   
@@ -2187,7 +2199,7 @@ trim_hard() {
   Imagemask="$Sourceimage.mask.mpc"
   $Convert "$Sourceimagempc" -alpha extract "$Imagemask"
   
-  note "trim_hard(): Searching for inner rectangle of $(basename $Image)"
+  note "trim_hard(): Searching for inner rectangle of $(basename $Sourceimage)"
   
   Imagewidth=$($Convert  -format '%w'  $Imagemask info:)
   Imageheight=$($Convert -format '%h'  $Imagemask info:)
@@ -2241,6 +2253,7 @@ $Permilleright
 $Permilletop
 $Permillebottom" | sort -n | head -n1)
     showpercent "$(awk "BEGIN {print 1000*$Permillemax}" | cut -d. -f1)" "1000"
+    Cropgeometry="$((Right-Left+1))x$((Bottom-Top+1))+$Left+$Top"
     [ "$Permillemax" = "1.0000" ] && break # Ready
     
     # Remove side with maximal permille of $Trimcolor.
@@ -2290,6 +2303,7 @@ $Permillebottom" | sort -n | head -n1)
   showimage $Cropgeometryimage
   
   # Output of result
+  verbose "trim_hard(): $Cropgeometry"
   #echo "$Left,$Top $Right,$Bottom"                     # "-draw rectangle" geometry
   #echo $((Right-Left+1))x$((Bottom-Top+1))+$Left+$Top  # "-crop" geometry
   echo "$Cropgeometry"
@@ -2743,7 +2757,7 @@ start "stackfuser '$Version'"  -> frameset;
           align_vidstabbutton                                   -> @button="magick" ;
           align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | "";
         align_aisline:beside                                  -> align_ais align_aisopt1combo align_aisopt2combo align_aisbutton ;
-          align_aisopt1combo          "demagnifier"             -> "m"  | ! "";
+          align_aisopt1combo          "demagnifier (-m)"        -> "m"  | "";
           align_aisopt2combo          "crop interactive"        -> "interactive" | ! "";
           align_aisbutton                                       -> @button="magick" ;
           align_ais:beside            "align with align_image_stack" -> "on" | ! "";
@@ -2793,7 +2807,7 @@ start "stackfuser '$Version'"  -> frameset;
           stretchfuse                                           -> @button="fuse" ;
           stretch:beside              "stretch-contrast"        -> stretchopt1combo | ! "";
         wizardline:beside                                     -> wizard wizardmagick wizardfuse wizardevaluate;
-          wizardopt1combo                                       -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 0","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
+          wizardopt1combo                                       -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 0","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-orient undefined","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
           wizardmagick                                          -> @button="magick" ;
           wizardevaluate                                        -> @button="evaluate" ;
           wizardfuse                                            -> @button="fuse" ;
