@@ -45,7 +45,7 @@ Provides:
  - Generating multiple overall sharp images from stackshot with `enfuse`. Further combining of these results with `imagemagick`.
  - Animated videos of focus stackshots.
  
-Expects a folder with name `stackshot` containing the source images. `stackshot` should be in an otherwise empty parent folder. The images in `stackshot` won't be changed.
+Especially supports a folder with name `stackshot` containing the source images. `stackshot` should be in an otherwise empty parent folder. The images in `stackshot` won't be changed.
 Folder structure:
 ```
 -.
