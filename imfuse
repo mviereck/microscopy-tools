@@ -167,9 +167,11 @@ trap_sigint() {
 evaluate_step() {
   # evaluate in small stack steps to avoid high memory usage and caching.
   # Gives correct results for max and min, but not for mean or median.
+  ### FIXME weak results for unknown reasons
   
   local Imagelist Destinationfile
   local Mode Step Stepsize Stackcount Stacklist
+  local Startzeit Dauer Restzeit
   
   Mode="${1:-}" ; shift
   Destinationfile="${1:-}" ; shift
@@ -180,15 +182,55 @@ ${1:-}"
     shift
   done
   Imagelist="$(tail -n+2 <<< "$Imagelist")"
+  Startzeit="$(date +%s)"
   Stackcount=0
+  set -x
   for Step in 0 $(seq $((Imagenumber/$Stepsize)) ); do
     Stackcount="$((Stackcount+1))"
     Stacklist="$(tail -n+$((Stepsize*Step+1)) <<< "$Imagelist" | head)"
     [ "$Step" != "0" ] && Stacklist="$Destinationfile $Stacklist"
     nice $Magickbin $Stacklist -evaluate-sequence $Mode $Destinationfile || return 1
     showimage $Destinationfile
+    Dauer="$(( $(date +%s)-Startzeit))"
+    Restzeit="$(( Dauer*(Imagenumber-((Step+1)*Stepsize)) / ((Step+1)*Stepsize) ))"
+    [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
+    verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
   done
+  set +x
 }
+evaluate_split() {
+
+  local Imagelist Resultimage Mode
+  local Startzeit Dauer Restzeit
+  local Image Split Splitpercent Part Partimage Partimagelist
+  
+  Mode="${1:-}" ; shift
+  Resultimage="${1:-}" ; shift
+  while [ $# -gt 0 ]; do
+    Imagelist="$Imagelist
+${1:-}"
+    shift
+  done
+  Imagelist="$(tail -n+2 <<< "$Imagelist")"
+  Startzeit="$(date +%s)"
+  
+  Split=5
+  Splitpercent="$((100/Split))"
+  for Image in $Imagelist; do
+    verbose "Splitting $(basename $Image) into $Split pieces"
+#    $Magickbin $Image -crop 100%x${Splitpercent}% $Cachedir/split%01d.tif
+    $Magickbin $Image -crop 100%x${Splitpercent}% $Cachedir/split%01d.$(basename $Image).tif
+    showimage $Cachedir/split3.$(basename $Image).tif
+  done
+  ls $Cachedir
+  for Part in $(seq 0 $((Split-1))) ; do
+    Partimage=$Cachedir/$Mode.part$Part.tif
+    $Magickbin $Cachedir/split${Part}.*.tif -evaluate-sequence $Mode $Partimage
+    Partimagelist="$Partimagelist $Partimage"
+  done
+  $Magickbin $Partimagelist -append $Resultimage
+}
+
 fuse_focus_stackshot()  {
   # fuse focus image stackshot.
   # Based on snibgo's focus stacking script at http://im.snibgo.com/focstack.htm
@@ -197,6 +239,7 @@ fuse_focus_stackshot()  {
   local Sourcemask Resultmask Diffmask Resultcount Sourcecount
   local Maskgenerator Maskgenerator2
   local Writesourcemask Writeresultmask Writediffmask Writesourcecount Writeresultcount
+  local Startzeit Dauer Restzeit
   
   # Use first image as base of result
   Firstimage="$(head -n1 <<< "$Imagelist")"
@@ -207,6 +250,7 @@ fuse_focus_stackshot()  {
   # Interate on rest of image list
 #  Count=1
 #  for Sourceimage in $(grep -v -x "$Firstimage" <<< "$Imagelist"); do
+  Startzeit="$(date +%s)"
   Count=0
   for Sourceimage in $Imagelist; do
     [ "$Error" ] && break
@@ -223,7 +267,7 @@ fuse_focus_stackshot()  {
       Writediffmask="-write $Diffmask"
     }
     
-    verbose "Processing Image $Count / $Imagenumber with method $Method in fuse mode $Mode: $Sourceimage" 
+    verbose "Processing Image $Count / $Imagenumber with method $Method in fuse mode $Mode: $(basename $Sourceimage)" 
     
     # Mask generating ImageMagick options
     # Most of them are based on edge detection: http://www.imagemagick.org/Usage/convolve/#edgedet
@@ -536,7 +580,52 @@ fuse_focus_stackshot()  {
           "$Resultimage" || error "Error in fuse"
         showimage $Resultimage
       ;;
+      8)
+        # combine mode 1+2: overlay max+min
+        $Magickbin \
+          $Sourceimage \
+            -write mpr:sourceimage  \
+            $Maskgenerator  \
+            -write mpr:sourcemask \
+            -delete 0 \
+          $Resultimage \
+            -write mpr:resultimage \
+            $Maskgenerator2 \
+            -write mpr:resultmask \
+            -delete 0 \
+          mpr:sourcemask mpr:resultmask \
+            -compose MinusDst -composite -fill white +opaque black  \
+            -write mpr:diffmask \
+            -delete 0 \
+          mpr:sourceimage mpr:resultimage mpr:diffmask \
+            -alpha off -compose Over -composite \
+            -write mpr:result1 \
+            -delete 0 \
+          mpr:resultmask mpr:sourcemask \
+            -compose MinusDst -composite -fill white +opaque black \
+            -write mpr:diffmask                   \
+            -delete 0 \
+          mpr:resultimage mpr:sourceimage mpr:diffmask \
+            -alpha off -compose Over -composite \
+            -write mpr:result2 \
+            -delete 0 \
+          mpr:result1 mpr:result2 \
+            -evaluate-sequence min \
+            -write mpr:resultmin \
+            -delete 0 \
+          mpr:result1 mpr:result2 \
+            -evaluate-sequence max \
+            -write mpr:resultmax \
+            -delete 0 \
+          mpr:resultmin mpr:resultmax \
+            -compose overlay -composite \
+          "$Resultimage" || error "Error in fuse"
+        showimage $Resultimage
+      ;;
     esac
+    Dauer="$(( $(date +%s)-Startzeit))"
+    Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
+    verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
   done
   [ "$Error" ] && return "${Error:-0}"
   case $Mode in
@@ -789,7 +878,7 @@ check_options() {
     ;;
     *)
       case $Mode in
-        1|2|3|4|5|6|7) ;;
+        1|2|3|4|5|6|7|8) ;;
         "")
           note "Setting --mode=1"
           Mode=1
@@ -831,17 +920,17 @@ check_options() {
     Outputimage="${Outputimage}.${Imageformat}"
     note "Setting --output=$Outputimage"
   }
-  Resultimage="$Cachedir/imfuse.result.tif"
+  Resultimage="$Cachedir/imfuse.result-${Method}.tif"
   Outputimage="$(realpath $Outputimage)"
   
-  grep -i '\.tif$' <<< "$Outputimage" && Compress="-compress zip"
+  grep -q -i '\.tif$' <<< "$Outputimage" && Compress="-compress zip"
   
   [ "$Revertimagelist" = "yes" ] && Imagelist="$(tac <<< "$Imagelist")"
   
   verbose "--$Method=$Maskgeneratorargument
 --mode=$Mode
 --radius=$Radius
---sigma=$Sigma
+--sigma=$Sigma1
 --sigma2=$Sigma2
 --gamma=$Gamma
 --addmax: $Addmax
@@ -897,7 +986,7 @@ $Imagelist"
     evaluate)
       case $Maskgeneratorargument in
         max|min)
-          evaluate_step $Maskgeneratorargument $Resultimage $Imagelist
+          evaluate_split $Maskgeneratorargument $Resultimage $Imagelist
         ;;
         *)
           $Magickbin \
@@ -908,21 +997,24 @@ $Imagelist"
       esac
     ;;
     compose)
-      evaluate_step max $Cachedir/max.tif $Imagelist
-      evaluate_step min $Cachedir/min.tif $Imagelist
-      $Magickbin \
-        $Cachedir/max.tif $Cachedir/min.tif $Swapcompose \
-          -compose $Maskgeneratorargument -composite \
-        $Resultimage || error "Error in --$Method=$Maskgeneratorargument"
-        
-#      $Magickbin \
-#        $(echo $Imagelist) \
-#          \( -clone 0--1 -evaluate-sequence max -write mpr:max -delete 0--1 \) \
-#          \( -clone 0--1 -evaluate-sequence min -write mpr:min -delete 0--1 \) \
-#          -delete 0--1 \
-#        mpr:max mpr:min $Swapcompose \
+#      verbose "--compose: Generating max image"
+#      evaluate_step max $Cachedir/max.tif $Imagelist
+#      verbose "--compose: Generating min image"
+#      evaluate_step min $Cachedir/min.tif $Imagelist
+#      verbose "--compose: compositing $Maskgeneratorargument"
+#     $Magickbin \
+#        $Cachedir/max.tif $Cachedir/min.tif $Swapcompose \
 #          -compose $Maskgeneratorargument -composite \
 #        $Resultimage || error "Error in --$Method=$Maskgeneratorargument"
+        
+      $Magickbin \
+        $(echo $Imagelist) \
+          \( -clone 0--1 -evaluate-sequence max -write mpr:max -delete 0--1 \) \
+          \( -clone 0--1 -evaluate-sequence min -write mpr:min -delete 0--1 \) \
+          -delete 0--1 \
+        mpr:max mpr:min $Swapcompose \
+          -compose $Maskgeneratorargument -composite \
+        $Resultimage || error "Error in --$Method=$Maskgeneratorargument"
     ;;
     *)
       fuse_focus_stackshot  || error "Error while fusing stackshot"
