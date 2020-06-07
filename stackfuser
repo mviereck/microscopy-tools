@@ -567,7 +567,7 @@ batch_function() {
   Startzeit="$(date +%s)"
   $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -s "$Sourcedir" -g "$Sourcefileglob" -d "$Destinationdir" -b "$Destinationfile" -c "$Cachedir"
   Return=$?
-  note "Ready: $Function $Opt1 $Opt2 $Opt3 $Opt4; time: $(( $(date +%s) -Startzeit ))s."
+  note "Ready: $Function $Opt1 $Opt2 $Opt3 $Opt4; time: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   cd "$Targetdir"
   storeinfo drop cmd
   storeinfo drop cmd_source
@@ -710,7 +710,7 @@ getfunctionsettings() {
 runbatchone() {
   local $Batchlocal
   local Iterate
-  for Function in crop whitebalance align_ais align_vidstab; do
+  for Function in crop whitebalance align_vidstab align_ais; do
     askkaptain -c $Function > /dev/null && {
       getfunctionsettings $Function
       cmd -f "$Function" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Stackdir"
@@ -761,19 +761,376 @@ setup_imagelist() {
 
 #### image sequence operations
 
+align_ais() {
+
+  local $Batchlocal
+  local $Imagelocal
+  local Alignlist
+  local Aligndir Distortdir
+  local Cropminimage Rotate
+  local Stackcount Stacklist Firstimage Step Stepsize
+  local Startzeit Dauer Restzeit
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  [ "$Opt1" ] && Opt1="-m"
+  Stepsize=10
+
+  note "align_ais: Running align_image_stack with $Stepsize images on each iteration.
+  "
+  Stackcount=0
+  Startzeit="$(date +%s)"
+  for Step in 0 $(seq $((Imagenumber/$Stepsize)) ); do
+    showpercent $((Step*Stepsize)) $Imagenumber
+    Stackcount="$((Stackcount+1))"
+    Stacklist="$(tail -n+$((Stepsize*Step+1)) <<< "$Imagelist" | head)"
+    [ -z "$Stacklist" ] && break
+    Aligndir=$Cachedir/align.$Stackcount
+    mkdir $Aligndir
+    align_image_stack $Opt1 -v -l -g3 --use-given-order -p $Cachedir/ais.$Stackcount.pto -a $Aligndir/align $Firstimage $Stacklist || return 1
+    Firstimage="$(fileglob "$Aligndir/align*" | tail -n1)"
+    showimage $Firstimage
+    Dauer="$(( $(date +%s)-Startzeit))"
+    Restzeit="$(( Dauer*(Imagenumber-((Step+1)*Stepsize)) / ((Step+1)*Stepsize) ))"
+    note "align_ais: Running since $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+  done
+  
+  Distortdir=$Cachedir/result
+  mkdir $Distortdir
+  Count=0
+  for Aligndir in $Cachedir/align*; do
+    [ "$Count" = "0" ] || rm $Aligndir/align0000.tif
+    for Image in $(fileglob "$Aligndir/*"); do
+      Count=$((Count+1))
+      mv $Image $Distortdir/align$(zeronumber $Count).tif
+    done
+  done
+
+  Alignlist="$(fileglob "$Distortdir/*")"
+
+  # crop greatest common inner rectangle of distorted images
+  note "align_ais(): Generating min image of aligned images."
+  Cropminimage="$Cachedir/distorted.min.tif"
+  #$Convert $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
+  evaluate_step -s $Distortdir -g "*" -1 min -b $Cropminimage
+  case $Cropinteractive in
+    yes) notify-send "align_ais: Ready for interactive crop"
+         Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
+    *)   Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")"              || return 1 ;;
+  esac
+  
+  Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
+  Rotate="${Rotate:-0}"
+  Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
+      
+  [ "$Cropgeometry" ] || {
+    failure "align_ais: crop geometry is empty"
+    return 1
+  }
+  
+  note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeometry"
+  Imagecount=0
+  for Image in $Alignlist; do
+    Imagecount="$((Imagecount + 1))"
+    Destinationfile="$(head -n$Imagecount <<< "$Imagelist" | tail -n1)"
+    Destinationfile="$Destinationdir/$(basename $Destinationfile)"
+    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    showpercent $Imagecount $Imagenumber
+  done
+  multicore_wait || return 1
+}
+align_ais_ONE() {
+
+  local $Batchlocal
+  local $Imagelocal
+  local Alignlist
+  local Distortdir
+  local Cropminimage Rotate
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  [ "$Opt1" ] && Opt1="-m"
+
+  Distortdir=$Cachedir/distort
+  mkdir $Distortdir
+  
+  note "align_ais(): Running align_image_stack now. That will take a while."
+#  nice align_image_stack -v -v -v -v -v -l $Opt1 -a $Distortdir/align --use-given-order $Imagelist || return 1
+  nice align_image_stack $Opt1 -l --use-given-order -v -v -v -v -v -a $Distortdir/align -p $Cachedir/controlpoints.pto $Imagelist || return 1
+
+  Alignlist="$(fileglob "$Distortdir/*")"
+
+  # crop greatest common inner rectangle of distorted images
+  note "align_ais(): Generating min image of aligned images."
+  Cropminimage="$Cachedir/distorted.min.mpc"
+  $Convert $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
+  case $Cropinteractive in
+    yes) notify-send "align_ais: Ready for interactive crop"
+         Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
+    *)   Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")"              || return 1 ;;
+  esac
+  
+  Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
+  Rotate="${Rotate:-0}"
+  Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
+      
+  [ "$Cropgeometry" ] || {
+    failure "align_ais: crop geometry is empty"
+    return 1
+  }
+  
+  note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeometry"
+  Imagecount=0
+  for Image in $Alignlist; do
+    Imagecount="$((Imagecount + 1))"
+    Destinationfile="$(head -n$Imagecount <<< "$Imagelist" | tail -n1)"
+    Destinationfile="$Destinationdir/$(basename $Destinationfile)"
+    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    showpercent $Imagecount $Imagenumber
+  done
+  multicore_wait || return 1
+}
+align_ais_TWO() {
+
+  local $Batchlocal
+  local $Imagelocal
+  local Imagelist1 Imagelist2 Alignlist
+  local Count Imagehalf
+  local Part1dir Part2dir Distortdir
+  local Cropminimage Rotate
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  [ "$Opt1" ] && Opt1="-m"
+  
+  Part1dir=$Cachedir/part1
+  Part2dir=$Cachedir/part2
+  Distortdir=$Cachedir/distort
+  mkdir $Part1dir
+  mkdir $Part2dir
+  mkdir $Distortdir
+
+  Imagehalf=$((Imagenumber/2 +1))
+  Count=0
+  for Image in $Imagelist; do
+    Count=$((Count + 1))
+    [ "$Count" -le "$Imagehalf" ] && Imagelist1="$Image $Imagelist1"
+    [ "$Count" -ge "$Imagehalf" ] && Imagelist2="$Imagelist2 $Image"
+  done
+
+  echo "List1:
+$Imagelist1"
+  echo "List2:
+$Imagelist2"
+  showpercent busy
+  multicore "nice align_image_stack -l $Opt1 --gpu -a $Part1dir/align --use-given-order $Imagelist1" || return 1
+  multicore "nice align_image_stack -l $Opt1 --gpu -a $Part2dir/align --use-given-order $Imagelist2" || return 1
+  multicore_wait || return 1
+
+  Alignlist="$(fileglob "$Part1dir/*")"
+  Count=0
+  for Image in $Alignlist ; do
+    Destinationfile="$(head -n$((Imagehalf - Count)) <<< "$Imagelist" | tail -1)"
+    Destinationfile="$Distortdir/$(basename "$Destinationfile").tif"
+    cp -T "$Image" "$Destinationfile"
+    Count=$((Count + 1))
+    showimage "$Destinationfile"
+  done
+  Alignlist="$(fileglob "$Part2dir/*")"
+  Count=0
+  for Image in $Alignlist ; do
+    Destinationfile="$(head -n$((Imagehalf + Count)) <<< "$Imagelist" | tail -1)"
+    Destinationfile="$Distortdir/$(basename "$Destinationfile").tif"
+    cp "$Image" "$Destinationfile"
+    Count=$((Count + 1))
+    showimage "$Destinationfile"
+  done
+
+  # crop greatest common inner rectangle of distorted images
+  Cropminimage="$Cachedir/distorted.min.mpc"
+  $Convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
+  case $Cropinteractive in
+    yes) notify-send "align_ais: Ready for interactive crop"
+         Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
+    *)   Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")"              || return 1 ;;
+  esac
+  
+  Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
+  Rotate="${Rotate:-0}"
+  Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
+  Cropgeometry="$(calc_evengeometry "$Cropgeometry")"
+      
+  [ "$Cropgeometry" ] || {
+    failure "align_ais: crop geometry is empty"
+    return 1
+  }
+  
+  note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeoemtry"
+  Imagelist="$(fileglob "$Distortdir/*")"
+  Imagecount=0
+  for Image in $Imagelist; do
+    Imagecount="$((Imagecount + 1))"
+    Destinationfile="$Destinationdir/$(basename $Image)"
+    Destinationfile="${Destinationfile%.tif}"
+    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    showpercent $Imagecount $Imagenumber
+  done
+  multicore_wait || return 1
+}
+align_hugin() {
+  # Align image stack with some panotools. Similar to align_image_stack
+  
+  local $Batchlocal
+  local $Imagelocal
+  local Pto_ptogen Pto_cpfind Pto_cpclean Pto_result
+  local Logfile Aligndir
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  Logfile="$Cachedir/align_hugin.log"
+  :> $Logfile
+  
+  Pto_ptogen=$Cachedir/align1.pto_gen.pto
+  Pto_cpfind=$Cachedir/align2.cpfind.pto
+  Pto_cpclean=$Cachedir/align3.cpclean.pto
+  Pto_result=$Cachedir/align4.result.pto
+  
+  Aligndir=$Cachedir/align
+  mkdir $Aligndir
+  
+  #tail -f "$Logfile" &
+    
+  echo "########## pto_gen ##########" >> "$Logfile"
+  note "align_hugin: Running pto_gen to create list of files"
+#  pto_gen -o "$Pto_ptogen" -p 0 -f 40 --crop=0,${Imagewidth},0,${Imageheight} $(fileglob $Sourcefileglob) >> "$Logfile" 2>&1 || {
+#  pto_gen -o "$Pto_ptogen" -p 0 -f 40 --crop=0,${Imagewidth},0,${Imageheight} $(echo $Imagelist) >> "$Logfile" 2>&1 || {
+  pto_gen -p0 -f50 -o "$Pto_ptogen" $(echo $Imagelist) >> "$Logfile" 2>&1 || {
+    failure "align_hugin: Error in pto_gen
+$(tail $Logfile)"
+    return 1
+  }
+  
+  sed -i '3 s/r:CROP//'                     "$Pto_ptogen"
+  sed -i '3 s/\bf[0-9]*\b/f0/'              "$Pto_ptogen"
+  sed -i "3 s/\bw[0-9]*\b/w${Imagewidth}/"  "$Pto_ptogen"
+  sed -i "3 s/\bh[0-9]*\b/h${Imageheight}/" "$Pto_ptogen"
+  sed -i "3 s/\bv[0-9]*\b/v50/"             "$Pto_ptogen"
+#  sed -i "s/v=0/v50/"             "$Pto_ptogen"
+  #sed -i "s/v50/v0/"             "$Pto_ptogen"
+    
+#    pano_modify --projection=0 $Pto_ptogen
+#    pano_modify --canvas=${Imagewidth}x${Imageheight} $Pto_ptogen
+#    pano_modify --output-type=FUSEDSTACKS $Pto_ptogen
+
+  ifcmdbreak && return 1
+  echo "########## cpfind ##########" >> "$Logfile"
+  note "align_hugin: Running cpfind to find control points for alignment. That will take a while."
+#  cpfind -o "$Pto_cpfind"  \
+#        --fullscale \
+#        --minmatches 4 \
+#        --linearmatch \
+#        --linearmatchlen 10 \
+#        --ransacmode rpyv \
+#        "$Pto_ptogen" 2>&1 >> "$Logfile" || {
+#    failure "Error in cpfind
+#$(tail $Logfile)"
+#    return 1
+#  }
+  cpfind -o "$Pto_cpfind"  \
+        --ransacmode rpyv \
+        --linearmatch \
+        --linearmatchlen 3 \
+        "$Pto_ptogen" 2>&1 >> "$Logfile" || {
+    failure "align_hugin: Error in cpfind
+$(tail $Logfile)"
+    return 1
+  }
+  showpercent 40 100
+#        --linearmatchlen $Count \
+
+  ifcmdbreak && return 1
+  echo "########## cpclean ##########" >> "$Logfile"
+  note "align_hugin: Running cpclean to remove wrong control points"
+  cpclean -s -o "$Pto_cpclean" --pairwise-checking "$Pto_cpfind" >> "$Logfile" || {
+    failure "align_hugin: Error in cpclean
+$(tail $Logfile)"
+    return 1
+  }
+  showpercent 45 100
+
+  #pano_modify --fov=AUTO -o $Pto_cpclean $Pto_cpclean
+  pto_var --modify-opt --opt=v -o $Pto_cpfind $Pto_cpfind
+    
+  # calculate distortion of images to align control points
+  ifcmdbreak && return 1
+  echo "########## autooptimiser ##########" >> "$Logfile"
+  note "align_hugin: Running autooptimiser to transform control points into image distortion"
+#  autooptimiser -p -o "$Pto_result" "$Pto_cpclean" >> "$Logfile" || {
+  autooptimiser -n -p -a -o "$Pto_result" "$Pto_cpclean" >> "$Logfile" || {
+    failure "Error in autooptimiser
+$(tail $Logfile)"
+    return 1
+  }
+  showpercent 60 100
+  #pano_modify --crop=AUTO $Pto_result
+
+  grep -q "Strange values may result!" < "$Logfile" && {
+    failure "align_hugin: Did not find enough control points!
+  Check out log file $Logfile
+  Probably source images are distorted too much.
+  The result might be unuseable."
+#    return 1
+  }
+
+  # distort images to align them
+  ifcmdbreak && return 1
+  echo "########## nona ##########" >> "$Logfile"
+  note "align_hugin: Running nona to transform images"
+  nona -o "$Aligndir/PTO_ALIGN" "$Pto_result" >> "$Logfile" || {
+    failure "align_hugin: Error in nona
+$(tail $Logfile)"
+    return 1
+  }
+  showpercent 70 100
+  
+  ifcmdbreak && return 1
+  note "align_hugin: Checking crop coordinates of common area of all aligned images"
+  evaluate_step -s $Aligndir -g "*" -1 min -b $Cachedir/align_PTO.min.tif
+  #$Convert $Aligndir/PTO_ALIGN* -evaluate-sequence min $Cachedir/align_PTO.min.tif
+  Cropgeometry="$(trim_hard "$Cachedir/align_PTO.min.tif")"
+  showpercent 80 100
+
+  ifcmdbreak && return 1
+  note "align_hugin: Cropping images"
+  Count=0
+  for Image in $(fileglob "$Aligndir/PTO_ALIGN*"); do
+    Count=$((Count +1))
+    Destinationfile="$(sed "${Count}q;d" <<< "$Imagelist")"
+    Destinationfile="$(basename "$Destinationfile")"
+    Destinationfile="$Destinationdir/$Destinationfile"
+    multicore "$Convert $Image -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    showpercent $Count $Imagenumber
+  done
+  multicore_wait || return 1
+}
 align_vidstab() {
 
   local $Batchlocal
   local $Imagelocal
   local Framedir Distortdir Distortlogfile Cropminimage Commonareaimage
   local Xoffset Yoffset Degree
-  local Iterations
+  local Iterations Prepare Crop
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
   
   Opt1="${Opt1:-crop}"
   Iterations="${Opt2:-3}"
+  [ "${Opt3:-}" ] && Prepare="yes" || Prepare="no"
   
   # cache setup
   Framedir="$Cachedir/frames"
@@ -784,24 +1141,43 @@ align_vidstab() {
   Commonareaimage="$Cachedir/distorted.commonarea.mpc"
   Distortlogfile="$Cachedir/align_vidstab.log"
   
-  imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir"
   
-  note "align_vidstab: Preparing video frames for alignment"
-  Cropgeometry="$(calc_evengeometry "${Imagewidth}x${Imageheight}+0+0")"
-  Imagecount=0
-  for Image in $Imagelist; do
-    Imagecount="$((Imagecount + 1))"
-    Destinationfile="$Framedir/frame$(zeronumber $Imagecount).png"
-    multicore "$Convert $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
-    showpercent "$Imagecount" "$Imagenumber"
-  done
-  multicore_wait || return 1
-  Cropgeometry=""
-  showpercent 10 100
+  case "$Prepare" in
+    "no")
+      note "align_vidstab: Cropping video frames to even geometry and converting to png"
+      Cropgeometry="$(calc_evengeometry "${Imagewidth}x${Imageheight}+0+0")"
+      [ "$Cropgeometry" != "${Imagewidth}x${Imageheight}+0+0" ] && Crop="-crop $Cropgeometry" || Crop=""
+      Imagecount=0
+      for Image in $Imagelist; do
+        Imagecount="$((Imagecount + 1))"
+        Destinationfile="$Framedir/frame$(zeronumber $Imagecount).png"
+        multicore "$Convert $Image $Crop $Destinationfile" "$Destinationfile" || return 1
+        showpercent "$Imagecount" "$Imagenumber"
+      done
+      multicore_wait || return 1
+      Cropgeometry=""
+      showpercent 10 100
+    ;;
+    "yes")
+      note "align_vidstab: Preparing video frames for alignment"
+      imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir"
+      Cropgeometry="$(calc_evengeometry "${Imagewidth}x${Imageheight}+0+0")"
+      Imagecount=0
+      for Image in $Imagelist; do
+        Imagecount="$((Imagecount + 1))"
+        Destinationfile="$Framedir/frame$(zeronumber $Imagecount).png"
+        multicore "$Convert $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
+        showpercent "$Imagecount" "$Imagenumber"
+      done
+      multicore_wait || return 1
+      Cropgeometry=""
+      showpercent 10 100
   
-  note "align_vidstab: Balancing video frame brightness"
-  whitebalance -1 "full" -2 "mean" -s "$Framedir" -g "*" -d "$Framedir" -c "$Cachedir"
-  showpercent 20 100
+      note "align_vidstab: Balancing video frame brightness"
+      whitebalance -1 "full" -2 "mean" -s "$Framedir" -g "*" -d "$Framedir" -c "$Cachedir"
+      showpercent 20 100
+    ;;
+  esac
   
   align_vidstab_ffmpeg -2 "10" -s "$Framedir" -g "*" -c "$Cachedir" || return 1
   note "align_vidstab: Distorting frames (Shakiness=10)"
@@ -990,146 +1366,6 @@ align_vidstab_ffmpeg() {
   done
   
   return 0
-}
-align_ais() {
-
-  local $Batchlocal
-  local $Imagelocal
-  local Alignlist
-  local Distortdir
-  local Cropminimage Rotate
-  
-  parse_batchoptions "$@" || return 1
-  setup_imagelist         || return 1
-  
-  [ "$Opt1" ] && Opt1="-m"
-
-  Distortdir=$Cachedir/distort
-  mkdir $Distortdir
-  
-  note "align_ais(): Running align_image_stack now. That will take a while."
-#  nice align_image_stack -v -v -v -v -v -l $Opt1 -a $Distortdir/align --use-given-order $Imagelist || return 1
-  nice align_image_stack -v -v -v -v -v $Opt1 -a $Distortdir/align -p $Cachedir/controlpoints.pto $Imagelist || return 1
-
-  Alignlist="$(fileglob "$Distortdir/*")"
-
-  # crop greatest common inner rectangle of distorted images
-  note "align_ais(): Generating min image of aligned images."
-  Cropminimage="$Cachedir/distorted.min.mpc"
-  $Convert $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
-  case $Cropinteractive in
-    yes) notify-send "align_ais: Ready for interactive crop"
-         Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
-    *)   Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")"              || return 1 ;;
-  esac
-  
-  Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
-  Rotate="${Rotate:-0}"
-  Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
-      
-  [ "$Cropgeometry" ] || {
-    failure "align_ais: crop geometry is empty"
-    return 1
-  }
-  
-  note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeometry"
-  Imagecount=0
-  for Image in $Alignlist; do
-    Imagecount="$((Imagecount + 1))"
-    Destinationfile="$(head -n$Imagecount <<< "$Imagelist" | tail -n1)"
-    Destinationfile="$Destinationdir/$(basename $Destinationfile)"
-    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
-    showpercent $Imagecount $Imagenumber
-  done
-  multicore_wait || return 1
-}
-align_ais2() {
-
-  local $Batchlocal
-  local $Imagelocal
-  local Imagelist1 Imagelist2 Alignlist
-  local Count Imagehalf
-  local Part1dir Part2dir Distortdir
-  local Cropminimage Rotate
-  
-  parse_batchoptions "$@" || return 1
-  setup_imagelist         || return 1
-  
-  [ "$Opt1" ] && Opt1="-m"
-  
-  Part1dir=$Cachedir/part1
-  Part2dir=$Cachedir/part2
-  Distortdir=$Cachedir/distort
-  mkdir $Part1dir
-  mkdir $Part2dir
-  mkdir $Distortdir
-
-  Imagehalf=$((Imagenumber/2 +1))
-  Count=0
-  for Image in $Imagelist; do
-    Count=$((Count + 1))
-    [ "$Count" -le "$Imagehalf" ] && Imagelist1="$Image $Imagelist1"
-    [ "$Count" -ge "$Imagehalf" ] && Imagelist2="$Imagelist2 $Image"
-  done
-
-  echo "List1:
-$Imagelist1"
-  echo "List2:
-$Imagelist2"
-  showpercent busy
-  multicore "nice align_image_stack -l $Opt1 --gpu -a $Part1dir/align --use-given-order $Imagelist1" || return 1
-  multicore "nice align_image_stack -l $Opt1 --gpu -a $Part2dir/align --use-given-order $Imagelist2" || return 1
-  multicore_wait || return 1
-
-  Alignlist="$(fileglob "$Part1dir/*")"
-  Count=0
-  for Image in $Alignlist ; do
-    Destinationfile="$(head -n$((Imagehalf - Count)) <<< "$Imagelist" | tail -1)"
-    Destinationfile="$Distortdir/$(basename "$Destinationfile").tif"
-    cp -T "$Image" "$Destinationfile"
-    Count=$((Count + 1))
-    showimage "$Destinationfile"
-  done
-  Alignlist="$(fileglob "$Part2dir/*")"
-  Count=0
-  for Image in $Alignlist ; do
-    Destinationfile="$(head -n$((Imagehalf + Count)) <<< "$Imagelist" | tail -1)"
-    Destinationfile="$Distortdir/$(basename "$Destinationfile").tif"
-    cp "$Image" "$Destinationfile"
-    Count=$((Count + 1))
-    showimage "$Destinationfile"
-  done
-
-  # crop greatest common inner rectangle of distorted images
-  Cropminimage="$Cachedir/distorted.min.mpc"
-  $Convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
-  case $Cropinteractive in
-    yes) notify-send "align_ais: Ready for interactive crop"
-         Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
-    *)   Cropgeometry="$(trim_hard "$Cropminimage" "$Cropgeometry")"              || return 1 ;;
-  esac
-  
-  Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
-  Rotate="${Rotate:-0}"
-  Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
-  Cropgeometry="$(calc_evengeometry "$Cropgeometry")"
-      
-  [ "$Cropgeometry" ] || {
-    failure "align_ais: crop geometry is empty"
-    return 1
-  }
-  
-  note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeoemtry"
-  Imagelist="$(fileglob "$Distortdir/*")"
-  Imagecount=0
-  for Image in $Imagelist; do
-    Imagecount="$((Imagecount + 1))"
-    Destinationfile="$Destinationdir/$(basename $Image)"
-    Destinationfile="${Destinationfile%.tif}"
-    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
-    showpercent $Imagecount $Imagenumber
-  done
-  multicore_wait || return 1
 }
 animation() {
   # Generate animated GIF from stackshot.
@@ -1609,6 +1845,32 @@ evaluate() {
   esac
   return 0
 }
+evaluate_step() {
+  # evaluate in small stack steps to avoid high memory usage and caching.
+  # Gives correct results for max and min, but not for mean or median.
+  
+  local $Batchlocal
+  local $Imagelocal
+  local Mode Step Stepsize Stackcount Stacklist
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  Mode="${Opt1:-min}"
+  Stepsize=40
+  [ -n "$Destinationfile" ] && Destinationfile="$Destinationdir/$Destinationfile" || Destinationfile="$Cachedir/$Mode.tif"
+
+  note "Generating $Mode image"
+  Stackcount=0
+  for Step in 0 $(seq $((Imagenumber/$Stepsize)) ); do
+    Stackcount="$((Stackcount+1))"
+    Stacklist="$(tail -n+$((Stepsize*Step+1)) <<< "$Imagelist" | head)"
+    [ "$Step" != "0" ] && Stacklist="$Destinationfile $Stacklist"
+    nice $Convert $Stacklist -evaluate-sequence $Mode $Destinationfile || return 1
+    showimage $Destinationfile
+    showpercent $((Stackcount*Stepsize)) $Imagenumber
+  done
+}
 fuse() {
   # fuse stackshot of images with enfuse
   
@@ -2016,10 +2278,13 @@ wizard() {
   local $Batchlocal
   local $Imagelocal
   local $Imagepropertieslocal
-  local Options 
+  local Options Compress
 
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
+  
+  grep -i '\.tif$' <<< "$Outputimage" && Compress="-compress zip"
+
   [ "$Opt2" ] || case "$Opt1" in
     brightness) Opt2="10x10" ;;
     contrast)   Opt2="3x50%" ;;
@@ -2063,7 +2328,7 @@ wizard() {
   for Image in $Imagelist; do
     Imagecount="$((Imagecount + 1 ))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
-    multicore "$Convert $Image $Options $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Convert $Image $Options $Compress $Destinationfile" "$Destinationfile" || return 1
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
@@ -2730,7 +2995,7 @@ start "stackfuser '$Version'"  -> frameset;
         batchframeleft:framed              -> batchblock1 batchblock2 ;
         batchframeright:framed             -> batchblock3 runbatchframe stopframe;
           
-      batchblock1 "batch block 1: crop and balance directory magick" -> cropline whitebalanceline align_aisline align_vidstabline;
+      batchblock1 "batch block 1: crop and balance directory magick" -> cropline whitebalanceline align_vidstabline align_huginline align_aisline;
         meanbalanceline:beside                                -> meanbalance meanbalanceopt1combo meanbalancemagick meanbalancefuse meanbalanceevaluate;
           meanbalanceopt1combo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
           meanbalancemagick                                     -> @button="magick" ;
@@ -2751,11 +3016,15 @@ start "stackfuser '$Version'"  -> frameset;
           cropevaluate                                          -> @button="evaluate" ;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop + rotate"           -> "on" | ! "";
-        align_vidstabline:beside                              -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabbutton ;
+        align_vidstabline:beside                              -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabopt3combo align_vidstabbutton ;
           align_vidstabopt1combo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
           align_vidstabopt2combo:beside   "Iterations:"         -> @combo("1","2","3")="3";
+          align_vidstabopt3combo:beside   "prepare"             -> "prepare" | "" ;
           align_vidstabbutton                                   -> @button="magick" ;
           align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | "";
+        align_huginline:beside                                  -> align_hugin align_huginbutton ;
+          align_huginbutton                                      -> @button="magick" ;
+          align_hugin:beside          "align with hugin"         -> "on" | ! "";
         align_aisline:beside                                  -> align_ais align_aisopt1combo align_aisopt2combo align_aisbutton ;
           align_aisopt1combo          "demagnifier (-m)"        -> "m"  | "";
           align_aisopt2combo          "crop interactive"        -> "interactive" | ! "";
@@ -3062,19 +3331,19 @@ kaptain_update() {
   sendkaptain "choosedir='$Stackdir'"
   
   # show directory buttons
-  [ -d "$Stackdir/stackshot" ]             && sendkaptain "showdirstackshot='stackshot'"       || sendkaptain "showdirstackshot='-'"
-  [ -d "$Stackdir/magick" ]                && sendkaptain "showdirmagick='magick'"             || sendkaptain "showdirmagick='-'"
-  [ -d "$Stackdir/evaluate" ]              && sendkaptain "showdirevaluate='evaluate'"         || sendkaptain "showdirevaluate='-'"
-  [ -d "$Stackdir/compose" ]               && sendkaptain "showdircompose='compose'"           || sendkaptain "showdircompose='-'"
-  [ -d "$Stackdir/fuse" ]                  && sendkaptain "showdirfuse='fuse'"                 || sendkaptain "showdirfuse='-'"
+  [ -d "$Stackdir/stackshot" ]                      && sendkaptain "showdirstackshot='stackshot'"       || sendkaptain "showdirstackshot='-'"
+  [ -d "$Stackdir/magick" ]                         && sendkaptain "showdirmagick='magick'"             || sendkaptain "showdirmagick='-'"
+  [ -d "$Stackdir/evaluate" ]                       && sendkaptain "showdirevaluate='evaluate'"         || sendkaptain "showdirevaluate='-'"
+  [ -d "$Stackdir/compose" ]                        && sendkaptain "showdircompose='compose'"           || sendkaptain "showdircompose='-'"
+  [ -d "$Stackdir/fuse" ]                           && sendkaptain "showdirfuse='fuse'"                 || sendkaptain "showdirfuse='-'"
   
   # show delete buttons
-  check_dirglob "$Stackdir/*.bak" ]        && sendkaptain "deletebackups='backups + cache'"    || sendkaptain "deletebackups='-'"
-  check_dirglob "$Stackdir/magick" ]       && sendkaptain "deletemagick='magick'"              || sendkaptain "deletemagick='-'"
-  check_dirglob "$Stackdir/evaluate" ]     && sendkaptain "deleteevaluate='evaluate'"          || sendkaptain "deleteevaluate='-'"
-  check_dirglob "$Stackdir/compose" ]      && sendkaptain "deletecompose='compose'"            || sendkaptain "deletecompose='-'"
-  check_dirglob "$Stackdir/fuse" ]         && sendkaptain "deletefuse='fuse'"                  || sendkaptain "deletefuse='-'"
-  check_dirglob "$Stackdir/video" ]        && sendkaptain "deletevideo='video'"                || sendkaptain "deletevideo='-'"
+  check_dirglob "$Stackdir/*.bak $Stackdir/cache" ] && sendkaptain "deletebackups='backups + cache'"    || sendkaptain "deletebackups='-'"
+  check_dirglob "$Stackdir/magick" ]                && sendkaptain "deletemagick='magick'"              || sendkaptain "deletemagick='-'"
+  check_dirglob "$Stackdir/evaluate" ]              && sendkaptain "deleteevaluate='evaluate'"          || sendkaptain "deleteevaluate='-'"
+  check_dirglob "$Stackdir/compose" ]               && sendkaptain "deletecompose='compose'"            || sendkaptain "deletecompose='-'"
+  check_dirglob "$Stackdir/fuse" ]                  && sendkaptain "deletefuse='fuse'"                  || sendkaptain "deletefuse='-'"
+  check_dirglob "$Stackdir/video" ]                 && sendkaptain "deletevideo='video'"                || sendkaptain "deletevideo='-'"
   
   # videos
   Comboline=""
@@ -3855,7 +4124,7 @@ parse_kaptainsignal() {
       fuse_config &
     ;;
     
-    *magick|*compose|*evaluate|*fuse|evaluatemagick|align_vidstab|align_ais)
+    *magick|*compose|*evaluate|*fuse|evaluatemagick|align_vidstab|align_ais|align_hugin)
       Command="$Kaptainsignal"
       Command="${Command%evaluate}"
       Command="${Command%fuse}"
