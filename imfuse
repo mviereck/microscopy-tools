@@ -38,31 +38,31 @@ Mask generating methods:                                 Default: --compose
                                bumpmap colorburn difference linearburn 
                                linearlight modulate multiply overlay pegtoplight
                              Does not generate masks but directly combines.
-                             Some MODEs are influenced by --swap.
-                                                        
+                             Takes options:
+                               --swap                   
      --dog                   Difference of Gaussians.
                              Takes options: 
                                --radius                  Default: 0
                                --sigma1                  Default: 0.5
                                --sigma2                  Default: 1.6*sigma1
-     --enfuse [=ENFUSEARGS]  Uses external binary enfuse.
+     --enfuse [=ENFUSEARGS]  Uses external binary enfuse for mask generation.
                              Takes options: 
                                --radius                  Default: 5
                              Optionally add custom enfuse options ENFUSEARGS.
                              One of interest is '--hard-mask'.
-                             --radius sets --contrast-window-size=RADIUS.
+                             Option --radius sets --contrast-window-size=RADIUS.
      --evaluate [=MODE]      Evaluates a result of all source images with
                              mode MODE.                  Default: max
                              MODE can be one of '$(basename $Magickbin) -list evaluate'
                              Compare IM option -evaluate-sequence.
                              Most of interest:
-                               max      Maximal values in sequence. 
+                               max      Brightest pixels in sequence. 
                                         Fast and pretty result.
-                               mean     Average of sequence. 
+                               mean     Average pixel values in sequence. 
                                         Useful to combine imfuse results.
-                               median   Middle values in sequence. 
+                               median   Middle pixel values in sequence. 
                                         Useful to combine imfuse results.
-                               min      Minimal values in sequence.
+                               min      Darkest pixels in sequence.
                              Does not generate masks but directly combines.
      --free='IMOPTION'       Custom ImageMagick option IMOPTION 
                              for mask generation.        Default: '-edge 2'
@@ -103,6 +103,7 @@ Method settings: (Effect depends on method, see above.)
  -s, --sigma=SIGMA1
  -S, --sigma2=SIGMA2         Default: SIGMA2=SIGMA1*1.6
      --swap                  Invert order of max/min in --compose.
+                             Changes result of some but not all compose modes.
  
 Method independent adjustments:
      --addmax                Add a maximum image of source images to image list.
@@ -161,8 +162,33 @@ trap_sigint() {
   error "Received SIGINT"
 }
 
-### Fuse focus stackshot
+### Image processing
 
+evaluate_step() {
+  # evaluate in small stack steps to avoid high memory usage and caching.
+  # Gives correct results for max and min, but not for mean or median.
+  
+  local Imagelist Destinationfile
+  local Mode Step Stepsize Stackcount Stacklist
+  
+  Mode="${1:-}" ; shift
+  Destinationfile="${1:-}" ; shift
+  Stepsize=40
+  while [ $# -gt 0 ]; do
+    Imagelist="$Imagelist
+${1:-}"
+    shift
+  done
+  Imagelist="$(tail -n+2 <<< "$Imagelist")"
+  Stackcount=0
+  for Step in 0 $(seq $((Imagenumber/$Stepsize)) ); do
+    Stackcount="$((Stackcount+1))"
+    Stacklist="$(tail -n+$((Stepsize*Step+1)) <<< "$Imagelist" | head)"
+    [ "$Step" != "0" ] && Stacklist="$Destinationfile $Stacklist"
+    nice $Magickbin $Stacklist -evaluate-sequence $Mode $Destinationfile || return 1
+    showimage $Destinationfile
+  done
+}
 fuse_focus_stackshot()  {
   # fuse focus image stackshot.
   # Based on snibgo's focus stacking script at http://im.snibgo.com/focstack.htm
@@ -531,6 +557,7 @@ declare_variables() {
   Addmax="no"
   Addmean="no"
   Addmin="no"
+  Compress=""
   Error=""
   Gamma=""
   Sourceweight=""
@@ -540,7 +567,7 @@ declare_variables() {
   Magickbin=""
   Method=""
   Maskgeneratorargument=""
-  Mode="1"
+  Mode=""
   Negate="no"
   Outputimage=""
   Revertimagelist="no"
@@ -576,7 +603,7 @@ parse_options() {
       --addmax)            Addmax="yes" ;;
       --addmean)           Addmean="yes" ;;
       --addmin)            Addmin="yes" ;;
-      -g|--gamma)          Mode="${2:-auto}" ; shift ;;
+      -g|--gamma)          Gamma="${2:-auto}" ; shift ;;
       -m|--mode)           Mode="${2:-}" ; shift ;;
       --negate)            Negate="yes" ;;
       -o|--output)         Outputimage="${2:-}" ; shift ;;
@@ -750,12 +777,29 @@ check_options() {
   esac
   
   # --mode
-  false && case $Mode in
-    1|2|3|4|5|6|7) ;;
-    *) 
-      note "Invalid --mode=$Mode
+  case $Method in
+    compose|evaluate)
+      case $Mode in
+        "") ;;
+        *) 
+          note "--mode: Not used by --$Method" 
+          Mode=""
+        ;;
+      esac
+    ;;
+    *)
+      case $Mode in
+        1|2|3|4|5|6|7) ;;
+        "")
+          note "Setting --mode=1"
+          Mode=1
+        ;;
+        *) 
+          note "Invalid --mode=$Mode
   Setting --mode=1"
-      Mode=1
+          Mode=1
+        ;;
+      esac
     ;;
   esac
   
@@ -779,11 +823,18 @@ check_options() {
       *) Outputimage="${Outputimage}.m${Mode}" ;;
     esac
     [ "$Sourceweight" ] && Outputimage="${Outputimage}.w${Sourceweight}"
+    case $Gamma in
+      "") ;;
+      auto) Outputimage="${Outputimage}.g" ;;
+      *)    Outputimage="${Outputimage}.g$Gamma" ;;
+    esac
     Outputimage="${Outputimage}.${Imageformat}"
     note "Setting --output=$Outputimage"
   }
   Resultimage="$Cachedir/imfuse.result.tif"
   Outputimage="$(realpath $Outputimage)"
+  
+  grep -i '\.tif$' <<< "$Outputimage" && Compress="-compress zip"
   
   [ "$Revertimagelist" = "yes" ] && Imagelist="$(tac <<< "$Imagelist")"
   
@@ -792,9 +843,10 @@ check_options() {
 --radius=$Radius
 --sigma=$Sigma
 --sigma2=$Sigma2
-Addmax: $Addmax
-Addmean: $Addmean
-Addmin: $Addmin
+--gamma=$Gamma
+--addmax: $Addmax
+--addmean: $Addmean
+--addmin: $Addmin
 Cachedir: $Cachedir"
   
   return ${Error:-0}
@@ -843,20 +895,34 @@ $Imagelist"
  
   case $Method in
     evaluate)
-      $Magickbin \
-        $(echo $Imagelist) \
-          -evaluate-sequence $Maskgeneratorargument \
-        $Resultimage  || error "Error in --$Method=$Maskgeneratorargument"
+      case $Maskgeneratorargument in
+        max|min)
+          evaluate_step $Maskgeneratorargument $Resultimage $Imagelist
+        ;;
+        *)
+          $Magickbin \
+            $Imagelist \
+              -evaluate-sequence $Maskgeneratorargument \
+            $Resultimage  || error "Error in --$Method=$Maskgeneratorargument"
+        ;;
+      esac
     ;;
     compose)
+      evaluate_step max $Cachedir/max.tif $Imagelist
+      evaluate_step min $Cachedir/min.tif $Imagelist
       $Magickbin \
-        $(echo $Imagelist) \
-          \( -clone 0--1 -evaluate-sequence max -write mpr:max -delete 0--1 \) \
-          \( -clone 0--1 -evaluate-sequence min -write mpr:min -delete 0--1 \) \
-          -delete 0--1 \
-        mpr:max mpr:min $Swapcompose \
+        $Cachedir/max.tif $Cachedir/min.tif $Swapcompose \
           -compose $Maskgeneratorargument -composite \
         $Resultimage || error "Error in --$Method=$Maskgeneratorargument"
+        
+#      $Magickbin \
+#        $(echo $Imagelist) \
+#          \( -clone 0--1 -evaluate-sequence max -write mpr:max -delete 0--1 \) \
+#          \( -clone 0--1 -evaluate-sequence min -write mpr:min -delete 0--1 \) \
+#          -delete 0--1 \
+#        mpr:max mpr:min $Swapcompose \
+#          -compose $Maskgeneratorargument -composite \
+#        $Resultimage || error "Error in --$Method=$Maskgeneratorargument"
     ;;
     *)
       fuse_focus_stackshot  || error "Error while fusing stackshot"
@@ -872,9 +938,9 @@ $Imagelist"
   esac
   [ "$Error" ] && return 1
   
-  $Magickbin "$Resultimage" "$Outputimage"  || error "Error storing result in $Outputimage"
+  $Magickbin "$Resultimage" $Compress "$Outputimage"  || error "Error storing result in $Outputimage"
   showimage "$Outputimage"
-  note "Ready. Time needed: $(( $(date +%s) -Startzeit ))s."
+  note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
     
   return "${Error:-0}"
 }
