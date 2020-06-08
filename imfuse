@@ -39,7 +39,9 @@ Mask generating methods:                                 Default: --compose
                                linearlight modulate multiply overlay pegtoplight
                              Does not generate masks but directly combines.
                              Takes options:
-                               --swap                   
+                               --swap       
+                             Hint: Generate max+min images with --evaluate and
+                             provide only them to --compose to speed it up.
      --dog                   Difference of Gaussians.
                              Takes options: 
                                --radius                  Default: 0
@@ -133,13 +135,11 @@ error() {
   #exit 1
 }
 note() {
-  [ -z "$Error" ] && echo "imfuse note: $*
-"
+  [ -z "$Error" ] && echo "imfuse note: $*"
   return 0
 }
 verbose() {
-  [ "$Verbose" = "yes" ] && echo "imfuse: $*
-"
+  [ "$Verbose" = "yes" ] && echo "imfuse: $*"
   return 0
 }
 showimage() {
@@ -148,6 +148,17 @@ showimage() {
 }
 
 ### Misc
+
+freememory() {
+  local Freemem Line Zram
+  Freemem="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
+  while read Line; do
+    Zram="$(awk '{print ($3 - $4)}' <<< "$Line")"
+    Zram="$((Zram/1000))"
+    Freemem="$((Freemem + Zram))"
+  done < <(/sbin/swapon --bytes | grep zram)
+  echo $Freemem
+}
 lowercase() {
     # Usage: lowercase "string"
     printf '%s\n' "${1,,}"
@@ -202,7 +213,8 @@ evaluate_split() {
 
   local Imagelist Resultimage Mode
   local Startzeit Dauer Restzeit
-  local Image Split Splitpercent Part Partimage Partimagelist
+  local Image Split Splitpercent Showsplit Part Partimage Partimagelist
+  local Startzeit Dauer Restzeit Count
   
   Mode="${1:-}" ; shift
   Resultimage="${1:-}" ; shift
@@ -212,23 +224,43 @@ ${1:-}"
     shift
   done
   Imagelist="$(tail -n+2 <<< "$Imagelist")"
-  Startzeit="$(date +%s)"
   
-  Split=5
-  Splitpercent="$((100/Split))"
-  for Image in $Imagelist; do
-    verbose "Splitting $(basename $Image) into $Split pieces"
-#    $Magickbin $Image -crop 100%x${Splitpercent}% $Cachedir/split%01d.tif
-    $Magickbin $Image -crop 100%x${Splitpercent}% $Cachedir/split%01d.$(basename $Image).tif
-    showimage $Cachedir/split3.$(basename $Image).tif
-  done
-  ls $Cachedir
-  for Part in $(seq 0 $((Split-1))) ; do
-    Partimage=$Cachedir/$Mode.part$Part.tif
-    $Magickbin $Cachedir/split${Part}.*.tif -evaluate-sequence $Mode $Partimage
-    Partimagelist="$Partimagelist $Partimage"
-  done
-  $Magickbin $Partimagelist -append $Resultimage
+  Split="$((Imagelistmemsize/Freemem +1))"
+  
+  case $Split in
+    1) 
+      $Magickbin $Imagelist -evaluate-sequence $Mode $Resultimage
+    ;;
+    *)
+      Startzeit="$(date +%s)"
+      Splitpercent="$((100/Split))"
+      Showsplit="$(printnum $(( (Split+1)/2 )) 3)"
+      Count="0"
+      for Image in $Imagelist; do
+        Count="$((Count+1))"
+        verbose "Splitting image $Count / $Imagenumber into $Split pieces due to low memory: $(basename $Image)"
+        $Magickbin $Image -crop 100%x${Splitpercent}% $Cachedir/split%03d.$(basename $Image).tif || return 1
+        showimage $Cachedir/split${Showsplit}.$(basename $Image).tif
+        Dauer="$(( $(date +%s)-Startzeit))"
+        Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
+        [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
+        verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+      done
+      Startzeit="$(date +%s)"
+      for Part in $(seq 0 $((Split-1))) ; do
+        verbose "Evaluating part $((Part+1)) / $Split"
+        Partimage=$Cachedir/$Mode.part$Part.tif
+        $Magickbin $Cachedir/split$(printnum $Part 3).*.tif -evaluate-sequence $Mode $Partimage || return 1
+        Partimagelist="$Partimagelist $Partimage"
+        showimage $Partimage
+        Dauer="$(( $(date +%s)-Startzeit))"
+        Restzeit="$(( Dauer*(Split-Part+1) / (Part+1) ))"
+        [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
+        verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+      done
+      $Magickbin $Partimagelist -append $Resultimage
+    ;;
+  esac
 }
 
 fuse_focus_stackshot()  {
@@ -648,12 +680,20 @@ declare_variables() {
   Addmin="no"
   Compress=""
   Error=""
+  Freemem=""
   Gamma=""
   Sourceweight=""
+  Image=""
   Imageformat="tif"
+  Imageheight=""
   Imagelist=""
+  Imagelistmemsize=""
+  Imagememsize=""
   Imagenumber=""
+  Imagewidth=""
   Magickbin=""
+  Magickpixelmemory=""
+  Magickversion=""
   Method=""
   Maskgeneratorargument=""
   Mode=""
@@ -894,7 +934,8 @@ check_options() {
   
   # --cachedir
   [ -z "$Cachedir" ] && Cachedir="/tmp/imfuse.$RANDOM"
-  Cachedir="$(realpath "$Cachedir")"
+  Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
+  Cachedir="$(realpath -m "$Cachedir")"
   
   # --output
   [ -z "$Outputimage" ] && {
@@ -949,7 +990,13 @@ main() {
   command -v convert >/dev/null && Magickbin="convert"
   command -v magick  >/dev/null && Magickbin="magick"
   [ -z "$Magickbin" ] && error "Neither command convert nor magick found. Please install ImageMagick."
+  Magickversion="$($Magickbin -version)"
+  grep -q " Q8 "   <<< "$Magickversion" && Magickpixelmemory="4"
+  grep -q " Q16 "  <<< "$Magickversion" && Magickpixelmemory="8"
+  grep -q " HDRI " <<< "$Magickversion" && Magickpixelmemory="16"
   [ "$Error" ] && return 1
+  
+  Freemem="$(freememory)"
   
   parse_options "$@"
   check_options
@@ -959,24 +1006,40 @@ main() {
   Imagenumber="$(grep -c "." <<< "$Imagelist")"
   Imagenumberlength="${#Imagenumber}"
   
+  Image="$(head -n1 <<< "$Imagelist")"
+  Imagewidth=$($Magickbin  -format '%w' "$Image" info:)
+  Imageheight=$($Magickbin -format '%h' "$Image" info:)
+  Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
+  Imagelistmemsize="$((Imagenumber*Imagememsize))"
+  Image=""
+  
+  verbose "Image number: $Imagenumber
+  Image width:  $Imagewidth
+  Image height: $Imageheight
+  Image memory size:      $Imagememsize kb
+  Image list memory size: $Imagelistmemsize kb
+  Free Memory:            $Freemem kb"
+  
   mkdir -p $Cachedir || error "Error creating cache folder $Cachedir"
   [ "$Error" ] && return 1
   
   # --addmean
   [ "$Addmean" = "yes" ] && {
-    $Magickbin $(echo $Imagelist) -evaluate-sequence mean $Cachedir/mean.tif || error "Error in --addmean"
+    evaluate_split mean $Cachedir/mean.tif $(echo $Imagelist) || error "Error in --addmean"
     Imagelist="$Cachedir/mean.tif
 $Imagelist"
   }
+  [ "$Error" ] && return 1
   # --addmin
   [ "$Addmin" = "yes" ] && {
-    $Magickbin $(echo $Imagelist) -evaluate-sequence min $Cachedir/min.tif || error "Error in --addmin"
+    evaluate_split min $Cachedir/min.tif $(echo $Imagelist) || error "Error in --addmin"
     Imagelist="$Cachedir/min.tif
 $Imagelist"
   }
+  [ "$Error" ] && return 1
   # --addmax
   [ "$Addmax" = "yes" ] && {
-    $Magickbin $(echo $Imagelist) -evaluate-sequence max $Cachedir/max.tif || error "Error in --addmax"
+    evaluate_split max $Cachedir/max.tif $(echo $Imagelist) || error "Error in --addmax"
     Imagelist="$Cachedir/max.tif
 $Imagelist"
   }
@@ -984,37 +1047,29 @@ $Imagelist"
  
   case $Method in
     evaluate)
-      case $Maskgeneratorargument in
-        max|min)
-          evaluate_split $Maskgeneratorargument $Resultimage $Imagelist
-        ;;
-        *)
-          $Magickbin \
-            $Imagelist \
-              -evaluate-sequence $Maskgeneratorargument \
-            $Resultimage  || error "Error in --$Method=$Maskgeneratorargument"
-        ;;
-      esac
+      evaluate_split $Maskgeneratorargument $Resultimage $Imagelist || error "Error in --$Method=$Maskgeneratorargument"
     ;;
     compose)
-#      verbose "--compose: Generating max image"
-#      evaluate_step max $Cachedir/max.tif $Imagelist
-#      verbose "--compose: Generating min image"
-#      evaluate_step min $Cachedir/min.tif $Imagelist
-#      verbose "--compose: compositing $Maskgeneratorargument"
-#     $Magickbin \
-#        $Cachedir/max.tif $Cachedir/min.tif $Swapcompose \
-#          -compose $Maskgeneratorargument -composite \
-#        $Resultimage || error "Error in --$Method=$Maskgeneratorargument"
-        
-      $Magickbin \
-        $(echo $Imagelist) \
-          \( -clone 0--1 -evaluate-sequence max -write mpr:max -delete 0--1 \) \
-          \( -clone 0--1 -evaluate-sequence min -write mpr:min -delete 0--1 \) \
-          -delete 0--1 \
-        mpr:max mpr:min $Swapcompose \
-          -compose $Maskgeneratorargument -composite \
-        $Resultimage || error "Error in --$Method=$Maskgeneratorargument"
+      [ "$Freemem" -lt "$Imagelistmemsize" ] && {
+        verbose "--compose: Generating max image"
+        evaluate_split max $Cachedir/max.tif $Imagelist
+        verbose "--compose: Generating min image"
+        evaluate_split min $Cachedir/min.tif $Imagelist
+        verbose "--compose: compositing $Maskgeneratorargument"
+       $Magickbin \
+         $Cachedir/max.tif $Cachedir/min.tif $Swapcompose \
+           -compose $Maskgeneratorargument -composite \
+         $Resultimage || error "Error in --$Method=$Maskgeneratorargument"
+      } || {
+        $Magickbin \
+          $(echo $Imagelist) \
+            \( -clone 0--1 -evaluate-sequence max -write mpr:max -delete 0--1 \) \
+            \( -clone 0--1 -evaluate-sequence min -write mpr:min -delete 0--1 \) \
+            -delete 0--1 \
+          mpr:max mpr:min $Swapcompose \
+            -compose $Maskgeneratorargument -composite \
+          $Resultimage || error "Error in --$Method=$Maskgeneratorargument"
+      }
     ;;
     *)
       fuse_focus_stackshot  || error "Error while fusing stackshot"
