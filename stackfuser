@@ -1698,7 +1698,7 @@ crop() {
       Image="$Cachedir/crop.min.mpc"
       note "crop $Opt1: Generating min image"
       #$Magickbin $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
-      evaluate_split -s $Sourcedir -g $Sourcefileglob -1 min -b $Image -c $Cachedir || return 1
+      evaluate_split -s $Sourcedir -g '$Sourcefileglob' -1 min -b $Image -c $Cachedir || return 1
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Opt2")"
       Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
       Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
@@ -1888,7 +1888,7 @@ evaluate() {
             [ "$Mode" = "max" ] && Maxfile="$Destinationfile"
             [ "$Mode" = "min" ] && Minfile="$Destinationfile"
             [ "$Mode" = "median" ] && [ "$Set" = "set2" ] && Showimage="$Destinationfile"
-            multicore "evaluate_split -s $Sourcedir -g $Sourcefileglob -1 $Mode -c $Cachedir -b $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || Error=1
+            multicore "evaluate_split -s $Sourcedir -g '$Sourcefileglob' -1 $Mode -c $Cachedir -b $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || Error=1
             [ "$Error" ] && break
           done
           multicore_wait || Error=1
@@ -1908,7 +1908,7 @@ evaluate() {
         [ "$Mode" = "max" ] && Maxfile="$Destinationfile"
         [ "$Mode" = "min" ] && Minfile="$Destinationfile"
         [ "$Mode" = "max" ] && Showimage="$Destinationfile"
-        multicore "evaluate_split -s $Sourcedir -g $Sourcefileglob -1 $Mode -c $Cachedir -b $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || Error=1
+        multicore "evaluate_split -s $Sourcedir -g '$Sourcefileglob' -1 $Mode -c $Cachedir -b $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || Error=1
         [ "$Error" ] && break
       done
       multicore_wait || return 1
