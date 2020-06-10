@@ -87,6 +87,16 @@ checkvar() {
   esac
   return 0
 }
+freememory() {
+  local Freemem Line Zram
+  Freemem="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
+  while read Line; do
+    Zram="$(awk '{print ($3 - $4)}' <<< "$Line")"
+    Zram="$((Zram/1000))"
+    Freemem="$((Freemem + Zram))"
+  done < <(/sbin/swapon --bytes | grep zram)
+  echo $Freemem
+}
 milisleep() {
   local Time 
   Time="$(awk "BEGIN { print ${1:-1000} / 1000 }")"
@@ -234,7 +244,7 @@ mycp() {
     failure "cp: Target is not a directory: ${2:-}"
     return 1
   }
-  verbose "cp: copy ${1:-} to ${2:-}"
+  note "cp: copying $(basename "${1:-}") to $(basename "${2:-}")"
   cp $(fileglob "${1:-}") "${2:-}"
 }
 mymv() {
@@ -247,7 +257,7 @@ mymv() {
     failure "mv: Target is not a directory: ${2:-}"
     return 1
   }
-  verbose "mv: moving ${1:-} to ${2:-}"
+  verbose "mv: moving $(basename "${1:-}") to $(basename "${2:-}")"
   mv -f $(fileglob "${1:-}") "${2:-}"
 }
 myrm() {
@@ -400,7 +410,7 @@ setup_workdir() {
       #Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
     ;;
     
-    align*|brightness*|contrast*|crop*|cuberotate*|imageformat*|lightbalance*|gamma*|level*|ruler*|sharpen*|statistic*|stretch*|wizard*)
+    align*|brightness*|contrast*|crop*|cuberotate*|imageformat*|lightbalance*|gamma*|level*|orient*|rotate*|ruler*|sharpen*|statistic*|stretch*|wizard*)
       Sourcedir="$Targetprevdir"
       Destinationdir="$Targetnewdir"
     ;;
@@ -453,7 +463,7 @@ showimage() {
     0) 
       failure "showimage: Not found: ${1:-}"
       Image="$(storeinfo dump notfoundimage)"
-      [ -e "$Image" ] || $Convert -size 300x200 xc:red -fill black -pointsize 20 -gravity center -draw "text 0,0 'image not found'" "$Image"
+      [ -e "$Image" ] || $Magickbin -size 300x200 xc:red -fill black -pointsize 20 -gravity center -draw "text 0,0 'image not found'" "$Image"
       geeqie -t -r File:"$Image"
       storeinfo drop showimage
       return 1
@@ -526,7 +536,7 @@ batch_function() {
   esac
   Function="${Function%_}"
   case "$Function" in
-    brightness|contrast|gamma|level|prepare|sharpen|statistic|stretch|wizard)
+    brightness|contrast|gamma|level|orient|prepare|rotate|sharpen|statistic|stretch|wizard)
       Opt2="$Opt1 $Opt2 $Opt3"
       Opt3=""
       Opt2="${Opt2# }"
@@ -675,7 +685,7 @@ parse_batchoptions() {
 }
 getbatchone() {
   local Command= Line Argument
-  for Line in gamma level contrast sharpen brightness stretch statistic wizard; do
+  for Line in rotate gamma level contrast sharpen brightness stretch statistic wizard; do
     Argument="$(askkaptain "$Line")"
     [ "$Argument" ] && case $Line in
       brightness) Line="-brightness-contrast" ;;
@@ -710,7 +720,7 @@ getfunctionsettings() {
 runbatchone() {
   local $Batchlocal
   local Iterate
-  for Function in crop whitebalance align_vidstab align_ais; do
+  for Function in orient crop whitebalance align_vidstab align_hugin align_ais; do
     askkaptain -c $Function > /dev/null && {
       getfunctionsettings $Function
       cmd -f "$Function" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Stackdir"
@@ -740,8 +750,8 @@ setup_imagelist() {
     failure "No images found"
     return 1
   }
-  Imagewidth=$($Convert  -format '%w' "$Image" info:)
-  Imageheight=$($Convert -format '%h' "$Image" info:)
+  Imagewidth=$($Magickbin  -format '%w' "$Image" info:)
+  Imageheight=$($Magickbin -format '%h' "$Image" info:)
   Imageformat="$(get_extension        "$Image")"
   Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
   Imagelistmemsize="$((Imagememsize*Imagenumber))"
@@ -783,17 +793,19 @@ align_ais() {
   Startzeit="$(date +%s)"
   for Step in 0 $(seq $((Imagenumber/$Stepsize)) ); do
     showpercent $((Step*Stepsize)) $Imagenumber
+    ifcmdbreak && return 1
     Stackcount="$((Stackcount+1))"
     Stacklist="$(tail -n+$((Stepsize*Step+1)) <<< "$Imagelist" | head)"
     [ -z "$Stacklist" ] && break
     Aligndir=$Cachedir/align.$Stackcount
     mkdir $Aligndir
-    align_image_stack $Opt1 -v -l -g3 --use-given-order -p $Cachedir/ais.$Stackcount.pto -a $Aligndir/align $Firstimage $Stacklist || return 1
+    nice align_image_stack $Opt1 -v -l -g3 --use-given-order -p $Cachedir/ais.$Stackcount.pto -a $Aligndir/align $Firstimage $Stacklist || return 1
     Firstimage="$(fileglob "$Aligndir/align*" | tail -n1)"
     showimage $Firstimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-((Step+1)*Stepsize)) / ((Step+1)*Stepsize) ))"
-    note "align_ais: Running since $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+    [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
+    note "align_ais: Duration: $(date -u -d @$Dauer +"%T"); Estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
   done
   
   Distortdir=$Cachedir/result
@@ -802,6 +814,7 @@ align_ais() {
   for Aligndir in $Cachedir/align*; do
     [ "$Count" = "0" ] || rm $Aligndir/align0000.tif
     for Image in $(fileglob "$Aligndir/*"); do
+      ifcmdbreak && return 1
       Count=$((Count+1))
       mv $Image $Distortdir/align$(zeronumber $Count).tif
     done
@@ -812,8 +825,8 @@ align_ais() {
   # crop greatest common inner rectangle of distorted images
   note "align_ais(): Generating min image of aligned images."
   Cropminimage="$Cachedir/distorted.min.tif"
-  #$Convert $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
-  evaluate_step -s $Distortdir -g "*" -1 min -b $Cropminimage
+  #$Magickbin $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
+  evaluate_split -s $Distortdir -g "*" -1 min -b $Cropminimage -c $Cachedir || return 1
   case $Cropinteractive in
     yes) notify-send "align_ais: Ready for interactive crop"
          Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
@@ -831,12 +844,15 @@ align_ais() {
   
   note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeometry"
   Imagecount=0
+  Startzeit="$(date +%s)"
   for Image in $Alignlist; do
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$(head -n$Imagecount <<< "$Imagelist" | tail -n1)"
     Destinationfile="$Destinationdir/$(basename $Destinationfile)"
-    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
     showpercent $Imagecount $Imagenumber
+    Restzeit="$(( Dauer*(Imagenumber-Imagecount) / Imagecount ))"
+    note "align_ais: Cropping to $Cropgeometry. Duration: $(date -u -d @$Dauer +"%T"); Estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
   done
   multicore_wait || return 1
 }
@@ -865,7 +881,7 @@ align_ais_ONE() {
   # crop greatest common inner rectangle of distorted images
   note "align_ais(): Generating min image of aligned images."
   Cropminimage="$Cachedir/distorted.min.mpc"
-  $Convert $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
+  $Magickbin $Alignlist -evaluate-sequence min "$Cropminimage" || return 1
   case $Cropinteractive in
     yes) notify-send "align_ais: Ready for interactive crop"
          Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
@@ -887,7 +903,7 @@ align_ais_ONE() {
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$(head -n$Imagecount <<< "$Imagelist" | tail -n1)"
     Destinationfile="$Destinationdir/$(basename $Destinationfile)"
-    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
     showpercent $Imagecount $Imagenumber
   done
   multicore_wait || return 1
@@ -926,8 +942,8 @@ $Imagelist1"
   echo "List2:
 $Imagelist2"
   showpercent busy
-  multicore "nice align_image_stack -l $Opt1 --gpu -a $Part1dir/align --use-given-order $Imagelist1" || return 1
-  multicore "nice align_image_stack -l $Opt1 --gpu -a $Part2dir/align --use-given-order $Imagelist2" || return 1
+  multicore "align_image_stack -l $Opt1 --gpu -a $Part1dir/align --use-given-order $Imagelist1" || return 1
+  multicore "align_image_stack -l $Opt1 --gpu -a $Part2dir/align --use-given-order $Imagelist2" || return 1
   multicore_wait || return 1
 
   Alignlist="$(fileglob "$Part1dir/*")"
@@ -951,7 +967,7 @@ $Imagelist2"
 
   # crop greatest common inner rectangle of distorted images
   Cropminimage="$Cachedir/distorted.min.mpc"
-  $Convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
+  $Magickbin $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
   case $Cropinteractive in
     yes) notify-send "align_ais: Ready for interactive crop"
          Cropgeometry="$(cropgeometry_interactive "$Cropminimage" "$Cachedir")"   || return 1 ;;
@@ -975,7 +991,7 @@ $Imagelist2"
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$Destinationdir/$(basename $Image)"
     Destinationfile="${Destinationfile%.tif}"
-    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
     showpercent $Imagecount $Imagenumber
   done
   multicore_wait || return 1
@@ -987,6 +1003,7 @@ align_hugin() {
   local $Imagelocal
   local Pto_ptogen Pto_cpfind Pto_cpclean Pto_result
   local Logfile Aligndir
+  local Count
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1019,7 +1036,7 @@ $(tail $Logfile)"
   sed -i "3 s/\bw[0-9]*\b/w${Imagewidth}/"  "$Pto_ptogen"
   sed -i "3 s/\bh[0-9]*\b/h${Imageheight}/" "$Pto_ptogen"
   sed -i "3 s/\bv[0-9]*\b/v50/"             "$Pto_ptogen"
-#  sed -i "s/v=0/v50/"             "$Pto_ptogen"
+  sed -i "s/v=0/v50/"             "$Pto_ptogen"
   #sed -i "s/v50/v0/"             "$Pto_ptogen"
     
 #    pano_modify --projection=0 $Pto_ptogen
@@ -1063,7 +1080,10 @@ $(tail $Logfile)"
   showpercent 45 100
 
   #pano_modify --fov=AUTO -o $Pto_cpclean $Pto_cpclean
-  pto_var --modify-opt --opt=v -o $Pto_cpfind $Pto_cpfind
+  for Count in $(seq $((Imagenumber-1)) ); do
+#    pto_var --modify-opt --opt=v,v$Count -o $Pto_cpfind $Pto_cpfind
+    echo "v v$Count" >> $Pto_cpfind
+  done
     
   # calculate distortion of images to align control points
   ifcmdbreak && return 1
@@ -1099,8 +1119,8 @@ $(tail $Logfile)"
   
   ifcmdbreak && return 1
   note "align_hugin: Checking crop coordinates of common area of all aligned images"
-  evaluate_step -s $Aligndir -g "*" -1 min -b $Cachedir/align_PTO.min.tif
-  #$Convert $Aligndir/PTO_ALIGN* -evaluate-sequence min $Cachedir/align_PTO.min.tif
+  evaluate_split -s $Aligndir -g "*" -1 min -b $Cachedir/align_PTO.min.tif -c $Cachedir 
+  #$Magickbin $Aligndir/PTO_ALIGN* -evaluate-sequence min $Cachedir/align_PTO.min.tif
   Cropgeometry="$(trim_hard "$Cachedir/align_PTO.min.tif")"
   showpercent 80 100
 
@@ -1112,7 +1132,7 @@ $(tail $Logfile)"
     Destinationfile="$(sed "${Count}q;d" <<< "$Imagelist")"
     Destinationfile="$(basename "$Destinationfile")"
     Destinationfile="$Destinationdir/$Destinationfile"
-    multicore "$Convert $Image -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
     showpercent $Count $Imagenumber
   done
   multicore_wait || return 1
@@ -1151,7 +1171,7 @@ align_vidstab() {
       for Image in $Imagelist; do
         Imagecount="$((Imagecount + 1))"
         Destinationfile="$Framedir/frame$(zeronumber $Imagecount).png"
-        multicore "$Convert $Image $Crop $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image $Crop $Destinationfile" "$Destinationfile" || return 1
         showpercent "$Imagecount" "$Imagenumber"
       done
       multicore_wait || return 1
@@ -1166,7 +1186,7 @@ align_vidstab() {
       for Image in $Imagelist; do
         Imagecount="$((Imagecount + 1))"
         Destinationfile="$Framedir/frame$(zeronumber $Imagecount).png"
-        multicore "$Convert $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
         showpercent "$Imagecount" "$Imagenumber"
       done
       multicore_wait || return 1
@@ -1210,7 +1230,7 @@ align_vidstab() {
   showpercent 70 100
   
   echo "# Image | Xoffset | Yoffset | Degree" > $Distortlogfile
-  echo "# $Convert Image -virtual-pixel transparent -distort SRT '0,0 1 Degree Xoffset,Yoffset' out.png" >> $Distortlogfile
+  echo "# $Magickbin Image -virtual-pixel transparent -distort SRT '0,0 1 Degree Xoffset,Yoffset' out.png" >> $Distortlogfile
   Imagecount=0
   for Image in $(fileglob "$Framedir/*") ; do
     Imagecount="$((Imagecount+1))"
@@ -1235,7 +1255,8 @@ align_vidstab() {
   case $Opt1 in
     crop|crop_interactive|common_area) 
       note "align_vidstab: Generating min image"
-      $Convert $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
+      #$Magickbin $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
+      evaluate_split -s "$Distortdir" -1 min -b "$Cropminimage" -c $Cachedir || return 1
     ;;
   esac
   
@@ -1250,7 +1271,7 @@ align_vidstab() {
     distort_only) ;;
     common_area) 
       note "align_vidstab: Generating mask image"
-      $Convert $Cropminimage -threshold 0% $Commonareaimage || return 1
+      $Magickbin $Cropminimage -threshold 0% $Commonareaimage || return 1
     ;;
   esac
   
@@ -1280,13 +1301,13 @@ align_vidstab() {
     Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
     case $Opt1 in
       crop|crop_interactive) 
-        multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
       ;;
       common_area)
-        multicore "$Convert $Image $Commonareaimage -evaluate-sequence min $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image $Commonareaimage -evaluate-sequence min $Destinationfile" "$Destinationfile" || return 1
       ;;
       distort_only)
-        multicore "$Convert $Image $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || return 1
       ;;
     esac
     showpercent "$Imagecount" "$Imagenumber"
@@ -1540,7 +1561,7 @@ $Position"
   Count=-$((Imagenumber * $Staticlayer))  # negative start value causes movement of lowest layer
   for Image in $Imagelist; do
     Count="$((Count +1))"
-    Convertline="$Convert $Image -write mpr:image +delete"
+    Convertline="$Magickbin $Image -write mpr:image +delete"
     for Position in $Positionlist; do
       Distortdir="$Cachedir/distort.$Position"
       Distortimage="$Distortdir/$(basename $Image)"   
@@ -1581,8 +1602,9 @@ $Position"
     Fusedir="$Distortdir/fuse"
     Destinationfile="$Cachedir/animation.$Position.median.gif"
     note "animation: Generating $(basename $Destinationfile)"
-    #multicore "$Convert $Fusedir/* -evaluate-sequence median -gravity center -stroke black -fill black -pointsize 24 -draw 'text 0,0 \"$Position\"' $Destinationfile" "$Destinationfile" || return 1
-    multicore "$Convert $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
+    #multicore "$Magickbin $Fusedir/* -evaluate-sequence median -gravity center -stroke black -fill black -pointsize 24 -draw 'text 0,0 \"$Position\"' $Destinationfile" "$Destinationfile" || return 1
+    #multicore "$Magickbin $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
+    multicore "evaluate_split -s $Fusedir -1 median -b $Destinationfile -c $Cachedir" "$Destinationfile" || return 1
     showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
@@ -1604,8 +1626,8 @@ $Position"
 
     note "animation: Generating $(basename $Destinationfile)."
     case $Format in
-      gif) multicore "nice gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount=forever --output $Destinationfile $Imagelist" "$Destinationfile" || return 1 ;;
-      *)   multicore "nice ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1 ;;
+      gif) multicore "gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount=forever --output $Destinationfile $Imagelist" "$Destinationfile" || return 1 ;;
+      *)   multicore "ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1 ;;
     esac
     showpercent $Iteration $Iterationnumber
   done
@@ -1646,7 +1668,8 @@ crop() {
 #      Image="$Cachedir/crop.min.jpg"
       Image="$Cachedir/crop.min.mpc"
       note "crop $Opt1: Generating min image"
-      $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
+      #$Magickbin $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
+      evaluate_split -s $Sourcedir -g $Sourcefileglob -1 min -b $Image -c $Cachedir || return 1
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Opt2")"
       Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
       Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
@@ -1670,7 +1693,7 @@ crop() {
   for Image in $Imagelist; do
     Imagecount="$((Imagecount+1))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
-    multicore "$Convert $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
@@ -1703,7 +1726,7 @@ cuberotate() {
           top|bottom) Cropgeometry="0x1" ;;
           left|right) Cropgeometry="1x0" ;;
         esac
-        multicore "$Convert $Image -crop $Cropgeometry $Cachedir/split$Imagecount/line%d.mpc" || return 1
+        multicore "$Magickbin $Image -crop $Cropgeometry $Cachedir/split$Imagecount/line%d.mpc" || return 1
         showpercent $Imagecount $((Imagenumber*2))
       done
       multicore_wait
@@ -1720,8 +1743,8 @@ cuberotate() {
         Destinationfile="$Destinationdir/cube${Opt1}$(printnum $Linecount 4).jpg"
         
         case $Opt1 in
-          top|bottom) multicore "$Convert $Linelist -append $Destinationfile" "$Destinationfile" || return 1 ;;
-          left|right) multicore "$Convert $Linelist +append $Destinationfile" "$Destinationfile" || return 1 ;;
+          top|bottom) multicore "$Magickbin $Linelist -append $Destinationfile" "$Destinationfile" || return 1 ;;
+          left|right) multicore "$Magickbin $Linelist +append $Destinationfile" "$Destinationfile" || return 1 ;;
         esac
         showpercent $((Linenumber+Linecount)) $((Linenumber*2))
       done
@@ -1739,10 +1762,10 @@ cuberotate() {
             multicore "cp -T    $Image       $Destinationfile" "$Destinationfile" 16 || return 1
           ;;
           back-left)
-            multicore "$Convert $Image -flop $Destinationfile" "$Destinationfile" || return 1
+            multicore "$Magickbin $Image -flop $Destinationfile" "$Destinationfile" || return 1
           ;;
           back-top)
-            multicore "$Convert $Image -flip $Destinationfile" "$Destinationfile" || return 1
+            multicore "$Magickbin $Image -flip $Destinationfile" "$Destinationfile" || return 1
           ;;
         esac
         Imagecount="$((Imagecount+1))"
@@ -1757,7 +1780,7 @@ cuberotate() {
         Destinationfile="$(basename $Image)"
         note "cuberotate $Opt1: Generating $Destinationfile"
         Destinationfile="$Destinationdir/$Destinationfile"
-        multicore "$Convert $Image -rotate $Opt1 $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image -rotate $Opt1 $Destinationfile" "$Destinationfile" || return 1
         showpercent $Imagecount $Imagenumber
       done
       multicore_wait || return 1
@@ -1791,7 +1814,7 @@ distort() {
     Degree="$(cut  -d' ' -f4 <<< "$Line")"
   
     Destinationfile="$Destinationdir/$(basename "$Image")"
-    multicore "$Convert $Image -virtual-pixel transparent -distort SRT '0,0 1 $Degree $Xoffset,$Yoffset' $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -virtual-pixel transparent -distort SRT '0,0 1 $Degree $Xoffset,$Yoffset' $Destinationfile" "$Destinationfile" || return 1
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
@@ -1820,7 +1843,8 @@ evaluate() {
             [ "$Mode" = "max" ] && Maxfile="$Destinationfile"
             [ "$Mode" = "min" ] && Minfile="$Destinationfile"
             [ "$Mode" = "median" ] && [ "$Set" = "set2" ] && Showimage="$Destinationfile"
-            multicore "$Convert $(fileglob -w "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1 
+#            multicore "$Magickbin $(fileglob -w "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1 
+            multicore "evaluate_split -s $Sourcedir -g $Sourcefileglob -1 $Mode -c $Cachedir -b $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1
           done
           multicore_wait || return 1
           compose -1 "$Maxfile" -2 "$Minfile" -9 "$Imageformat" -d "$Targetcomposedir" -b "$Destinationfilebasename.set${Set}" || return 1
@@ -1835,7 +1859,8 @@ evaluate() {
         [ "$Mode" = "max" ] && Maxfile="$Destinationfile"
         [ "$Mode" = "min" ] && Minfile="$Destinationfile"
         [ "$Mode" = "max" ] && Showimage="$Destinationfile"
-        multicore "$Convert $(echo $Imagelist) -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1
+#        multicore "$Magickbin $(echo $Imagelist) -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1
+        multicore "evaluate_split -s $Sourcedir -g $Sourcefileglob -1 $Mode -c $Cachedir -b $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1
       done
       multicore_wait || return 1
       compose -1 "$Maxfile" -2 "$Minfile" -9 "$Imageformat" -d "$Targetcomposedir" -b "$Destinationfilebasename" || return 1
@@ -1845,13 +1870,11 @@ evaluate() {
   esac
   return 0
 }
-evaluate_step() {
-  # evaluate in small stack steps to avoid high memory usage and caching.
-  # Gives correct results for max and min, but not for mean or median.
-  
+evaluate_split() {
   local $Batchlocal
   local $Imagelocal
-  local Mode Step Stepsize Stackcount Stacklist
+  local Mode Split Splitpercent Showsplit Splitdir Part Partimage Partimagelist
+  local Startzeit Dauer Restzeit Count
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1859,17 +1882,50 @@ evaluate_step() {
   Mode="${Opt1:-min}"
   Stepsize=40
   [ -n "$Destinationfile" ] && Destinationfile="$Destinationdir/$Destinationfile" || Destinationfile="$Cachedir/$Mode.tif"
-
-  note "Generating $Mode image"
-  Stackcount=0
-  for Step in 0 $(seq $((Imagenumber/$Stepsize)) ); do
-    Stackcount="$((Stackcount+1))"
-    Stacklist="$(tail -n+$((Stepsize*Step+1)) <<< "$Imagelist" | head)"
-    [ "$Step" != "0" ] && Stacklist="$Destinationfile $Stacklist"
-    nice $Convert $Stacklist -evaluate-sequence $Mode $Destinationfile || return 1
-    showimage $Destinationfile
-    showpercent $((Stackcount*Stepsize)) $Imagenumber
-  done
+  Splitdir="$Cachedir/evaluate_split.$RANDOM"
+  
+  Split="$((Imagelistmemsize/$(freememory) +1))"
+  
+  case $Split in
+    1) 
+      $Magickbin $Imagelist -evaluate-sequence $Mode $Destinationfile
+    ;;
+    *)
+      mkdir -p "$Splitdir"
+      Startzeit="$(date +%s)"
+      Splitpercent="$((100/Split))"
+      Showsplit="$(printnum $(( (Split+1)/2 )) 3)"
+      Count="0"
+      for Image in $Imagelist; do
+        Count="$((Count+1))"
+        note "Splitting image $Count / $Imagenumber into $Split pieces due to low memory: $(basename $Image)"
+        multicore "$Magickbin $Image -crop 100%x${Splitpercent}% $Splitdir/split%03d.$(basename $Image).tif" "$Splitdir/split${Showsplit}.$(basename $Image).tif" || return 1
+        #showimage $Splitdir/split${Showsplit}.$(basename $Image).tif
+        Dauer="$(( $(date +%s)-Startzeit))"
+        Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
+        [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
+        verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+        showpercent $Count $Imagenumber
+      done
+      multicore_wait || return 1
+      Startzeit="$(date +%s)"
+      Count="0"
+      for Part in $(seq 0 $((Split-1))) ; do
+        Count="$((Count+1))"
+        note "Evaluating part $((Part+1)) / $Split"
+        Partimage=$Splitdir/$Mode.part$Part.tif
+        nice $Magickbin $Splitdir/split$(printnum $Part 3).*.tif -evaluate-sequence $Mode $Partimage || return 1
+        Partimagelist="$Partimagelist $Partimage"
+        showimage $Partimage
+        Dauer="$(( $(date +%s)-Startzeit))"
+        Restzeit="$(( Dauer*(Split-Part+1) / (Part+1) ))"
+        [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
+        verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+        showpercent $Count $Imagenumber
+      done
+      nice $Magickbin $Partimagelist -append $Destinationfile
+    ;;
+  esac
 }
 fuse() {
   # fuse stackshot of images with enfuse
@@ -1906,7 +1962,7 @@ fuse() {
     for Image in $Imagelist; do
       Imagecount="$((Imagecount + 1))"
       Destinationfile="$Stretchdir/stretch$(zeronumber $Imagecount).png"
-      multicore "$Convert $Image -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
+      multicore "$Magickbin $Image -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
       showpercent "$Imagecount" "$Imagenumber"
     done
     multicore_wait || return 1
@@ -1918,7 +1974,7 @@ fuse() {
     all|set*)
       #Layertif="$Cachedir/layer.tif"
       #note "fuse $Fusemode: Generating layered tif image"         ### FIXME Damaging other file formats?
-      #$Convert $(echo $Imagelist) "$Layertif" || return 1
+      #$Magickbin $(echo $Imagelist) "$Layertif" || return 1
       #Filesize="$(du -k "$Layertif" | awk '{print $1}')"
       case $Fusemode in
         all) 
@@ -1932,7 +1988,7 @@ fuse() {
       esac
       Modenumber="$(wc -w <<< "$Modelist")"
       
-      #$Convert "$(head -n1 <<< "$Imagelist")" "$Cachedir/stackfuser-test.gif"
+      #$Magickbin "$(head -n1 <<< "$Imagelist")" "$Cachedir/stackfuser-test.gif"
       #Imagememsize="$(du -k $Cachedir/memsizetest.gif | awk '{print $1}')"
       Imagememsize="$((Imagewidth*Imageheight*8/1000))" ### FIXME
       Imagelistmemsize="$((Imagememsize*Imagenumber))"
@@ -1993,7 +2049,7 @@ fuse() {
   # Write enfuse options into EXIF data of image
   exiv2 -M"set Exif.Photo.UserComment Comment charset=Ascii enfuse $(echo $Enfuseoptions)" "$Fusedir/$Destinationfile"  || return 1
   
-  $Convert  "$Fusedir/$Destinationfile" $(cat $Unstretchfile) "$Destinationdir/$Destinationfile" || return 1
+  $Magickbin  "$Fusedir/$Destinationfile" $(cat $Unstretchfile) "$Destinationdir/$Destinationfile" || return 1
   
   showimage "$Destinationdir/$Destinationfile"
   return 0
@@ -2024,9 +2080,9 @@ imageformat() {
     showpercent $Imagecount $Imagenumber
     Destinationfile="$(rev <<< "$Image" | cut -d. -f2- | rev).$Destinationformat"
     Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
-    multicore "$Convert $Image $Destinationfile" "$Destinationfile" || return 1 
+    multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || return 1 
 #    case $Imageraw in
-#      no)  multicore "$Convert $Image $Destinationfile" "$Destinationfile" || return 1 ;;
+#      no)  multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || return 1 ;;
 #      yes) multicore "ufraw-batch --wb=camera --black-point=auto --exposure=auto --create-id=no --out-type=$Destinationformat --out-depth=16 --output=$Destinationfile $Image" "$Destinationfile" || return 1 ;;
 #    esac
   done
@@ -2057,7 +2113,7 @@ lightbalance() {
   for Image in $Imagelist; do
     Imagecount=$((Imagecount+1))
     Destinationfile="$(basename $Image)"
-    Convertline="$Convert $Image -write mpr:image +delete"  
+    Convertline="$Magickbin $Image -write mpr:image +delete"  
     Convertline="$Convertline     \( mpr:image                                           -write $Cachedir/$Destinationfile.exp.source.tif \)" 
     case $Opt1 in
       brightness)    
@@ -2170,7 +2226,7 @@ $(tac <<< "$Imagelist")"
     #echo "file '$Image'" >> $Imagelistfile
     Frame="$Framedir/frame$(zeronumber $Imagecount).$Imageformat"
     case $Format in
-      gif) multicore "$Convert $Image $Frame" "$Image" || return 1 ;;
+      gif) multicore "$Magickbin $Image $Frame" "$Image" || return 1 ;;
       *)   multicore "cp -T    $Image $Frame" "$Image" || return 1 ;;
     esac
     showpercent $Imagecount $Imagenumber
@@ -2217,7 +2273,8 @@ whitebalance() {
 #      Image="$Cachedir/whitebalance.min.jpg"
       Image="$Cachedir/whitebalance.min.mpc"
       note "whitebalance: Generating min image"
-      $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
+      $Magickbin $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
+      evaluate_split -s $Sourcedir -g "$Sourcefileglob" -c $Cachedir -1 min $Image || return 1
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "50x50+10+10")"  ### FIXME rotate
       Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")" 
       [ "$Cropgeometry" ] || {
@@ -2231,14 +2288,14 @@ whitebalance() {
   [ "$Referencecolor" = "mean" ] && {
     Image="$Cachedir/whitebalance.mean.mpc"
     note "whitebalance: Generating mean image"
-    $Convert $(fileglob "$Sourcedir/$Sourcefileglob") -crop "$Cropgeometry" -evaluate-sequence mean "$Image"
-    Referencecolor=$($Convert "$Image" -filter box -resize 1x1! -format "%[pixel:u]" info:)
+    $Magickbin $(fileglob "$Sourcedir/$Sourcefileglob") -crop "$Cropgeometry" -evaluate-sequence mean "$Image"  ### FIXME might fail with large sequences
+    Referencecolor=$($Magickbin "$Image" -filter box -resize 1x1! -format "%[pixel:u]" info:)
   }
   
-  $Convert -size 1x1 xc:"$Referencecolor" $Referencecolorimage
-  Refred="$($Convert   $Referencecolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
-  Refgreen="$($Convert $Referencecolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
-  Refblue="$($Convert  $Referencecolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
+  $Magickbin -size 1x1 xc:"$Referencecolor" $Referencecolorimage
+  Refred="$($Magickbin   $Referencecolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
+  Refgreen="$($Magickbin $Referencecolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
+  Refblue="$($Magickbin  $Referencecolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
 
   historyentry "# whitebalance geometry: $Cropgeometry"
 
@@ -2248,17 +2305,17 @@ whitebalance() {
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
     
-    $Convert $Image -crop $Cropgeometry -resize 1x1! "$Meancolorimage"
+    $Magickbin $Image -crop $Cropgeometry -resize 1x1! "$Meancolorimage"
     
-    Meanred="$($Convert   $Meancolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
-    Meangreen="$($Convert $Meancolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
-    Meanblue="$($Convert  $Meancolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
+    Meanred="$($Magickbin   $Meancolorimage -format "%[fx:255*u.p{0,0}.r]" info:)"
+    Meangreen="$($Magickbin $Meancolorimage -format "%[fx:255*u.p{0,0}.g]" info:)"
+    Meanblue="$($Magickbin  $Meancolorimage -format "%[fx:255*u.p{0,0}.b]" info:)"
     
     [ "$Meanred"   = "0" ] && Partred=255   || Partred="$(awk   "BEGIN { print $Refred   / $Meanred }")"
     [ "$Meangreen" = "0" ] && Partgreen=255 || Partgreen="$(awk "BEGIN { print $Refgreen / $Meangreen }")"
     [ "$Meanblue"  = "0" ] && Partblue=255  || Partblue="$(awk  "BEGIN { print $Refblue  / $Meanblue }")"
     
-    multicore "$Convert $Image -color-matrix '$Partred 0 0 0 $Partgreen 0 0 0 $Partblue' $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -color-matrix '$Partred 0 0 0 $Partgreen 0 0 0 $Partblue' $Destinationfile" "$Destinationfile" || return 1
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
@@ -2279,6 +2336,7 @@ wizard() {
   local $Imagelocal
   local $Imagepropertieslocal
   local Options Compress
+  local Startzeit Dauer Restzeit
 
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -2290,6 +2348,8 @@ wizard() {
     contrast)   Opt2="3x50%" ;;
     gamma)      Opt2="auto" ;;
     level)      Opt2="auto" ;;
+    orient)     Opt2="topleft" ;;
+    rotate)     Opt2="90" ;;
     sharpen)    Opt2="6x2" ;;
     statistic)  Opt2="median 5" ;;
     stretch)    Opt2="auto" ;;
@@ -2309,8 +2369,8 @@ wizard() {
     ;;
     brightness)  Opt1="-brightness-contrast" ;;
     contrast)    Opt1="-sigmoidal-contrast" ;;
-    statistic)   Opt1="-statistic" ;;
     sharpen)     Opt1="-adaptive-sharpen" ;;
+    orient|rotate|statistic) Opt1="-$Opt1" ;;
     wizard)      Opt1="" ;;
   esac
   Options="$Opt1 $Opt2 $Opt3"
@@ -2324,11 +2384,16 @@ wizard() {
   }
   
   note "wizard: $Options"
+  Startzeit="$(date +%s)"
   Imagecount=0
   for Image in $Imagelist; do
     Imagecount="$((Imagecount + 1 ))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
-    multicore "$Convert $Image $Options $Compress $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image $Options $Compress $Destinationfile" "$Destinationfile" || return 1
+    Dauer="$(( $(date +%s)-Startzeit))"
+    Restzeit="$(( Dauer*(Imagenumber-Imagecount) / Imagecount ))"
+    [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
+    note "wizard: Duration: $(date -u -d @$Dauer +"%T"); Estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
@@ -2355,12 +2420,13 @@ imageproperties() {
     *)
       note "imageproperties(): Generating mean image"
       Meanimage="$Cachedir/mean.png"
-      $Convert $Imagelist -evaluate-sequence mean "$Meanimage" || return 1
+      #$Magickbin $Imagelist -evaluate-sequence mean "$Meanimage" || return 1
+      evaluate_split -s $Sourcedir -g "$Sourcefileglob" -c $Cachedir -1 mean -b $Meanimage || return 1
       showimage "$Meanimage"
     ;;
   esac
 
-  Imageproperties="$($Convert "$Meanimage" -format '
+  Imageproperties="$($Magickbin "$Meanimage" -format '
 Imagemean=%[mean]
 Imagequantumrange=%[fx:quantumrange]
 Imageautogamma=%[fx:log(mean)/log(0.5)]
@@ -2413,17 +2479,17 @@ compose() {
   for Mode in bumpmap colorburn linearlight modulate  overlay pegtoplight; do
     ifcmdbreak && return 1
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}1.$Imageformat"
-    multicore "$Convert $Minfile $Maxfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Maxfile $Minfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}2.$Imageformat"
-    multicore "$Convert $Maxfile $Minfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Minfile $Maxfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
   done
   for Mode in linearburn difference multiply; do
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.$Imageformat"
-    multicore "$Convert $Minfile $Maxfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Maxfile $Minfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
   done
   multicore_wait
   Destinationfile="$Destinationdir/$Destinationfilebasename.composemean.${Imageformat}"
-  $Convert  $Destinationdir/$Destinationfilebasename.{*modulate*,*bumpmap*,*pegtoplight*,*overlay*,*difference*} -evaluate-sequence mean $Destinationfile
+  $Magickbin  $Destinationdir/$Destinationfilebasename.{*modulate*,*bumpmap*,*pegtoplight*,*overlay*,*difference*} -evaluate-sequence mean $Destinationfile
   showimage $Destinationfile
   return 0
 }
@@ -2454,7 +2520,7 @@ trim_hard() {
   # check source for mpc format, convert if not
   [ "$Sourceimage" = "${Sourceimage%.mpc}" ] && {
     Sourceimagempc="$Sourceimage.mpc"
-    $Convert "$Sourceimage" "$Sourceimagempc"
+    $Magickbin "$Sourceimage" "$Sourceimagempc"
   } || {
     Sourceimagempc="$Sourceimage"
   }
@@ -2462,12 +2528,12 @@ trim_hard() {
   
   # Generate alpha mask image in imagemagick memory format for fastest possible access
   Imagemask="$Sourceimage.mask.mpc"
-  $Convert "$Sourceimagempc" -alpha extract "$Imagemask"
+  $Magickbin "$Sourceimagempc" -alpha extract "$Imagemask"
   
   note "trim_hard(): Searching for inner rectangle of $(basename $Sourceimage)"
   
-  Imagewidth=$($Convert  -format '%w'  $Imagemask info:)
-  Imageheight=$($Convert -format '%h'  $Imagemask info:)
+  Imagewidth=$($Magickbin  -format '%w'  $Imagemask info:)
+  Imageheight=$($Magickbin -format '%h'  $Imagemask info:)
   Left=0
   Top=0
   Right=$((Imagewidth-1))
@@ -2475,7 +2541,7 @@ trim_hard() {
   
   # First cut with regular trim to save some time.
   # Add a colored border so trim uses the desired color. Afterward remove border from canvas to get correct geometry values. 
-  Line="$($Convert "$Sourceimagempc" -bordercolor "$Trimcolor" -border 1x1  -trim -set page '%[fx:page.width-2]x%[fx:page.height-2]+%[fx:page.x-1]+%[fx:page.y-1]' info:)"
+  Line="$($Magickbin "$Sourceimagempc" -bordercolor "$Trimcolor" -border 1x1  -trim -set page '%[fx:page.width-2]x%[fx:page.height-2]+%[fx:page.x-1]+%[fx:page.y-1]' info:)"
   Left="$(awk '{print $4}' <<< "$Line" | cut -d+ -f2)"
   Top="$(awk '{print $4}' <<< "$Line" | cut -d+ -f3)"
   Right="$(awk '{print $3}' <<< "$Line" | cut -dx -f1)"
@@ -2499,10 +2565,10 @@ trim_hard() {
   # - Repeat check with new geometry
   while :; do
     # Get part of non-$Trimcolor at each side
-    [ "$Skipleft" ]   || $Convert $Imagemask -crop 1x$((Bottom-Top+1))+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleleft    & pid1=$!
-    [ "$Skipright" ]  || $Convert $Imagemask -crop 1x$((Bottom-Top+1))+$Right+$Top   +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleright   & pid2=$!
-    [ "$Skiptop" ]    || $Convert $Imagemask -crop $((Right-Left+1))x1+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilletop     & pid3=$!
-    [ "$Skipbottom" ] || $Convert $Imagemask -crop $((Right-Left+1))x1+$Left+$Bottom +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permillebottom  & pid4=$!
+    [ "$Skipleft" ]   || $Magickbin $Imagemask -crop 1x$((Bottom-Top+1))+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleleft    & pid1=$!
+    [ "$Skipright" ]  || $Magickbin $Imagemask -crop 1x$((Bottom-Top+1))+$Right+$Top   +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleright   & pid2=$!
+    [ "$Skiptop" ]    || $Magickbin $Imagemask -crop $((Right-Left+1))x1+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilletop     & pid3=$!
+    [ "$Skipbottom" ] || $Magickbin $Imagemask -crop $((Right-Left+1))x1+$Left+$Bottom +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permillebottom  & pid4=$!
     wait $pid1
     wait $pid2
     wait $pid3
@@ -2555,7 +2621,7 @@ $Permillebottom" | sort -n | head -n1)
       Loopcount=$((Loopcount+1))
       [ "$Loopcount" = "10" ] && {
         Loopcount=0
-        $Convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
+        $Magickbin $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
         showimage $Cropgeometryimage
         eval "$Addcommand"
       }
@@ -2564,7 +2630,7 @@ $Permillebottom" | sort -n | head -n1)
 
   # show result
   showpercent 100 100
-  $Convert $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
+  $Magickbin $Sourceimagempc -fill none -stroke red -strokewidth 1 -pointsize 18 -undercolor white -gravity center -draw "rectangle $Left,$Top $Right,$Bottom  text 0,0 '$Cropgeometry'" $Cropgeometryimage
   showimage $Cropgeometryimage
   
   # Output of result
@@ -2892,29 +2958,20 @@ multicore() {
   # $2 Image to show if $1 is finished
   # Run multicore_wait afterwards to wait for the last processes to finish.
   
-  local Process
+  local Process Command
   local Mem_needed Zram
   
   [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
     multicore_wait || return 1
   }
-  
-  [ "$Multicore_processcount" = "0" ] && {
-    Multicore_memorymax="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
-    while read Line; do
-      Zram="$(awk '{print ($3 - $4)}' <<< "$Line")"
-      Zram="$((Zram/1000))"
-      Multicore_memorymax="$((Multicore_memorymax + Zram))"
-    done < <(/sbin/swapon --bytes | grep zram)
-  }
-  
+  [ "$Multicore_processcount" = "0" ] && Multicore_memorymax="$(freememory)"  
   Mem_needed=0
   for Process in $(seq $Multicore_maxprocesses); do
     Mem_needed="$(awk "BEGIN {print $Mem_needed + ${Multicore_memory[$Process]:-0} }" )"
   done
   Mem_needed="$((Mem_needed+${3:-0}))"
   [ "$Mem_needed" -gt "$Multicore_memorymax" ] && {
-    note "multicore: Low memory. Waiting for $Multicore_processcount running processes to finish. Need: $Mem_needed, Available: $Multicore_memorymax"
+    note "multicore: Low memory. Waiting for $Multicore_processcount running processes to finish. Need: $((Mem_needed/1000)) MB, Available: $((Multicore_memorymax/1000)) MB"
     [ "$Mem_needed" -gt "$Multicore_memorymax" ] && [ "$Multicore_processcount" = "0" ] && note "multicore: Likely hard disk cache will be used and slow down the calculation."
     multicore_wait || return 1
   }
@@ -2923,8 +2980,14 @@ multicore() {
 
   Multicore_processcount=$((Multicore_processcount +1))
 
+  Command="$(cut -d ' ' -f1 <<< "${1:-}")"
+  case $(type -t "$Command") in
+    file) Command="nice ${1:-}" ;;
+    *)    Command="${1:-}" ;;
+  esac
+  
   #verbose "multicore: ${1:-}"
-  eval "${1:-} &"
+  eval "$Command &"
   
   Multicore_process[Multicore_processcount]=$!
   Multicore_image[Multicore_processcount]="${2:-}"
@@ -2989,19 +3052,23 @@ start "stackfuser '$Version'"  -> frameset;
       cmdpercent                         -> @icon ;
       wizardlog                          -> @text="" ;
 
-  tabset:tabbed                     -> batchtab specialtab configtab showresulttab;
+  tabset:tabbed                     -> batchtab specialtab deletetab configtab showresulttab;
     batchtab "Image batch processing" -> batchoptionframe ;
       batchoptionframe:beside            -> batchframeleft  batchframeright;
         batchframeleft:framed              -> batchblock1 batchblock2 ;
-        batchframeright:framed             -> batchblock3 runbatchframe stopframe;
+        batchframeright:framed             -> batchblock3 runbatchframe @fill stopframe;
           
-      batchblock1 "batch block 1: crop and balance directory magick" -> cropline whitebalanceline align_vidstabline align_huginline align_aisline;
+      batchblock1 "batch block 1: crop and balance directory magick" -> orientline cropline whitebalanceline align_vidstabline align_huginline align_aisline;
+        orientline:beside                                     -> orient orientopt1combo orientmagick;
+          orientopt1combo                                       -> @combo("topleft","topright","bottomleft","bottomright")="topleft" ;
+          orientmagick                                          -> @button="magick" ;
+          orient:beside               "orient (fixate image exif rotation)" -> "on" | "";
         meanbalanceline:beside                                -> meanbalance meanbalanceopt1combo meanbalancemagick meanbalancefuse meanbalanceevaluate;
           meanbalanceopt1combo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
           meanbalancemagick                                     -> @button="magick" ;
           meanbalanceevaluate                                   -> @button="evaluate" ;
           meanbalancefuse                                       -> @button="fuse" ;
-          meanbalance:beside          "meanbalance"             ->  "on"  | ! "";
+          meanbalance:beside          "meanbalance"             -> "on"  | ! "";
         whitebalanceline:beside                               -> whitebalance whitebalanceopt1combo whitebalanceopt2combo whitebalancemagick whitebalancefuse whitebalanceevaluate;
           whitebalanceopt1combo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
           whitebalanceopt2combo                                 -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#CCCCCC" ;
@@ -3015,7 +3082,7 @@ start "stackfuser '$Version'"  -> frameset;
           cropmagick                                            -> @button="magick" ;
           cropevaluate                                          -> @button="evaluate" ;
           cropfuse                                              -> @button="fuse" ;
-          crop:beside                 "crop + rotate"           -> "on" | ! "";
+          crop:beside                 "crop"                    -> "on" | ! "";
         align_vidstabline:beside                              -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabopt3combo align_vidstabbutton ;
           align_vidstabopt1combo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
           align_vidstabopt2combo:beside   "Iterations:"         -> @combo("1","2","3")="3";
@@ -3031,7 +3098,13 @@ start "stackfuser '$Version'"  -> frameset;
           align_aisbutton                                       -> @button="magick" ;
           align_ais:beside            "align with align_image_stack" -> "on" | ! "";
       
-      batchblock2 "batch block 2: imagemagick operations on directory magick" -> gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline;
+      batchblock2 "batch block 2: imagemagick operations on directory magick" -> rotateline gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline;
+        rotateline:beside                                     -> rotate rotateopt1combo rotatemagick rotatefuse rotateevaluate;
+          rotateopt1combo                                       -> @combo("90","180","270")="90" ;
+          rotatemagick                                          -> @button="magick" ;
+          rotateevaluate                                        -> @button="evaluate" ;
+          rotatefuse                                            -> @button="fuse" ;
+          rotate:beside               "rotate"                  -> "on"  | ! "";
         gammaline:beside                                      -> gamma gammamagick gammafuse gammaevaluate;
           gammaopt1combo                                        -> @combow("auto","0.2","0.3","0.4","0.454545","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
           gammamagick                                           -> @button="magick" ;
@@ -3076,7 +3149,7 @@ start "stackfuser '$Version'"  -> frameset;
           stretchfuse                                           -> @button="fuse" ;
           stretch:beside              "stretch-contrast"        -> stretchopt1combo | ! "";
         wizardline:beside                                     -> wizard wizardmagick wizardfuse wizardevaluate;
-          wizardopt1combo                                       -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 0","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-orient undefined","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
+          wizardopt1combo                                       -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 0","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
           wizardmagick                                          -> @button="magick" ;
           wizardevaluate                                        -> @button="evaluate" ;
           wizardfuse                                            -> @button="fuse" ;
@@ -3109,7 +3182,7 @@ start "stackfuser '$Version'"  -> frameset;
           cmdbreak                                                -> @button="stop current batch" ;
           killviewnior                                            -> @action("killall viewnior ffplay")="killall viewnior ffplay";
                 
-    specialtab:framed "Special operations" -> specialframe undoframe @fill deleteframe;
+    specialtab:framed "Special operations" -> specialframe @fill undoframe;
       specialframe "Special operations" -> imageformatline videoline animationline cuberotateline lightbalanceline rulerline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
           ruleropt1combo                                        -> @combo('$Imgrulermodecombo')="100z" ;
@@ -3156,8 +3229,9 @@ start "stackfuser '$Version'"  -> frameset;
           undoevaluate                                          -> @button="evaluate" ;
           undofuse                                              -> @button="fuse" ;
           undo                        "undo last step"          -> "" ;
-    
-      deleteframe                     "Delete directories"   -> deletebuttons; 
+          
+    deletetab:framed                  "Delete"               -> deletedirframe deleterescursiveframe @fill;
+      deletedirframe                  "Delete directories of current stack"   -> deletebuttons; 
         deletebuttons:beside                                   -> deletebackups deletemagick deleteevaluate deletecompose deletefuse deletevideo deleteall deleteallbutvideo;
           deletebackups                                          -> @button="backups + cache";
           deleteevaluate                                         -> @button="evaluate";
@@ -3167,6 +3241,10 @@ start "stackfuser '$Version'"  -> frameset;
           deletevideo                                            -> @button="video";
           deleteall                                              -> @button="all";
           deleteallbutvideo                                      -> @button="all but video";
+      deleterescursiveframe           "Delete recursively"     -> recursivedeletedir recursivedeletecache recursivedeletemagick;
+        recursivedeletedir            "Base direcortory for recursive deleting" -> @directory"'$(storeinfo dump projecthome)'" ;
+        recursivedeletecache                                       -> @button="Delete all cache and backup directories" ;
+        recursivedeletemagick                                      -> @button="Delete all magick directories" ;
           
     configtab                         "Configuration"        -> configframe;
       configframe                                              -> storagebasedirtext storagebasedir allownonconformant gallerydir @fill;
@@ -3198,7 +3276,7 @@ The directory structure is:\n\
         gallerydir:beside             "Gallery directory where one result of each stackshot in the storage base dir is shown:"  -> @directory="'$(storeinfo dump gallerydir)'";
 
           
-    showresulttab:framed              "Results"          -> showsetframe showcomposeframe showdirvideoframe;
+    showresulttab:framed              "Show results"     -> showsetframe showcomposeframe showdirvideoframe;
       showsetframe:beside:framed      "Evaluate results of fuse image sets" -> showmaxline showminline showmeanline showmedianline;'
       
   echo -n 'showmaxline:double         "MAX"                  -> '
@@ -3449,10 +3527,10 @@ showpercent() {
   Percentimage="$Percentcachedir/$Percentimage"
 
   [ -e "$Percentimage" ] || case "$Part" in
-    idle)  $Convert -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"     "$Percentimage" ;;
-    busy)  $Convert -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'" "$Percentimage" ;;
-    error) $Convert -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"    "$Percentimage" ;;
-    *)     $Convert -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
+    idle)  $Magickbin -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"     "$Percentimage" ;;
+    busy)  $Magickbin -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'" "$Percentimage" ;;
+    error) $Magickbin -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"    "$Percentimage" ;;
+    *)     $Magickbin -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
   esac
   sendkaptain "cmdpercent('$Percentimage')=''"
 }
@@ -3485,7 +3563,7 @@ stackshot_selector() {
   
   # generate empty X image for unfused stackshots
   Emptyimage=$Thumbnaildir/empty.png
-  [ -e "$Emptyimage" ] || $Convert caption:X $Emptyimage
+  [ -e "$Emptyimage" ] || $Magickbin caption:X $Emptyimage
   
   # get list of stackshot dirs and median images
   Dirlist="$(find -name stackshot -type d | sed s%/stackshot%% | sort -V)"
@@ -3509,9 +3587,9 @@ $Image"
     #Md5="$(md5sum "$Image" | cut -d' ' -f1)"
     Md5="$(md5sum <<< "$(ls --full-time "$Image")" | cut -d' ' -f1)"
     Destinationfile=$Thumbnaildir/$(basename "$Image").$Md5.png
-    #[ -e "$Destinationfile" ] || $Convert "$Image" -resize 256x256 "$Destinationfile"
+    #[ -e "$Destinationfile" ] || $Magickbin "$Image" -resize 256x256 "$Destinationfile"
     [ -e "$Destinationfile" ] || {
-      $Convert "$Image" -scale 256x256 "$Destinationfile"
+      $Magickbin "$Image" -scale 256x256 "$Destinationfile"
       ### FIXME delete old thumbnail
     }
     
@@ -3857,7 +3935,7 @@ cropgeometry_interactive() {
   # check source for mpc format, convert if not
   [ "$Image" = "${Image%.mpc}" ] && {
     Imagempc="$Cachedir/cropgeometry.source.mpc"
-    $Convert "$Image" "$Imagempc"
+    $Magickbin "$Image" "$Imagempc"
   } || {
     Imagempc="$Image"
   }
@@ -3866,8 +3944,8 @@ cropgeometry_interactive() {
   Rotate=0
   Refresh="yes"
 
-  Imagewidth=$($Convert  -format '%w'  $Imagempc info:)
-  Imageheight=$($Convert -format '%h'  $Imagempc info:)
+  Imagewidth=$($Magickbin  -format '%w'  $Imagempc info:)
+  Imageheight=$($Magickbin -format '%h'  $Imagempc info:)
     
   grep -q "x" <<< "$Cropgeometry" && grep -q "+" <<< "$Cropgeometry" && {
     CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
@@ -3950,7 +4028,7 @@ start 'Choose geometry' -> frameset ;
     [ "$Refresh" = "yes" ] && {
       Cropgeometry="${CropW}x${CropH}+$CropX+$CropY"
       showpercent 10 100
-      $Convert $Imagempc -background '#00000000' -rotate $Rotate +repage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropgeometryimage"
+      $Magickbin $Imagempc -background '#00000000' -rotate $Rotate +repage -fill none -stroke red -strokewidth 1 -draw "rectangle $CropX,$CropY $((CropX+CropW-1)),$((CropY+CropH-1))" "$Cropgeometryimage"
       showpercent 60 100
       showimage "$Cropgeometryimage"
       #echo "geometry='$Cropgeometry'" >&${Kaptainstdin}
@@ -3959,8 +4037,8 @@ start 'Choose geometry' -> frameset ;
       showpercent 100 100
     }
 
-    Imagewidth=$($Convert  -format '%w'  $Cropgeometryimage info:)
-    Imageheight=$($Convert -format '%h'  $Cropgeometryimage info:)
+    Imagewidth=$($Magickbin  -format '%w'  $Cropgeometryimage info:)
+    Imageheight=$($Magickbin -format '%h'  $Cropgeometryimage info:)
     
     read -t1 Kaptainsignal
     
@@ -3997,7 +4075,7 @@ start 'Choose geometry' -> frameset ;
           }
         ;;
         trim)
-          $Convert "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
+          $Magickbin "$Imagempc" -background '#00000000' -rotate $Rotate +repage "$Cropimagempc"
           Cropgeometry="$(trim_hard "$Cropimagempc" "$Cropgeometry" )"
           [ "$Cropgeometry" ] && {
             CropX=$(cut -d+ -f2 <<< "$Cropgeometry")
@@ -4219,7 +4297,7 @@ parse_cmd() {
     deletebackups)     myrmdir "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
     delete*)           myrmdir "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
-    align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|fuse*|imageformat*|lightbalance*|gamma*|level*|prepare*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
+    align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|fuse*|imageformat*|gamma*|level*|lightbalance*|orient*|prepare*|rotate*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
       batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -g "$Sourcefileglob" -t "$Targetdir"
       Return=$?
@@ -4284,12 +4362,12 @@ declare_variables() {
   Imagelocal="Image Imagelist Imagewidth Imageheight Imageformat Imagememsize Imagelistmemsize Imagecount Imagenumber Imageraw Cropgeometry Extension"
   Imagepropertieslocal="Imagemean Imagequantumrange Imageautogamma Imageminlevel Imagemaxlevel Imageminlevelred Imagemaxlevelred Imageminlevelgreen Imagemaxlevelgreen Imageminlevelblue Imagemaxlevelblue"
 
-  #Convert="nice convert -quality 100%"
-  command -v convert             >/dev/null && Convert=convert
-  command -v convert-im6.q16     >/dev/null && Convert=convert-im6.q16
-  command -v convert-im6.q16hdri >/dev/null && Convert=convert-im6.q16hdri
-  Magickversion="$($Convert -version)"
-  Convert="nice $Convert -quality 100%"
+  #Magickbin="nice convert -quality 100%"
+  command -v convert             >/dev/null && Magickbin=convert
+  command -v magick              >/dev/null && Magickbin=magick
+  #command -v convert-im6.q16     >/dev/null && Magickbin=convert-im6.q16
+  #command -v convert-im6.q16hdri >/dev/null && Magickbin=convert-im6.q16hdri
+  Magickversion="$($Magickbin -version)"
   grep -q " Q8 "   <<< "$Magickversion" && Magickpixelmemory="4"
   grep -q " Q16 "  <<< "$Magickversion" && Magickpixelmemory="8"
   grep -q " HDRI " <<< "$Magickversion" && Magickpixelmemory="16"
@@ -4312,7 +4390,7 @@ declare_variables() {
   done
   Imgrulermodecombo="${Imgrulermodecombo#,}"
   
-  Imageformatlist="$($Convert -list format | grep " rw" | cut -c1-9 | tr -d ' ')
+  Imageformatlist="$($Magickbin -list format | grep " rw" | cut -c1-9 | tr -d ' ')
 TIF"
   Imageformatlist="$(sort <<< "$Imageformatlist")"
   for Line in $Imageformatlist; do
