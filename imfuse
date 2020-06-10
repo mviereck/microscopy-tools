@@ -175,40 +175,6 @@ trap_sigint() {
 
 ### Image processing
 
-evaluate_step() {
-  # evaluate in small stack steps to avoid high memory usage and caching.
-  # Gives correct results for max and min, but not for mean or median.
-  ### FIXME weak results for unknown reasons
-  
-  local Imagelist Destinationfile
-  local Mode Step Stepsize Stackcount Stacklist
-  local Startzeit Dauer Restzeit
-  
-  Mode="${1:-}" ; shift
-  Destinationfile="${1:-}" ; shift
-  Stepsize=40
-  while [ $# -gt 0 ]; do
-    Imagelist="$Imagelist
-${1:-}"
-    shift
-  done
-  Imagelist="$(tail -n+2 <<< "$Imagelist")"
-  Startzeit="$(date +%s)"
-  Stackcount=0
-  set -x
-  for Step in 0 $(seq $((Imagenumber/$Stepsize)) ); do
-    Stackcount="$((Stackcount+1))"
-    Stacklist="$(tail -n+$((Stepsize*Step+1)) <<< "$Imagelist" | head)"
-    [ "$Step" != "0" ] && Stacklist="$Destinationfile $Stacklist"
-    nice $Magickbin $Stacklist -evaluate-sequence $Mode $Destinationfile || return 1
-    showimage $Destinationfile
-    Dauer="$(( $(date +%s)-Startzeit))"
-    Restzeit="$(( Dauer*(Imagenumber-((Step+1)*Stepsize)) / ((Step+1)*Stepsize) ))"
-    [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
-    verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
-  done
-  set +x
-}
 evaluate_split() {
 
   local Imagelist Resultimage Mode
@@ -229,7 +195,7 @@ ${1:-}"
   
   case $Split in
     1) 
-      $Magickbin $Imagelist -evaluate-sequence $Mode $Resultimage
+      $Magickbin $Imagelist -evaluate-sequence $Mode $Resultimage || error "Error in evaluate_split / $Mode"
     ;;
     *)
       Startzeit="$(date +%s)"
@@ -237,9 +203,10 @@ ${1:-}"
       Showsplit="$(printnum $(( (Split+1)/2 )) 3)"
       Count="0"
       for Image in $Imagelist; do
+        [ "$Error" ] && break
         Count="$((Count+1))"
         verbose "Splitting image $Count / $Imagenumber into $Split pieces due to low memory: $(basename $Image)"
-        $Magickbin $Image -crop 100%x${Splitpercent}% $Cachedir/split%03d.$(basename $Image).tif || return 1
+        $Magickbin $Image -crop 100%x${Splitpercent}% $Cachedir/split%03d.$(basename $Image).tif || error "Error in evaluate_split / crop"
         showimage $Cachedir/split${Showsplit}.$(basename $Image).tif
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
@@ -248,9 +215,10 @@ ${1:-}"
       done
       Startzeit="$(date +%s)"
       for Part in $(seq 0 $((Split-1))) ; do
+        [ "$Error" ] && break
         verbose "Evaluating part $((Part+1)) / $Split"
         Partimage=$Cachedir/$Mode.part$Part.tif
-        $Magickbin $Cachedir/split$(printnum $Part 3).*.tif -evaluate-sequence $Mode $Partimage || return 1
+        $Magickbin $Cachedir/split$(printnum $Part 3).*.tif -evaluate-sequence $Mode $Partimage || error "Error in evaluate_split / evaluating parts"
         Partimagelist="$Partimagelist $Partimage"
         showimage $Partimage
         Dauer="$(( $(date +%s)-Startzeit))"
@@ -258,9 +226,11 @@ ${1:-}"
         [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
         verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
       done
-      $Magickbin $Partimagelist -append $Resultimage
+      [ "$Error" ] && return 1
+      $Magickbin $Partimagelist -append $Resultimage  || error "Error in evaluate_split / appending parts"
     ;;
   esac
+  return "${Error:-0}"
 }
 
 fuse_focus_stackshot()  {
@@ -997,6 +967,11 @@ main() {
   [ "$Error" ] && return 1
   
   Freemem="$(freememory)"
+  [ -z "$Freemem" ] && {
+    note "WARNING: failed to estimate free memory.
+  Blindly guessing 1000 MB."
+    Freemem="1000000"
+  }
   
   parse_options "$@"
   check_options
