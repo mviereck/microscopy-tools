@@ -434,6 +434,7 @@ setup_workdir() {
     *)
       failure "setup_workdir(): Function not defined: $Function"
       return 1
+    ;;
   esac
   
   [ "$Sourcedir" = "$Targetmagickdir" ] && {
@@ -643,6 +644,8 @@ parse_batchoptions() {
   #   local Targetdir Sourcedir Sourcefileglob Destinationdir Destinationfile Cachedir Function Opt1 Opt2
 
   local Shortoptions Longoptions Parsedoptions
+  local Error
+  
   Shortoptions="b:c:d:f:g:m:o:s:t:1:2:3:4:5:6:7:8:9:"
   Longoptions=""
 
@@ -670,7 +673,7 @@ parse_batchoptions() {
       --) ;;
       *) 
         failure "Unbekannte Option ${1:-} ($Function)" 
-        return 1
+        Error=1
       ;;
     esac
     shift
@@ -681,7 +684,7 @@ parse_batchoptions() {
   #[ ! -d "$Sourcedir" ]      && failure "$Function: source dir not found: $Sourcedir" && return 1
   #[ ! -d "$Destinationdir" ] && failure "$Function: destination dir not found: $Destinationdir"&& return 1
   #! check_fileglob "$Sourcedir/$Sourcefileglob" && failure "$Function: No source files found: $Sourcedir/$Sourcefileglob"  && return 1
-  return 0
+  return ${Error:-0}
 }
 getbatchone() {
   local Command= Line Argument
@@ -780,6 +783,7 @@ align_ais() {
   local Cropminimage Rotate
   local Stackcount Stacklist Firstimage Step Stepsize
   local Startzeit Dauer Restzeit
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -793,13 +797,14 @@ align_ais() {
   Startzeit="$(date +%s)"
   for Step in 0 $(seq $((Imagenumber/$Stepsize)) ); do
     showpercent $((Step*Stepsize)) $Imagenumber
-    ifcmdbreak && return 1
+    ifcmdbreak && break
+    [ "$Error" ] && break
     Stackcount="$((Stackcount+1))"
     Stacklist="$(tail -n+$((Stepsize*Step+1)) <<< "$Imagelist" | head)"
     [ -z "$Stacklist" ] && break
     Aligndir=$Cachedir/align.$Stackcount
     mkdir $Aligndir
-    nice align_image_stack $Opt1 -v -l -g3 --use-given-order -p $Cachedir/ais.$Stackcount.pto -a $Aligndir/align $Firstimage $Stacklist || return 1
+    nice align_image_stack $Opt1 -v -l -g3 --use-given-order -p $Cachedir/ais.$Stackcount.pto -a $Aligndir/align $Firstimage $Stacklist || Error=1
     Firstimage="$(fileglob "$Aligndir/align*" | tail -n1)"
     showimage $Firstimage
     Dauer="$(( $(date +%s)-Startzeit))"
@@ -808,13 +813,16 @@ align_ais() {
     note "align_ais: Duration: $(date -u -d @$Dauer +"%T"); Estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
   done
   
+  ifcmdbreak   && return 1
+  [ "$Error" ] && return 1
+  
   Distortdir=$Cachedir/result
   mkdir $Distortdir
   Count=0
   for Aligndir in $Cachedir/align*; do
     [ "$Count" = "0" ] || rm $Aligndir/align0000.tif
     for Image in $(fileglob "$Aligndir/*"); do
-      ifcmdbreak && return 1
+      ifcmdbreak && break
       Count=$((Count+1))
       mv $Image $Distortdir/align$(zeronumber $Count).tif
     done
@@ -849,12 +857,14 @@ align_ais() {
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$(head -n$Imagecount <<< "$Imagelist" | tail -n1)"
     Destinationfile="$Destinationdir/$(basename $Destinationfile)"
-    multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || Error=1
+    [ "$Error" ] && return 1
     showpercent $Imagecount $Imagenumber
     Restzeit="$(( Dauer*(Imagenumber-Imagecount) / Imagecount ))"
     note "align_ais: Cropping to $Cropgeometry. Duration: $(date -u -d @$Dauer +"%T"); Estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
   done
   multicore_wait || return 1
+  return ${Error:-0}
 }
 align_ais_ONE() {
 
@@ -1004,6 +1014,7 @@ align_hugin() {
   local Pto_ptogen Pto_cpfind Pto_cpclean Pto_result
   local Logfile Aligndir
   local Count
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1132,10 +1143,12 @@ $(tail $Logfile)"
     Destinationfile="$(sed "${Count}q;d" <<< "$Imagelist")"
     Destinationfile="$(basename "$Destinationfile")"
     Destinationfile="$Destinationdir/$Destinationfile"
-    multicore "$Magickbin $Image -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -crop $Cropgeometry $Destinationfile" "$Destinationfile" || Error=1
+    [ "$Error" ] && break
     showpercent $Count $Imagenumber
   done
   multicore_wait || return 1
+  return ${Error:-0}
 }
 align_vidstab() {
 
@@ -1144,6 +1157,7 @@ align_vidstab() {
   local Framedir Distortdir Distortlogfile Cropminimage Commonareaimage
   local Xoffset Yoffset Degree
   local Iterations Prepare Crop
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1171,10 +1185,12 @@ align_vidstab() {
       for Image in $Imagelist; do
         Imagecount="$((Imagecount + 1))"
         Destinationfile="$Framedir/frame$(zeronumber $Imagecount).png"
-        multicore "$Magickbin $Image $Crop $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image $Crop $Destinationfile" "$Destinationfile" || Error=1
+        [ "$Error" ] && break
         showpercent "$Imagecount" "$Imagenumber"
       done
       multicore_wait || return 1
+      [ "$Error" ] && return 1
       Cropgeometry=""
       showpercent 10 100
     ;;
@@ -1186,15 +1202,17 @@ align_vidstab() {
       for Image in $Imagelist; do
         Imagecount="$((Imagecount + 1))"
         Destinationfile="$Framedir/frame$(zeronumber $Imagecount).png"
-        multicore "$Magickbin $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || Error=1
+        [ "$Error" ] && break
         showpercent "$Imagecount" "$Imagenumber"
       done
       multicore_wait || return 1
+      [ "$Error" ] && return 1
       Cropgeometry=""
       showpercent 10 100
   
       note "align_vidstab: Balancing video frame brightness"
-      whitebalance -1 "full" -2 "mean" -s "$Framedir" -g "*" -d "$Framedir" -c "$Cachedir"
+      whitebalance -1 "full" -2 "mean" -s "$Framedir" -g "*" -d "$Framedir" -c "$Cachedir" || return 1
       showpercent 20 100
     ;;
   esac
@@ -1301,16 +1319,17 @@ align_vidstab() {
     Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
     case $Opt1 in
       crop|crop_interactive) 
-        multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || Error=1
       ;;
       common_area)
-        multicore "$Magickbin $Image $Commonareaimage -evaluate-sequence min $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image $Commonareaimage -evaluate-sequence min $Destinationfile" "$Destinationfile" || Error=1
       ;;
       distort_only)
-        multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || Error=1
       ;;
     esac
     showpercent "$Imagecount" "$Imagenumber"
+    [ "$Error" ] && break
   done
   multicore_wait || return 1
 
@@ -1319,7 +1338,7 @@ align_vidstab() {
     crop_interactive) showimage "$Cachedir/cropgeometry.gui.tif" ;;
     common_area)      showimage "$Commonareaimage" ;;
   esac
-  return 0     
+  return ${Error:-0}
 }
 align_vidstab_ffmpeg() {
   # Align images with ffmpeg/vidstab
@@ -1411,6 +1430,7 @@ animation() {
   local Imagelistfile
   local Position Positionlist Positionnumber
   local Sequence Sequencename Sequencenumber
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1570,12 +1590,14 @@ $Position"
       Convertline="$Convertline \( mpr:image -gravity center -crop $Cropgeometry+$(awk "BEGIN {print $Count * $Xpos * $Offset}")+$(awk "BEGIN {print $Count * $Ypos * $Offset}") -write $Distortimage \)" 
     done
     
-    multicore "$Convertline info: >/dev/null" "$Distortimage" || return 1
+    multicore "$Convertline info: >/dev/null" "$Distortimage" || Error=1
+    [ "$Error" ] && break
     
     Iteration=$((Iteration + 1))
     showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
+  [ "$Error" ] && return 1
   
   # fuse distorted images
   Showpercentfunc="$(declare -f showpercent)"
@@ -1588,12 +1610,14 @@ $Position"
     mkdir -p "$Fusedir"
     Imagebasename="animation.$Position"
     case $Fusemode in
-      all|set*) ( showpercent() { : ; } ; fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -1 $Fusemode -c $Distortcachedir ) || return 1 ;; 
-      *)                       multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -1 $Fusemode -c $Distortcachedir"  || return 1 ;;
+      all|set*) ( showpercent() { : ; } ; fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -1 $Fusemode -c $Distortcachedir ) || Error=1 ;; 
+      *)                       multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -1 $Fusemode -c $Distortcachedir"  || Error=1 ;;
     esac
     showpercent $Iteration $Iterationnumber
+    [ "$Error" ] && break
   done
   multicore_wait || return 1
+  [ "$Error" ] && return 1
 
   # Calculate median of fuse images (fuse set* or all)
   for Position in $Positionlist; do
@@ -1604,10 +1628,12 @@ $Position"
     note "animation: Generating $(basename $Destinationfile)"
     #multicore "$Magickbin $Fusedir/* -evaluate-sequence median -gravity center -stroke black -fill black -pointsize 24 -draw 'text 0,0 \"$Position\"' $Destinationfile" "$Destinationfile" || return 1
     #multicore "$Magickbin $Fusedir/* -evaluate-sequence median $Destinationfile" "$Destinationfile" || return 1
-    multicore "evaluate_split -s $Fusedir -1 median -b $Destinationfile -c $Cachedir" "$Destinationfile" || return 1
+    multicore "evaluate_split -s $Fusedir -1 median -b $Destinationfile -c $Cachedir" "$Destinationfile" || Error=1
     showpercent $Iteration $Iterationnumber
+    [ "$Error" ] && break
   done
   multicore_wait || return 1
+  [ "$Error" ] && return 1
 
   # Generate videos
   for Count in $(seq $Sequencenumber); do
@@ -1626,12 +1652,14 @@ $Position"
 
     note "animation: Generating $(basename $Destinationfile)."
     case $Format in
-      gif) multicore "gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount=forever --output $Destinationfile $Imagelist" "$Destinationfile" || return 1 ;;
-      *)   multicore "ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || return 1 ;;
+      gif) multicore "gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount=forever --output $Destinationfile $Imagelist" "$Destinationfile" || Error=1 ;;
+      *)   multicore "ffmpeg -y -hide_banner -nostdin -safe 0 -r $Framerate -f concat -i $Imagelistfile -c:v libvpx-vp9 -crf 30 -b:v 0 $Destinationfile" "$Destinationfile"  || Error=1 ;;
     esac
+    [ "$Error" ] && break
     showpercent $Iteration $Iterationnumber
   done
   multicore_wait || return 1
+  return ${Error:-0}
 }
 crop() {
   # crop area of image sequence
@@ -1641,6 +1669,7 @@ crop() {
   local $Imagelocal
   local Newwidth Newheight Shrink
   local Rotate Rotatedir
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1693,19 +1722,22 @@ crop() {
   for Image in $Imagelist; do
     Imagecount="$((Imagecount+1))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
-    multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || Error=1
+    [ "$Error" ] && break
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
+  [ "$Error" ] && return 1
   Imagelist="$(fileglob "$Rotatedir/*")"
   
   historyentry "# crop geometry: $Cropgeometry rotation: $Rotate"
-  return 0
+  return ${Error:-0}
 }
 cuberotate() {
   local $Batchlocal
   local $Imagelocal
   local Linecount Linenumber
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1726,10 +1758,12 @@ cuberotate() {
           top|bottom) Cropgeometry="0x1" ;;
           left|right) Cropgeometry="1x0" ;;
         esac
-        multicore "$Magickbin $Image -crop $Cropgeometry $Cachedir/split$Imagecount/line%d.mpc" || return 1
+        multicore "$Magickbin $Image -crop $Cropgeometry $Cachedir/split$Imagecount/line%d.mpc" || Error=1
+        [ "$Error" ] && break
         showpercent $Imagecount $((Imagenumber*2))
       done
-      multicore_wait
+      multicore_wait || return 1
+      [ "$Error" ] && return 1
       
       note "cuberotate $Opt1: Appending lines to rotated image"
       for Linecount in $(seq $Linenumber); do
@@ -1743,12 +1777,14 @@ cuberotate() {
         Destinationfile="$Destinationdir/cube${Opt1}$(printnum $Linecount 4).jpg"
         
         case $Opt1 in
-          top|bottom) multicore "$Magickbin $Linelist -append $Destinationfile" "$Destinationfile" || return 1 ;;
-          left|right) multicore "$Magickbin $Linelist +append $Destinationfile" "$Destinationfile" || return 1 ;;
+          top|bottom) multicore "$Magickbin $Linelist -append $Destinationfile" "$Destinationfile" || Error=1 ;;
+          left|right) multicore "$Magickbin $Linelist +append $Destinationfile" "$Destinationfile" || Error=1 ;;
         esac
+        [ "$Error" ] && break
         showpercent $((Linenumber+Linecount)) $((Linenumber*2))
       done
-      multicore_wait
+      multicore_wait || return 1
+      [ "$Error" ] && return 1
     ;;
     back-left|back-top|reverse-order)
       Imagecount=0
@@ -1759,19 +1795,21 @@ cuberotate() {
         Destinationfile="$Destinationdir/$Destinationfile"
         case $Opt1 in
           reverse-order)
-            multicore "cp -T    $Image       $Destinationfile" "$Destinationfile" 16 || return 1
+            multicore "cp -T    $Image       $Destinationfile" "$Destinationfile" 16 || Error=1
           ;;
           back-left)
-            multicore "$Magickbin $Image -flop $Destinationfile" "$Destinationfile" || return 1
+            multicore "$Magickbin $Image -flop $Destinationfile" "$Destinationfile" || Error=1
           ;;
           back-top)
-            multicore "$Magickbin $Image -flip $Destinationfile" "$Destinationfile" || return 1
+            multicore "$Magickbin $Image -flip $Destinationfile" "$Destinationfile" || Error=1
           ;;
         esac
+        [ "$Error" ] && break
         Imagecount="$((Imagecount+1))"
         showpercent $Imagecount $Imagenumber
       done
       multicore_wait || return 1
+      [ "$Error" ] && return 1
     ;;
     90|180|270)
       Imagecount=0
@@ -1780,12 +1818,15 @@ cuberotate() {
         Destinationfile="$(basename $Image)"
         note "cuberotate $Opt1: Generating $Destinationfile"
         Destinationfile="$Destinationdir/$Destinationfile"
-        multicore "$Magickbin $Image -rotate $Opt1 $Destinationfile" "$Destinationfile" || return 1
+        multicore "$Magickbin $Image -rotate $Opt1 $Destinationfile" "$Destinationfile" || Error=1
+        [ "$Error" ] && break
         showpercent $Imagecount $Imagenumber
       done
       multicore_wait || return 1
+      [ "$Error" ] && return 1
     ;;
   esac
+  return ${Error:-0}
 }
 distort() {
   # distort images.
@@ -1796,6 +1837,7 @@ distort() {
   local $Imagelocal
   local Xoffset Yoffset Degree
   local Distortfile
+  local Error
 
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1814,16 +1856,19 @@ distort() {
     Degree="$(cut  -d' ' -f4 <<< "$Line")"
   
     Destinationfile="$Destinationdir/$(basename "$Image")"
-    multicore "$Magickbin $Image -virtual-pixel transparent -distort SRT '0,0 1 $Degree $Xoffset,$Yoffset' $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -virtual-pixel transparent -distort SRT '0,0 1 $Degree $Xoffset,$Yoffset' $Destinationfile" "$Destinationfile" || Error=1
+    [ "$Error" ] && break
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
+  return ${Error:-0}
 }
 evaluate() {
   local $Batchlocal
   local $Imagelocal
   local Destinationfilebasename Set Mode Showimage
   local Maxfile Minfile
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1843,15 +1888,19 @@ evaluate() {
             [ "$Mode" = "max" ] && Maxfile="$Destinationfile"
             [ "$Mode" = "min" ] && Minfile="$Destinationfile"
             [ "$Mode" = "median" ] && [ "$Set" = "set2" ] && Showimage="$Destinationfile"
-#            multicore "$Magickbin $(fileglob -w "$Sourcedir/$Sourcefileglob") -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1 
-            multicore "evaluate_split -s $Sourcedir -g $Sourcefileglob -1 $Mode -c $Cachedir -b $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1
+            multicore "evaluate_split -s $Sourcedir -g $Sourcefileglob -1 $Mode -c $Cachedir -b $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || Error=1
+            [ "$Error" ] && break
           done
-          multicore_wait || return 1
-          compose -1 "$Maxfile" -2 "$Minfile" -9 "$Imageformat" -d "$Targetcomposedir" -b "$Destinationfilebasename.set${Set}" || return 1
+          multicore_wait || Error=1
+          [ "$Error" ] && break
+          compose -1 "$Maxfile" -2 "$Minfile" -9 "$Imageformat" -d "$Targetcomposedir" -b "$Destinationfilebasename.set${Set}" || Error=1
+          [ "$Error" ] && break
           showimage "$Showimage"
         }
+        [ "$Error" ] && break
         showpercent $Set $Fusesetnumber
       done
+      [ "$Error" ] && return 1
     ;;
     magick)
       for Mode in min mean max median; do
@@ -1859,22 +1908,24 @@ evaluate() {
         [ "$Mode" = "max" ] && Maxfile="$Destinationfile"
         [ "$Mode" = "min" ] && Minfile="$Destinationfile"
         [ "$Mode" = "max" ] && Showimage="$Destinationfile"
-#        multicore "$Magickbin $(echo $Imagelist) -evaluate-sequence $Mode $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1
-        multicore "evaluate_split -s $Sourcedir -g $Sourcefileglob -1 $Mode -c $Cachedir -b $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || return 1
+        multicore "evaluate_split -s $Sourcedir -g $Sourcefileglob -1 $Mode -c $Cachedir -b $Destinationfile" "$Destinationfile" "$Imagelistmemsize" || Error=1
+        [ "$Error" ] && break
       done
       multicore_wait || return 1
+      [ "$Error" ] && return 1
       compose -1 "$Maxfile" -2 "$Minfile" -9 "$Imageformat" -d "$Targetcomposedir" -b "$Destinationfilebasename" || return 1
       showimage "$Showimage"
       ;;
     *) warning "evaluate(): Undefined handling for source $Sourcedir" ; return 1 ;;
   esac
-  return 0
+  return ${Error:-0}
 }
 evaluate_split() {
   local $Batchlocal
   local $Imagelocal
   local Mode Split Splitpercent Showsplit Splitdir Part Partimage Partimagelist
   local Startzeit Dauer Restzeit Count
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1899,8 +1950,8 @@ evaluate_split() {
       for Image in $Imagelist; do
         Count="$((Count+1))"
         note "Splitting image $Count / $Imagenumber into $Split pieces due to low memory: $(basename $Image)"
-        multicore "$Magickbin $Image -crop 100%x${Splitpercent}% $Splitdir/split%03d.$(basename $Image).tif" "$Splitdir/split${Showsplit}.$(basename $Image).tif" || return 1
-        #showimage $Splitdir/split${Showsplit}.$(basename $Image).tif
+        multicore "$Magickbin $Image -crop 100%x${Splitpercent}% $Splitdir/split%03d.$(basename $Image).tif" "$Splitdir/split${Showsplit}.$(basename $Image).tif" || Error=1
+        [ "$Error" ] && break
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
         [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
@@ -1908,13 +1959,15 @@ evaluate_split() {
         showpercent $Count $Imagenumber
       done
       multicore_wait || return 1
+      [ "$Error" ] && return 1
       Startzeit="$(date +%s)"
       Count="0"
       for Part in $(seq 0 $((Split-1))) ; do
         Count="$((Count+1))"
         note "Evaluating part $((Part+1)) / $Split"
         Partimage=$Splitdir/$Mode.part$Part.tif
-        nice $Magickbin $Splitdir/split$(printnum $Part 3).*.tif -evaluate-sequence $Mode $Partimage || return 1
+        nice $Magickbin $Splitdir/split$(printnum $Part 3).*.tif -evaluate-sequence $Mode $Partimage || Error=1
+        [ "$Error" ] && break
         Partimagelist="$Partimagelist $Partimage"
         showimage $Partimage
         Dauer="$(( $(date +%s)-Startzeit))"
@@ -1923,9 +1976,11 @@ evaluate_split() {
         verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
         showpercent $Count $Imagenumber
       done
-      nice $Magickbin $Partimagelist -append $Destinationfile
+      [ "$Error" ] && return 1
+      nice $Magickbin $Partimagelist -append $Destinationfile || return 1
     ;;
   esac
+  return ${Error:-0}
 }
 fuse() {
   # fuse stackshot of images with enfuse
@@ -1935,6 +1990,7 @@ fuse() {
   local $Imagepropertieslocal
   local Destinationfilebasename Stretchdir Stretch
   local Fusemode Fuseoption Modelist Modenumber Count
+  local Error
   #local Layertif Filesize
   
   parse_batchoptions "$@" || return 1
@@ -1962,10 +2018,12 @@ fuse() {
     for Image in $Imagelist; do
       Imagecount="$((Imagecount + 1))"
       Destinationfile="$Stretchdir/stretch$(zeronumber $Imagecount).png"
-      multicore "$Magickbin $Image -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || return 1
+      multicore "$Magickbin $Image -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || Error=1
+      [ "$Error" ] && break
       showpercent "$Imagecount" "$Imagenumber"
     done
     multicore_wait || return 1
+    [ "$Error" ] && return 1
   } || {
     [ "$Stretchdir" != "$Sourcedir" ] && mycp "$Sourcedir/$Sourcefileglob" "$Stretchdir"
   }
@@ -1997,10 +2055,12 @@ fuse() {
       for Fusemode in $Modelist; do
         Count="$((Count+1))"
 #        multicore "fuse -s '$(dirname "$Layertif")' -g '$(basename "$Layertif")' -d '$Destinationdir' -b '$Destinationfilebasename' -1 '$Fusemode' -2 '$Fuseoption'" "" "$((Filesize*3))" || return 1
-        multicore "fuse -s '$Stretchdir' -g '$Sourcefileglob' -d '$Destinationdir' -c '$Cachedir' -b '$Destinationfilebasename' -1 '$Fusemode' -2 '$Fuseoption' -9 '$Extension'" "" "$Imagelistmemsize" || return 1
+        multicore "fuse -s '$Stretchdir' -g '$Sourcefileglob' -d '$Destinationdir' -c '$Cachedir' -b '$Destinationfilebasename' -1 '$Fusemode' -2 '$Fuseoption' -9 '$Extension'" "" "$Imagelistmemsize" || Error=1
+        [ "$Error" ] && break
         showpercent "$Count" "$Modenumber"
       done
       multicore_wait || return 1
+      [ "$Error" ] && return 1
       return 0
     ;;
     fuse*)
@@ -2058,6 +2118,7 @@ imageformat() {
   local $Batchlocal
   local $Imagelocal
   local Sourceformat Destinationformat
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -2080,14 +2141,15 @@ imageformat() {
     showpercent $Imagecount $Imagenumber
     Destinationfile="$(rev <<< "$Image" | cut -d. -f2- | rev).$Destinationformat"
     Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
-    multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || return 1 
+    multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || Error=1 
+    [ "$Error" ] && break
 #    case $Imageraw in
 #      no)  multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || return 1 ;;
 #      yes) multicore "ufraw-batch --wb=camera --black-point=auto --exposure=auto --create-id=no --out-type=$Destinationformat --out-depth=16 --output=$Destinationfile $Image" "$Destinationfile" || return 1 ;;
 #    esac
   done
   multicore_wait || return 1
-  
+  return ${Error:-0}  
 }
 lightbalance() {
   # simulate a HDR image with multiple exposures combined to one image with balanced light.
@@ -2096,6 +2158,7 @@ lightbalance() {
   local $Batchlocal
   local $Imagelocal
   local Darkfactor Brightfactor Darkpercent Brightpercent
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -2143,16 +2206,20 @@ lightbalance() {
     esac
     Convertline="$Convertline info: >/dev/null"
     echo $Convertline
-    multicore "$Convertline" || return 1
-    multicore_wait || return 1
-    multicore "enfuse $(find $Cachedir/${Destinationfile}.exp* | tr "\n" " ") -o $Destinationdir/$Destinationfile --gray-projector=average" "$Destinationdir/$Destinationfile" || return 1
+    multicore "$Convertline" || Error=1
+    multicore_wait || Error=1
+    [ "$Error" ] && break
+    multicore "enfuse $(find $Cachedir/${Destinationfile}.exp* | tr "\n" " ") -o $Destinationdir/$Destinationfile --gray-projector=average" "$Destinationdir/$Destinationfile" || Error=1
+    [ "$Error" ] && break
     showpercent $Imagecount $Imagenumber
   done
   multicore_wait || return 1
+  return ${Error:-0}
 }
 ruler() {
   local $Batchlocal
   local $Imagelocal
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -2161,11 +2228,12 @@ ruler() {
   for Image in $Imagelist; do
     Imagecount="$((Imagecount+1))"
     Destinationfile="$Destinationdir/$(basename $Image)"
-    multicore "$Imgruler -m $Opt1 -t '$Opt2' -c '$Opt3' -n '$Opt4' -o $Destinationfile $Image" "$Destinationfile" || return 1
+    multicore "$Imgruler -m $Opt1 -t '$Opt2' -c '$Opt3' -n '$Opt4' -o $Destinationfile $Image" "$Destinationfile" || Error=1
+    [ "$Error" ] && break
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
-  return 0
+  return ${Error:-0}
 }
 undo() {
   local $Batchlocal
@@ -2188,6 +2256,7 @@ video() {
   local $Imagelocal
   local Imagelistfile
   local Framerate Format Framedir Frame
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -2226,21 +2295,24 @@ $(tac <<< "$Imagelist")"
     #echo "file '$Image'" >> $Imagelistfile
     Frame="$Framedir/frame$(zeronumber $Imagecount).$Imageformat"
     case $Format in
-      gif) multicore "$Magickbin $Image $Frame" "$Image" || return 1 ;;
-      *)   multicore "cp -T    $Image $Frame" "$Image" || return 1 ;;
+      gif) multicore "$Magickbin $Image $Frame" "$Image" || Error=1 ;;
+      *)   multicore "cp -T      $Image $Frame" "$Image" || Error=1 ;;
     esac
+    [ "$Error" ] && break
     showpercent $Imagecount $Imagenumber
   done
   multicore_wait || return 1
+  [ "$Error" ] && return 1
   
   note "video: Generating $Format video $Opt1"
   showpercent busy
   case $Format in
-    gif) nice gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount=forever --output $Destinationfile $(fileglob "$Framedir/*") ;;
+    gif) nice gifsicle --lossy --optimize=3 --delay $((100 / $Framerate)) --loopcount=forever --output $Destinationfile $(fileglob "$Framedir/*") || return 1 ;;
     *)   nice ffmpeg -y -hide_banner -nostdin  -r $Framerate -f image2 -start_number 1 -i $Framedir/frame%04d.$Imageformat $Destinationfile || return 1 ;;
   esac
   showpercent 100 100
   showimage $Destinationfile
+  return ${Error:-0}
 }
 whitebalance() {
   # whitebalance sequence of images
@@ -2253,6 +2325,7 @@ whitebalance() {
   local Refred  Refgreen  Refblue
   local Meanred Meangreen Meanblue
   local Partred Partgreen Partblue
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -2315,11 +2388,12 @@ whitebalance() {
     [ "$Meangreen" = "0" ] && Partgreen=255 || Partgreen="$(awk "BEGIN { print $Refgreen / $Meangreen }")"
     [ "$Meanblue"  = "0" ] && Partblue=255  || Partblue="$(awk  "BEGIN { print $Refblue  / $Meanblue }")"
     
-    multicore "$Magickbin $Image -color-matrix '$Partred 0 0 0 $Partgreen 0 0 0 $Partblue' $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -color-matrix '$Partred 0 0 0 $Partgreen 0 0 0 $Partblue' $Destinationfile" "$Destinationfile" || Error=1
+    [ "$Error" ] && break
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
-  return 0
+  return ${Error:-0}
 }
 wizard() {
   # Wrapper for ImageMagick convert to work on folders
@@ -2337,6 +2411,7 @@ wizard() {
   local $Imagepropertieslocal
   local Options Compress
   local Startzeit Dauer Restzeit
+  local Error
 
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -2389,7 +2464,8 @@ wizard() {
   for Image in $Imagelist; do
     Imagecount="$((Imagecount + 1 ))"
     Destinationfile="$Destinationdir/$(basename "$Image")"
-    multicore "$Magickbin $Image $Options $Compress $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image $Options $Compress $Destinationfile" "$Destinationfile" || Error=1
+    [ "$Error" ] && break
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Imagecount) / Imagecount ))"
     [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
@@ -2398,7 +2474,7 @@ wizard() {
   done
   multicore_wait || return 1
   
-  return 0
+  return ${Error:-0}
 }
 
 #### single image operations
@@ -2463,6 +2539,7 @@ compose() {
   local Minfile Maxfile Mode
   local Destinationfilebasename
   local Count
+  local Error
   
   parse_batchoptions "$@" || return 1
   
@@ -2477,19 +2554,23 @@ compose() {
   Destinationfilebasename="${Destinationfile:-compose}"
     
   for Mode in bumpmap colorburn linearlight modulate  overlay pegtoplight; do
-    ifcmdbreak && return 1
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}1.$Imageformat"
-    multicore "$Magickbin $Maxfile $Minfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Maxfile $Minfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || Error=1
+    [ "$Error" ] && break
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}2.$Imageformat"
-    multicore "$Magickbin $Minfile $Maxfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Minfile $Maxfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || Error=1
+    [ "$Error" ] && break
   done
+  [ "$Error" ] && return 1
   for Mode in linearburn difference multiply; do
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.$Imageformat"
-    multicore "$Magickbin $Maxfile $Minfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Maxfile $Minfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || Error=1
+    [ "$Error" ] && break
   done
-  multicore_wait
+  multicore_wait || return 1
+  [ "$Error" ] && return 1
   Destinationfile="$Destinationdir/$Destinationfilebasename.composemean.${Imageformat}"
-  $Magickbin  $Destinationdir/$Destinationfilebasename.{*modulate*,*bumpmap*,*pegtoplight*,*overlay*,*difference*} -evaluate-sequence mean $Destinationfile
+  $Magickbin  $Destinationdir/$Destinationfilebasename.{*modulate*,*bumpmap*,*pegtoplight*,*overlay*,*difference*} -evaluate-sequence mean $Destinationfile || return 1
   showimage $Destinationfile
   return 0
 }
@@ -2601,7 +2682,8 @@ $Permillebottom" | sort -n | head -n1)
     [ "1.0000" = "$Permillebottom" ] && Skipbottom=yes
     
     # break signal of stackfuser
-    ifcmdbreak && return 1
+    ifcmdbreak && Return=1
+    [ "$Return" = "1" ] && break
 
     # Out-of-range error
     { [ "$Left" -gt "$Right" ] || [ "$Top" -gt "$Bottom" ] ; } && {
@@ -2627,6 +2709,7 @@ $Permillebottom" | sort -n | head -n1)
       }
     }
   done
+  [ "$Return" = "1" ] && return 1
 
   # show result
   showpercent 100 100
@@ -2996,27 +3079,31 @@ multicore() {
   return 0
 }
 multicore_wait() {
-  local Process
+  local Process Error
   for Process in $(seq $Multicore_maxprocesses); do
     [ "${Multicore_process[$Process]}" ] && {
       multicore_waitprocess "${Multicore_process[$Process]}" || {
         multicore_break
-        return 1
+        Error=1
       }
+      [ "$Error" ] && break
       [ "${Multicore_image[$Process]}" ] && showimage "${Multicore_image[$Process]}"
     }
     Multicore_process[$Process]=""
     Multicore_image[$Process]=""
     Multicore_memory[$Process]="0"
   done
+  [ "$Error" ] && return 1
   Multicore_processcount=0
   return 0
 }
 multicore_waitprocess() {
+  local Error
   while sleep 0.2 ; do
     ps -p "${1:-}" >/dev/null || break
-    ifcmdbreak && return 1
+    ifcmdbreak && Error=1
   done
+  [ "$Error" ] && return 1
   wait "${1:-}"
   return $?
 }
