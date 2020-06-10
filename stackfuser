@@ -205,6 +205,29 @@ check_stackdir() {
     ;;
   esac
 }
+dirglob() {
+  # echos files only for glob $1
+  #local Path Glob 
+  local Filelist Whitespace
+  
+  #[ -d "${1:-}" ] && {
+  #  Path="${1:-}"
+  #  Glob="*"
+  #} || {
+  #  Path="$(dirname  "${1:-}")"
+  #  Glob="$(basename "${1:-}")"
+  #}
+  #Path="$(realpath "$Path")"
+  
+  [ "${1:-}" = "-w" ] && Whitespace="yes" && shift
+  
+  Filelist="$(eval find ${1:-} -maxdepth 0 -type d 2>/dev/null)"
+  Filelist="$(sort -V <<< "$Filelist")"
+  
+  [ "$Whitespace" ] && Filelist="$(echo $Filelist)"
+  
+  [ "$Filelist" ] && echo "$Filelist" || return 1
+}
 fileglob() {
   # echos files only for glob $1
   #local Path Glob 
@@ -244,7 +267,7 @@ mycp() {
     failure "cp: Target is not a directory: ${2:-}"
     return 1
   }
-  note "cp: copying $(basename "${1:-}") to $(basename "${2:-}")"
+  #verbose "cp: copy ${1:-} to $(basename "${2:-}")"
   cp $(fileglob "${1:-}") "${2:-}"
 }
 mymv() {
@@ -257,7 +280,7 @@ mymv() {
     failure "mv: Target is not a directory: ${2:-}"
     return 1
   }
-  verbose "mv: moving $(basename "${1:-}") to $(basename "${2:-}")"
+  #verbose "mv: moving ${1:-} to $(basename "${2:-}")"
   mv -f $(fileglob "${1:-}") "${2:-}"
 }
 myrm() {
@@ -819,7 +842,7 @@ align_ais() {
   Distortdir=$Cachedir/result
   mkdir $Distortdir
   Count=0
-  for Aligndir in $Cachedir/align*; do
+  for Aligndir in $(dirglob "$Cachedir/align*"); do
     [ "$Count" = "0" ] || rm $Aligndir/align0000.tif
     for Image in $(fileglob "$Aligndir/*"); do
       ifcmdbreak && break
