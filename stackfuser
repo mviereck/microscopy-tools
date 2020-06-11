@@ -1634,7 +1634,7 @@ $Position"
     Imagebasename="animation.$Position"
     case $Fusemode in
       all|set*) ( showpercent() { : ; } ; fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -1 $Fusemode -c $Distortcachedir ) || Error=1 ;; 
-      *)                       multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -1 $Fusemode -c $Distortcachedir"  || Error=1 ;;
+      *)                       multicore "fuse -s $Distortdir -g '*' -d $Fusedir -b $Imagebasename -1 $Fusemode -c $Distortcachedir" "" "$Imagelistmemsize" || Error=1 ;;
     esac
     showpercent $Iteration $Iterationnumber
     [ "$Error" ] && break
