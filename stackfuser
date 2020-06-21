@@ -95,6 +95,7 @@ freememory() {
     Zram="$((Zram/1000))"
     Freemem="$((Freemem + Zram))"
   done < <(/sbin/swapon --bytes | grep zram)
+  Freemem="$((Freemem*100/95))"
   echo $Freemem
 }
 milisleep() {
@@ -1997,7 +1998,7 @@ evaluate_split() {
         Restzeit="$(( Dauer*(Split-Part+1) / (Part+1) ))"
         [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
         verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
-        showpercent $Count $Imagenumber
+        showpercent $Count $Split
       done
       [ "$Error" ] && return 1
       nice $Magickbin $Partimagelist -append $Destinationfile || return 1
@@ -2471,7 +2472,7 @@ wizard() {
     orient|rotate|statistic) Opt1="-$Opt1" ;;
     wizard)      Opt1="" ;;
   esac
-  Options="$Opt1 $Opt2 $Opt3"
+  Options="$Opt1 $Opt2 $Opt3 +repage"
   
   [ "$Sourcedir" = "$Targetmagickdir" ] && grep -q -E "auto-gamma|auto-level|auto-contrast-stretch|contrast-stretch max" <<< "$Options" && {
     imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir" || return 1
@@ -3196,9 +3197,9 @@ start "stackfuser '$Version'"  -> frameset;
         align_vidstabline:beside                              -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabopt3combo align_vidstabbutton ;
           align_vidstabopt1combo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
           align_vidstabopt2combo:beside   "Iterations:"         -> @combo("1","2","3")="3";
-          align_vidstabopt3combo:beside   "prepare"             -> "prepare" | "" ;
+          align_vidstabopt3combo:beside   "prepare"             -> "prepare" | ! "" ;
           align_vidstabbutton                                   -> @button="magick" ;
-          align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | "";
+          align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | ! "";
         align_huginline:beside                                  -> align_hugin align_huginbutton ;
           align_huginbutton                                      -> @button="magick" ;
           align_hugin:beside          "align with hugin"         -> "on" | ! "";
@@ -3206,7 +3207,7 @@ start "stackfuser '$Version'"  -> frameset;
           align_aisopt1combo          "demagnifier (-m)"        -> "m"  | "";
           align_aisopt2combo          "crop interactive"        -> "interactive" | ! "";
           align_aisbutton                                       -> @button="magick" ;
-          align_ais:beside            "align with align_image_stack" -> "on" | ! "";
+          align_ais:beside            "align with align_image_stack" -> "on" | "";
       
       batchblock2 "batch block 2: imagemagick operations on directory magick" -> rotateline gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline;
         rotateline:beside                                     -> rotate rotateopt1combo rotatemagick rotatefuse rotateevaluate;
