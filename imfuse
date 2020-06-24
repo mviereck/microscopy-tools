@@ -31,12 +31,13 @@ imfuse provides two basic ways to get overall sharp results.
 The traditional way is mask comparision with the mask generating methods below.
 The most recommended traditional mask method is --statistic=standarddeviation.
 Another, faster attempt compares max and min images and combines them
-with the compositing methods.                            Default: --compose
+with the compositing methods.                            
+Default method: --diffstat
 
 Compositing methods:
      --compose [=MODE]       Composes a result with mode MODE based on a max
                              and a min calculation of the source images.
-                             Compare IM option -compose. Default: overlay
+                             Compare IM option -compose. Default MODE: overlay
                              MODE can be one of '$(basename $Magickbin) -list compose'
                              Some MODEs of interest:
                                bumpmap colorburn difference linearburn 
@@ -61,11 +62,28 @@ Compositing methods:
 Mask generating methods:
      --blur                  Blur edge detection. Takes options: 
                                --radius                  Default: 0
-                               --sigma1                  Default: 0.5
+                               --sigma                   Default: 0.5
                              Difference calculation with option:
                                --radius2                 Default: 0
                                --sigma2                  Default: 1.6*sigma1
      --compass               Compass edge detection. 
+     --diffstat [=STAT1[,STAT2]]  Compares two local statistics of source. 
+                             Uses IM option -statistic. Compare --statistic.
+                             Possible STAT1 and STAT2:
+                               1|gradient|grad
+                               2|maximum|max
+                               3|mean
+                               4|median
+                               5|minimum|min
+                               6|mode
+                               7|nonpeak
+                               8|9|rms|rootmeansquare
+                               10|standarddeviation|dev
+                             Default for STAT1: median. Default for STAT2: mean
+                             Takes options: 
+                               --radius                  Default: 5
+                             Difference calculation with option:
+                               --radius2                 Default: radius1*3/2
      --enfuse [=ENFUSEARGS]  Uses external binary enfuse for mask generation.
                              Takes options: 
                                --radius                  Default: 5
@@ -78,7 +96,7 @@ Mask generating methods:
      --gaussian              Gaussian blur edge detection.
                              Takes options: 
                                --radius                  Default: 0
-                               --sigma1                  Default: 0.5
+                               --sigma                   Default: 0.5
                              Difference (DoG) calculation with option:
                                --sigma2                  Default: sigma1*1.6
      --kirsch                Kirsch edge detection. 
@@ -91,29 +109,24 @@ Mask generating methods:
                              Difference calculation with options:
                                --radius2                 Default: 0
                                --sigma2                  Default: sigma1*1.6
-     --mediff                Difference of mean and median statistics.
-                             Takes options:
-                               --radius                  Default: 5
-                             Difference calculation with option:
-                               --radius2                 Default: radius1*3/2
      --prewitt               Prewitt edge detection. 
      --roberts               Roberts edge detection. 
      --sobel                 Sobel edge detection. 
-     --statistic [=MODE]     ImageMagick option -statistic.
+     --statistic [=STAT]     IM option -statistic result compared with source.
                              Takes options:
                                --radius                  Default: 2
-                             Difference calculation with option:
+                             Two-radius difference comparision with option:
                                --radius2                 Default: radius1*3/2
-                             Argument MODE is one of:
-                                      gradient|grad
-                                      maximum|max
-                                      mean
-                                      median
-                                      minimum|min
-                                      mode
-                                      nonpeak
-                                      rms
-                                      standarddeviation|dev
+                             Argument STAT is one of (number or name):
+                               1|gradient|grad
+                               2|maximum|max
+                               3|mean
+                               4|median
+                               5|minimum|min
+                               6|mode
+                               7|nonpeak
+                               8|9|rms|rootmeansquare
+                               10|standarddeviation|dev
                              Default: standarddeviation
      --unsharp               Difference of -unsharp.
                              Takes options: 
@@ -283,7 +296,9 @@ ${1:-}"
   verbose "Generating $Mode image $(basename "$Resultimage") in $Split parts."
   case $Split in
     1) 
+      Startzeit="$(date +%s)"
       $Magickbin $Imagelist -evaluate-sequence $Mode $Tifstore $Resultimage || error "Error in evaluate_split / $Mode"
+      verbose "Duration: $(date -u -d @$Dauer +"%T")"
     ;;
     *)
       Startzeit="$(date +%s)"
@@ -501,7 +516,7 @@ $Imageproperties"
   [ "$Storelayers" ] && {
     verbose "Creating layered result with parts in use of source images"
     Image="$(rev <<< "$Outputimage" | cut -d. -f2- | rev).layered_parts.tif"
-    $Magickbin $Backgroundimage $Sourcemasklist $Tifstore "$Image" || note "Failed to create layered parts result image."
+    $Magickbin -type TrueColorAlpha $Maskmax $Backgroundimage $Sourcemasklist $Tifstore "$Image" || note "Failed to create layered parts result image."
   }
   
   [ "$Storelayers" ] && {
@@ -513,6 +528,59 @@ $Imageproperties"
     Startzeit="$(date +%s)"
     Pixelcount=0
     Pixelnumber=0
+    while read Line; do
+      Count=$((Count+1))
+      [ "$Error" ] && break
+      Color="$(awk '{print $3}' <<< "$Line")"
+      Pixelnumber="$(awk '{print $1}' <<< "$Line")"
+      Pixelnumber="${Pixelnumber%:}"
+      Pixelcount="$((Pixelcount+Pixelnumber))"
+      [ "$Pixelcount" -lt "$Layerminpixel" ] && {
+        Color1="${Color1:-$Color}"
+      }
+      { [ "$Pixelcount" -gt "$Layerminpixel" ] || [ "$Count" = "$Colornumber" ] ; } && {
+        Layercount="$((Layercount+1))"
+        Layerimage="$Cachedir/layer_sharpness.$(printnum $Layercount).tif"
+        Color2="${Color2:-$Color}"
+        $Magickbin \
+          $Maskmax \
+            -depth 16 \
+            -color-threshold "${Color1:-$Color2}"-"$Color" \
+            -write mpr:layermask \
+            -delete 0 \
+          $Resultimage mpr:layermask \
+            -colorspace sRGB \
+            -alpha Off -compose CopyOpacity -composite \
+            -background blue -alpha background \
+          $Tifstore $Layerimage || {
+            note "Error in generating sharpness layers"
+            break
+        }
+        Layerimagelist="$Layerimagelist $Layerimage"
+        [ "$Color2" = "$Color" ] && {
+          Color1=""
+          Pixelcount="0"
+        } || {
+          Color1="$Color"
+          Pixelcount="$Pixelnumber"
+        }
+        Dauer="$(( $(date +%s)-Startzeit))"
+        Restzeit="$(( Dauer*(Colornumber-Count) / Count ))"
+        verbose "Layer $Layercount/$Layernumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+        showimage $Layerimage
+      }
+      Color2="$Color"
+        
+    done < <($Magickbin $Maskmax -depth 16 -define histogram:unique-colors=true -format %c histogram:info:-)
+    verbose "Creating layered result of sharpness areas"
+    Image="$(rev <<< "$Outputimage" | cut -d. -f2- | rev).layered_sharpness.tif"
+    $Magickbin -type TrueColorAlpha $Maskmax $Backgroundimage $Layerimagelist $Tifstore "$Image" || note "Failed to create layered sharpness result image."
+  }
+  
+  return "${Error:-0}"
+}
+bak() {
+
     while read Line; do
       Count=$((Count+1))
       [ "$Error" ] && break
@@ -550,14 +618,8 @@ $Imageproperties"
       }
         
     done < <($Magickbin $Maskmax -depth 16 -define histogram:unique-colors=true -format %c histogram:info:-)
-    verbose "Creating layered result of sharpness areas"
-    Image="$(rev <<< "$Outputimage" | cut -d. -f2- | rev).layered_sharpness.tif"
-    $Magickbin $Backgroundimage -type TrueColorAlpha $Layerimagelist $Tifstore "$Image" || note "Failed to create layered sharpness result image."
-  }
-  
-  return "${Error:-0}"
-}
-bak() {
+    
+    ##################
 
     Command="$Magickbin \
       $Maskmax.strip.tif \
@@ -1081,6 +1143,24 @@ maskfilter() {
 -delete 0"
 #-compose Difference -composite" # sort of interesting.
       ;;
+      diffstat)
+        Maskgenerator="
+-write mpr:source
+-delete 0
+( mpr:source -statistic $Diffstat1 ${Radius1} )
+( mpr:source -statistic $Diffstat2 ${Radius1} )
+-compose Difference -composite
+-write mpr:diff1"
+        [ "$Radius2" ] && Maskgenerator="$Maskgenerator
+-delete 0
+( mpr:source -statistic $Diffstat1 ${Radius2} )
+( mpr:source -statistic $Diffstat2 ${Radius2} )
+-compose Difference -composite
+-write mpr:diff2
+-delete 0
+mpr:diff1 mpr:diff2
+-compose Difference -composite"
+      ;;
       gaussian) 
         case $Sigma2 in
           "")
@@ -1104,8 +1184,8 @@ maskfilter() {
       ;;
       experimental)
         Maskgenerator="
-( -clone 0 -statistic mean   ${Radius:-5} )
-( -clone 0 -statistic median ${Radius:-5} )
+( -clone 0 -statistic rootmeansquare  ${Radius:-5} )
+( -clone 0 -statistic rms ${Radius:-5} )
 -delete 0
 -compose Difference -composite"
       ;;
@@ -1145,25 +1225,6 @@ maskfilter() {
 -compose Difference -composite"
         [ -z "$Radius2$Sigma2" ] && Maskgenerator="$Maskgenerator
 -delete 0"
-      ;;
-      mediff)
-        Maskgenerator="
--write mpr:source
--delete 0
-( mpr:source -statistic mean   ${Radius1} )
-( mpr:source -statistic median ${Radius1} )
--compose Difference -composite
--write mpr:diff1"
-        [ "$Radius2" ] && Maskgenerator="$Maskgenerator
--delete 0
-( mpr:source -statistic mean   ${Radius2} )
-( mpr:source -statistic median ${Radius2} )
--compose Difference -composite
--write mpr:diff2
--delete 0
-mpr:diff1 mpr:diff2
--compose Difference -composite
-"
       ;;
       prewitt)
         Maskgenerator="
@@ -1223,6 +1284,8 @@ declare_variables() {
   Backgroundimage=""
   Cachedir=""
   Compress=""
+  Diffstat1=""
+  Diffstat2=""
   Error=""
   Freemem=""
   Gamma=""
@@ -1258,7 +1321,7 @@ declare_variables() {
   Stripmask="yes"
   Swapcompose=""
   Threshold=
-  Tifstore="+repage -type TrueColorAlpha -quality 100% -compress lzw"
+  Tifstore="+repage -quality 100% -compress lzw"
   Radius1=""
   Radius2=""
   Sigma1=""
@@ -1272,7 +1335,7 @@ parse_options() {
   Shortoptions="b::g::hn::o:r:R::s:S::t::vV"
   Longoptions="cachedir:,help,verbose,version,output:,showimage"
   Longoptions="$Longoptions,background::,grayscale:,gamma::,layers::,negate,noise::,radius:,radius1:,radius2::,revert,sigma:,sigma1:,sigma2::,swap,threshold::"
-  Longoptions="$Longoptions,blur::,compass::,compose::,gaussian::,enfuse::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,log::,mediff::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
+  Longoptions="$Longoptions,blur::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,log::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@" 2>"$Parsererrorfile")"
@@ -1302,7 +1365,7 @@ parse_options() {
       -v|--verbose)          Verbose="yes" ;;
          --version)          echo "imfuse v$Version"; exit 0 ;;
       -V|--showimage)        Showimage="yes" ;;
-      --blur|--compass|--compose|--gaussian|--enfuse|--evaluate|--experimental|--free|--freichen|--kirsch|--laplacian|--log|--mediff|--prewitt|--roberts|--sobel|--statistic|--unsharp)
+      --blur|--compass|--compose|--diffstat|--gaussian|--enfuse|--evaluate|--experimental|--free|--freichen|--kirsch|--laplacian|--log|--prewitt|--roberts|--sobel|--statistic|--unsharp)
         Method="${1#--}"
         Maskgeneratorargument="${2:-}"  && shift
       ;;  
@@ -1327,7 +1390,7 @@ check_options() {
       command -v enfuse >/dev/null || error "--enfuse: command enfuse not found. Please install enfuse."
     ;;
     "")
-      Method="compose"
+      Method="diffstat"
       note "Setting --$Method"
     ;;
   esac  
@@ -1345,6 +1408,41 @@ check_options() {
   or compare IM option -compose."
       }
       Maskgeneratorargument="$(lowercase "$Maskgeneratorargument")"
+    ;;
+    diffstat)
+      Diffstat1="$(cut -d, -f1    <<< "$Maskgeneratorargument")"
+      Diffstat2="$(cut -d, -f2 -s <<< "$Maskgeneratorargument")"
+      case ${Diffstat1,,} in
+        ""|auto)                Diffstat1="median" ;;
+        1|gradient|grad)        Diffstat1="gradient" ;;
+        2|maximum|max)          Diffstat1="maximum" ;;
+        3|mean)                 Diffstat1="mean" ;;
+        4|median)               Diffstat1="median" ;;
+        5|minimum|min)          Diffstat1="minimum" ;;
+        6|mode)                 Diffstat1="mode" ;;
+        7|nonpeak)              Diffstat1="nonpeak" ;;
+        8|9|rms|rootmeansquare) Diffstat1="rms" ;;
+        10|standarddeviation|standard_deviation|standard-deviation|dev) 
+                                Diffstat1="standarddeviation" ;;
+        *) error "--diffstat: Unknown STAT $Diffstat1" ;;
+      esac
+      case ${Diffstat2,,} in
+        ""|auto)                Diffstat2="mean" ;;
+        1|gradient|grad)        Diffstat2="gradient" ;;
+        2|maximum|max)          Diffstat2="maximum" ;;
+        3|mean)                 Diffstat2="mean" ;;
+        4|median)               Diffstat2="median" ;;
+        5|minimum|min)          Diffstat2="minimum" ;;
+        6|mode)                 Diffstat2="mode" ;;
+        7|nonpeak)              Diffstat2="nonpeak" ;;
+        8|9|rms|rootmeansquare) Diffstat2="rms" ;;
+        10|standarddeviation|standard_deviation|standard-deviation|dev)
+                                Diffstat2="standarddeviation" ;;
+        *) error "--diffstat: Unknown STAT $Diffstat2" ;;
+      esac
+      [ "$Diffstat1" = "$Diffstat2" ] && note "--diffstat: Method 1 und 2 are the same: $Diffstat1
+  This is likely not what you want."
+      Maskgeneratorargument="${Diffstat1},${Diffstat2}"
     ;;
     enfuse) ;;
     evaluate)
@@ -1374,20 +1472,19 @@ check_options() {
     ;;
     statistic)
       case $Maskgeneratorargument in
-        gradient|maximum|minimum|mean|median|mode|nonpeak|rms|standarddeviation) ;;
-        dev|standard-deviation)  Maskgeneratorargument="standarddeviation" ;;
-        grad) Maskgeneratorargument="gradient" ;;
-        max)  Maskgeneratorargument="maximum" ;;
-        min)  Maskgeneratorargument="minimum" ;;
-        "")
-          Maskgeneratorargument="standarddeviation"
-          note "Setting --$Method=$Maskgeneratorargument"
-        ;;
-        *)
-          note "--statistic: unknown argument $Maskgeneratorargument.
-  Setting --$Method=standarddeviation"
-          Maskgeneratorargument="standarddeviation"
-        ;;
+        ""|auto)                Maskgeneratorargument="standarddeviation" 
+          note "Setting --$Method=$Maskgeneratorargument" ;;
+        1|gradient|grad)        Maskgeneratorargument="gradient" ;;
+        2|maximum|max)          Maskgeneratorargument="maximum" ;;
+        3|mean)                 Maskgeneratorargument="mean" ;;
+        4|median)               Maskgeneratorargument="median" ;;
+        5|minimum|min)          Maskgeneratorargument="minimum" ;;
+        6|mode)                 Maskgeneratorargument="mode" ;;
+        7|nonpeak)              Maskgeneratorargument="nonpeak" ;;
+        8|9|rms|rootmeansquare) Maskgeneratorargument="rms" ;;
+        10|standarddeviation|standard_deviation|standard-deviation|dev) 
+                                Maskgeneratorargument="standarddeviation" ;;
+        *) error "--statistic: Unknown STAT $Maskgeneratorargument" ;;
       esac
     ;;
     *)
@@ -1409,7 +1506,7 @@ check_options() {
     *)
       [ "$Background" ] && [ -z "$Threshold" ] && note "--background: With --threshold=0 the background will be covered entirely."
       case $Background in
-        "")   [ "$Threshold" ] && Background="transparent" || Background="black" ;;
+        "")   [ "$Threshold" ] && Background="transparent" || Background="darkgreen" ;;
         auto) Background="mean" ;;
         none) Background="transparent" ;;
       esac
@@ -1461,7 +1558,7 @@ check_options() {
       Radius1="5"
       note "Setting --radius=$Radius1"
     ;;
-    mediff)
+    diffstat)
       Radius1="5"
       note "Setting --radius=$Radius1"
     ;;
@@ -1482,7 +1579,7 @@ check_options() {
   Setting --radius=$Radius1"
       }
     ;;
-    statistic|mediff)
+    statistic|diffstat)
       [ "$Radius1" -lt "2" ] && {
         Radius1="2"
         note "--$Method: Radius must be at least 2.
@@ -1493,7 +1590,7 @@ check_options() {
   
   # --radius2
   [ "$Radius2" ] && case $Method in
-    statistic|mediff)
+    statistic|diffstat)
       [ "$Radius2" = "$Radius1" ] && {
         note "--radius2=$Radius2 is same as --radius1=$Radius1.
   Setting --radius2=auto"
@@ -1506,7 +1603,7 @@ check_options() {
     ;;
   esac
   [ "$Radius2" = "auto" ] && case $Method in
-    statistic|mediff)
+    statistic|diffstat)
       Radius2="$((Radius1*3/2))"
       note "Setting --radius2=$Radius2"
     ;;
@@ -1581,9 +1678,9 @@ check_options() {
       blur|gaussian|log|unsharp)    Resultimage="imfuse.${Method}.${Radius1}x${Sigma1}"
         [ "$Radius2$Sigma2" ] &&    Resultimage="${Resultimage}-${Radius2:-$Radius1}x${Sigma2:-$Sigma2}" ;;
       compose|evaluate|laplacian)   Resultimage="imfuse.${Method}.${Maskgeneratorargument}" ;;
-      enfuse)                       Resultimage="imfuse.${Method}.r${Radius1}";;
-      mediff   )                    Resultimage="imfuse.${Method}.r${Radius1}" 
+      diffstat)                     Resultimage="imfuse.${Method}.${Diffstat1}-${Diffstat2}.r${Radius1}"
         [ "$Radius2" ] &&           Resultimage="${Resultimage}-r${Radius2}" ;;
+      enfuse)                       Resultimage="imfuse.${Method}.r${Radius1}";;
       statistic)                    Resultimage="imfuse.${Method}.${Maskgeneratorargument}.r${Radius1}" 
         [ "$Radius2" ] &&           Resultimage="${Resultimage}-r${Radius2}" ;;
       *)                            Resultimage="imfuse.${Method}" ;;
@@ -1669,6 +1766,7 @@ main() {
   Imagewidth="$($Magickbin  -format '%w' "$Image" info:)"
   Imageheight="$($Magickbin -format '%h' "$Image" info:)"
   Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
+  Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel? Meta data?
   Imagelistmemsize="$((Imagenumber*Imagememsize))"
   Image=""
   
@@ -1754,7 +1852,8 @@ main() {
   
   $Magickbin "$Resultimage" $Tifstore "$Outputimage"  || error "Error storing result in $Outputimage"
   showimage "$Outputimage"
-  note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+  note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")
+$Outputimage"
     
   return "${Error:-0}"
 }
