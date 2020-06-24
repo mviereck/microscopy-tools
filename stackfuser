@@ -781,6 +781,7 @@ setup_imagelist() {
   Imageheight=$($Magickbin -format '%h' "$Image" info:)
   Imageformat="$(get_extension        "$Image")"
   Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
+  Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel? Meta data?
   Imagelistmemsize="$((Imagememsize*Imagenumber))"
   LC_ALL=C file $Image | grep -q "raw image" && Imageraw="yes" || Imageraw="no"
   Image=""
