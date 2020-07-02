@@ -28,16 +28,16 @@ General options:
  -V, --showimage             Show intermediate results with geeqie.
  
 imfuse provides two basic ways to get overall sharp results.
-The traditional way is mask comparision with the mask generating methods below.
-The most recommended traditional mask method is --statistic=standarddeviation.
-Another, faster attempt compares max and min images and combines them
+ - The traditional way is mask comparision with the mask generating methods below.
+Use --saturation-weight to reduce possible contrast mask artefacts.
+ - Another, faster attempt compares max and min images and combines them
 with the compositing methods.                            
 Default method: --diffstat
 
 Compositing methods:
      --compose [=MODE]       Composes a result with mode MODE based on a max
                              and a min calculation of the source images.
-                             Compare IM option -compose. Default MODE: overlay
+                             Compare IM option -compose. 
                              MODE can be one of '$(basename $Magickbin) -list compose'
                              Some MODEs of interest:
                                bumpmap colorburn difference linearburn 
@@ -46,8 +46,9 @@ Compositing methods:
                                --swap       
                              Hint: Generate max+min images with --evaluate and
                              provide only them to --compose to speed it up.
+                                                         Default MODE: overlay
      --evaluate [=MODE]      Evaluates a result of all source images with
-                             mode MODE.                  Default: max
+                             mode MODE.                  
                              MODE can be one of '$(basename $Magickbin) -list evaluate'
                              Compare IM option -evaluate-sequence.
                              Most of interest:
@@ -58,6 +59,7 @@ Compositing methods:
                                median   Middle pixel values in sequence. 
                                         Useful to combine imfuse results.
                                min      Darkest pixels in sequence.
+                                                         Default MODE: max
                              
 Mask generating methods:
      --blur                  Blur edge detection. Takes options: 
@@ -176,6 +178,17 @@ General mask generation adjustments:
  -t, --threshold [=PERCENT]  Do not use pixels less significant than PERCENT%.
                              You might prefer --layers.  Default PERCENT: 5
 
+Mask weighting options:
+Additionally to to contrast mask imfuse can generate masks based on 
+saturation, brightness and intensity. (Compare HSB and HSI colorspaces).
+The different masks are combined with a customizable weight.
+     --brightness-weight PERCENT    Brightness mask weight.    Default: 0
+     --contrast-weight PERCENT      Contrast mask weight.      Default: 100
+     --intensity-weight PERCENT     Intensity mask weight.     Default: 0
+     --saturation-weight PERCENT    Saturation mask weight.    Default: 10
+Most of interest is --saturation-weight to reduce contrast mask artefacts.
+     
+
 Method independent adjustments:
  -g, --gamma [=GAMMA]        Adjust gamma of result. GAMMA>1 brightens,
                              GAMMA<1 darkens the image.  Default GAMMA: auto
@@ -199,7 +212,7 @@ verbose() {
   return 0
 }
 showimage() {
-  [ "$Showimage" = "yes" ] && geeqie -t -r File:"${1:-}" &
+  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r File:"${1:-}" &
   return 0
 }
 
@@ -242,7 +255,7 @@ unspecialstring() {             # replace special chars of $1 with -
 
 compose_stepx() {
   local Stacklist Imagenumber Stackcount Stackdir Step Image1 Image2 Image3
-  Stacklist="$Imagelist"
+  Stacklist="$Sourceimagelist"
   Imagenumber="$(grep -c . <<< "$Stacklist")"
   while :; do
     [ "$Error" ] && break
@@ -280,7 +293,7 @@ compose_step2() {
   for Step in 0 $(seq $((Imagenumber/$Stepsize)) ); do
     [ "$Error" ] && break
     Stackcount="$((Stackcount+1))"
-    Stacklist="$(tail -n+$((Stepsize*Step+1)) <<< "$Imagelist" | head)"
+    Stacklist="$(tail -n+$((Stepsize*Step+1)) <<< "$Sourceimagelist" | head)"
     [ -z "$Stacklist" ] && break
     $Magickbin $Stacklist -evaluate-sequence max $Cachedir/max.$Stackcount.tif
     $Magickbin $Stacklist -evaluate-sequence min $Cachedir/min.$Stackcount.tif
@@ -299,7 +312,7 @@ compose_step2() {
 
 evaluate_split() {
 
-  local Imagelist Resultimage Mode
+  local Sourceimagelist Resultimage Mode
   local Startzeit Dauer Restzeit
   local Image Split Splitpercent Showsplit Part Partimage Partimagelist
   local Startzeit Dauer Restzeit Count
@@ -307,11 +320,11 @@ evaluate_split() {
   Mode="${1:-}" ; shift
   Resultimage="${1:-}" ; shift
   while [ $# -gt 0 ]; do
-    Imagelist="$Imagelist
+    Sourceimagelist="$Sourceimagelist
 ${1:-}"
     shift
   done
-  Imagelist="$(tail -n+2 <<< "$Imagelist")"
+  Sourceimagelist="$(tail -n+2 <<< "$Sourceimagelist")"
   
   Split="$((Imagelistmemsize/Freemem +1))"
   
@@ -319,7 +332,7 @@ ${1:-}"
   case $Split in
     1) 
       Startzeit="$(date +%s)"
-      $Magickbin $Imagelist -evaluate-sequence $Mode $Tifstore $Resultimage || error "Error in evaluate_split / $Mode"
+      $Magickbin $Sourceimagelist -evaluate-sequence $Mode $Tifstore $Resultimage || error "Error in evaluate_split / $Mode"
       Dauer="$(( $(date +%s)-Startzeit))"
       verbose "Duration: $(date -u -d @$Dauer +"%T")"
     ;;
@@ -328,12 +341,12 @@ ${1:-}"
       Splitpercent="$((100/Split))"
       Showsplit="$(printnum $(( (Split+1)/2 )) 3)"
       Count="0"
-      for Image in $Imagelist; do
+      for Sourceimage in $Sourceimagelist; do
         [ "$Error" ] && break
         Count="$((Count+1))"
-        verbose "Splitting image $Count / $Imagenumber into $Split pieces due to low memory: $(basename $Image)"
-        $Magickbin $Image -crop 100%x${Splitpercent}% $Tifstore $Cachedir/split%03d.$(basename $Image).tif || error "Error in evaluate_split / crop"
-        showimage $Cachedir/split${Showsplit}.$(basename $Image).tif
+        verbose "Splitting image $Count / $Imagenumber into $Split pieces due to low memory: $(basename $Sourceimage)"
+        $Magickbin $Sourceimage -crop 100%x${Splitpercent}% $Tifstore $Cachedir/split%03d.$(basename $Sourceimage).tif || error "Error in evaluate_split / crop"
+        showimage $Cachedir/split${Showsplit}.$(basename $Sourceimage).tif
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
         [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
@@ -363,22 +376,19 @@ fuse_focus_stackshot()  {
   # fuse focus image stackshot.
   # Based on snibgo's focus stacking script at http://im.snibgo.com/focstack.htm
   
-  local Count Number Line
-  local Sourcemask Maskmax Sourcemasklist Enfusemasklist Resultmeanimage Meanradius
+  local Count Number Line Showimage
+  local Sourcemask     Sourcemasklist     
+  local Intensitymask  Intensitymasklist
+  local Saturationmask Saturationmasklist
+  local Brightnessmask Brightnessmasklist
+  local Maskmax Contrastminlevel Contrastmaxlevel
+  local Enfusemasklist  
   local Maskgenerator Downweightoption
   local Startzeit Dauer Restzeit
   local Color Pixelnumber Pixelcount Layerimage Layerimagelist Colornumber Histogramm
   
   Maskmax="$Cachedir/mask.max.tif"
-  
-  Resultmeanimage="$Cachedir/$Basename.resultmean.tif"
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:none -type TrueColorAlpha $Tifstore $Resultmeanimage
-  case $Radius1 in
-    0) Meanradius="5" ;;
-    *) Meanradius=$Radius1 ;;
-  esac
-  Meanradius=20
-    
+      
   Maskgenerator="$(maskfilter)"
   
   # --negate
@@ -410,7 +420,7 @@ $Maskgenerator"
                --output=enfuse-out.tif \
                --verbose \
                $Maskgeneratorargument \
-               $Imagelist \
+               $Sourceimagelist \
                2>&1 | grep -v -E 'no usable resolution|loading next image|will assume 300 dpi|assuming all pixels|does not have an alpha channel' #|| error "Error in enfuse"
                
       grep -q "hard-mask" <<< "$Maskgeneratorargument" && {
@@ -420,6 +430,7 @@ $Maskgenerator"
       }
       Count="0"
       while read Line; do
+        [ "$Error" ] && break
         Count="$((Count+1))"
         Number="$(printnum $Count $Imagenumberlength)"
         Sourcemask="$Cachedir/mask.${Number}.tif"
@@ -428,22 +439,71 @@ $Maskgenerator"
       done <<< "$Enfusemasklist"
     ;;
     *)
-      verbose "Generating masks with:
-$Maskgenerator"
-      for Sourceimage in $Imagelist; do
+      verbose "Generating contrast masks with:
+$Maskgenerator
+"
+      for Sourceimage in $Sourceimagelist; do
         [ "$Error" ] && break
         Count="$((Count+1))"
         Number="$(printnum $Count $Imagenumberlength)"
         Sourcemask="$Cachedir/mask.${Number}.tif"
+        Saturationmask="$Cachedir/saturation.${Number}.tif"
+        Intensitymask="$Cachedir/intensity.${Number}.tif"
+        Brightnessmask="$Cachedir/brightness.${Number}.tif"      
+        Showimage="$Sourcemask"
         
-        $Magickbin $Sourceimage -depth 16 $Maskgenerator -alpha off $Tifstore $Sourcemask || error "Error in source mask generation"
-        showimage $Sourcemask
+        Command="$Magickbin \
+          $Sourceimage \
+            -depth 16 \
+            -write mpr:sourceimage \
+            -delete 0"
+        [ "$Saturationweight" -gt "0" ] && {
+          Command="$Command \
+          mpr:sourceimage \
+            -colorspace HSI -channel G -separate \
+            $Grayscaleconverter \
+            +level 1%,99% \
+            $Tifstore -write $Saturationmask \
+            -delete 0"
+          Showimage="$Saturationmask"
+        }
+        [ "$Intensityweight" -gt "0" ] && {
+          Command="$Command \
+          mpr:sourceimage \
+            -colorspace HSI -channel B -separate \
+            $Grayscaleconverter \
+            +level 1%,99% \
+            $Tifstore -write $Intensitymask \
+            -delete 0"
+          Showimage="$Intensitymask"
+        }
+        [ "$Brightnessweight" -gt "0" ] && {
+          Command="$Command \
+          mpr:sourceimage \
+            -colorspace HSB -channel B -separate \
+            $Grayscaleconverter \
+            +level 1%,99% \
+            $Tifstore -write $Brightnessmask \
+            -delete 0"
+          Showimage="$Brightnessmask"
+        }
+        Command="$Command \
+          mpr:sourceimage \
+            $Maskgenerator \
+            -alpha off \
+            $Tifstore $Sourcemask"
+            
+        $Command
+        showimage "$Showimage"
     
         Sourcemasklist="$Sourcemasklist $Sourcemask"
+        Saturationmasklist="$Saturationmasklist $Saturationmask"
+        Intensitymasklist="$Intensitymasklist $Intensitymask"
+        Brightnessmasklist="$Brightnessmasklist $Brightnessmask"
     
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-        verbose "$Method: Generating mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+        verbose "$Method: Generating masks $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
       done
     ;;
   esac
@@ -455,47 +515,53 @@ $Maskgenerator"
     *)
       # max of masks to level single masks
       evaluate_split max $Maskmax $Sourcemasklist || return 1
-  
       Imageproperties="$($Magickbin "$Maskmax" -format '
-Imagemean=%[mean]
-Imagequantumrange=%[fx:quantumrange]
-Imageautogamma=%[fx:log(mean)/log(0.5)]
-Imageminlevel=%[fx:minima*100]
-Imagemaxlevel=%[fx:maxima*100]
-Imageminlevelred=%[fx:minima.r*100]
-Imagemaxlevelred=%[fx:maxima.r*100]
-Imageminlevelgreen=%[fx:minima.g*100]
-Imagemaxlevelgreen=%[fx:maxima.g*100]
-Imageminlevelblue=%[fx:minima.b*100]
-Imagemaxlevelblue=%[fx:maxima.b*100]
+Contrastminlevel=%[fx:minima*100]
+Contrastmaxlevel=%[fx:maxima*100]
 ' info:)"
-
-      verbose "Image properties of $Maskmax: 
-$Imageproperties"
       eval $Imageproperties
-  
-      # Level masks into visible range. Technically not needed, but helpful for human analysis. Also needed for --threshold.
+
+      # Level contrast mask into visible range. Merge --weight-xxx masks.
       Startzeit="$(date +%s)"
       Count=0
-      for Image in $Sourcemasklist; do
+      for Sourceimage in $Sourceimagelist; do
         [ "$Error" ] && break
         Count="$((Count+1))"
-        #[ "$Downweight" -gt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 - $Downweight*$Count/$Imagenumber }")%"
-        #[ "$Downweight" -gt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100*sin( ((100 - $Downweight*$Count/$Imagenumber)/100)*3.14159265/2 ) }")%"
-        #echo $Downweightoption
-        #[ "$Downweight" -lt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 + $Downweight*$((Imagenumber-Count))/$Imagenumber }")%"
+        Number="$(printnum $Count $Imagenumberlength)"
+        Sourcemask="$Cachedir/mask.${Number}.tif"
+        Saturationmask="$Cachedir/saturation.${Number}.tif"
+        Intensitymask="$Cachedir/intensity.${Number}.tif"
+        Brightnessmask="$Cachedir/brightness.${Number}.tif"
         
-        #Prefer=30
-        [ "$((100*Count/Imagenumber))" -lt "${Downweight:-0}" ] || Downweightoption="+level 0,50%"
-        
-        $Magickbin $Image -depth 16 -level ${Imageminlevel}%,${Imagemaxlevel}% +level 1%,99% $Downweightoption $Tifstore $Image || error "Error in leveling masks"
-        showimage $Image
+        # -downweight
+        [ "${Downweight:-0}" -gt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 - $Downweight*$Count/$Imagenumber }")%"
+        [ "${Downweight:-0}" -lt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 + $Downweight*$((Imagenumber-Count))/$Imagenumber }")%"
+       
+        Command="$Magickbin \
+          $Sourcemask \
+            -level ${Contrastminlevel}%,${Contrastmaxlevel}% \
+            +level 1%,99% \
+            -black-threshold ${Threshold:-0}% \
+                               +level 0%,${Contrastweight}%"
+        [ "$Saturationweight" -gt "0" ] && Command="$Command \
+          ( $Saturationmask +level 0%,${Saturationweight}% ) -compose screen -composite"
+        [ "$Intensityweight" -gt "0" ] && Command="$Command \
+          ( $Intensitymask  +level 0%,${Intensityweight}% )  -compose screen -composite"
+        [ "$Brightnessweight" -gt "0" ] && Command="$Command \
+          ( $Brightnessmask +level 0%,${Brightnessweight}% ) -compose screen -composite"
+        Command="$Command \
+            $Downweightoption \
+          $Tifstore $Sourcemask"
+          
+        $Command
+      
+        showimage "$Sourcemask"
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
         verbose "Leveling $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
       done
       [ "$Error" ] && return "${Error:-0}"
-
+      
       # max of masks to compare single masks
       evaluate_split max $Maskmax $Sourcemasklist || return 1
     ;;
@@ -516,13 +582,11 @@ $Imageproperties"
   case $Fusemode in
     1)
       # Default fuse mode: Find sharpest area in source (brightest in maskmax). First source image wins if it shares same sharpness with later source images.
-      for Sourceimage in $Imagelist; do
+      for Sourceimage in $Sourceimagelist; do
         [ "$Error" ] && break
         Count="$((Count+1))"
         Number="$(printnum $Count $Imagenumberlength)"
         Sourcemask="$Cachedir/mask.${Number}.tif"
-    
-        #cp $Sourcemask $Sourcemask.bak.tif
     
         # Load maskmax, sourcemask and sourceimage into memory. Apply threshold if given.
         Command="$Magickbin \
@@ -530,16 +594,10 @@ $Imageproperties"
             -write mpr:maskmax \
             -delete 0 \
           $Sourcemask \
-            -black-threshold ${Threshold:-0}% \
             -write mpr:sourcemask \
             -delete 0
           $Sourceimage \
             -write mpr:sourceimage \
-            -delete 0"
-        false && Command="$Command \
-          mpr:sourceimage mpr:sourcemask \
-            -alpha off -compose copy_opacity -composite \
-            -write $Cachedir/alpha.$Number.tif \
             -delete 0"
         # keep only parts of source mask that fit maskmax (greatest sharpness in stack)
         # remove source mask from maskmax to avoid overwrite by later masks with same sharpness areas.
@@ -547,7 +605,6 @@ $Imageproperties"
           mpr:sourcemask mpr:maskmax \
             -compose MinusDst -composite -fill white +opaque black -negate \
             -write mpr:sourcepartmask \
-            -write $Cachedir/partmask.$Number.tif \
             -delete 0
           mpr:sourcepartmask mpr:maskmax \
             -evaluate-sequence max \
@@ -570,25 +627,6 @@ $Imageproperties"
             -type TrueColorAlpha \
             $Tifstore -write $Sourcemask \
             -delete 0"
-        # mean of source image for threshold
-        false && Command="$Command \
-          mpr:sourceimage \
-            -statistic mean $Meanradius \
-            -write mpr:sourcemeanimage \
-            -delete 0 \
-          mpr:sourcemeanimage mpr:sourcepartmask \
-            -alpha Off -compose CopyOpacity -composite \
-            -write mpr:sourcemeanpart \
-            -delete 0 \
-          mpr:sourcemeanpart \
-            -background blue -alpha background \
-            -write mpr:sourcemeanpart \
-            -delete 0
-          $Resultmeanimage mpr:sourcemeanpart \
-            -compose Over -composite
-            -type TrueColorAlpha \
-            $Tifstore -write $Resultmeanimage \
-            -delete 0"
         # add source image part to result
         Command="$Command \
           $Resultimage mpr:sourcepart \
@@ -603,7 +641,18 @@ $Imageproperties"
         verbose "$Method $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
       done
       
-      $Magickbin \
+      false && for Mode in $($Magickbin -list compose); do
+        [ "$Error" ] && break
+        Alphaimage="$Cachedir/alpha.$Mode.tif"
+        $Magickbin -size ${Imagewidth}x${Imageheight} xc:none -alpha transparent -type TrueColorAlpha $Tifstore $Alphaimage
+        for Image in $(ls $Cachedir/alpha* | sort -V | tac); do
+          [ "$Error" ] && break
+          $Magickbin $Alphaimage $Image -compose $Mode -composite $Alphaimage
+          showimage $Alphaimage
+        done
+      done
+      
+      false && $Magickbin \
         $Resultimage $Maskmax \
           -alpha off -compose copy_opacity -composite \
           $Tifstore $Cachedir/$Basename.alpha.tif
@@ -616,7 +665,7 @@ $Imageproperties"
     ;;
     2)
       # fuse mode 2: Compare on each step if source or result seem to be more sharp
-      for Sourceimage in $Imagelist; do
+      for Sourceimage in $Sourceimagelist; do
         [ "$Error" ] && break
         Count="$((Count+1))"
         Number="$(printnum $Count $Imagenumberlength)"
@@ -626,7 +675,7 @@ $Imageproperties"
           $Resultimage \
             -write mpr:resultimage \
             $Maskgenerator \
-            -level ${Imageminlevel}%,${Imagemaxlevel}% +level 1%,99% \
+            -level ${Contrastminlevel}%,${Contrastmaxlevel}% +level 1%,99% \
             -write mpr:resultmask \
             -delete 0 \
           $Sourcemask mpr:resultmask \
@@ -698,9 +747,10 @@ $Imageproperties"
       Color2="$Color"
     done <<< "$Histogramm"
     
+    [ "$Error" ] && return $Error
     verbose "Creating layered result of sharpness areas"
     Image="$(rev <<< "$Outputimage" | cut -d. -f2- | rev).layered_sharpness.tif"
-    $Magickbin -type TrueColorAlpha $Maskmax $Backgroundimage $Resultmeanimage $Layerimagelist $Tifstore "$Image" || note "Failed to create layered sharpness result image."
+    $Magickbin -type TrueColorAlpha $Maskmax $Backgroundimage $Layerimagelist $Tifstore "$Image" || note "Failed to create layered sharpness result image."
   }
   
   return "${Error:-0}"
@@ -779,11 +829,7 @@ mpr:diff1 mpr:diff2
         esac
       ;;
       experimental)
-        Maskgenerator="
-( -clone 0 -adaptive-sharpen ${Radius1:-5} )
-( -clone 0 -adaptive-sharpen ${Radius2:-8} )
--delete 0
--compose Difference -composite"
+        Maskgenerator=""
       ;;
       free)
         Maskgenerator="$Maskgeneratorargument"
@@ -822,11 +868,14 @@ mpr:diff1 mpr:diff2
         [ -z "$Radius2$Sigma2" ] && Maskgenerator="$Maskgenerator
 -delete 0"
       ;;
+      none)
+        Maskgenerator=""
+      ;;
       prewitt)
         Maskgenerator="
 -define convolve:scale=50%!
 -define convolve:bias=50%
--morphology Convolve Prewitt" ### FIXME
+-morphology Convolve Prewitt"
       ;;
       roberts)
         Maskgenerator="
@@ -879,8 +928,10 @@ declare_variables() {
   Background=""
   Backgroundimage=""
   Basename=""
+  Brightnessweight=""
   Cachedir=""
   Compress=""
+  Contrastweight=""
   Diffstat1=""
   Diffstat2=""
   Downweight=""
@@ -894,11 +945,11 @@ declare_variables() {
   Image=""
   Imageformat="tif"
   Imageheight=""
-  Imagelist=""
   Imagelistmemsize=""
   Imagememsize=""
   Imagenumber=""
   Imagewidth=""
+  Intensityweight=""
   Layernumber=""
   Layerminpixel=""
   Layers=""
@@ -914,8 +965,11 @@ declare_variables() {
   Outputimage=""
   Revertimagelist="no"
   Preservecache="no"
+  Saturationweight=""
   Savemaskfile=""
-  Showimage="no"
+  Showimageprocessing="no"
+  Sourceimage=""
+  Sourceimagelist=""
   Startzeit="$(date +%s)"
   Stepsize=""
   Storelayers=""
@@ -934,9 +988,10 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions Parsererror Parsererrorfile
   
   Shortoptions="b::f:g::hn::o:r:R::s:S::t::vV"
-  Longoptions="cachedir:,help,verbose,version,output:,save-masks::,showimage"
-  Longoptions="$Longoptions,background::,basename::,downweight::,fusemode:,grayscale:,gamma::,layers::,negate,noise::,radius:,radius1:,radius2::,revert,sigma:,sigma1:,sigma2::,swap,threshold::"
-  Longoptions="$Longoptions,blur::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,load-masks::,log::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
+  Longoptions="basename::,cachedir:,help,verbose,version,output:,save-masks::,showimage"
+  Longoptions="$Longoptions,brightness-weight:,contrast-weight:,saturation-weight:,intensity-weight:"
+  Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,negate,noise::,radius:,radius1:,radius2::,revert,sigma:,sigma1:,sigma2::,swap,threshold::"
+  Longoptions="$Longoptions,blur::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,load-masks::,log::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@" 2>"$Parsererrorfile")"
@@ -947,36 +1002,40 @@ parse_options() {
   while [ $# -gt 0 ]; do
     [ "$Error" ] && break
     case "${1:-}" in
-      -h|--help)             usage ; exit 0 ;;
-      -b|--background)       Background="${2:-auto}" ; shift ;;
-         --basename)         Basename="${2:-auto}" ; shift ;;
-         --cachedir)         Cachedir="${2:-}" ; Preservecache="yes" ; shift ;;
-         --downweight)       Downweight="${2:-auto}" ; shift ;;
-      -f|--fusemode)         Fusemode="${2:-auto}" ; shift ;;
-      -g|--gamma)            Gamma="${2:-auto}" ; shift ;;
-         --grayscale)        Grayscale="${2:-auto}" ; shift ;;
-         --layers)           Storelayers="yes" ; Layernumber="${2:-auto}" ; shift ;;
-         --negate)           Negate="yes" ;;
-      -n|--noise)            Noise="${2:-auto}" ; shift ;;
-      -o|--output)           Outputimage="${2:-}" ; shift ;;
-      -r|--radius|--radius1) Radius1="${2:-}" ; shift ;;
-      -R|--radius2)          Radius2="${2:-auto}" ; shift ;;
-         --revert)           Revertimagelist="yes" ;;
-         --save-masks)       Savemask="yes" ; Savemaskfile="${2:-$Basename.mask.tif}" ; shift;;
-      -s|--sigma|--sigma1)   Sigma1="${2:-}" ; shift ;;
-      -S|--sigma2)           Sigma2="${2:-auto}" ; shift ;;
-         --swap)             Swapcompose="-swap 0,1" ;;
-      -t|--threshold)        Threshold="${2:-auto}" ; shift ;;
-      -v|--verbose)          Verbose="yes" ;;
-         --version)          echo "imfuse v$Version"; exit 0 ;;
-      -V|--showimage)        Showimage="yes" ;;
-         --blur|--compass|--compose|--diffstat|--gaussian|--enfuse|--evaluate|--experimental|--free|--freichen|--kirsch|--laplacian|--load-masks|--log|--prewitt|--roberts|--sobel|--statistic|--unsharp)
+      -h|--help)              usage ; exit 0 ;;
+      -b|--background)        Background="${2:-auto}" ; shift ;;
+         --basename)          Basename="${2:-auto}" ; shift ;;
+         --brightness-weight) Brightnessweight="${2:-auto}" ; shift ;;
+         --cachedir)          Cachedir="${2:-}" ; Preservecache="yes" ; shift ;;
+         --contrast-weight)   Contrastweight="${2:-auto}" ; shift ;;
+         --downweight)        Downweight="${2:-auto}" ; shift ;;
+      -f|--fusemode)          Fusemode="${2:-auto}" ; shift ;;
+      -g|--gamma)             Gamma="${2:-auto}" ; shift ;;
+         --grayscale)         Grayscale="${2:-auto}" ; shift ;;
+         --intensity-weight)  Intensityweight="${2:-auto}" ; shift ;;
+         --layers)            Storelayers="yes" ; Layernumber="${2:-auto}" ; shift ;;
+         --negate)            Negate="yes" ;;
+      -n|--noise)             Noise="${2:-auto}" ; shift ;;
+      -o|--output)            Outputimage="${2:-}" ; shift ;;
+      -r|--radius|--radius1)  Radius1="${2:-}" ; shift ;;
+      -R|--radius2)           Radius2="${2:-auto}" ; shift ;;
+         --revert)            Revertimagelist="yes" ;;
+         --saturation-weight) Saturationweight="${2:-auto}" ; shift ;;
+         --save-masks)        Savemask="yes" ; Savemaskfile="${2:-$Basename.mask.tif}" ; shift;;
+      -s|--sigma|--sigma1)    Sigma1="${2:-}" ; shift ;;
+      -S|--sigma2)            Sigma2="${2:-auto}" ; shift ;;
+         --swap)              Swapcompose="-swap 0,1" ;;
+      -t|--threshold)         Threshold="${2:-auto}" ; shift ;;
+      -v|--verbose)           Verbose="yes" ;;
+         --version)           echo "imfuse v$Version"; exit 0 ;;
+      -V|--showimage)         Showimageprocessing="yes" ;;
+         --blur|--compass|--compose|--diffstat|--gaussian|--enfuse|--evaluate|--experimental|--free|--freichen|--kirsch|--laplacian|--load-masks|--log|--none|--prewitt|--roberts|--sobel|--statistic|--unsharp)
         Method="${1#--}"
         Maskgeneratorargument="${2:-}"  && shift
       ;;  
       --) ;;
       *)
-        Imagelist="$Imagelist
+        Sourceimagelist="$Sourceimagelist
 $(realpath "${1:-}")" 
         [ -f "${1:-}" ] || error "File not found: ${1:-}"
       ;;
@@ -1306,6 +1365,34 @@ check_options() {
     ;;
   esac
   
+  # --contrast-weight --saturation-weight --intensity-weight
+  case $Method in
+    compose|evaluate) [ "${Brightnessweight}${Contrastweight}${Saturationweight}${Intensityweight}" ] && error "--$Method does not support options
+  --brightness-weight --contrast-weight --saturation-weight --intensity-weight" ;;
+    *)
+      Contrastweight="$(sed   s/%// <<< "$Contrastweight")"
+      Saturationweight="$(sed s/%// <<< "$Saturationweight")"
+      Intensityweight="$(sed  s/%// <<< "$Intensityweight")"
+      Brightnessweight="$(sed s/%// <<< "$Brightnessweight")"
+      case $Contrastweight in
+        ""|auto) Contrastweight="100" ;;
+      esac
+      case $Saturationweight in
+        "")   Saturationweight="10" ;;
+        auto) Saturationweight="10" ;;
+      esac
+      case $Intensityweight in
+        "")   Intensityweight="0" ;;
+        auto) Intensityweight="0" ;;
+      esac
+      case $Brightnessweight in
+        "")   Brightnessweight="0" ;;
+        auto) Brightnessweight="0" ;;
+      esac
+      [ "$Contrastweight" = "0" ] && Method="none"
+    ;;
+  esac
+  
   # --cachedir
   [ -z "$Cachedir" ] && Cachedir="$(pwd)/imfuse.$RANDOM"
   Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
@@ -1313,12 +1400,12 @@ check_options() {
   
   #### Files ####
   
-  [ -z "$Imagelist" ] && error "No images specified"
-  Imagelist="$(grep .  <<< "$Imagelist")"
-  Imagelist="$(sort -V <<< "$Imagelist")"
+  [ -z "$Sourceimagelist" ] && error "No images specified"
+  Sourceimagelist="$(grep .  <<< "$Sourceimagelist")"
+  Sourceimagelist="$(sort -V <<< "$Sourceimagelist")"
   
   # --revert
-  [ "$Revertimagelist" = "yes" ] && Imagelist="$(tac <<< "$Imagelist")"
+  [ "$Revertimagelist" = "yes" ] && Sourceimagelist="$(tac <<< "$Sourceimagelist")"
   
   # --basename
   case $Basename in
@@ -1352,6 +1439,13 @@ check_options() {
           1) ;;
           *) Resultimage="${Resultimage}.m$Fusemode" ;;
         esac
+        [ "${Contrastweight}${Saturationweight}${Intensityweight}${Brightnessweight}" != "100000" ] && {
+          Resultimage="${Resultimage}."
+          [ "$Contrastweight"   != "100" ] && Resultimage="${Resultimage}c${Contrastweight}"
+          [ "$Saturationweight" != "0" ]   && Resultimage="${Resultimage}s${Saturationweight}"
+          [ "$Intensityweight"  != "0" ]   && Resultimage="${Resultimage}i${Intensityweight}"
+          [ "$Brightnessweight" != "0" ]   && Resultimage="${Resultimage}b${Brightnessweight}"
+        }
         case $Threshold in
           0|"") ;;
           *) Resultimage="${Resultimage}.t$Threshold" ;;
@@ -1386,11 +1480,14 @@ check_options() {
   Resultimage="$Cachedir/$Resultimage"
     
   verbose "--$Method=$Maskgeneratorargument
+--brightness-weight=$Brightnessweight
 --cachedir=$Cachedir
+--contrast-weight=$Contrastweight
 --fusemode=$Fusemode
 --downweight=$Downweight
 --gamma=$Gamma
 --grayscale=$Grayscale
+--intensity-weight=$Intensityweight
 --layers=$Layernumber
 --load-masks=$Loadmaskfile
 --mode=$Mode
@@ -1398,6 +1495,7 @@ check_options() {
 --output=$Outputimage
 --radius=$Radius1
 --radius2=$Radius2
+--saturation-weight=$Saturationweight
 --save-masks=$Savemaskfile
 --sigma=$Sigma1
 --sigma2=$Sigma2
@@ -1431,11 +1529,11 @@ main() {
   check_options
   [ "$Error" ] && return 1
   
-  Imagelist="$(grep -v -x "" <<< "$Imagelist")"
-  Imagenumber="$(grep -c "." <<< "$Imagelist")"
+  Sourceimagelist="$(grep -v -x "" <<< "$Sourceimagelist")"
+  Imagenumber="$(grep -c "." <<< "$Sourceimagelist")"
   Imagenumberlength="${#Imagenumber}"
   
-  Image="$(head -n1 <<< "$Imagelist")"
+  Image="$(head -n1 <<< "$Sourceimagelist")"
   Imagewidth="$($Magickbin  -format '%w' "$Image" info:)"
   Imageheight="$($Magickbin -format '%h' "$Image" info:)"
   Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
@@ -1458,16 +1556,16 @@ main() {
  
   case $Method in
     evaluate)
-      evaluate_split $Maskgeneratorargument $Resultimage $Imagelist || error "Error in --$Method=$Maskgeneratorargument"
+      evaluate_split $Maskgeneratorargument $Resultimage $Sourceimagelist || error "Error in --$Method=$Maskgeneratorargument"
     ;;
     compose)
       case $Stepsize in
         ""|0|all)
           [ "$Freemem" -lt "$Imagelistmemsize" ] && {
             verbose "--compose: Generating max image"
-            evaluate_split max $Cachedir/max.tif $Imagelist
+            evaluate_split max $Cachedir/max.tif $Sourceimagelist
             verbose "--compose: Generating min image"
-            evaluate_split min $Cachedir/min.tif $Imagelist
+            evaluate_split min $Cachedir/min.tif $Sourceimagelist
             verbose "--compose: compositing $Maskgeneratorargument"
            $Magickbin \
              $Cachedir/max.tif $Cachedir/min.tif $Swapcompose \
@@ -1476,7 +1574,7 @@ main() {
              $Resultimage || error "Error in --$Method=$Maskgeneratorargument"
           } || {
             $Magickbin \
-              $(echo $Imagelist) \
+              $(echo $Sourceimagelist) \
                 \( -clone 0--1 -evaluate-sequence max -write mpr:max -delete 0--1 \) \
                 \( -clone 0--1 -evaluate-sequence min -write mpr:min -delete 0--1 \) \
                 -delete 0--1 \
@@ -1494,14 +1592,14 @@ main() {
     *)
       case $Background in
         max|min|mean|median)
-          evaluate_split $Background $Backgroundimage $Imagelist || return 1
+          evaluate_split $Background $Backgroundimage $Sourceimagelist || return 1
         ;;
         transparent|none)
           $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue +level-colors black -type TrueColorAlpha $Tifstore $Backgroundimage || error "Failed to create transparent background image."
-          #$Magickbin $(head -n1 <<< "$Imagelist") -alpha Transparent +level-colors "black"  -colorspace sRGB  $Resultimage || error "Failed to create transparent background image."
+          #$Magickbin $(head -n1 <<< "$Sourceimagelist") -alpha Transparent +level-colors "black"  -colorspace sRGB  $Resultimage || error "Failed to create transparent background image."
         ;;
         *)
-          #$Magickbin $(head -n1 <<< "$Imagelist") -alpha Opaque +level-colors "$Background" -colorspace sRGB  $Resultimage || error "Failed to create background image with color $Background."
+          #$Magickbin $(head -n1 <<< "$Sourceimagelist") -alpha Opaque +level-colors "$Background" -colorspace sRGB  $Resultimage || error "Failed to create background image with color $Background."
           $Magickbin -size ${Imagewidth}x${Imageheight} xc:"$Background" -type TrueColorAlpha $Tifstore $Backgroundimage
         ;;
       esac
@@ -1509,7 +1607,7 @@ main() {
       case $Background in
         transparent|none|"") Backgroundimage="" ;;
       esac
-      showimage "$Resultimage"
+      #showimage "$Resultimage"
       fuse_focus_stackshot  || error "Error while fusing stackshot"
     ;;
   esac
