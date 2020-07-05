@@ -32,7 +32,7 @@ imfuse provides two basic ways to get overall sharp results.
 Use --saturation-weight to reduce possible contrast mask artefacts.
  - Another, faster attempt compares max and min images and combines them
 with the compositing methods.                            
-Default method: --diffstat
+Default method: Mask comparision with --diffstat
 
 Compositing methods:
      --compose [=MODE]       Composes a result with mode MODE based on a max
@@ -179,15 +179,18 @@ General mask generation adjustments:
                              You might prefer --layers.  Default PERCENT: 5
 
 Mask weighting options:
-Additionally to to contrast mask imfuse can generate masks based on 
-saturation, brightness and intensity. (Compare HSB and HSI colorspaces).
-The different masks are combined with a customizable weight.
-     --brightness-weight PERCENT    Brightness mask weight.    Default: 0
-     --contrast-weight PERCENT      Contrast mask weight.      Default: 100
-     --intensity-weight PERCENT     Intensity mask weight.     Default: 0
-     --saturation-weight PERCENT    Saturation mask weight.    Default: 10
-Most of interest is --saturation-weight to reduce contrast mask artefacts.
-     
+Imfuse can add other masks to the contrast mask to reduce stacking artefacts.
+They are extracted from image colorspace calculations. (HSB, HCL and CieLAB).
+The different masks are combined with a customizable weight. (0..100)
+     --contrast-weight PERCENT      Contrast mask weight.          Default: 100
+     --saturation-weight PERCENT    Saturation weight. (HSB)       Default: 10
+     --chroma-weight PERCENT        Color intensity weight. (HCL)  Default: 0
+     --lightness-weight PERCENT     Lightness weight.  (CieLAB L)  Default: 0
+                                    (Similar to --evaluate=max)
+     --rg-weight PERCENT            Red-green weight   (CieLAB A)  Default: 0
+     --by-weight PERCENT            Blue-yellow weight (CieLAB B)  Default: 0
+     --darkness-weight PERCENT      Negated Lightness. (CieLAB L)  Default: 0
+                                    (Similar to --evaluate=min)
 
 Method independent adjustments:
  -g, --gamma [=GAMMA]        Adjust gamma of result. GAMMA>1 brightens,
@@ -377,12 +380,9 @@ fuse_focus_stackshot()  {
   # Based on snibgo's focus stacking script at http://im.snibgo.com/focstack.htm
   
   local Count Number Line Showimage
-  local Sourcemask     Sourcemasklist     
-  local Intensitymask  Intensitymasklist
-  local Saturationmask Saturationmasklist
-  local Brightnessmask Brightnessmasklist
+  local Sourcemasklist Enfusemasklist
+  local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Cielabamask Cielabbmask
   local Maskmax Contrastminlevel Contrastmaxlevel
-  local Enfusemasklist  
   local Maskgenerator Downweightoption
   local Startzeit Dauer Restzeit
   local Color Pixelnumber Pixelcount Layerimage Layerimagelist Colornumber Histogramm
@@ -448,9 +448,13 @@ $Maskgenerator
         Number="$(printnum $Count $Imagenumberlength)"
         Sourcemask="$Cachedir/mask.${Number}.tif"
         Saturationmask="$Cachedir/saturation.${Number}.tif"
-        Intensitymask="$Cachedir/intensity.${Number}.tif"
-        Brightnessmask="$Cachedir/brightness.${Number}.tif"      
+        Chromamask="$Cachedir/chroma.${Number}.tif"
+        Darknessmask="$Cachedir/darkness.${Number}.tif"      
+        Lightnessmask="$Cachedir/lightness.${Number}.tif"      
+        Cielabamask="$Cachedir/cielab_a.${Number}.tif"      
+        Cielabbmask="$Cachedir/cielab_b.${Number}.tif"      
         Showimage="$Sourcemask"
+        Sourcemasklist="$Sourcemasklist $Sourcemask"
         
         Command="$Magickbin \
           $Sourceimage \
@@ -460,32 +464,51 @@ $Maskgenerator
         [ "$Saturationweight" -gt "0" ] && {
           Command="$Command \
           mpr:sourceimage \
-            -colorspace HSI -channel G -separate \
-            $Grayscaleconverter \
-            +level 1%,99% \
+            -colorspace HSB -channel G -separate \
             $Tifstore -write $Saturationmask \
             -delete 0"
           Showimage="$Saturationmask"
         }
-        [ "$Intensityweight" -gt "0" ] && {
+        [ "$Chromaweight" -gt "0" ] && {
           Command="$Command \
           mpr:sourceimage \
-            -colorspace HSI -channel B -separate \
-            $Grayscaleconverter \
-            +level 1%,99% \
-            $Tifstore -write $Intensitymask \
+            -colorspace HCL -channel G -separate \
+            $Tifstore -write $Chromamask \
             -delete 0"
-          Showimage="$Intensitymask"
+          Showimage="$Chromamask"
         }
-        [ "$Brightnessweight" -gt "0" ] && {
+        [ "$Darknessweight" -gt "0" ] && {
           Command="$Command \
           mpr:sourceimage \
-            -colorspace HSB -channel B -separate \
-            $Grayscaleconverter \
-            +level 1%,99% \
-            $Tifstore -write $Brightnessmask \
+            -colorspace LAB -channel R -separate \
+            -negate \
+            $Tifstore -write $Darknessmask \
             -delete 0"
-          Showimage="$Brightnessmask"
+          Showimage="$Darknessmask"
+        }
+        [ "$Lightnessweight" -gt "0" ] && {
+          Command="$Command \
+          mpr:sourceimage \
+            -colorspace LAB -channel R -separate \
+            $Tifstore -write $Lightnessmask \
+            -delete 0"
+          Showimage="$Lightnessmask"
+        }
+        [ "$Cielabaweight" -gt "0" ] && {
+          Command="$Command \
+          mpr:sourceimage \
+            -colorspace LAB -channel G -separate \
+            $Tifstore -write $Cielabamask \
+            -delete 0"
+          Showimage="$Cielabamask"
+        }
+        [ "$Cielabbweight" -gt "0" ] && {
+          Command="$Command \
+          mpr:sourceimage \
+            -colorspace LAB -channel B -separate \
+            $Tifstore -write $Cielabbmask \
+            -delete 0"
+          Showimage="$Cielabbmask"
         }
         Command="$Command \
           mpr:sourceimage \
@@ -495,11 +518,6 @@ $Maskgenerator
             
         $Command
         showimage "$Showimage"
-    
-        Sourcemasklist="$Sourcemasklist $Sourcemask"
-        Saturationmasklist="$Saturationmasklist $Saturationmask"
-        Intensitymasklist="$Intensitymasklist $Intensitymask"
-        Brightnessmasklist="$Brightnessmasklist $Brightnessmask"
     
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
@@ -530,8 +548,11 @@ Contrastmaxlevel=%[fx:maxima*100]
         Number="$(printnum $Count $Imagenumberlength)"
         Sourcemask="$Cachedir/mask.${Number}.tif"
         Saturationmask="$Cachedir/saturation.${Number}.tif"
-        Intensitymask="$Cachedir/intensity.${Number}.tif"
-        Brightnessmask="$Cachedir/brightness.${Number}.tif"
+        Chromamask="$Cachedir/chroma.${Number}.tif"
+        Darknessmask="$Cachedir/darkness.${Number}.tif"     
+        Lightnessmask="$Cachedir/lightness.${Number}.tif"     
+        Cielabamask="$Cachedir/cielab_a.${Number}.tif"      
+        Cielabbmask="$Cachedir/cielab_b.${Number}.tif"  
         
         # -downweight
         [ "${Downweight:-0}" -gt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 - $Downweight*$Count/$Imagenumber }")%"
@@ -539,16 +560,22 @@ Contrastmaxlevel=%[fx:maxima*100]
        
         Command="$Magickbin \
           $Sourcemask \
-            -level ${Contrastminlevel}%,${Contrastmaxlevel}% \
-            +level 1%,99% \
-            -black-threshold ${Threshold:-0}% \
-                               +level 0%,${Contrastweight}%"
+            -level ${Contrastminlevel}%,${Contrastmaxlevel}%"
+        [ "$Threshold" ] && Command="$Command \
+            -black-threshold ${Threshold:-0}%"
+        Command="$Command    +level 0%,${Contrastweight}%"
         [ "$Saturationweight" -gt "0" ] && Command="$Command \
-          ( $Saturationmask +level 0%,${Saturationweight}% ) -compose screen -composite"
-        [ "$Intensityweight" -gt "0" ] && Command="$Command \
-          ( $Intensitymask  +level 0%,${Intensityweight}% )  -compose screen -composite"
-        [ "$Brightnessweight" -gt "0" ] && Command="$Command \
-          ( $Brightnessmask +level 0%,${Brightnessweight}% ) -compose screen -composite"
+          ( $Saturationmask  +level 0%,${Saturationweight}% ) -compose screen -composite"
+        [ "$Chromaweight" -gt "0" ] && Command="$Command \
+          ( $Chromamask      +level 0%,${Chromaweight}% )     -compose screen -composite"
+        [ "$Darknessweight" -gt "0" ] && Command="$Command \
+          ( $Darknessmask  +level 0%,${Darknessweight}% ) -compose screen -composite"
+        [ "$Lightnessweight" -gt "0" ] && Command="$Command \
+          ( $Lightnessmask  +level 0%,${Lightnessweight}% ) -compose screen -composite"
+        [ "$Cielabaweight" -gt "0" ] && Command="$Command \
+          ( $Cielabamask  +level 0%,${Cielabaweight}% )       -compose screen -composite"
+        [ "$Cielabbweight" -gt "0" ] && Command="$Command \
+          ( $Cielabbmask  +level 0%,${Cielabbweight}% )       -compose screen -composite"
         Command="$Command \
             $Downweightoption \
           $Tifstore $Sourcemask"
@@ -807,6 +834,36 @@ maskfilter() {
 mpr:diff1 mpr:diff2
 -compose Difference -composite"
       ;;
+      experimental)
+        Maskgenerator="
+( -clone 0
+-statistic $Maskgeneratorargument ${Radius1}x${Radius1}
+-write mpr:stat1
+)
+( -clone 0
+-statistic $Maskgeneratorargument $((Radius1*2))x$((Radius1*2))
+-write mpr:stat2
+)
+( -clone 0
+-statistic $Maskgeneratorargument $((Radius1*3))x$((Radius1*3))
+-write mpr:stat3
+)
+-delete 0
+mpr:stat1 mpr:stat2
+-compose screen -composite
+mpr:stat3
+-compose screen -composite"
+#mpr:stat1 mpr:stat2 mpr:stat3 -evaluate-sequence mean"
+      ;;
+      free)
+        Maskgenerator="$Maskgeneratorargument"
+      ;;
+      freichen)
+        Maskgenerator="-define convolve:scale=50%!
+                       -define morphology:compose=Lighten
+                       -define convolve:bias=50%
+                       -morphology Convolve FreiChen:>" ### FIXME allow more modes
+      ;;
       gaussian) 
         case $Sigma2 in
           "")
@@ -827,18 +884,6 @@ mpr:diff1 mpr:diff2
 -morphology Convolve DoG:$Radius1,$Sigma1,$Sigma2"
           ;;
         esac
-      ;;
-      experimental)
-        Maskgenerator=""
-      ;;
-      free)
-        Maskgenerator="$Maskgeneratorargument"
-      ;;
-      freichen)
-        Maskgenerator="-define convolve:scale=50%!
-                       -define morphology:compose=Lighten
-                       -define convolve:bias=50%
-                       -morphology Convolve FreiChen:>" ### FIXME allow more modes
       ;;
       kirsch)
         Maskgenerator="
@@ -928,10 +973,13 @@ declare_variables() {
   Background=""
   Backgroundimage=""
   Basename=""
-  Brightnessweight=""
+  Lightnessweight=""
   Cachedir=""
   Compress=""
+  Cielabaweight=""
+  Cielabbweight=""
   Contrastweight=""
+  Darknessweight=""
   Diffstat1=""
   Diffstat2=""
   Downweight=""
@@ -949,7 +997,7 @@ declare_variables() {
   Imagememsize=""
   Imagenumber=""
   Imagewidth=""
-  Intensityweight=""
+  Chromaweight=""
   Layernumber=""
   Layerminpixel=""
   Layers=""
@@ -989,7 +1037,7 @@ parse_options() {
   
   Shortoptions="b::f:g::hn::o:r:R::s:S::t::vV"
   Longoptions="basename::,cachedir:,help,verbose,version,output:,save-masks::,showimage"
-  Longoptions="$Longoptions,brightness-weight:,contrast-weight:,saturation-weight:,intensity-weight:"
+  Longoptions="$Longoptions,darkness-weight:,lightness-weight:,contrast-weight:,saturation-weight:,chroma-weight:,rg-weight:,by-weight:"
   Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,negate,noise::,radius:,radius1:,radius2::,revert,sigma:,sigma1:,sigma2::,swap,threshold::"
   Longoptions="$Longoptions,blur::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,load-masks::,log::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
@@ -1003,16 +1051,19 @@ parse_options() {
     [ "$Error" ] && break
     case "${1:-}" in
       -h|--help)              usage ; exit 0 ;;
+         --rg-weight)          Cielabaweight="${2:-auto}" ; shift ;;
+         --by-weight)          Cielabbweight="${2:-auto}" ; shift ;;
       -b|--background)        Background="${2:-auto}" ; shift ;;
          --basename)          Basename="${2:-auto}" ; shift ;;
-         --brightness-weight) Brightnessweight="${2:-auto}" ; shift ;;
+         --lightness-weight) Lightnessweight="${2:-auto}" ; shift ;;
          --cachedir)          Cachedir="${2:-}" ; Preservecache="yes" ; shift ;;
          --contrast-weight)   Contrastweight="${2:-auto}" ; shift ;;
+         --darkness-weight)   Darknessweight="${2:-auto}" ; shift ;;
          --downweight)        Downweight="${2:-auto}" ; shift ;;
       -f|--fusemode)          Fusemode="${2:-auto}" ; shift ;;
       -g|--gamma)             Gamma="${2:-auto}" ; shift ;;
          --grayscale)         Grayscale="${2:-auto}" ; shift ;;
-         --intensity-weight)  Intensityweight="${2:-auto}" ; shift ;;
+         --chroma-weight)     Chromaweight="${2:-auto}" ; shift ;;
          --layers)            Storelayers="yes" ; Layernumber="${2:-auto}" ; shift ;;
          --negate)            Negate="yes" ;;
       -n|--noise)             Noise="${2:-auto}" ; shift ;;
@@ -1365,15 +1416,19 @@ check_options() {
     ;;
   esac
   
-  # --contrast-weight --saturation-weight --intensity-weight
+  # --contrast-weight --saturation-weight --chroma-weight --lightness-weight
   case $Method in
-    compose|evaluate) [ "${Brightnessweight}${Contrastweight}${Saturationweight}${Intensityweight}" ] && error "--$Method does not support options
-  --brightness-weight --contrast-weight --saturation-weight --intensity-weight" ;;
+    compose|evaluate) [ "${Darknessweight}${Lightnessweight}${Contrastweight}${Saturationweight}${Chromaweight}${Cielabaweight}${Cielabbweight}" ] && error "--$Method does not support options
+  --contrast-weight --saturation-weight --chroma-weight 
+  --darkness-weight --lightness-weight --rg-weight --by-weight" ;;
     *)
       Contrastweight="$(sed   s/%// <<< "$Contrastweight")"
       Saturationweight="$(sed s/%// <<< "$Saturationweight")"
-      Intensityweight="$(sed  s/%// <<< "$Intensityweight")"
-      Brightnessweight="$(sed s/%// <<< "$Brightnessweight")"
+      Chromaweight="$(sed     s/%// <<< "$Chromaweight")"
+      Darknessweight="$(sed   s/%// <<< "$Darknessweight")"
+      Lightnessweight="$(sed  s/%// <<< "$Lightnessweight")"
+      Cielabaweight="$(sed    s/%// <<< "$Cielabaweight")"
+      Cielabbweight="$(sed    s/%// <<< "$Cielabbweight")"
       case $Contrastweight in
         ""|auto) Contrastweight="100" ;;
       esac
@@ -1381,13 +1436,25 @@ check_options() {
         "")   Saturationweight="10" ;;
         auto) Saturationweight="10" ;;
       esac
-      case $Intensityweight in
-        "")   Intensityweight="0" ;;
-        auto) Intensityweight="0" ;;
+      case $Chromaweight in
+        "")   Chromaweight="0" ;;
+        auto) Chromaweight="0" ;;
       esac
-      case $Brightnessweight in
-        "")   Brightnessweight="0" ;;
-        auto) Brightnessweight="0" ;;
+      case $Darknessweight in
+        "")   Darknessweight="0" ;;
+        auto) Darknessweight="0" ;;
+      esac
+      case $Lightnessweight in
+        "")   Lightnessweight="0" ;;
+        auto) Lightnessweight="0" ;;
+      esac
+      case $Cielabaweight in
+        "")   Cielabaweight="0" ;;
+        auto) Cielabaweight="0" ;;
+      esac
+      case $Cielabbweight in
+        "")   Cielabbweight="0" ;;
+        auto) Cielabbweight="0" ;;
       esac
       [ "$Contrastweight" = "0" ] && Method="none"
     ;;
@@ -1439,12 +1506,15 @@ check_options() {
           1) ;;
           *) Resultimage="${Resultimage}.m$Fusemode" ;;
         esac
-        [ "${Contrastweight}${Saturationweight}${Intensityweight}${Brightnessweight}" != "100000" ] && {
+        [ "${Contrastweight}${Saturationweight}${Chromaweight}${Darknessweight}${Lightnessweight}${Cielabaweight}${Cielabbweight}" != "100000000" ] && {
           Resultimage="${Resultimage}."
           [ "$Contrastweight"   != "100" ] && Resultimage="${Resultimage}c${Contrastweight}"
           [ "$Saturationweight" != "0" ]   && Resultimage="${Resultimage}s${Saturationweight}"
-          [ "$Intensityweight"  != "0" ]   && Resultimage="${Resultimage}i${Intensityweight}"
-          [ "$Brightnessweight" != "0" ]   && Resultimage="${Resultimage}b${Brightnessweight}"
+          [ "$Chromaweight"  != "0" ]      && Resultimage="${Resultimage}cr${Chromaweight}"
+          [ "$Darknessweight" != "0" ]     && Resultimage="${Resultimage}d${Darknessweight}"
+          [ "$Lightnessweight" != "0" ]    && Resultimage="${Resultimage}l${Lightnessweight}"
+          [ "$Cielabaweight" != "0" ]      && Resultimage="${Resultimage}a${Cielabaweight}"
+          [ "$Cielabbweight" != "0" ]      && Resultimage="${Resultimage}b${Cielabaweight}"
         }
         case $Threshold in
           0|"") ;;
@@ -1460,7 +1530,7 @@ check_options() {
         esac
         case $Downweight in
           ""|0) ;;
-          *) Resultimage="${Resultimage}.d$Downweight" ;;
+          *) Resultimage="${Resultimage}.D$Downweight" ;;
         esac
         [ "$Revertimagelist" = "yes" ] && Resultimage="${Resultimage}.rev"
       ;;
@@ -1480,14 +1550,11 @@ check_options() {
   Resultimage="$Cachedir/$Resultimage"
     
   verbose "--$Method=$Maskgeneratorargument
---brightness-weight=$Brightnessweight
 --cachedir=$Cachedir
---contrast-weight=$Contrastweight
 --fusemode=$Fusemode
 --downweight=$Downweight
 --gamma=$Gamma
 --grayscale=$Grayscale
---intensity-weight=$Intensityweight
 --layers=$Layernumber
 --load-masks=$Loadmaskfile
 --mode=$Mode
@@ -1495,11 +1562,16 @@ check_options() {
 --output=$Outputimage
 --radius=$Radius1
 --radius2=$Radius2
---saturation-weight=$Saturationweight
 --save-masks=$Savemaskfile
 --sigma=$Sigma1
 --sigma2=$Sigma2
 --threshold=$Threshold
+--contrast-weight=$Contrastweight
+--saturation-weight=$Saturationweight
+--chroma-weight=$Chromaweight
+--lightness-weight=$Lightnessweight
+--rg-weight=$Cielabaweight
+--by-weight=$Cielabbweight
 "
   return ${Error:-0}
 }
