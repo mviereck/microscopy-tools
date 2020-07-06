@@ -54,11 +54,13 @@ Compositing methods:
                              Most of interest:
                                max      Brightest pixels in sequence. 
                                         Fast and pretty result.
+                                        Similar is --statistic=rms
                                mean     Average pixel values in sequence. 
                                         Useful to combine imfuse results.
                                median   Middle pixel values in sequence. 
                                         Useful to combine imfuse results.
                                min      Darkest pixels in sequence.
+                                        Similar is --statistic=rms --negate
                                                          Default MODE: max
                              
 Mask generating methods:
@@ -72,6 +74,7 @@ Mask generating methods:
      --diffstat [=STAT1[,STAT2]]  Compares two local statistics of source. 
                              Uses IM option -statistic. Compare --statistic.
                              Possible STAT1 and STAT2:
+                               0|none|source
                                1|gradient|grad
                                2|maximum|max
                                3|mean
@@ -95,6 +98,9 @@ Mask generating methods:
                              Option --radius sets --contrast-window-size=RADIUS.
      --free='IMOPTION'       Custom ImageMagick option IMOPTION 
                              for mask generation.        Default: '-edge 2'
+     --freediff='IMOPTION'   Custom ImageMagick option IMOPTION 
+                             for mask generation with difference comparision
+                             to source image.            Default: '-edge 2'
      --freichen              Frei-Chen edge detection.
      --gaussian              Gaussian blur edge detection.
                              Takes options: 
@@ -134,7 +140,8 @@ Mask generating methods:
      --unsharp               Difference of -unsharp.
                              Takes options: 
                                --radius                  Default: 0
-                               --sigma1                  Default: 5
+                               --sigma1                  Default: 2
+                             Higher values for --sigma1 results in strong edges.
                              Two-mask difference calculation with options:
                                --sigma2                  Default: 1.6*sigma1
                                       
@@ -173,7 +180,7 @@ General mask generation adjustments:
                    8 MS               (R'^2 + G'^2 + B'^2) / 3.0
                    9 RMS              sqrt( (R'^2 + G'^2 + B'^2) / 3.0 )
                              Compare IM options -grayscale and -intensity.
-     --negate                Invert the mask to achieve very diffuse result.
+     --negate                Invert contrast mask.
      --noise [=ARG]          Mask noise filter.          Default ARG: 3
  -t, --threshold [=PERCENT]  Do not use pixels less significant than PERCENT%.
                              You might prefer --layers.  Default PERCENT: 5
@@ -182,14 +189,15 @@ Mask weighting options:
 Imfuse can add other masks to the contrast mask to reduce stacking artefacts.
 They are extracted from image colorspace calculations. (HSB, HCL and CieLAB).
 The different masks are combined with a customizable weight. (0..100)
-     --contrast-weight PERCENT      Contrast mask weight.          Default: 100
-     --saturation-weight PERCENT    Saturation weight. (HSB)       Default: 10
-     --chroma-weight PERCENT        Color intensity weight. (HCL)  Default: 0
-     --lightness-weight PERCENT     Lightness weight.  (CieLAB L)  Default: 0
+By default only --contrast-weight=100 is in use.
+     --contrast-weight [=PERCENT]   Contrast mask weight.          Default: 100
+     --saturation-weight [=PERCENT] Saturation weight. (HSB)       Default: 15
+     --chroma-weight [=PERCENT]     Color intensity weight. (HCL)  Default: 5
+     --lightness-weight [=PERCENT]  Lightness weight.  (CieLAB L)  Default: 10
                                     (Similar to --evaluate=max)
-     --rg-weight PERCENT            Red-green weight   (CieLAB A)  Default: 0
-     --by-weight PERCENT            Blue-yellow weight (CieLAB B)  Default: 0
-     --darkness-weight PERCENT      Negated Lightness. (CieLAB L)  Default: 0
+     --rg-weight [=PERCENT]         Red-green weight   (CieLAB A)  Default: 10
+     --by-weight [=PERCENT]         Blue-yellow weight (CieLAB B)  Default: 10
+     --darkness-weight [=PERCENT]   Negated Lightness. (CieLAB L)  Default: 10
                                     (Similar to --evaluate=min)
 
 Method independent adjustments:
@@ -235,6 +243,13 @@ freememory() {
 lowercase() {
     # Usage: lowercase "string"
     printf '%s\n' "${1,,}"
+}
+multiply() {
+  Factor1="${1:-}"
+  Factor2="${2:-}"
+  [ -z "$Factor1" ] && return 1
+  [ -z "$Factor2" ] && return 1
+  awk "BEGIN {print $Factor1*$Factor2}"
 }
 printnum(){
   # print number $1 with leading zeroes.
@@ -312,7 +327,6 @@ compose_step2() {
   $Magickbin $Cachedir/max.overlay.tif $Cachedir/min.overlay.tif -compose overlay -composite $Cachedir/overlay.overlay.tif
   showimage $Cachedir/overlay.overlay.tif
 }
-
 evaluate_split() {
 
   local Sourceimagelist Resultimage Mode
@@ -388,16 +402,31 @@ fuse_focus_stackshot()  {
   local Color Pixelnumber Pixelcount Layerimage Layerimagelist Colornumber Histogramm
   
   Maskmax="$Cachedir/mask.max.tif"
-      
-  Maskgenerator="$(maskfilter)"
   
+  for Factor in $(seq $Multiply); do
+    Maskgenerator="$Maskgenerator 
+$(maskfilter "mpr:sourceimage" "$(multiply $Radius1 $Factor)" "$(multiply $Radius2 $Factor)" "$(multiply $Sigma1 $Factor)" "$(multiply $Sigma2 $Factor)" "$Maskgeneratorargument" "$Diffstat1" "$Diffstat2")
+-write mpr:contrastmask$Factor
+-delete 0"
+  done
+  Maskgenerator="$Maskgenerator
+mpr:contrastmask1"
+  for Factor in $(seq 2 $Multiply); do
+    Maskgenerator="$Maskgenerator
+mpr:contrastmask$Factor -compose screen -composite"
+  done
+
   # --negate
   [ "$Negate" = "yes" ] && {
-    Maskgenerator="$Maskgenerator \
+    Maskgenerator="$Maskgenerator
 -negate"
   }
 
-  Maskgenerator="$Grayscaleconverter
+  [ "$Grayscaleconverter" ] && Maskgenerator="
+mpr:sourceimage 
+$Grayscaleconverter
+-write mpr:sourceimage
+-delete 0
 $Maskgenerator"
 
   [ "$Noise" ] && Maskgenerator="$Maskgenerator
@@ -511,8 +540,7 @@ $Maskgenerator
           Showimage="$Cielabbmask"
         }
         Command="$Command \
-          mpr:sourceimage \
-            $Maskgenerator \
+          $Maskgenerator \
             -alpha off \
             $Tifstore $Sourcemask"
             
@@ -785,22 +813,36 @@ Contrastmaxlevel=%[fx:maxima*100]
 maskfilter() {
     # Mask generating ImageMagick options
     # Most of them are based on edge detection: http://www.imagemagick.org/Usage/convolve/#edgedet
-    Maskgenerator=""
-    Maskgenerator2=""
+    local Sourceimage Radius1 Radius2 Sigma1 Sigma2 Maskgeneratorargument Diffstat1 Diffstat2
+    local Maskgenerator
+    
+    Sourceimage="${1:-}"
+    Radius1="${2:-}"
+    Radius2="${3:-}"
+    Sigma1="${4:-}"
+    Sigma2="${5:-}"
+    Maskgeneratorargument="${6:-}"
+    Diffstat1="${7:-}"
+    Diffstat2="${8:-}"
+    
     case $Method in
       blur)
         # Compare two blurred images with different sigma.
         # Concept and result is similar to Difference of Gaussian (DoG). Using -gaussian-blur gives same as DoG.
         # Code based on https://im.snibgo.com/simpalign.htm#twoBlrDiff.bat
         Maskgenerator="
-( -clone 0
--blur ${Radius1}x${Sigma1} 
-)"
-        [ "$Radius2$Sigma2" ] && Maskgenerator="$Maskgenerator
-( -clone 0
--blur ${Radius2:-$Radius1}x${Sigma2:-$Sigma1} 
-)
--delete 0"
+( $Sourceimage -blur ${Radius1}x${Sigma1} -write mpr:mask1 -delete 0 )"
+        case "$Radius2$Sigma2" in
+          "") 
+            Maskgenerator="$Maskgenerator
+$Sourceimage mpr:mask1"
+          ;;
+          *) 
+            Maskgenerator="$Maskgenerator
+( $Sourceimage -blur ${Radius2:-$Radius1}x${Sigma2:-$Sigma1} -write mpr:mask2 -delete 0 )
+mpr:mask1 mpr:mask2"
+          ;;
+        esac
         Maskgenerator="$Maskgenerator
 -compose Difference -composite"
 # -compose Mathematics -define compose:args=0,-4,4,0.5 -composite
@@ -808,69 +850,85 @@ maskfilter() {
       ;;
       compass)
         Maskgenerator="
-( -clone 0
+$Sourceimage
 -define convolve:scale=50%!
 -define convolve:bias=50%
--morphology Convolve Compass
-)
--delete 0"
+-morphology Convolve Compass"
 #-compose Difference -composite" # sort of interesting.
       ;;
       diffstat)
-        Maskgenerator="
--write mpr:source
--delete 0
-( mpr:source -statistic $Diffstat1 ${Radius1} )
-( mpr:source -statistic $Diffstat2 ${Radius1} )
--compose Difference -composite
--write mpr:diff1"
-        [ "$Radius2" ] && Maskgenerator="$Maskgenerator
--delete 0
-( mpr:source -statistic $Diffstat1 ${Radius2} )
-( mpr:source -statistic $Diffstat2 ${Radius2} )
--compose Difference -composite
--write mpr:diff2
--delete 0
-mpr:diff1 mpr:diff2
+        Maskgenerator=""
+        [ "$Diffstat1" = "source" ] && Maskgenerator="$Maskgenerator $Sourceimage" || Maskgenerator="$Maskgenerator
+( $Sourceimage -statistic $Diffstat1 ${Radius1} )"
+        [ "$Diffstat2" = "source" ] && Maskgenerator="$Maskgenerator $Sourceimage" || Maskgenerator="$Maskgenerator
+( $Sourceimage -statistic $Diffstat2 ${Radius1} )"
+Maskgenerator="$Maskgenerator
 -compose Difference -composite"
+        [ "$Radius2" ] && {
+          Maskgenerator="$Maskgenerator
+-write mpr:mask1
+-delete 0"
+        [ "$Diffstat1" = "source" ] && Maskgenerator="$Maskgenerator $Sourceimage" || Maskgenerator="$Maskgenerator
+( $Sourceimage -statistic $Diffstat1 ${Radius2} )"
+        [ "$Diffstat2" = "source" ] && Maskgenerator="$Maskgenerator $Sourceimage" || Maskgenerator="$Maskgenerator
+( $Sourceimage -statistic $Diffstat2 ${Radius2} )"
+        Maskgenerator="$Maskgenerator
+-compose Difference -composite
+-write mpr:mask2
+-delete 0
+mpr:mask1 mpr:mask2
+-compose Difference -composite"
+        }
       ;;
       experimental)
         Maskgenerator="
-( -clone 0
--statistic $Maskgeneratorargument ${Radius1}x${Radius1}
--write mpr:stat1
-)
-( -clone 0
--statistic $Maskgeneratorargument $((Radius1*2))x$((Radius1*2))
--write mpr:stat2
-)
-( -clone 0
--statistic $Maskgeneratorargument $((Radius1*3))x$((Radius1*3))
--write mpr:stat3
-)
+$Sourceimage
+-define convolve:scale=50%!
+-define convolve:bias=50%
+-morphology Convolve Compass
+-write mpr:mask1
 -delete 0
-mpr:stat1 mpr:stat2
+$Sourceimage
+-define convolve:scale=50%!
+-define convolve:bias=50%
+-morphology Convolve Kirsch
+-write mpr:mask2
+-delete 0
+$Sourceimage
+-define convolve:scale=!
+-define convolve:bias=50%
+-define morphology:compose=Lighten
+-morphology Convolve Sobel:>
+-write mpr:mask3
+-delete 0
+mpr:mask1 mpr:mask2
 -compose screen -composite
-mpr:stat3
+mpr:mask3
 -compose screen -composite"
 #mpr:stat1 mpr:stat2 mpr:stat3 -evaluate-sequence mean"
       ;;
       free)
-        Maskgenerator="$Maskgeneratorargument"
+        Maskgenerator="$Sourceimage $Maskgeneratorargument"
+      ;;
+      freediff)
+        Maskgenerator="$Sourceimage $Maskgeneratorargument
+$Sourceimage
+-compose Difference -composite"
       ;;
       freichen)
-        Maskgenerator="-define convolve:scale=50%!
-                       -define morphology:compose=Lighten
-                       -define convolve:bias=50%
-                       -morphology Convolve FreiChen:>" ### FIXME allow more modes
+        Maskgenerator="
+$Sourceimage
+-define convolve:scale=50%!
+-define morphology:compose=Lighten
+-define convolve:bias=50%
+-morphology Convolve FreiChen:>" ### FIXME allow more modes
       ;;
       gaussian) 
         case $Sigma2 in
           "")
             Maskgenerator="
-( -clone 0
--gaussian-blur ${Radius1}x${Sigma1} 
-)
+( $Sourceimage -gaussian-blur ${Radius1}x${Sigma1} )
+$Sourceimage
 -compose Difference -composite"
           ;;
           *) # DoG: Difference of Gaussian
@@ -880,56 +938,63 @@ mpr:stat3
         # Reversing the two numbers will effectivally negate the resulting kernel. 
         # By generating two 'Gaussian' kernels of slightly different sigma values (in a ratio of approximatally 1.6), 
         # and subtracting them from each other you can actually generate a close approximation of a Laplacian of a Gaussian.
-            Maskgenerator="-define convolve:bias=50%
+            Maskgenerator="
+$Sourceimage
+-define convolve:bias=50%
 -morphology Convolve DoG:$Radius1,$Sigma1,$Sigma2"
           ;;
         esac
       ;;
       kirsch)
         Maskgenerator="
+$Sourceimage
 -define convolve:scale=50%!
 -define convolve:bias=50%
--morphology Convolve Kirsch" ### FIXME
+-morphology Convolve Kirsch"
       ;;
       laplacian)
         Maskgenerator="
+$Sourceimage
 -define convolve:bias=50%
 -define convolve:scale=!
 -morphology Convolve Laplacian:$Maskgeneratorargument"
       ;;
       log)  # LoG: Laplacian of Gaussian
         Maskgenerator="
-( -clone 0
+$Sourceimage
 -define convolve:bias=50%
--morphology Convolve LoG:${Radius1}x${Sigma1}
-)"
+-morphology Convolve LoG:${Radius1}x${Sigma1}"
         [ "$Radius2$Sigma2" ] && Maskgenerator="$Maskgenerator
-( -clone 0
+-write mpr:mask1
+-delete 0
+$Sourceimage
 -define convolve:bias=50%
 -morphology Convolve LoG:${Radius2:-$Radius1}x${Sigma2:-$Sigma1}
-)
+-write mpr:mask2
 -delete 0
+mpr:mask1 mpr:mask2
 -compose Difference -composite"
-        [ -z "$Radius2$Sigma2" ] && Maskgenerator="$Maskgenerator
--delete 0"
       ;;
       none)
-        Maskgenerator=""
+        Maskgenerator="$Sourceimage"
       ;;
       prewitt)
         Maskgenerator="
+$Sourceimage
 -define convolve:scale=50%!
 -define convolve:bias=50%
 -morphology Convolve Prewitt"
       ;;
       roberts)
         Maskgenerator="
+$Sourceimage
 -define morphology:compose=Lighten
 -define convolve:bias=50%
 -morphology Convolve Roberts:@"
       ;;
       sobel)
         Maskgenerator="
+$Sourceimage
 -define convolve:scale=!
 -define convolve:bias=50%
 -define morphology:compose=Lighten
@@ -937,34 +1002,20 @@ mpr:stat3
       ;;
       statistic)
         Maskgenerator="
-( -clone 0
--statistic $Maskgeneratorargument ${Radius1}x${Radius1}
-)"
+( $Sourceimage -statistic $Maskgeneratorargument ${Radius1}x${Radius1} )"
         [ "$Radius2" ] && Maskgenerator="$Maskgenerator
-( -clone 0
--statistic $Maskgeneratorargument ${Radius2}x${Radius2}
-)"
-        Maskgenerator="$Maskgenerator
--delete 0"
-        [ "$Radius2" ] && Maskgenerator="$Maskgenerator
+( $Sourceimage -statistic $Maskgeneratorargument ${Radius2}x${Radius2} )
 -compose Difference -composite"
       ;;
       unsharp)
-        Maskgenerator="( -clone 0 -unsharp ${Radius1}x${Sigma1} )
-                       -compose Difference -composite"
-      ;;
-      unsharp2)
-        Maskgenerator="-unsharp ${Radius1}x${Sigma1}"
-      ;;
-      unsharpXXX)
-        Maskgenerator="( -clone 0 -unsharp ${Radius1}x${Sigma1} )
-                       ( -clone 0 -unsharp ${Radius1}x${Sigma2} )
-                       -delete 0
-                       -compose Difference -composite
-                       -grayscale RMS"
+        Maskgenerator="
+( $Sourceimage -unsharp ${Radius1}x${Sigma1} )
+$Sourceimage
+-compose Difference -composite"
       ;;
     esac
-  grep . <<< "$Maskgenerator"
+    
+    grep . <<< "$Maskgenerator"
 }
 
 ### main
@@ -1008,6 +1059,7 @@ declare_variables() {
   Method=""
   Maskgeneratorargument=""
   Mode=""
+  Multiply="1"
   Negate="no"
   Noise=""
   Outputimage=""
@@ -1037,9 +1089,9 @@ parse_options() {
   
   Shortoptions="b::f:g::hn::o:r:R::s:S::t::vV"
   Longoptions="basename::,cachedir:,help,verbose,version,output:,save-masks::,showimage"
-  Longoptions="$Longoptions,darkness-weight:,lightness-weight:,contrast-weight:,saturation-weight:,chroma-weight:,rg-weight:,by-weight:"
-  Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,negate,noise::,radius:,radius1:,radius2::,revert,sigma:,sigma1:,sigma2::,swap,threshold::"
-  Longoptions="$Longoptions,blur::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,load-masks::,log::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
+  Longoptions="$Longoptions,darkness-weight::,lightness-weight::,contrast-weight::,saturation-weight::,chroma-weight::,rg-weight::,by-weight::"
+  Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,multiply::,negate,noise::,radius:,radius1:,radius2::,revert,sigma:,sigma1:,sigma2::,swap,threshold::"
+  Longoptions="$Longoptions,blur::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freediff::,freichen::,kirsch::,laplacian::,load-masks::,log::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@" 2>"$Parsererrorfile")"
@@ -1051,11 +1103,10 @@ parse_options() {
     [ "$Error" ] && break
     case "${1:-}" in
       -h|--help)              usage ; exit 0 ;;
-         --rg-weight)          Cielabaweight="${2:-auto}" ; shift ;;
-         --by-weight)          Cielabbweight="${2:-auto}" ; shift ;;
       -b|--background)        Background="${2:-auto}" ; shift ;;
          --basename)          Basename="${2:-auto}" ; shift ;;
-         --lightness-weight) Lightnessweight="${2:-auto}" ; shift ;;
+         --by-weight)         Cielabbweight="${2:-auto}" ; shift ;;
+         --lightness-weight)  Lightnessweight="${2:-auto}" ; shift ;;
          --cachedir)          Cachedir="${2:-}" ; Preservecache="yes" ; shift ;;
          --contrast-weight)   Contrastweight="${2:-auto}" ; shift ;;
          --darkness-weight)   Darknessweight="${2:-auto}" ; shift ;;
@@ -1065,12 +1116,14 @@ parse_options() {
          --grayscale)         Grayscale="${2:-auto}" ; shift ;;
          --chroma-weight)     Chromaweight="${2:-auto}" ; shift ;;
          --layers)            Storelayers="yes" ; Layernumber="${2:-auto}" ; shift ;;
+         --multiply)          Multiply="${2:-3}" ; shift ;;
          --negate)            Negate="yes" ;;
       -n|--noise)             Noise="${2:-auto}" ; shift ;;
       -o|--output)            Outputimage="${2:-}" ; shift ;;
       -r|--radius|--radius1)  Radius1="${2:-}" ; shift ;;
       -R|--radius2)           Radius2="${2:-auto}" ; shift ;;
          --revert)            Revertimagelist="yes" ;;
+         --rg-weight)         Cielabaweight="${2:-auto}" ; shift ;;
          --saturation-weight) Saturationweight="${2:-auto}" ; shift ;;
          --save-masks)        Savemask="yes" ; Savemaskfile="${2:-$Basename.mask.tif}" ; shift;;
       -s|--sigma|--sigma1)    Sigma1="${2:-}" ; shift ;;
@@ -1080,7 +1133,7 @@ parse_options() {
       -v|--verbose)           Verbose="yes" ;;
          --version)           echo "imfuse v$Version"; exit 0 ;;
       -V|--showimage)         Showimageprocessing="yes" ;;
-         --blur|--compass|--compose|--diffstat|--gaussian|--enfuse|--evaluate|--experimental|--free|--freichen|--kirsch|--laplacian|--load-masks|--log|--none|--prewitt|--roberts|--sobel|--statistic|--unsharp)
+         --blur|--compass|--compose|--diffstat|--gaussian|--enfuse|--evaluate|--experimental|--free|--freediff|--freichen|--kirsch|--laplacian|--load-masks|--log|--none|--prewitt|--roberts|--sobel|--statistic|--unsharp)
         Method="${1#--}"
         Maskgeneratorargument="${2:-}"  && shift
       ;;  
@@ -1155,6 +1208,7 @@ check_options() {
       Diffstat2="$(cut -d, -f2 -s <<< "$Maskgeneratorargument")"
       case ${Diffstat1,,} in
         ""|auto)                Diffstat1="median" ;;
+        0|source|none)          Diffstat1="source" ;;
         1|gradient|grad)        Diffstat1="gradient" ;;
         2|maximum|max)          Diffstat1="maximum" ;;
         3|mean)                 Diffstat1="mean" ;;
@@ -1209,7 +1263,7 @@ check_options() {
       Loadmaskfile="${Maskgeneratorargument:-$Basename.mask.tif}"
       [ -e "$Loadmaskfile" ] || error "--load-masks: File not found: $Loadmaskfile"
     ;;
-    free)
+    free|freediff)
       [ -z "$Maskgeneratorargument" ] && {
         Maskgeneratorargument="-edge 2"
         note "Setting --$Method='$Maskgeneratorargument'"
@@ -1371,7 +1425,7 @@ check_options() {
     ;;
     unsharp)
       [ -z "$Sigma1" ] && {
-        Sigma1="5"
+        Sigma1="2"
         note "Setting --sigma=$Sigma1"
       }
     ;;
@@ -1433,28 +1487,28 @@ check_options() {
         ""|auto) Contrastweight="100" ;;
       esac
       case $Saturationweight in
-        "")   Saturationweight="10" ;;
-        auto) Saturationweight="10" ;;
+        "")   Saturationweight="0" ;;
+        auto) Saturationweight="15" ;;
       esac
       case $Chromaweight in
         "")   Chromaweight="0" ;;
-        auto) Chromaweight="0" ;;
+        auto) Chromaweight="5" ;;
       esac
       case $Darknessweight in
         "")   Darknessweight="0" ;;
-        auto) Darknessweight="0" ;;
+        auto) Darknessweight="10" ;;
       esac
       case $Lightnessweight in
         "")   Lightnessweight="0" ;;
-        auto) Lightnessweight="0" ;;
+        auto) Lightnessweight="10" ;;
       esac
       case $Cielabaweight in
         "")   Cielabaweight="0" ;;
-        auto) Cielabaweight="0" ;;
+        auto) Cielabaweight="10" ;;
       esac
       case $Cielabbweight in
         "")   Cielabbweight="0" ;;
-        auto) Cielabbweight="0" ;;
+        auto) Cielabbweight="10" ;;
       esac
       [ "$Contrastweight" = "0" ] && Method="none"
     ;;
@@ -1482,18 +1536,20 @@ check_options() {
   [ "$Basename" != "$(unspecialstring "$Basename")" ] && error "--basename: Name must not contain special chars or whitespace: '$Basename'"
   
   # --output
+    Resultimage="$Basename"
     case $Method in
-      blur|gaussian|log|unsharp)    Resultimage="$Basename.${Method}.${Radius1}x${Sigma1}"
+      blur|gaussian|log|unsharp)    Resultimage="$Resultimage.${Method}.${Radius1}x${Sigma1}"
         [ "$Radius2$Sigma2" ] &&    Resultimage="${Resultimage}-${Radius2:-$Radius1}x${Sigma2:-$Sigma2}" ;;
-      compose|evaluate|laplacian)   Resultimage="$Basename.${Method}.${Maskgeneratorargument}" ;;
-      diffstat)                     Resultimage="$Basename.${Method}.${Diffstat1}-${Diffstat2}.r${Radius1}"
+      compose|evaluate|laplacian)   Resultimage="$Resultimage.${Method}.${Maskgeneratorargument}" ;;
+      diffstat)                     Resultimage="$Resultimage.${Method}.${Diffstat1}-${Diffstat2}.r${Radius1}"
         [ "$Radius2" ] &&           Resultimage="${Resultimage}-r${Radius2}" ;;
-      enfuse)                       Resultimage="$Basename.${Method}.r${Radius1}";;
-      "load-masks")                 Resultimage="$Basename.loadmask" ;;
-      statistic)                    Resultimage="$Basename.${Method}.${Maskgeneratorargument}.r${Radius1}" 
+      enfuse)                       Resultimage="$Resultimage.${Method}.r${Radius1}";;
+      "load-masks")                 Resultimage="$Resultimage.loadmask" ;;
+      statistic)                    Resultimage="$Resultimage.${Method}.${Maskgeneratorargument}.r${Radius1}" 
         [ "$Radius2" ] &&           Resultimage="${Resultimage}-r${Radius2}" ;;
-      *)                            Resultimage="$Basename.${Method}" ;;
+      *)                            Resultimage="$Resultimage.${Method}" ;;
     esac
+    [ "$Negate" = "yes" ] && Resultimage="$Resultimage.neg"
     case $Method in
       compose) [ "$Swapcompose" ] && Resultimage="${Resultimage}.swap";;
       evaluate) ;;
