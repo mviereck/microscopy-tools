@@ -29,7 +29,7 @@ General options:
  
 imfuse provides two basic ways to get overall sharp results.
  - The traditional way is mask comparision with the mask generating methods below.
-Use --saturation-weight to reduce possible contrast mask artefacts.
+Noteable --saturation-weight and --softcut reduce contrast mask artefacts.
  - Another, faster attempt compares max and min images and combines them
 with the compositing methods.                            
 Default method: Mask comparision with --diffstat
@@ -106,7 +106,7 @@ Mask generating methods:
                              Takes options: 
                                --radius                  Default: 0
                                --sigma                   Default: 0.75
-                             Two-mask difference calculation (DoG) with options:
+                             Two-mask difference calculation (DoG) with option:
                                --sigma2                  Default: sigma1*1.6
      --kirsch                Kirsch edge detection. 
      --laplacian [=MODE]     Laplacian edge detection.
@@ -182,6 +182,10 @@ General mask generation adjustments:
                              Compare IM options -grayscale and -intensity.
      --negate                Invert contrast mask.
      --noise [=ARG]          Mask noise filter.          Default ARG: 3
+     --softcut [=SIGMA]      Add a semi-transparent blur around cut masks. 
+                             Reduces some artefacts. Disable with SIGMA=0
+                                                         Default SIGMA:      9
+                                                         Default w/o option: 3
  -t, --threshold [=PERCENT]  Do not use pixels less significant than PERCENT%.
                              You might prefer --layers.  Default PERCENT: 5
 
@@ -189,15 +193,13 @@ Mask weighting options:
 Imfuse can add other masks to the contrast mask to reduce stacking artefacts.
 They are extracted from image colorspace calculations. (HSB, HCL and CieLAB).
 The different masks are combined with a customizable weight. (0..100)
-By default only --contrast-weight=100 is in use.
+By default --contrast-weight=100 and --saturation-weight=15 is in use.
      --contrast-weight [=PERCENT]   Contrast mask weight.          Default: 100
-     --saturation-weight [=PERCENT] Saturation weight. (HSB)       Default: 15
+     --saturation-weight [=PERCENT] Saturation weight. (HSB)       Default: 30
      --chroma-weight [=PERCENT]     Color intensity weight. (HCL)  Default: 5
-     --lightness-weight [=PERCENT]  Lightness weight.  (CieLAB L)  Default: 10
+     --lightness-weight [=PERCENT]  Lightness weight.  (CieLAB L)  Default: 40
                                     (Similar to --evaluate=max)
-     --rg-weight [=PERCENT]         Red-green weight   (CieLAB A)  Default: 10
-     --by-weight [=PERCENT]         Blue-yellow weight (CieLAB B)  Default: 10
-     --darkness-weight [=PERCENT]   Negated Lightness. (CieLAB L)  Default: 10
+     --darkness-weight [=PERCENT]   Negated Lightness. (CieLAB L)  Default: 40
                                     (Similar to --evaluate=min)
 
 Method independent adjustments:
@@ -395,7 +397,7 @@ fuse_focus_stackshot()  {
   
   local Count Number Line Showimage
   local Sourcemasklist Enfusemasklist
-  local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Cielabamask Cielabbmask
+  local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask
   local Maskmax Contrastminlevel Contrastmaxlevel
   local Maskgenerator Downweightoption
   local Startzeit Dauer Restzeit
@@ -479,9 +481,7 @@ $Maskgenerator
         Saturationmask="$Cachedir/saturation.${Number}.tif"
         Chromamask="$Cachedir/chroma.${Number}.tif"
         Darknessmask="$Cachedir/darkness.${Number}.tif"      
-        Lightnessmask="$Cachedir/lightness.${Number}.tif"      
-        Cielabamask="$Cachedir/cielab_a.${Number}.tif"      
-        Cielabbmask="$Cachedir/cielab_b.${Number}.tif"      
+        Lightnessmask="$Cachedir/lightness.${Number}.tif"   
         Showimage="$Sourcemask"
         Sourcemasklist="$Sourcemasklist $Sourcemask"
         
@@ -523,22 +523,6 @@ $Maskgenerator
             -delete 0"
           Showimage="$Lightnessmask"
         }
-        [ "$Cielabaweight" -gt "0" ] && {
-          Command="$Command \
-          mpr:sourceimage \
-            -colorspace LAB -channel G -separate \
-            $Tifstore -write $Cielabamask \
-            -delete 0"
-          Showimage="$Cielabamask"
-        }
-        [ "$Cielabbweight" -gt "0" ] && {
-          Command="$Command \
-          mpr:sourceimage \
-            -colorspace LAB -channel B -separate \
-            $Tifstore -write $Cielabbmask \
-            -delete 0"
-          Showimage="$Cielabbmask"
-        }
         Command="$Command \
           $Maskgenerator \
             -alpha off \
@@ -578,9 +562,7 @@ Contrastmaxlevel=%[fx:maxima*100]
         Saturationmask="$Cachedir/saturation.${Number}.tif"
         Chromamask="$Cachedir/chroma.${Number}.tif"
         Darknessmask="$Cachedir/darkness.${Number}.tif"     
-        Lightnessmask="$Cachedir/lightness.${Number}.tif"     
-        Cielabamask="$Cachedir/cielab_a.${Number}.tif"      
-        Cielabbmask="$Cachedir/cielab_b.${Number}.tif"  
+        Lightnessmask="$Cachedir/lightness.${Number}.tif"
         
         # -downweight
         [ "${Downweight:-0}" -gt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 - $Downweight*$Count/$Imagenumber }")%"
@@ -597,13 +579,9 @@ Contrastmaxlevel=%[fx:maxima*100]
         [ "$Chromaweight" -gt "0" ] && Command="$Command \
           ( $Chromamask      +level 0%,${Chromaweight}% )     -compose screen -composite"
         [ "$Darknessweight" -gt "0" ] && Command="$Command \
-          ( $Darknessmask  +level 0%,${Darknessweight}% ) -compose screen -composite"
+          ( $Darknessmask  +level 0%,${Darknessweight}% )     -compose screen -composite"
         [ "$Lightnessweight" -gt "0" ] && Command="$Command \
-          ( $Lightnessmask  +level 0%,${Lightnessweight}% ) -compose screen -composite"
-        [ "$Cielabaweight" -gt "0" ] && Command="$Command \
-          ( $Cielabamask  +level 0%,${Cielabaweight}% )       -compose screen -composite"
-        [ "$Cielabbweight" -gt "0" ] && Command="$Command \
-          ( $Cielabbmask  +level 0%,${Cielabbweight}% )       -compose screen -composite"
+          ( $Lightnessmask  +level 0%,${Lightnessweight}% )   -compose screen -composite"
         Command="$Command \
             $Downweightoption \
           $Tifstore $Sourcemask"
@@ -655,16 +633,24 @@ Contrastmaxlevel=%[fx:maxima*100]
             -write mpr:sourceimage \
             -delete 0"
         # keep only parts of source mask that fit maskmax (greatest sharpness in stack)
-        # remove source mask from maskmax to avoid overwrite by later masks with same sharpness areas.
-        [ "$Stripmask" = "yes" ] && Command="$Command \
+        Command="$Command \
           mpr:sourcemask mpr:maskmax \
             -compose MinusDst -composite -fill white +opaque black -negate \
             -write mpr:sourcepartmask \
-            -delete 0
+            -delete 0"
+        # remove source mask from maskmax to avoid overwrite by later masks with same sharpness areas.
+        [ "$Stripmask" = "yes" ] && Command="$Command \
           mpr:sourcepartmask mpr:maskmax \
             -evaluate-sequence max \
             -write $Maskmax.strip.tif \
             -delete 0"
+        # Soft mask edges
+        [ "$Softcut" ] && Command="$Command \
+          ( mpr:sourcepartmask -blur 0x${Softcut} ) \
+          ( mpr:sourcepartmask -transparent black ) \
+          -compose over -composite \
+          -write mpr:sourcepartmask \
+          -delete 0"
         # get part of source image
         # clean transparent area 
         Command="$Command \
@@ -718,6 +704,7 @@ Contrastmaxlevel=%[fx:maxima*100]
         $Magickbin -type TrueColorAlpha $Maskmax $Backgroundimage $Sourcemasklist $Tifstore "$Image" || note "Failed to create layered parts result image."
       }
     ;;
+    
     2)
       # fuse mode 2: Compare on each step if source or result seem to be more sharp
       for Sourceimage in $Sourceimagelist; do
@@ -730,11 +717,12 @@ Contrastmaxlevel=%[fx:maxima*100]
           $Resultimage \
             -write mpr:resultimage \
             $Maskgenerator \
-            -level ${Contrastminlevel}%,${Contrastmaxlevel}% +level 1%,99% \
+            -level ${Contrastminlevel}%,${Contrastmaxlevel}% \
             -write mpr:resultmask \
             -delete 0 \
           $Sourcemask mpr:resultmask \
-            -compose MinusDst -composite -fill white +opaque black -write mpr:diffmask \
+            -compose MinusDst -composite -fill white +opaque black \
+            -write mpr:diffmask \
             -delete 0 \
           $Sourceimage mpr:resultimage mpr:diffmask \
             -alpha off -compose Over -composite \
@@ -748,6 +736,7 @@ Contrastmaxlevel=%[fx:maxima*100]
     ;;
   esac
   
+  # --layers: Layered TIF with sharpness layers
   [ "$Storelayers" ] && {
     Histogramm="$($Magickbin $Maskmax -depth 16 -define histogram:unique-colors=true -format %c histogram:info:-)"
     Colornumber="$(awk '{print $3}' <<< "$Histogramm" | wc -l)"
@@ -881,31 +870,29 @@ mpr:mask1 mpr:mask2
         }
       ;;
       experimental)
-        Maskgenerator="
+        case $Sigma2 in
+          "")
+            Maskgenerator="
 $Sourceimage
--define convolve:scale=50%!
--define convolve:bias=50%
--morphology Convolve Compass
--write mpr:mask1
--delete 0
+-define convolve:scale=60,40%
+-morphology Convolve Gaussian:${Radius1}x${Sigma1}
 $Sourceimage
--define convolve:scale=50%!
--define convolve:bias=50%
--morphology Convolve Kirsch
--write mpr:mask2
--delete 0
+-compose Difference -composite"
+          ;;
+          *) # DoG: Difference of Gaussian
+        # This will generate a 'DoG' or "Difference of Gaussians" kernel in which 
+        # the gaussian generated by 'sigma1' will have the gaussian generated by 'sigma2' subtracted from it. 
+        # Normally 'sigma2' is the larger so that the 'central peak' of the kernel is positive. 
+        # Reversing the two numbers will effectivally negate the resulting kernel. 
+        # By generating two 'Gaussian' kernels of slightly different sigma values (in a ratio of approximatally 1.6), 
+        # and subtracting them from each other you can actually generate a close approximation of a Laplacian of a Gaussian.
+            Maskgenerator="
 $Sourceimage
--define convolve:scale=!
+-define convolve:scale=60,40%
 -define convolve:bias=50%
--define morphology:compose=Lighten
--morphology Convolve Sobel:>
--write mpr:mask3
--delete 0
-mpr:mask1 mpr:mask2
--compose screen -composite
-mpr:mask3
--compose screen -composite"
-#mpr:stat1 mpr:stat2 mpr:stat3 -evaluate-sequence mean"
+-morphology Convolve DoG:$Radius1,$Sigma1,$Sigma2"
+          ;;
+        esac
       ;;
       free)
         Maskgenerator="$Sourceimage $Maskgeneratorargument"
@@ -1027,8 +1014,6 @@ declare_variables() {
   Lightnessweight=""
   Cachedir=""
   Compress=""
-  Cielabaweight=""
-  Cielabbweight=""
   Contrastweight=""
   Darknessweight=""
   Diffstat1=""
@@ -1057,6 +1042,7 @@ declare_variables() {
   Magickpixelmemory=""
   Magickversion=""
   Method=""
+  Softcut=""
   Maskgeneratorargument=""
   Mode=""
   Multiply="1"
@@ -1073,7 +1059,7 @@ declare_variables() {
   Startzeit="$(date +%s)"
   Stepsize=""
   Storelayers=""
-  Stripmask="yes"
+  Stripmask="no"
   Swapcompose=""
   Threshold=
   Tifstore="+repage -quality 100% -compress lzw"
@@ -1089,8 +1075,8 @@ parse_options() {
   
   Shortoptions="b::f:g::hn::o:r:R::s:S::t::vV"
   Longoptions="basename::,cachedir:,help,verbose,version,output:,save-masks::,showimage"
-  Longoptions="$Longoptions,darkness-weight::,lightness-weight::,contrast-weight::,saturation-weight::,chroma-weight::,rg-weight::,by-weight::"
-  Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,multiply::,negate,noise::,radius:,radius1:,radius2::,revert,sigma:,sigma1:,sigma2::,swap,threshold::"
+  Longoptions="$Longoptions,darkness-weight::,lightness-weight::,contrast-weight::,saturation-weight::,chroma-weight::"
+  Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,multiply::,negate,noise::,radius:,radius1:,radius2::,revert,sigma:,sigma1:,sigma2::,softcut::,swap,threshold::"
   Longoptions="$Longoptions,blur::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freediff::,freichen::,kirsch::,laplacian::,load-masks::,log::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
@@ -1105,7 +1091,6 @@ parse_options() {
       -h|--help)              usage ; exit 0 ;;
       -b|--background)        Background="${2:-auto}" ; shift ;;
          --basename)          Basename="${2:-auto}" ; shift ;;
-         --by-weight)         Cielabbweight="${2:-auto}" ; shift ;;
          --lightness-weight)  Lightnessweight="${2:-auto}" ; shift ;;
          --cachedir)          Cachedir="${2:-}" ; Preservecache="yes" ; shift ;;
          --contrast-weight)   Contrastweight="${2:-auto}" ; shift ;;
@@ -1123,11 +1108,11 @@ parse_options() {
       -r|--radius|--radius1)  Radius1="${2:-}" ; shift ;;
       -R|--radius2)           Radius2="${2:-auto}" ; shift ;;
          --revert)            Revertimagelist="yes" ;;
-         --rg-weight)         Cielabaweight="${2:-auto}" ; shift ;;
          --saturation-weight) Saturationweight="${2:-auto}" ; shift ;;
          --save-masks)        Savemask="yes" ; Savemaskfile="${2:-$Basename.mask.tif}" ; shift;;
       -s|--sigma|--sigma1)    Sigma1="${2:-}" ; shift ;;
       -S|--sigma2)            Sigma2="${2:-auto}" ; shift ;;
+         --softcut)           Softcut="${2:-auto}" ; shift ;;
          --swap)              Swapcompose="-swap 0,1" ;;
       -t|--threshold)         Threshold="${2:-auto}" ; shift ;;
       -v|--verbose)           Verbose="yes" ;;
@@ -1452,11 +1437,30 @@ check_options() {
     ;;
   esac
   
+  # --softcut
+  case $Method in
+    evaluate|compose) 
+      [ "$Softcut" ] && error "--softcut has no effect with --$Method"
+    ;;
+    *)
+      case $Softcut in
+        "") 
+          Softcut="3"
+          note "Setting --softcut=$Softcut"
+        ;;
+        auto)
+          Softcut="9"
+          note "Setting --softcut=$Softcut"
+        ;;
+        *) Softcut="$(sed s/%// <<< "$Softcut")" ;;
+      esac
+    ;;
+  esac
+  
   # --threshold
   [ "$Threshold" ] && case $Method in
     evaluate|compose) 
       error "--threshold has no effect with --$Method"
-      Threshold=""
     ;;
     *)
       case $Threshold in
@@ -1472,7 +1476,7 @@ check_options() {
   
   # --contrast-weight --saturation-weight --chroma-weight --lightness-weight
   case $Method in
-    compose|evaluate) [ "${Darknessweight}${Lightnessweight}${Contrastweight}${Saturationweight}${Chromaweight}${Cielabaweight}${Cielabbweight}" ] && error "--$Method does not support options
+    compose|evaluate) [ "${Darknessweight}${Lightnessweight}${Contrastweight}${Saturationweight}${Chromaweight}" ] && error "--$Method does not support options
   --contrast-weight --saturation-weight --chroma-weight 
   --darkness-weight --lightness-weight --rg-weight --by-weight" ;;
     *)
@@ -1481,14 +1485,12 @@ check_options() {
       Chromaweight="$(sed     s/%// <<< "$Chromaweight")"
       Darknessweight="$(sed   s/%// <<< "$Darknessweight")"
       Lightnessweight="$(sed  s/%// <<< "$Lightnessweight")"
-      Cielabaweight="$(sed    s/%// <<< "$Cielabaweight")"
-      Cielabbweight="$(sed    s/%// <<< "$Cielabbweight")"
       case $Contrastweight in
         ""|auto) Contrastweight="100" ;;
       esac
       case $Saturationweight in
-        "")   Saturationweight="0" ;;
-        auto) Saturationweight="15" ;;
+        "")   Saturationweight="15" ;;
+        auto) Saturationweight="30" ;;
       esac
       case $Chromaweight in
         "")   Chromaweight="0" ;;
@@ -1496,19 +1498,11 @@ check_options() {
       esac
       case $Darknessweight in
         "")   Darknessweight="0" ;;
-        auto) Darknessweight="10" ;;
+        auto) Darknessweight="40" ;;
       esac
       case $Lightnessweight in
         "")   Lightnessweight="0" ;;
-        auto) Lightnessweight="10" ;;
-      esac
-      case $Cielabaweight in
-        "")   Cielabaweight="0" ;;
-        auto) Cielabaweight="10" ;;
-      esac
-      case $Cielabbweight in
-        "")   Cielabbweight="0" ;;
-        auto) Cielabbweight="10" ;;
+        auto) Lightnessweight="40" ;;
       esac
       [ "$Contrastweight" = "0" ] && Method="none"
     ;;
@@ -1526,7 +1520,8 @@ check_options() {
   Sourceimagelist="$(sort -V <<< "$Sourceimagelist")"
   
   # --revert
-  [ "$Revertimagelist" = "yes" ] && Sourceimagelist="$(tac <<< "$Sourceimagelist")"
+  # (in fact, revert unless --revert is specified)
+  [ "$Revertimagelist" = "yes" ] || Sourceimagelist="$(tac <<< "$Sourceimagelist")"
   
   # --basename
   case $Basename in
@@ -1562,16 +1557,18 @@ check_options() {
           1) ;;
           *) Resultimage="${Resultimage}.m$Fusemode" ;;
         esac
-        [ "${Contrastweight}${Saturationweight}${Chromaweight}${Darknessweight}${Lightnessweight}${Cielabaweight}${Cielabbweight}" != "100000000" ] && {
+        [ "${Contrastweight}${Saturationweight}${Chromaweight}${Darknessweight}${Lightnessweight}" != "1000000" ] && {
           Resultimage="${Resultimage}."
           [ "$Contrastweight"   != "100" ] && Resultimage="${Resultimage}c${Contrastweight}"
-          [ "$Saturationweight" != "0" ]   && Resultimage="${Resultimage}s${Saturationweight}"
+          [ "$Saturationweight" != "0" ]   && Resultimage="${Resultimage}sat${Saturationweight}"
           [ "$Chromaweight"  != "0" ]      && Resultimage="${Resultimage}cr${Chromaweight}"
           [ "$Darknessweight" != "0" ]     && Resultimage="${Resultimage}d${Darknessweight}"
           [ "$Lightnessweight" != "0" ]    && Resultimage="${Resultimage}l${Lightnessweight}"
-          [ "$Cielabaweight" != "0" ]      && Resultimage="${Resultimage}a${Cielabaweight}"
-          [ "$Cielabbweight" != "0" ]      && Resultimage="${Resultimage}b${Cielabaweight}"
         }
+        case $Softcut in
+          0|"") ;;
+          *) Resultimage="${Resultimage}.s$Softcut" ;;
+        esac
         case $Threshold in
           0|"") ;;
           *) Resultimage="${Resultimage}.t$Threshold" ;;
@@ -1621,13 +1618,12 @@ check_options() {
 --save-masks=$Savemaskfile
 --sigma=$Sigma1
 --sigma2=$Sigma2
+--softcut=$Softcut
 --threshold=$Threshold
 --contrast-weight=$Contrastweight
 --saturation-weight=$Saturationweight
 --chroma-weight=$Chromaweight
 --lightness-weight=$Lightnessweight
---rg-weight=$Cielabaweight
---by-weight=$Cielabbweight
 "
   return ${Error:-0}
 }
