@@ -571,17 +571,15 @@ Contrastmaxlevel=%[fx:maxima*100]
         Command="$Magickbin \
           $Sourcemask \
             -level ${Contrastminlevel}%,${Contrastmaxlevel}%"
-        [ "$Threshold" ] && Command="$Command \
-            -black-threshold ${Threshold:-0}%"
-        Command="$Command    +level 0%,${Contrastweight}%"
+        Command="$Command    +level 0%,${Contrastweight}%     +level 1%,99%"
         [ "$Saturationweight" -gt "0" ] && Command="$Command \
-          ( $Saturationmask  +level 0%,${Saturationweight}% ) -compose screen -composite"
+          ( $Saturationmask  +level 0%,${Saturationweight}% ) +level 1%,99% -compose screen -composite"
         [ "$Chromaweight" -gt "0" ] && Command="$Command \
-          ( $Chromamask      +level 0%,${Chromaweight}% )     -compose screen -composite"
+          ( $Chromamask      +level 0%,${Chromaweight}% )     +level 1%,99% -compose screen -composite"
         [ "$Darknessweight" -gt "0" ] && Command="$Command \
-          ( $Darknessmask  +level 0%,${Darknessweight}% )     -compose screen -composite"
+          ( $Darknessmask  +level 0%,${Darknessweight}% )     +level 1%,99% -compose screen -composite"
         [ "$Lightnessweight" -gt "0" ] && Command="$Command \
-          ( $Lightnessmask  +level 0%,${Lightnessweight}% )   -compose screen -composite"
+          ( $Lightnessmask  +level 0%,${Lightnessweight}% )   +level 1%,99% -compose screen -composite"
         Command="$Command \
             $Downweightoption \
           $Tifstore $Sourcemask"
@@ -621,7 +619,7 @@ Contrastmaxlevel=%[fx:maxima*100]
         Number="$(printnum $Count $Imagenumberlength)"
         Sourcemask="$Cachedir/mask.${Number}.tif"
     
-        # Load maskmax, sourcemask and sourceimage into memory. Apply threshold if given.
+        # Load maskmax, sourcemask and sourceimage into memory. 
         Command="$Magickbin \
           $Maskmax.strip.tif \
             -write mpr:maskmax \
@@ -631,6 +629,12 @@ Contrastmaxlevel=%[fx:maxima*100]
             -delete 0
           $Sourceimage \
             -write mpr:sourceimage \
+            -delete 0"
+        # --threshold
+        [ "$Threshold" ] && Command="$Command \
+          mpr:sourcemask \
+            -black-threshold ${Threshold:-0}%
+            -write mpr:sourcemask
             -delete 0"
         # keep only parts of source mask that fit maskmax (greatest sharpness in stack)
         Command="$Command \
@@ -652,14 +656,9 @@ Contrastmaxlevel=%[fx:maxima*100]
           -write mpr:sourcepartmask \
           -delete 0"
         # get part of source image
-        # clean transparent area 
         Command="$Command \
           mpr:sourceimage mpr:sourcepartmask \
             -alpha Off -compose CopyOpacity -composite \
-            -write mpr:sourcepart \
-            -delete 0 \
-          mpr:sourcepart \
-            -background blue -alpha background \
             -write mpr:sourcepart \
             -delete 0"
         # save source image parts for layered tif
@@ -670,7 +669,7 @@ Contrastmaxlevel=%[fx:maxima*100]
             -delete 0"
         # add source image part to result
         Command="$Command \
-          $Resultimage mpr:sourcepart \
+            mpr:sourcepart $Resultimage \
             -compose Over -composite \
             -type TrueColorAlpha \
           $Tifstore $Resultimage"
@@ -692,11 +691,6 @@ Contrastmaxlevel=%[fx:maxima*100]
           showimage $Alphaimage
         done
       done
-      
-      false && $Magickbin \
-        $Resultimage $Maskmax \
-          -alpha off -compose copy_opacity -composite \
-          $Tifstore $Cachedir/$Basename.alpha.tif
        
       [ "$Storelayers" ] && {
         verbose "Creating layered result with parts in use of source images"
@@ -1059,7 +1053,7 @@ declare_variables() {
   Startzeit="$(date +%s)"
   Stepsize=""
   Storelayers=""
-  Stripmask="no"
+  Stripmask="yes"
   Swapcompose=""
   Threshold=
   Tifstore="+repage -quality 100% -compress lzw"
@@ -1279,9 +1273,15 @@ check_options() {
     evaluate|compose) [ "$Background" ] error "--background has no effect with --$Method" ;;
     *)
       case $Background in
-        "")   [ "$Threshold" ] && Background="transparent" || Background="darkgreen" ;;
+        ""|none|transparent)   Background="transparent" ;;
         auto) Background="mean" ;;
-        none) Background="transparent" ;;
+      esac
+      case $Background in
+        transparent) ;;
+        *)
+          Sourceimagelist="$(tac <<< "$Sourceimagelist")"
+          Stripmask="no"
+        ;;
       esac
     ;;
   esac
@@ -1520,8 +1520,7 @@ check_options() {
   Sourceimagelist="$(sort -V <<< "$Sourceimagelist")"
   
   # --revert
-  # (in fact, revert unless --revert is specified)
-  [ "$Revertimagelist" = "yes" ] || Sourceimagelist="$(tac <<< "$Sourceimagelist")"
+  [ "$Revertimagelist" = "yes" ] && Sourceimagelist="$(tac <<< "$Sourceimagelist")"
   
   # --basename
   case $Basename in
@@ -1719,7 +1718,8 @@ main() {
           evaluate_split $Background $Backgroundimage $Sourceimagelist || return 1
         ;;
         transparent|none)
-          $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue +level-colors black -type TrueColorAlpha $Tifstore $Backgroundimage || error "Failed to create transparent background image."
+          #$Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue +level-colors black -type TrueColorAlpha $Tifstore $Backgroundimage || error "Failed to create transparent background image."
+          $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Backgroundimage || error "Failed to create transparent background image."
           #$Magickbin $(head -n1 <<< "$Sourceimagelist") -alpha Transparent +level-colors "black"  -colorspace sRGB  $Resultimage || error "Failed to create transparent background image."
         ;;
         *)
