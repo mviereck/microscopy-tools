@@ -5,7 +5,7 @@ Version="0.2"
 
 usage() {
   echo "imfuse v$Version - combine focus stackshot images to an overall sharp image.
-Aims to be similar to enfuse, but with the help of ImageMagick.
+Aims to be similar to enfuse, but based on ImageMagick.
 
 Dependencies:
   imagemagick      Mandatory (command 'convert' or 'magick').
@@ -646,7 +646,7 @@ Contrastmaxlevel=%[fx:maxima*100]
             -delete 0"
         # Soft mask edges
         [ "$Softcut" ] && Command="$Command \
-          ( mpr:sourcepartmask -blur 0x${Softcut} ) \
+          ( mpr:sourcepartmask -blur 0x${Softcut} -auto-level ) \
           ( mpr:sourcepartmask -transparent black ) \
           -compose over -composite \
           -write mpr:sourcepartmask \
