@@ -838,8 +838,9 @@ mpr:mask1 mpr:mask2"
         Maskgenerator="
 $Sourceimage
 -define convolve:scale=50%!
+-define morphology:compose=Lighten
 -define convolve:bias=50%
--morphology Convolve Compass"
+-morphology Convolve Compass:>"
 #-compose Difference -composite" # sort of interesting.
       ;;
       diffstat)
@@ -933,8 +934,9 @@ $Sourceimage
         Maskgenerator="
 $Sourceimage
 -define convolve:scale=50%!
+-define morphology:compose=Lighten
 -define convolve:bias=50%
--morphology Convolve Kirsch"
+-morphology Convolve Kirsch:>"
       ;;
       laplacian)
         Maskgenerator="
