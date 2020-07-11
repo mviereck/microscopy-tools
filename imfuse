@@ -32,7 +32,7 @@ imfuse provides two basic ways to get overall sharp results.
 Noteable --saturation-weight and --softcut reduce contrast mask artefacts.
  - Another, faster attempt compares max and min images and combines them
 with the compositing methods.                            
-Default method: Mask comparision with --diffstat
+Default method: Mask comparision with --freichen
 
 Compositing methods:
      --compose [=MODE]       Composes a result with mode MODE based on a max
@@ -485,47 +485,48 @@ $Maskgenerator
         Showimage="$Sourcemask"
         Sourcemasklist="$Sourcemasklist $Sourcemask"
         
-        Command="$Magickbin \
-          $Sourceimage \
-            -depth 16 \
-            -write mpr:sourceimage \
+        Command="$Magickbin
+          $Sourceimage
+            -alpha off
+            -depth 16
+            -write mpr:sourceimage
             -delete 0"
         [ "$Saturationweight" -gt "0" ] && {
-          Command="$Command \
-          mpr:sourceimage \
-            -colorspace HSB -channel G -separate \
-            $Tifstore -write $Saturationmask \
+          Command="$Command
+          mpr:sourceimage
+            -colorspace HSB -channel G -separate
+            $Tifstore -write $Saturationmask
             -delete 0"
           Showimage="$Saturationmask"
         }
         [ "$Chromaweight" -gt "0" ] && {
-          Command="$Command \
-          mpr:sourceimage \
-            -colorspace HCL -channel G -separate \
-            $Tifstore -write $Chromamask \
+          Command="$Command
+          mpr:sourceimage
+            -colorspace HCL -channel G -separate
+            $Tifstore -write $Chromamask
             -delete 0"
           Showimage="$Chromamask"
         }
         [ "$Darknessweight" -gt "0" ] && {
-          Command="$Command \
-          mpr:sourceimage \
-            -colorspace LAB -channel R -separate \
-            -negate \
-            $Tifstore -write $Darknessmask \
+          Command="$Command
+          mpr:sourceimage
+            -colorspace LAB -channel R -separate
+            -negate
+            $Tifstore -write $Darknessmask
             -delete 0"
           Showimage="$Darknessmask"
         }
         [ "$Lightnessweight" -gt "0" ] && {
-          Command="$Command \
-          mpr:sourceimage \
-            -colorspace LAB -channel R -separate \
-            $Tifstore -write $Lightnessmask \
+          Command="$Command
+          mpr:sourceimage
+            -colorspace LAB -channel R -separate
+            $Tifstore -write $Lightnessmask
             -delete 0"
           Showimage="$Lightnessmask"
         }
-        Command="$Command \
-          $Maskgenerator \
-            -alpha off \
+        Command="$Command
+          $Maskgenerator
+            -alpha off
             $Tifstore $Sourcemask"
             
         $Command
@@ -568,20 +569,20 @@ Contrastmaxlevel=%[fx:maxima*100]
         [ "${Downweight:-0}" -gt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 - $Downweight*$Count/$Imagenumber }")%"
         [ "${Downweight:-0}" -lt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 + $Downweight*$((Imagenumber-Count))/$Imagenumber }")%"
        
-        Command="$Magickbin \
-          $Sourcemask \
+        Command="$Magickbin
+          $Sourcemask
             -level ${Contrastminlevel}%,${Contrastmaxlevel}%"
         Command="$Command    +level 0%,${Contrastweight}%     +level 1%,99%"
-        [ "$Saturationweight" -gt "0" ] && Command="$Command \
+        [ "$Saturationweight" -gt "0" ] && Command="$Command
           ( $Saturationmask  +level 0%,${Saturationweight}% ) +level 1%,99% -compose screen -composite"
-        [ "$Chromaweight" -gt "0" ] && Command="$Command \
+        [ "$Chromaweight" -gt "0" ] && Command="$Command
           ( $Chromamask      +level 0%,${Chromaweight}% )     +level 1%,99% -compose screen -composite"
-        [ "$Darknessweight" -gt "0" ] && Command="$Command \
+        [ "$Darknessweight" -gt "0" ] && Command="$Command
           ( $Darknessmask  +level 0%,${Darknessweight}% )     +level 1%,99% -compose screen -composite"
-        [ "$Lightnessweight" -gt "0" ] && Command="$Command \
+        [ "$Lightnessweight" -gt "0" ] && Command="$Command
           ( $Lightnessmask  +level 0%,${Lightnessweight}% )   +level 1%,99% -compose screen -composite"
-        Command="$Command \
-            $Downweightoption \
+        Command="$Command
+            $Downweightoption
           $Tifstore $Sourcemask"
           
         $Command
@@ -620,58 +621,58 @@ Contrastmaxlevel=%[fx:maxima*100]
         Sourcemask="$Cachedir/mask.${Number}.tif"
     
         # Load maskmax, sourcemask and sourceimage into memory. 
-        Command="$Magickbin \
-          $Maskmax.strip.tif \
-            -write mpr:maskmax \
-            -delete 0 \
-          $Sourcemask \
-            -write mpr:sourcemask \
+        Command="$Magickbin
+          $Maskmax.strip.tif
+            -write mpr:maskmax
             -delete 0
-          $Sourceimage \
-            -write mpr:sourceimage \
+          $Sourcemask
+            -write mpr:sourcemask
+            -delete 0
+          $Sourceimage
+            -write mpr:sourceimage
             -delete 0"
         # --threshold
-        [ "$Threshold" ] && Command="$Command \
-          mpr:sourcemask \
+        [ "$Threshold" ] && Command="$Command
+          mpr:sourcemask
             -black-threshold ${Threshold:-0}%
             -write mpr:sourcemask
             -delete 0"
         # keep only parts of source mask that fit maskmax (greatest sharpness in stack)
-        Command="$Command \
-          mpr:sourcemask mpr:maskmax \
-            -compose MinusDst -composite -fill white +opaque black -negate \
-            -write mpr:sourcepartmask \
+        Command="$Command
+          mpr:sourcemask mpr:maskmax
+            -compose MinusDst -composite -fill white +opaque black -negate
+            -write mpr:sourcepartmask
             -delete 0"
         # remove source mask from maskmax to avoid overwrite by later masks with same sharpness areas.
-        [ "$Stripmask" = "yes" ] && Command="$Command \
-          mpr:sourcepartmask mpr:maskmax \
-            -evaluate-sequence max \
-            -write $Maskmax.strip.tif \
+        [ "$Stripmask" = "yes" ] && Command="$Command
+          mpr:sourcepartmask mpr:maskmax
+            -evaluate-sequence max
+            -write $Maskmax.strip.tif
             -delete 0"
         # Soft mask edges
-        [ "$Softcut" ] && Command="$Command \
-          ( mpr:sourcepartmask -blur 0x${Softcut} -auto-level ) \
-          ( mpr:sourcepartmask -transparent black ) \
-          -compose over -composite \
-          -write mpr:sourcepartmask \
+        [ "$Softcut" ] && Command="$Command
+          ( mpr:sourcepartmask -blur 0x${Softcut} -auto-level )
+          ( mpr:sourcepartmask -transparent black )
+          -compose over -composite
+          -write mpr:sourcepartmask
           -delete 0"
         # get part of source image
-        Command="$Command \
-          mpr:sourceimage mpr:sourcepartmask \
-            -alpha Off -compose CopyOpacity -composite \
-            -write mpr:sourcepart \
+        Command="$Command
+          mpr:sourceimage mpr:sourcepartmask
+            -alpha Off -compose CopyOpacity -composite
+            -write mpr:sourcepart
             -delete 0"
         # save source image parts for layered tif
-        [ "$Storelayers" ] && Command="$Command \
-          mpr:sourcepart \
-            -type TrueColorAlpha \
-            $Tifstore -write $Sourcemask \
+        [ "$Storelayers" ] && Command="$Command
+          mpr:sourcepart
+            -type TrueColorAlpha
+            $Tifstore -write $Sourcemask
             -delete 0"
         # add source image part to result
-        Command="$Command \
-            mpr:sourcepart $Resultimage \
-            -compose Over -composite \
-            -type TrueColorAlpha \
+        Command="$Command
+            mpr:sourcepart $Resultimage
+            -compose Over -composite
+            -type TrueColorAlpha
           $Tifstore $Resultimage"
         $Command
             
@@ -707,20 +708,22 @@ Contrastmaxlevel=%[fx:maxima*100]
         Number="$(printnum $Count $Imagenumberlength)"
         Sourcemask="$Cachedir/mask.${Number}.tif"
     
-        $Magickbin \
-          $Resultimage \
-            -write mpr:resultimage \
-            $Maskgenerator \
-            -level ${Contrastminlevel}%,${Contrastmaxlevel}% \
-            -write mpr:resultmask \
-            -delete 0 \
-          $Sourcemask mpr:resultmask \
-            -compose MinusDst -composite -fill white +opaque black \
-            -write mpr:diffmask \
-            -delete 0 \
-          $Sourceimage mpr:resultimage mpr:diffmask \
-            -alpha off -compose Over -composite \
-            "$Resultimage" || error "Error in fuse mode 2"
+        Command="$Magickbin
+          $Resultimage
+            -write mpr:resultimage
+            $Maskgenerator
+            -level ${Contrastminlevel}%,${Contrastmaxlevel}%
+            -write mpr:resultmask
+            -delete 0
+          $Sourcemask mpr:resultmask
+            -compose MinusDst -composite -fill white +opaque black
+            -write mpr:diffmask
+            -delete 0
+          $Sourceimage mpr:resultimage mpr:diffmask
+            -alpha off -compose Over -composite
+            $Resultimage"
+            
+        $Command || error "Error in fuse mode 2"
 
         showimage $Resultimage
         Dauer="$(( $(date +%s)-Startzeit))"
@@ -1163,7 +1166,7 @@ check_options() {
       [ "$Fusemode" = "2" ]        && error "Option --enfuse does not work with --fusemode=2"
     ;;
     "")
-      Method="diffstat"
+      Method="freichen"
       note "Setting --$Method"
     ;;
   esac  
