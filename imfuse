@@ -70,6 +70,12 @@ Mask generating methods:
                              Two-mask difference calculation with options:
                                --radius2                 Default: 0
                                --sigma2                  Default: 1.6*sigma1
+     --comet [=MODE]         Comet edge detection. Compares rotated mean areas.
+                             MODE can be one of '$(basename $Magickbin) -list compose'
+                             Recommended: Saturate (default), Lighten, Darken.
+                             Takes options: (low influence)
+                               --radius                  Default: 0
+                               --sigma                   Default: 5                            
      --compass               Compass edge detection. 
      --diffstat [=STAT1[,STAT2]]  Compares two local statistics of source. 
                              Uses IM option -statistic. Compare --statistic.
@@ -117,9 +123,19 @@ Mask generating methods:
                              Takes options: 
                                --radius                  Default: 0
                                --sigma1                  Default: 0.75
-                             Two-mask difference calculation with options:
-                               --radius2                 Default: 0
-                               --sigma2                  Default: sigma1*1.6
+     --morphology [=MODE]    Versatile option with many interesting MODEs.
+                             MODE can be one of '$(basename $Magickbin) -list morphology'
+                             Takes options:
+                               --radius1                 Default: 1
+                               --radius2                 Default: 4
+                             --radius1 is not a radius but multiplys the kernel.
+                             --radius2 is the kernel radius.
+                             --radius1 and --radius2 have similar effects, but
+                             --radius1 needs less resources.
+                             MODEs of interest:
+                               dilateintensity
+                               edge
+                               smooth
      --prewitt               Prewitt edge detection. 
      --roberts               Roberts edge detection. 
      --sobel                 Sobel edge detection. 
@@ -405,11 +421,12 @@ fuse_focus_stackshot()  {
   local Sourcemasklist Enfusemasklist
   local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask
   local Maskmax Contrastminlevel Contrastmaxlevel
-  local Maskgenerator Downweightoption
+  local Maskgenerator Downweightoption Maskcompose
   local Startzeit Dauer Restzeit
   local Color Pixelnumber Pixelcount Layerimage Layerimagelist Colornumber Histogramm
   
   Maskmax="$Cachedir/mask.max.tif"
+  Maskcompose="screen"
   
   # experimental: same mask with three parameter sets. No option yet. 
   for Factor in $(seq $Multiply); do
@@ -591,13 +608,13 @@ Contrastmaxlevel=%[fx:maxima*100]
             -level ${Contrastminlevel}%,${Contrastmaxlevel}%"
         Command="$Command    +level 0%,${Contrastweight}%     +level 1%,99%"
         [ "$Saturationweight" -gt "0" ] && Command="$Command
-          ( $Saturationmask  +level 0%,${Saturationweight}% ) +level 1%,99% -compose screen -composite"
+          ( $Saturationmask  +level 0%,${Saturationweight}% ) +level 1%,99% -compose $Maskcompose -composite"
         [ "$Chromaweight" -gt "0" ] && Command="$Command
-          ( $Chromamask      +level 0%,${Chromaweight}% )     +level 1%,99% -compose screen -composite"
+          ( $Chromamask      +level 0%,${Chromaweight}% )     +level 1%,99% -compose $Maskcompose -composite"
         [ "$Darknessweight" -gt "0" ] && Command="$Command
-          ( $Darknessmask  +level 0%,${Darknessweight}% )     +level 1%,99% -compose screen -composite"
+          ( $Darknessmask  +level 0%,${Darknessweight}% )     +level 1%,99% -compose $Maskcompose -composite"
         [ "$Lightnessweight" -gt "0" ] && Command="$Command
-          ( $Lightnessmask  +level 0%,${Lightnessweight}% )   +level 1%,99% -compose screen -composite"
+          ( $Lightnessmask  +level 0%,${Lightnessweight}% )   +level 1%,99% -compose $Maskcompose -composite"
         Command="$Command
             $Downweightoption
           $Tifstore $Sourcemask"
@@ -851,6 +868,14 @@ mpr:mask1 mpr:mask2"
 # -compose Mathematics -define compose:args=0,-4,4,0.5 -composite
 # -grayscale RMS"
       ;;
+      comet)
+        Maskgenerator="
+-define morphology:compose=${Maskgeneratorargument:-Lighten}
+$Sourceimage -morphology Convolve Comet:${Radius1:-0}x${Sigma1:-5}:>
+$Sourceimage
+-compose difference -composite
+"
+      ;;
       compass)
         Maskgenerator="
 $Sourceimage
@@ -884,24 +909,75 @@ mpr:mask1 mpr:mask2
 -compose Difference -composite"
         }
       ;;
-      experimental)
+      BLURexperimental)
         Maskgenerator="
-(
-$Sourceimage
 -define convolve:scale=50%!
--define morphology:compose=Lighten
--define convolve:bias=50%
--morphology Convolve FreiChen:1>
-)
-(
+
+    -define morphology:showkernel=1    
+    -define convolve:showkernel=1    
+    -define showkernel=1    
+( $Sourceimage -morphology Convolve 3x3+1+0:0.0,0.5,0.0,0.5,1.0,0.5,0.0,0.5,0.0' )
+( $Sourceimage -morphology Convolve 3x3+0+1:0.0,0.5,0.0,0.5,1.0,0.5,0.0,0.5,0.0' )
+( $Sourceimage -morphology Convolve 3x3+1+2:0.0,0.5,0.0,0.5,1.0,0.5,0.0,0.5,0.0' )
+( $Sourceimage -morphology Convolve 3x3+2+1:0.0,0.5,0.0,0.5,1.0,0.5,0.0,0.5,0.0' )
+-evaluate-sequence mean
 $Sourceimage
+-compose difference -composite
+"
+      ;;
+      experimental) 
+        Maskgenerator="
+$Sourceimage
+    -define morphology:showkernel=1    
+-define convolve:scale=100,100%
+-morphology Convolve LoG:${Radius1:-0}x${Sigma1:-0.75}
+$Sourceimage
+-compose Difference -composite"
+      ;;
+      AVERAGEexperimental)
+        Maskgenerator="
 -define convolve:scale=50%!
--define morphology:compose=Lighten
--define convolve:bias=50%
--morphology Convolve FreiChen:2>
-)
--compose Screen
--composite"
+
+    -define morphology:showkernel=1    
+    -define convolve:showkernel=1    
+    -define showkernel=1    
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:${Radius2}x1+1+0 )
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:${Radius2}x1+$((Radius2-1))+0 )
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:1x${Radius2}+0+1 )
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:1x${Radius2}+0+$((Radius2-1)) )
+-evaluate-sequence min
+
+$Sourceimage
+-compose difference -composite
+"
+      ;;
+      XXXexperimental)
+        Maskgenerator="
+-define convolve:scale=50%!
+-define morphology:compose=multiply
+    -define morphology:showkernel=1    
+
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:${Radius2}x$((Radius2/2))+0+$((Radius2/4)) )
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:${Radius2}x$((Radius2/2))+$((Radius2-1))+$((Radius2/4)) )
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:$((Radius2/2))x$((Radius2))+$((Radius2/4))+0 )
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:$((Radius2/2))x$((Radius2))+$((Radius2/4))+$((Radius2-1)) )
+-evaluate-sequence min
+"
+      ;;
+      xxxexperimental)
+        Maskgenerator="
+-define convolve:scale=50%!
+
+    -define morphology:showkernel=1    
+    -define convolve:showkernel=1    
+    -define showkernel=1    
+-define morphology:compose=multiply
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:7x1+1+0 )
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:7x1+7+0 )
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:1x7+0+1 )
+( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Radius1:-1} Rectangle:1x7+0+7 )
+-evaluate-sequence min
+"
       ;;
       free)
         Maskgenerator="$Sourceimage $Maskgeneratorargument"
@@ -982,18 +1058,15 @@ $Sourceimage
       log)  # LoG: Laplacian of Gaussian
         Maskgenerator="
 $Sourceimage
--define convolve:bias=50%
--morphology Convolve LoG:${Radius1}x${Sigma1}"
-        [ "$Radius2$Sigma2" ] && Maskgenerator="$Maskgenerator
--write mpr:mask1
--delete 0
+-define convolve:scale=100,100%
+-morphology Convolve LoG:${Radius1:-0}x${Sigma1:-0.75}
 $Sourceimage
--define convolve:bias=50%
--morphology Convolve LoG:${Radius2:-$Radius1}x${Sigma2:-$Sigma1}
--write mpr:mask2
--delete 0
-mpr:mask1 mpr:mask2
 -compose Difference -composite"
+      ;;
+      morphology)
+        Maskgenerator="
+$Sourceimage
+-morphology ${Maskgeneratorargument:-edge}:${Radius1} Octagon:${Radius2}"
       ;;
       none)
         Maskgenerator="$Sourceimage"
@@ -1109,8 +1182,8 @@ parse_options() {
   Shortoptions="b::f:g::hn::o:r:R::s:S::t::vV"
   Longoptions="basename::,cachedir:,help,verbose,version,output:,save-masks::,showimage"
   Longoptions="$Longoptions,darkness-weight::,lightness-weight::,contrast-weight::,saturation-weight::,chroma-weight::"
-  Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,multiply::,negate,noise::,radius:,radius1:,radius2::,revert,sigma:,sigma1:,sigma2::,softcut::,swap,threshold::"
-  Longoptions="$Longoptions,blur::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freediff::,freichen::,kirsch::,laplacian::,load-masks::,log::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
+  Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,multiply::,negate,noise::,radius:,radius1::,radius2::,revert,sigma:,sigma1:,sigma2::,softcut::,swap,threshold::"
+  Longoptions="$Longoptions,blur::,comet::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freediff::,freichen::,kirsch::,laplacian::,load-masks::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@" 2>"$Parsererrorfile")"
@@ -1151,7 +1224,7 @@ parse_options() {
       -v|--verbose)           Verbose="yes" ;;
          --version)           echo "imfuse v$Version"; exit 0 ;;
       -V|--showimage)         Showimageprocessing="yes" ;;
-         --blur|--compass|--compose|--diffstat|--gaussian|--enfuse|--evaluate|--experimental|--free|--freediff|--freichen|--kirsch|--laplacian|--load-masks|--log|--none|--prewitt|--roberts|--sobel|--statistic|--unsharp)
+         --blur|--comet|--compass|--compose|--diffstat|--gaussian|--enfuse|--evaluate|--experimental|--free|--freediff|--freichen|--kirsch|--laplacian|--load-masks|--log|--morphology|--none|--prewitt|--roberts|--sobel|--statistic|--unsharp)
         Method="${1#--}"
         Maskgeneratorargument="${2:-}"  && shift
       ;;  
@@ -1209,6 +1282,18 @@ check_options() {
   
   # Method argument
   case $Method in
+    comet)
+      [ -z "$Maskgeneratorargument" ] && {
+        Maskgeneratorargument="Saturate"
+        note "Setting --$Method=$Maskgeneratorargument"
+      }
+      grep -q -x -i "$Maskgeneratorargument" <<< "$($Magickbin -list compose)" || {
+        error "--$Method=$Maskgeneratorargument: unknown argument.
+  Please choose one out of '$Magickbin -list compose'
+  Recommended: Darken, Lighten, Saturate"
+      }
+      Maskgeneratorargument="$(lowercase "$Maskgeneratorargument")"
+    ;;
     compose)
       [ -z "$Maskgeneratorargument" ] && {
         Maskgeneratorargument="overlay"
@@ -1278,7 +1363,7 @@ check_options() {
         note "Setting --$Method=$Maskgeneratorargument"
       }
     ;;
-    load-masks)
+    "load-masks")
       Loadmaskfile="${Maskgeneratorargument:-$Basename.mask.tif}"
       [ -e "$Loadmaskfile" ] || error "--load-masks: File not found: $Loadmaskfile"
     ;;
@@ -1287,6 +1372,19 @@ check_options() {
         Maskgeneratorargument="-edge 2"
         note "Setting --$Method='$Maskgeneratorargument'"
       }
+    ;;
+    morphology)
+      [ -z "$Maskgeneratorargument" ] && {
+        Maskgeneratorargument="edge"
+        note "Setting --$Method=$Maskgeneratorargument"
+      }
+      grep -q -x -i "$Maskgeneratorargument" <<< "$($Magickbin -list morphology)" || {
+        error "--$Method=$Maskgeneratorargument: unknown argument.
+  Please choose one out of '$Magickbin -list morphology'
+  or compare IM option -morphology."
+      }
+      Maskgeneratorargument="$(lowercase "$Maskgeneratorargument")"
+    
     ;;
     statistic)
       case $Maskgeneratorargument in
@@ -1394,7 +1492,7 @@ check_options() {
   
   # --radius1
   [ -z "$Radius1" ] && case $Method in
-    blur|gaussian|log|unsharp)
+    blur|comet|gaussian|log|unsharp)
       Radius1="0"
     ;;
     enfuse)
@@ -1403,6 +1501,10 @@ check_options() {
     ;;
     diffstat)
       Radius1="5"
+      note "Setting --radius=$Radius1"
+    ;;
+    morphology)
+      Radius1="1"
       note "Setting --radius=$Radius1"
     ;;
     statistic)
@@ -1424,13 +1526,24 @@ check_options() {
         error "--radius2=$Radius2 is same as --radius1=$Radius1."
       }
     ;;
+    morphology) ;;
     compose|evaluate|freichen|kirsch|laplacian|prewitt|roberts|sobel)
       error "--radius2 is not supported by --$Method"
+    ;;
+  esac
+  [ -z "$Radius2" ] && case $Method in
+    morphology)
+      Radius2="4"
+      note "Setting --radius2=$Radius2"
     ;;
   esac
   [ "$Radius2" = "auto" ] && case $Method in
     statistic|diffstat)
       Radius2="$((Radius1*3/2))"
+      note "Setting --radius2=$Radius2"
+    ;;
+    morphology)
+      Radius2="$Radius1"
       note "Setting --radius2=$Radius2"
     ;;
     blur|gaussian|log|unsharp)
@@ -1441,6 +1554,12 @@ check_options() {
   
   # --sigma1
   case $Method in
+    comet)
+      [ -z "$Sigma1" ] && {
+        Sigma1="5"
+        note "Setting --sigma=$Sigma1"
+      }
+    ;;
     experimental) ;;
     blur|gaussian|log)
       [ -z "$Sigma1" ] && {
@@ -1574,6 +1693,7 @@ check_options() {
     case $Method in
       blur|gaussian|log|unsharp)              Resultimage="$Resultimage.${Method}.${Radius1}x${Sigma1}"
         [ "$Radius2$Sigma2" ] &&              Resultimage="${Resultimage}-${Radius2:-$Radius1}x${Sigma2:-$Sigma2}" ;;
+      comet)                                  Resultimage="$Resultimage.${Method}.${Maskgeneratorargument}.${Radius1}x${Sigma1}" ;;
       compose|evaluate|laplacian)             Resultimage="$Resultimage.${Method}.${Maskgeneratorargument}" ;;
       diffstat)                               Resultimage="$Resultimage.${Method}.${Diffstat1}-${Diffstat2}.r${Radius1}"
         [ "$Radius2" ] &&                     Resultimage="${Resultimage}-r${Radius2}" ;;
@@ -1581,6 +1701,9 @@ check_options() {
       freichen)                               Resultimage="$Resultimage.${Method}"
         [ "$Maskgeneratorargument" ] &&       Resultimage="$Resultimage.${Maskgeneratorargument}" ;;
       "load-masks")                           Resultimage="$Resultimage.loadmask" ;;
+      morphology)                             Resultimage="$Resultimage.${Method}.${Maskgeneratorargument}"
+        [ "$Radius1" ] &&                     Resultimage="${Resultimage}.r${Radius1}"
+        [ "$Radius2" ] &&                     Resultimage="${Resultimage}.R${Radius2}" ;;
       statistic)                              Resultimage="$Resultimage.${Method}.${Maskgeneratorargument}.r${Radius1}" 
         [ "$Radius2" ] &&                     Resultimage="${Resultimage}-r${Radius2}" ;;
       *)                                      Resultimage="$Resultimage.${Method}" ;;
