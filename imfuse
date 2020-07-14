@@ -32,7 +32,7 @@ imfuse provides two basic ways to get overall sharp results.
 Noteable --saturation-weight and --softcut reduce contrast mask artefacts.
  - Another, faster attempt compares max and min images and combines them
 with the compositing methods.                            
-Default method: Mask comparision with --freichen
+Default method: Mask comparision with --log
 
 Compositing methods:
      --compose [=MODE]       Composes a result with mode MODE based on a max
@@ -103,10 +103,9 @@ Mask generating methods:
                              One of interest is '--hard-mask'.
                              Option --radius sets --contrast-window-size=RADIUS.
      --free='IMOPTION'       Custom ImageMagick option IMOPTION 
-                             for mask generation.        Default: '-edge 2'
-     --freediff='IMOPTION'   Custom ImageMagick option IMOPTION 
-                             for mask generation with difference comparision
-                             to source image.            Default: '-edge 2'
+                             for mask generation.        Default: '-sharpen 0x3'
+                             Takes options:
+                               --diff                    Default: yes
      --freichen [=MODE]      Frei-Chen edge detection. Possible MODEs at
                              http://www.imagemagick.org/Usage/convolve/#freichen
                              Default: A combination of modes 1 and 2.
@@ -123,25 +122,22 @@ Mask generating methods:
                              Takes options: 
                                --radius                  Default: 0
                                --sigma1                  Default: 0.75
-     --morphology [=MODE]    Versatile option with many interesting MODEs.
+     --morphology [=MODE]    Rude option to achieve strong contrasts.
                              MODE can be one of '$(basename $Magickbin) -list morphology'
                              Takes options:
-                               --radius1                 Default: 1
-                               --radius2                 Default: 4
-                             --radius1 is not a radius but multiplys the kernel.
-                             --radius2 is the kernel radius.
-                             --radius1 and --radius2 have similar effects, but
-                             --radius1 needs less resources.
-                             MODEs of interest:
-                               dilateintensity
-                               edge
-                               smooth
+                               --radius1 (kernel radius)     Default: 2
+                               --radius2 (kernel iterations) Default: 1
+                               --diff                  Default depends on MODE
+                             Increasing radius 1 or 2 increases contrast.
+                             Some MODEs of interest:
+                               edge, dilateintensity, smooth
      --prewitt               Prewitt edge detection. 
      --roberts               Roberts edge detection. 
      --sobel                 Sobel edge detection. 
      --statistic [=STAT]     IM option -statistic result compared with source.
                              Takes options:
                                --radius                  Default: 2
+                               --diff    Default depends on STAT and --radius2
                              Two-mask difference calculation with options:
                                --radius2                 Default: radius1*3/2
                              Argument STAT is one of (number or name):
@@ -174,10 +170,8 @@ Method depending mask generation adjustments:
  -S, --sigma2=SIGMA2         Second sigma for difference masks. 
 
 General mask generation adjustments:
-     --downweight [=PERCENT] Reduce weight of sharpness masks of lower layers.
-                             Helps to strengthen weak objects in foreground.
-                             A negative PERCENT reduces weight of upper layers.
-                                                         Option w/o PERCENT: 50
+     --diff [=yes|no]        Difference comparision of mask with source image.
+                             Configurable for few options yet.
  -f, --fusemode MODE         Choose fuse mode to combine source images.
                              MODE can be 1 or 2.         Default MODE: 1
                              Fuse mode 1 compares sharpness of source images
@@ -222,6 +216,10 @@ The different masks are combined with a customizable weight. (0..100)
      --darkness-weight [=PERCENT]   Negated Lightness. (CieLAB L)  Default: 40
                                     (Similar to --evaluate=min)
                                     Default: 0           Option w/o PERCENT: 40
+     --downweight [=PERCENT] Reduce weight of sharpness masks of lower layers.
+                             Helps to strengthen weak objects in foreground.
+                             A negative PERCENT reduces weight of upper layers.
+                                                         Option w/o PERCENT: 50
 
 Method independent adjustments:
  -g, --gamma [=GAMMA]        Adjust gamma of result. GAMMA>1 brightens,
@@ -441,6 +439,9 @@ mpr:contrastmask1"
     Maskgenerator="$Maskgenerator
 mpr:contrastmask$Factor -compose screen -composite"
   done
+    [ "$Differencemask" = "yes" ] && Maskgenerator="$Maskgenerator
+mpr:sourceimage
+-compose Difference -composite"
 
   # --negate
   [ "$Negate" = "yes" ] && {
@@ -909,6 +910,15 @@ mpr:mask1 mpr:mask2
 -compose Difference -composite"
         }
       ;;
+      dog)
+        Maskgenerator="
+$Sourceimage
+    -define morphology:showkernel=1    
+-define convolve:scale=100,100%
+-morphology Convolve DoG:${Radius1:-0},${Sigma1:-0.75},${Sigma2:-1.2}
+$Sourceimage
+-compose Difference -composite"
+      ;;
       BLURexperimental)
         Maskgenerator="
 -define convolve:scale=50%!
@@ -928,9 +938,7 @@ $Sourceimage
       experimental) 
         Maskgenerator="
 $Sourceimage
-    -define morphology:showkernel=1    
--define convolve:scale=100,100%
--morphology Convolve LoG:${Radius1:-0}x${Sigma1:-0.75}
+-morphology ${Maskgeneratorargument:-edge}:${Radius2:-1} Octagon:${Radius1:-2}
 $Sourceimage
 -compose Difference -composite"
       ;;
@@ -981,11 +989,6 @@ $Sourceimage
       ;;
       free)
         Maskgenerator="$Sourceimage $Maskgeneratorargument"
-      ;;
-      freediff)
-        Maskgenerator="$Sourceimage $Maskgeneratorargument
-$Sourceimage
--compose Difference -composite"
       ;;
       freichen)
         case $Maskgeneratorargument in
@@ -1066,7 +1069,7 @@ $Sourceimage
       morphology)
         Maskgenerator="
 $Sourceimage
--morphology ${Maskgeneratorargument:-edge}:${Radius1} Octagon:${Radius2}"
+-morphology ${Maskgeneratorargument:-edge}:${Radius2:-1} Octagon:${Radius1:-2}"
       ;;
       none)
         Maskgenerator="$Sourceimage"
@@ -1122,6 +1125,7 @@ declare_variables() {
   Compress=""
   Contrastweight=""
   Darknessweight=""
+  Differencemask=""
   Diffstat1=""
   Diffstat2=""
   Downweight=""
@@ -1181,9 +1185,9 @@ parse_options() {
   
   Shortoptions="b::f:g::hn::o:r:R::s:S::t::vV"
   Longoptions="basename::,cachedir:,help,verbose,version,output:,save-masks::,showimage"
-  Longoptions="$Longoptions,darkness-weight::,lightness-weight::,contrast-weight::,saturation-weight::,chroma-weight::"
+  Longoptions="$Longoptions,darkness-weight::,diff::,lightness-weight::,contrast-weight::,saturation-weight::,chroma-weight::"
   Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,multiply::,negate,noise::,radius:,radius1::,radius2::,revert,sigma:,sigma1:,sigma2::,softcut::,swap,threshold::"
-  Longoptions="$Longoptions,blur::,comet::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freediff::,freichen::,kirsch::,laplacian::,load-masks::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
+  Longoptions="$Longoptions,blur::,comet::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,load-masks::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@" 2>"$Parsererrorfile")"
@@ -1201,6 +1205,7 @@ parse_options() {
          --cachedir)          Cachedir="${2:-}" ; Preservecache="yes" ; shift ;;
          --contrast-weight)   Contrastweight="${2:-auto}" ; shift ;;
          --darkness-weight)   Darknessweight="${2:-auto}" ; shift ;;
+         --diff)              Differencemask="${2:-yes}" ; shift ;;
          --downweight)        Downweight="${2:-auto}" ; shift ;;
       -f|--fusemode)          Fusemode="${2:-auto}" ; shift ;;
       -g|--gamma)             Gamma="${2:-auto}" ; shift ;;
@@ -1224,7 +1229,7 @@ parse_options() {
       -v|--verbose)           Verbose="yes" ;;
          --version)           echo "imfuse v$Version"; exit 0 ;;
       -V|--showimage)         Showimageprocessing="yes" ;;
-         --blur|--comet|--compass|--compose|--diffstat|--gaussian|--enfuse|--evaluate|--experimental|--free|--freediff|--freichen|--kirsch|--laplacian|--load-masks|--log|--morphology|--none|--prewitt|--roberts|--sobel|--statistic|--unsharp)
+         --blur|--comet|--compass|--compose|--diffstat|--gaussian|--enfuse|--evaluate|--experimental|--free|--freichen|--kirsch|--laplacian|--load-masks|--log|--morphology|--none|--prewitt|--roberts|--sobel|--statistic|--unsharp)
         Method="${1#--}"
         Maskgeneratorargument="${2:-}"  && shift
       ;;  
@@ -1275,7 +1280,7 @@ check_options() {
       [ "$Fusemode" = "2" ]        && error "Option --enfuse does not work with --fusemode=2"
     ;;
     "")
-      Method="freichen"
+      Method="log"
       note "Setting --$Method"
     ;;
   esac  
@@ -1367,9 +1372,9 @@ check_options() {
       Loadmaskfile="${Maskgeneratorargument:-$Basename.mask.tif}"
       [ -e "$Loadmaskfile" ] || error "--load-masks: File not found: $Loadmaskfile"
     ;;
-    free|freediff)
+    free)
       [ -z "$Maskgeneratorargument" ] && {
-        Maskgeneratorargument="-edge 2"
+        Maskgeneratorargument="-sharpen 0x3"
         note "Setting --$Method='$Maskgeneratorargument'"
       }
     ;;
@@ -1420,6 +1425,47 @@ check_options() {
           Sourceimagelist="$(tac <<< "$Sourceimagelist")"
           Stripmask="no"
         ;;
+      esac
+    ;;
+  esac
+  
+  # --diff
+  case $Differencemask in
+    "") ;;
+    1|yes) Differencemask="yes" 
+    ;;
+    0|no)  Differencemask="no" ;;
+    *) error "--diff: Unknown argument: $Differencemask" ;;
+  esac
+  case $Differencemask in
+    "") 
+      case $Method in
+        free) Differencemask="yes" ;;
+        morphology)
+          case $Maskgeneratorargument in
+            edge|edgein|edgeout|tophat|bottomhat) ;;
+            *) 
+              Differencemask="yes" 
+              note "Setting --diff=$Differencemask"
+            ;;
+          esac
+        ;;
+        statistic)
+          case $Maskgeneratorargument in
+            gradient|standarddeviation) ;;
+            *) 
+              [ -z "$Radius2" ] && {
+                Differencemask="yes" 
+                note "Setting --diff=$Differencemask"
+              }
+            ;;
+          esac
+      esac
+    ;;
+    *)
+      case $Method in
+        free|morphology|statistic) ;;
+        *) error "--diff: Not supported by --$Method yet." ;;
       esac
     ;;
   esac
@@ -1504,7 +1550,7 @@ check_options() {
       note "Setting --radius=$Radius1"
     ;;
     morphology)
-      Radius1="1"
+      Radius1="2"
       note "Setting --radius=$Radius1"
     ;;
     statistic)
@@ -1533,7 +1579,7 @@ check_options() {
   esac
   [ -z "$Radius2" ] && case $Method in
     morphology)
-      Radius2="4"
+      Radius2="1"
       note "Setting --radius2=$Radius2"
     ;;
   esac
@@ -1604,7 +1650,7 @@ check_options() {
     *)
       case $Softcut in
         "") 
-          Softcut="1"
+          Softcut="0"
           note "Setting --softcut=$Softcut"
         ;;
         auto)
@@ -1648,7 +1694,7 @@ check_options() {
         ""|auto) Contrastweight="100" ;;
       esac
       case $Saturationweight in
-        "")   Saturationweight="5" ;;
+        "")   Saturationweight="0" ;;
         auto) Saturationweight="25" ;;
       esac
       case $Chromaweight in
@@ -1708,6 +1754,7 @@ check_options() {
         [ "$Radius2" ] &&                     Resultimage="${Resultimage}-r${Radius2}" ;;
       *)                                      Resultimage="$Resultimage.${Method}" ;;
     esac
+    [ "$Differencemask" = "yes" ] &&          Resultimage="$Resultimage.diff"
     [ "$Negate" = "yes" ] &&                  Resultimage="$Resultimage.neg"
     case $Method in
       compose) [ "$Swapcompose" ] &&          Resultimage="${Resultimage}.swap";;
