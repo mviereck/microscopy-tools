@@ -380,10 +380,10 @@ setup_workdir() {
     check_fileglob "$Targetmagickdir/$Sourcefileglob" || {
       Imageformat="$(get_extension "$(fileglob "$Targetstackshotdir/$Sourcefileglob")")"
       grep -q -i -x "$Imageformat" <<< "$Imageformatlist" && {
-        mycp "$Targetstackshotdir/$Sourcefileglob" "$Targetmagickdir"
+        mycp "$Targetstackshotdir/$Sourcefileglob" "$Targetmagickdir" || return 1
         :
       } || {
-        imageformat -2 "tif" -s "$Targetstackshotdir" -g "$Sourcefileglob" -d "$Targetmagickdir"
+        imageformat -2 "tif" -s "$Targetstackshotdir" -g "$Sourcefileglob" -d "$Targetmagickdir" || return 1
       }
     }
   }
@@ -434,7 +434,7 @@ setup_workdir() {
       #Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
     ;;
     
-    align*|brightness*|contrast*|crop*|cuberotate*|imageformat*|lightbalance*|gamma*|level*|orient*|rotate*|ruler*|sharpen*|statistic*|stretch*|wizard*)
+    align*|brightness*|contrast*|crop*|cuberotate*|imageformat*|lightbalance*|gamma*|level*|orient*|rotate*|ruler*|sharpen*|statistic*|evalstep*|stretch*|wizard*)
       Sourcedir="$Targetprevdir"
       Destinationdir="$Targetnewdir"
     ;;
@@ -489,7 +489,7 @@ showimage() {
       failure "showimage: Not found: ${1:-}"
       Image="$(storeinfo dump notfoundimage)"
       [ -e "$Image" ] || $Magickbin -size 300x200 xc:red -fill black -pointsize 20 -gravity center -draw "text 0,0 'image not found'" "$Image"
-      geeqie -t -r File:"$Image"
+      geeqie -t -r File:"$Image" 1>&2
       storeinfo drop showimage
       return 1
     ;;
@@ -499,7 +499,7 @@ showimage() {
         gif)
           case $(identify "$Image" | grep -c GIF) in
             1) 
-              geeqie -t -r File:"$Image" 
+              geeqie -t -r File:"$Image" 1>&2
               storeinfo   "showimage=$Image"
             ;;
             *) showvideo "$Image" ;;
@@ -509,13 +509,13 @@ showimage() {
           showvideo "$Image" 
         ;;
         *)       
-          geeqie -t -r File:"$Image" 
+          geeqie -t -r File:"$Image" 1>&2
           storeinfo   "showimage=$Image"
         ;;
       esac
     ;;
 #    1) geeqie -t -r File:"$Imagelist" ;;
-    *) viewnior           $Imagelist & ;;
+    *) viewnior           $Imagelist 1>&2 & ;;
   esac
   return 0
 }
@@ -710,13 +710,14 @@ parse_batchoptions() {
   #! check_fileglob "$Sourcedir/$Sourcefileglob" && failure "$Function: No source files found: $Sourcedir/$Sourcefileglob"  && return 1
   return ${Error:-0}
 }
-getbatchone() {
+getbatchtwo() {
   local Command= Line Argument
   for Line in rotate gamma level contrast sharpen brightness stretch statistic wizard; do
     Argument="$(askkaptain "$Line")"
     [ "$Argument" ] && case $Line in
       brightness) Line="-brightness-contrast" ;;
       contrast)   Line="-sigmoidal-contrast" ;;
+      rotate)     Line="-rotate" ; Argument="$(askkaptain rotateopt1combo)" ;;
       sharpen)    Line="-adaptive-sharpen" ;;
       statistic)  Line="-statistic" ; Argument="$(askkaptain statisticopt1combo) $(askkaptain statisticopt2combo)" ;;
       stretch)    Line="-contrast-stretch" ;;
@@ -758,7 +759,7 @@ runbatchone() {
 runbatchtwo() {
   local $Batchlocal
   Stackdir="${1:-}"
-  cmd -f wizard -1 "$(getbatchone)" -t "$Stackdir"
+  cmd -f wizard -1 "$(getbatchtwo)" -t "$Stackdir"
 }
 runbatchthree() {
   askkaptain evaluate1 >/dev/null        && cmd -f evaluatemagick -t "$Stackdir"
@@ -1299,7 +1300,7 @@ align_vidstab() {
     crop|crop_interactive|common_area) 
       note "align_vidstab: Generating min image"
       #$Magickbin $(fileglob "$Distortdir/*") -evaluate-sequence min "$Cropminimage" || return 1
-      evaluate_split -s "$Distortdir" -1 min -b "$Cropminimage" -c $Cachedir || return 1
+      evaluate_split -s "$Distortdir" -1 min -b "$Cachedir/$Cropminimage" -c $Cachedir || return 1
     ;;
   esac
   
@@ -1723,7 +1724,7 @@ crop() {
       Image="$Cachedir/crop.min.mpc"
       note "crop $Opt1: Generating min image"
       #$Magickbin $(fileglob "$Sourcedir/$Sourcefileglob") -evaluate-sequence min "$Image"
-      evaluate_split -s $Sourcedir -g '$Sourcefileglob' -1 min -b $Image -c $Cachedir || return 1
+      evaluate_split -s $Sourcedir -g "$Sourcefileglob" -1 min -b $Image -c $Cachedir || return 1
       Cropgeometry="$(cropgeometry_interactive "$Image" "$Cachedir" "$Opt2")"
       Rotate="$(cut -s -d: -f2 <<< "$Cropgeometry")"
       Cropgeometry="$(cut -d: -f1 <<< "$Cropgeometry")"
@@ -2159,6 +2160,14 @@ imageformat() {
     showpercent 100 100
     return 0
   }
+  
+  [ "$Imagenumber" = "1" ] && {
+    file -i "$Imagelist" | grep -q video && {
+      note "imageformat(): Splitting video into images with format $Destinationformat"
+      $Magickbin $Imagelist $Destinationdir/frame%04d.$Destinationformat
+      return
+    }
+  }
     
   note "imageformat(): Converting image format from $Sourceformat to $Destinationformat"
   for Image in $Imagelist; do
@@ -2259,6 +2268,38 @@ ruler() {
   done
   multicore_wait || return 1
   return ${Error:-0}
+}
+evalstep() {
+
+  local $Batchlocal
+  local $Imagelocal
+  local Error
+  local Medianlist Mediancount Count
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  Opt1="${Opt1:-median}"
+  Opt2="${Opt2:-5}"
+  
+  Count=0
+  Imagecount=0
+  Mediancount="0"
+  for Image in $Imagelist; do
+    [ "$Error" ] && break
+    Imagecount="$((Imagecount+1))"
+    Medianlist="$Medianlist $Image"
+    Count="$((Count+1))"
+    { [ "$Count" = "$Opt2" ] || [ "$Imagecount" = "$Imagenumber" ] ; } && {
+      Mediancount="$((Mediancount+1))"
+      Destinationfile="$Destinationdir/median$(zeronumber $Mediancount 4).$Imageformat"
+      multicore "$Magickbin $Medianlist -evaluate-sequence $Opt1 $Destinationfile" "$Destinationfile" || Error=1
+      Count="0"
+      Medianlist=""
+    }
+  done
+  multicore_wait || return 1
+  return "${Error:-0}"
 }
 undo() {
   local $Batchlocal
@@ -2671,6 +2712,14 @@ trim_hard() {
   # - Repeat check with new geometry
   while :; do
     # Get part of non-$Trimcolor at each side
+    
+    #Command="$Magickbin $Imagemask -write mpr:imagemask -delete 0"
+    #[ "$Skipleft" ]   || Command="$Command ( mpr:imagemask -crop 1x$((Bottom-Top+1))+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info: )"
+    #[ "$Skipright" ]  || Command="$Command ( mpr:imagemask -crop 1x$((Bottom-Top+1))+$Right+$Top   +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info: )"
+    #[ "$Skiptop" ]    || Command="$Command ( mpr:imagemask -crop $((Right-Left+1))x1+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info: )"
+    #[ "$Skipbottom" ] || Command="$Command ( mpr:imagemask -crop $((Right-Left+1))x1+$Left+$Bottom +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info: )"
+    
+    
     [ "$Skipleft" ]   || $Magickbin $Imagemask -crop 1x$((Bottom-Top+1))+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleleft    & pid1=$!
     [ "$Skipright" ]  || $Magickbin $Imagemask -crop 1x$((Bottom-Top+1))+$Right+$Top   +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilleright   & pid2=$!
     [ "$Skiptop" ]    || $Magickbin $Imagemask -crop $((Right-Left+1))x1+$Left+$Top    +repage -scale 1x1! -precision 4 -format "%[fx:mean]" info:  >/tmp/permilletop     & pid3=$!
@@ -3295,7 +3344,7 @@ start "stackfuser '$Version'"  -> frameset;
           killviewnior                                            -> @action("killall viewnior ffplay")="killall viewnior ffplay";
                 
     specialtab:framed "Special operations" -> specialframe @fill undoframe;
-      specialframe "Special operations" -> imageformatline videoline animationline cuberotateline lightbalanceline rulerline ;
+      specialframe "Special operations" -> imageformatline videoline animationline cuberotateline lightbalanceline evalstepline rulerline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
           ruleropt1combo                                        -> @combo('$Imgrulermodecombo')="100z" ;
           ruleropt2combo:beside       "Title:"                  -> @string ;
@@ -3335,6 +3384,12 @@ start "stackfuser '$Version'"  -> frameset;
           imageformatevaluate                                   -> @button="evaluate" ;
           imageformatfuse                                       -> @button="fuse" ;
           imageformat:beside          "change image format"     -> "";
+        evalstepline:beside                                   -> evalstep evalstepopt1combo evalstepopt2combo evalstepmagick;
+          evalstepopt1combo                                     -> @combow("max","min","mean","median")="median" ;
+          evalstepopt2combo                                     -> @combow("3","5","7","9","15","25")="5" ;
+          evalstepmagick                                        -> @button="magick" ;
+          evalstep:beside             "Evaluate blocks of N images" -> "";
+          
       undoframe                       "undo"                -> undoline;
         undoline:beside                                       -> undo undomagick undofuse undoevaluate;
           undomagick                                            -> @button="magick" ;
@@ -4409,7 +4464,7 @@ parse_cmd() {
     deletebackups)     myrmdir "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
     delete*)           myrmdir "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
-    align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|fuse*|imageformat*|gamma*|level*|lightbalance*|orient*|prepare*|rotate*|sharpen*|statistic*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
+    align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|fuse*|imageformat*|gamma*|level*|lightbalance*|orient*|prepare*|rotate*|sharpen*|statistic*|evalstep*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
       batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -g "$Sourcefileglob" -t "$Targetdir"
       Return=$?
@@ -4476,7 +4531,7 @@ declare_variables() {
 
   #Magickbin="nice convert -quality 100%"
   command -v convert             >/dev/null && Magickbin=convert
-  command -v magick              >/dev/null && Magickbin=magick
+ # command -v magick              >/dev/null && Magickbin=magick
   #command -v convert-im6.q16     >/dev/null && Magickbin=convert-im6.q16
   #command -v convert-im6.q16hdri >/dev/null && Magickbin=convert-im6.q16hdri
   Magickversion="$($Magickbin -version)"
@@ -4502,7 +4557,7 @@ declare_variables() {
   done
   Imgrulermodecombo="${Imgrulermodecombo#,}"
   
-  Imageformatlist="$($Magickbin -list format | grep " rw" | cut -c1-9 | tr -d ' ')
+  Imageformatlist="$($Magickbin -list format | grep " rw" | grep -v -i "video" | cut -c1-9 | tr -d ' ')
 TIF"
   Imageformatlist="$(sort <<< "$Imageformatlist")"
   for Line in $Imageformatlist; do
