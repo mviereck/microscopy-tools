@@ -16,7 +16,7 @@ However, if you are already interested to try them out, please give me some feed
 
 ## imfuse
 
-Fuse focus stackshot images with ImageMagick. (Terminal)
+Fuse focus stackshot images with ImageMagick. In active development, beta stage. (Terminal) 
 
 Dependencies:
  - `imagemagick`
@@ -70,7 +70,10 @@ Dependencies:
  - `viewnior`
  
 ## stackshooter
-GUI for foto stacking with a stepper motor controlled by an Arduino and a camera connected on USB. Beta stage, in active development.
+GUI for foto stacking with a stepper motor controlled by an Arduino and a camera connected on USB. 
+Beta stage, in active development. 
+Note: The user must be in group `dialout` to access the Arduino.
+
 Features:
  - Camera control with `gphoto2` for preview videos and tethered shooting.
  - Stepper motor control for focus adjustment.
