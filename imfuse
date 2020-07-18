@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.2"
+Version="0.3"
 
 usage() {
   echo "imfuse v$Version - combine focus stackshot images to an overall sharp image.
@@ -32,7 +32,7 @@ imfuse provides two basic ways to get overall sharp results.
 Noteable --saturation-weight and --softcut reduce contrast mask artefacts.
  - Another, faster attempt compares max and min images and combines them
 with the compositing methods.                            
-Default method: Mask comparision with --log
+Default method: Mask comparision with --diffstat
 
 Compositing methods:
      --compose [=MODE]       Composes a result with mode MODE based on a max
@@ -166,7 +166,10 @@ Method depending mask generation adjustments:
  -r, --radius=RADIUS1        Automatically chooses a radius if RADIUS=0
  -R, --radius2=RADIUS2       Second radius for difference masks.  
  -s, --sigma=SIGMA1          Sigma for some mask generating methods.
- -S, --sigma2=SIGMA2         Second sigma for difference masks. 
+ -S, --sigma2=SIGMA2         Second sigma for difference masks.
+You can specify a comma separated list for radius and sigma.
+For example, --radius=2,3,4 will generate three contrast masks 
+with different radii and combine them to one mask.
 
 General mask generation adjustments:
      --diff [=yes|no]        Difference comparision of mask with source image.
@@ -243,13 +246,16 @@ verbose() {
   return 0
 }
 showimage() {
-  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r File:"${1:-}" &
+  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r File:"${1:-}"
   #[ "$Showimageprocessing" = "yes" ] && display -remote "${1:-}" &
   return 0
 }
 
 ### Misc
 
+comma2whitespace() {
+  sed "s/,/ /g" <<< "${1:-}"
+}
 freememory() {
   local Freemem Line Zram
   Freemem="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
@@ -415,6 +421,7 @@ fuse_focus_stackshot()  {
   # Based on snibgo's focus stacking script at http://im.snibgo.com/focstack.htm
   
   local Count Number Line Showimage
+  local R1 R2 S1 S2 Masknumber
   local Sourcemasklist Enfusemasklist
   local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Softimage
   local Maskmax Contrastminlevel Contrastmaxlevel
@@ -423,28 +430,53 @@ fuse_focus_stackshot()  {
   local Color Pixelnumber Pixelcount Layerimage Layerimagelist Colornumber Histogramm
   
   Maskmax="$Cachedir/mask.max.tif"
-  Maskcompose="screen"
   
   Softimage=$Cachedir/soft.tif
   $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Softimage
-  
-  # experimental: same mask with three parameter sets. No option yet. 
-  for Factor in $(seq $Multiply); do
-    Maskgenerator="$Maskgenerator 
-$(maskfilter "mpr:sourceimage" "$(multiply $Radius1 $Factor)" "$(multiply $Radius2 $Factor)" "$(multiply $Sigma1 $Factor)" "$(multiply $Sigma2 $Factor)" "$Maskgeneratorargument" "$Diffstat1" "$Diffstat2")
--write mpr:contrastmask$Factor
+
+  # Generate mask generator command part. Regard multiple radii and sigma.
+  Radius1="$(comma2whitespace "$Radius1")"
+  Radius2="$(comma2whitespace "$Radius2")"
+  Sigma1="$(comma2whitespace "$Sigma1")"
+  Sigma2="$(comma2whitespace "$Sigma2")"
+  Masknumber="0"
+  for R1 in ${Radius1:-none}; do
+    [ "$R1" = "none" ] && R1=""
+    for R2 in ${Radius2:-none}; do
+      [ "$R2" = "none" ] && R2=""
+      [ "$R2" = "auto" ] && case $Method in
+        statistic|diffstat)        R2="$((R1*3/2))" ;;
+        morphology)                R2="2" ;;
+        blur|gaussian|log|unsharp) R2="$R1" ;;
+      esac
+      for S1 in ${Sigma1:-none}; do
+        [ "$S1" = "none" ] && S1=""
+        for S2 in ${Sigma2:-none}; do
+          [ "$S2" = "none" ] && S2=""
+          [ "$S2" = "auto" ] && S2="$(awk "BEGIN {print $S1 * 1.6}")"
+          Masknumber="$((Masknumber+1))"
+          Maskgenerator="$Maskgenerator 
+$(maskfilter "$Method" "mpr:sourceimage" "$R1" "$R2" "$S1" "$S2" "$Maskgeneratorargument" "$Diffstat1" "$Diffstat2")
+-write mpr:contrastmask$Masknumber
 -delete 0"
+        done
+      done
+    done
   done
   Maskgenerator="$Maskgenerator
 mpr:contrastmask1"
-  for Factor in $(seq 2 $Multiply); do
-    Maskgenerator="$Maskgenerator
-mpr:contrastmask$Factor -compose screen -composite"
-  done
-    [ "$Differencemask" = "yes" ] && Maskgenerator="$Maskgenerator
+  [ "$Masknumber" -gt "1" ] && {
+    Maskgenerator="$Maskgenerator 
+-evaluate Divide $Masknumber"
+    for Count in $(seq 2 $Masknumber); do
+      Maskgenerator="$Maskgenerator 
+( mpr:contrastmask$Count -evaluate Divide $Masknumber ) -compose Screen -composite"
+    done
+  }
+  
+  [ "$Differencemask" = "yes" ] && Maskgenerator="$Maskgenerator
 mpr:sourceimage
 -compose Difference -composite"
-
 
   # --negate
   [ "$Negate" = "yes" ] && {
@@ -594,6 +626,14 @@ Contrastmaxlevel=%[fx:maxima*100]
 ' info:)"
       eval $Imageproperties
 
+      Maskcompose="screen"
+
+      Masknumber="1"
+      [ "$Saturationweight" -gt "0" ] && Masknumber="$((Masknumber+1))"
+      [ "$Chromaweight" -gt "0" ] && Masknumber="$((Masknumber+1))"
+      [ "$Darknessweight" -gt "0" ] && Masknumber="$((Masknumber+1))"
+      [ "$Lightnessweight" -gt "0" ] && Masknumber="$((Masknumber+1))"
+      
       # Level contrast mask into visible range. Merge --weight-xxx masks.
       Startzeit="$(date +%s)"
       Count=0
@@ -614,15 +654,15 @@ Contrastmaxlevel=%[fx:maxima*100]
         Command="$Magickbin
           $Sourcemask
             -level ${Contrastminlevel}%,${Contrastmaxlevel}%"
-        Command="$Command    +level 0%,${Contrastweight}%     +level 1%,99%"
+        Command="$Command    +level 0%,${Contrastweight}%     +level 1%,99% -evaluate Divide $Masknumber"
         [ "$Saturationweight" -gt "0" ] && Command="$Command
-          ( $Saturationmask  +level 0%,${Saturationweight}% ) +level 1%,99% -compose $Maskcompose -composite"
+          ( $Saturationmask  +level 0%,${Saturationweight}% ) +level 1%,99% -evaluate Divide $Masknumber -compose $Maskcompose -composite"
         [ "$Chromaweight" -gt "0" ] && Command="$Command
-          ( $Chromamask      +level 0%,${Chromaweight}% )     +level 1%,99% -compose $Maskcompose -composite"
+          ( $Chromamask      +level 0%,${Chromaweight}% )     +level 1%,99% -evaluate Divide $Masknumber -compose $Maskcompose -composite"
         [ "$Darknessweight" -gt "0" ] && Command="$Command
-          ( $Darknessmask  +level 0%,${Darknessweight}% )     +level 1%,99% -compose $Maskcompose -composite"
+          ( $Darknessmask  +level 0%,${Darknessweight}% )     +level 1%,99% -evaluate Divide $Masknumber -compose $Maskcompose -composite"
         [ "$Lightnessweight" -gt "0" ] && Command="$Command
-          ( $Lightnessmask  +level 0%,${Lightnessweight}% )   +level 1%,99% -compose $Maskcompose -composite"
+          ( $Lightnessmask  +level 0%,${Lightnessweight}% )   +level 1%,99% -evaluate Divide $Masknumber -compose $Maskcompose -composite"
         Command="$Command
             $Downweightoption
           $Tifstore $Sourcemask"
@@ -699,13 +739,16 @@ Contrastmaxlevel=%[fx:maxima*100]
           -write mpr:sourcepartmask
           -delete 0"
         # Soft mask edges -> store
+        
       false &&  Command="$Command
           mpr:sourceimage ( mpr:sourcepartmask -blur 0x${Softcut:-3} )
             -alpha Off -compose CopyOpacity -composite
           $Softimage
             -compose Over -composite
+            -type TrueColorAlpha
             -write $Softimage
             -delete 0"
+            
         # get part of source image
         Command="$Command
           mpr:sourceimage mpr:sourcepartmask
@@ -850,17 +893,18 @@ Contrastmaxlevel=%[fx:maxima*100]
 maskfilter() {
     # Mask generating ImageMagick options
     # Most of them are based on edge detection: http://www.imagemagick.org/Usage/convolve/#edgedet
-    local Sourceimage Radius1 Radius2 Sigma1 Sigma2 Maskgeneratorargument Diffstat1 Diffstat2
+    local Method Sourceimage Radius1 Radius2 Sigma1 Sigma2 Maskgeneratorargument Diffstat1 Diffstat2
     local Maskgenerator
     
-    Sourceimage="${1:-}"
-    Radius1="${2:-}"
-    Radius2="${3:-}"
-    Sigma1="${4:-}"
-    Sigma2="${5:-}"
-    Maskgeneratorargument="${6:-}"
-    Diffstat1="${7:-}"
-    Diffstat2="${8:-}"
+    Method="${1:-none}"
+    Sourceimage="${2:-}"
+    Radius1="${3:-}"
+    Radius2="${4:-}"
+    Sigma1="${5:-}"
+    Sigma2="${6:-}"
+    Maskgeneratorargument="${7:-}"
+    Diffstat1="${8:-}"
+    Diffstat2="${9:-}"
     
     case $Method in
       blur)
@@ -975,6 +1019,7 @@ $Sourceimage
 -define morphology:compose=Lighten
 -define convolve:bias=50%
 -morphology Convolve FreiChen:1>
+-evaluate Divide 2
 )
 (
 $Sourceimage
@@ -982,6 +1027,7 @@ $Sourceimage
 -define morphology:compose=Lighten
 -define convolve:bias=50%
 -morphology Convolve FreiChen:2>
+-evaluate Divide 2
 )
 -compose Screen
 -composite"
@@ -1126,7 +1172,6 @@ declare_variables() {
   Softcut=""
   Maskgeneratorargument=""
   Mode=""
-  Multiply="1"
   Negate="no"
   Noise=""
   Outputimage=""
@@ -1157,7 +1202,7 @@ parse_options() {
   Shortoptions="b::f:g::hn::o:r:R::s:S::t::vV"
   Longoptions="basename::,cachedir:,help,verbose,version,output:,save-masks::,showimage"
   Longoptions="$Longoptions,darkness-weight::,diff::,lightness-weight::,contrast-weight::,saturation-weight::,chroma-weight::"
-  Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,multiply::,negate,noise::,radius:,radius1::,radius2::,revert,sigma:,sigma1:,sigma2::,softcut::,swap,threshold::"
+  Longoptions="$Longoptions,background::,downweight::,fusemode:,grayscale:,gamma::,layers::,negate,noise::,radius:,radius1::,radius2::,revert,sigma:,sigma1:,sigma2::,softcut::,swap,threshold::"
   Longoptions="$Longoptions,blur::,comet::,compass::,compose::,diffstat::,gaussian::,enfuse::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,load-masks::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
@@ -1183,7 +1228,6 @@ parse_options() {
          --grayscale)         Grayscale="${2:-auto}" ; shift ;;
          --chroma-weight)     Chromaweight="${2:-auto}" ; shift ;;
          --layers)            Storelayers="yes" ; Layernumber="${2:-auto}" ; shift ;;
-         --multiply)          Multiply="${2:-3}" ; shift ;;
          --negate)            Negate="yes" ;;
       -n|--noise)             Noise="${2:-auto}" ; shift ;;
       -o|--output)            Outputimage="${2:-}" ; shift ;;
@@ -1251,7 +1295,7 @@ check_options() {
       [ "$Fusemode" = "2" ]        && error "Option --enfuse does not work with --fusemode=2"
     ;;
     "")
-      Method="log"
+      Method="diffstat"
       note "Setting --$Method"
     ;;
   esac  
@@ -1524,34 +1568,9 @@ check_options() {
   
   # --radius2
   [ "$Radius2" ] && case $Method in
-    statistic|diffstat)
-      [ "$Radius2" = "$Radius1" ] && {
-        error "--radius2=$Radius2 is same as --radius1=$Radius1."
-      }
-    ;;
     morphology) ;;
     compose|evaluate|freichen|kirsch|laplacian|prewitt|roberts|sobel)
       error "--radius2 is not supported by --$Method"
-    ;;
-  esac
-  [ -z "$Radius2" ] && case $Method in
-    morphology)
-      Radius2="1"
-      note "Setting --radius2=$Radius2"
-    ;;
-  esac
-  [ "$Radius2" = "auto" ] && case $Method in
-    statistic|diffstat)
-      Radius2="$((Radius1*3/2))"
-      note "Setting --radius2=$Radius2"
-    ;;
-    morphology)
-      Radius2="$Radius1"
-      note "Setting --radius2=$Radius2"
-    ;;
-    blur|gaussian|log|unsharp)
-      Radius2="$Radius1"
-      note "Setting --radius2=$Radius2"
     ;;
   esac
   
@@ -1583,15 +1602,7 @@ check_options() {
   
   # --sigma2
   case $Method in
-    experimental) ;;
-    blur|gaussian|log|unsharp)
-      [ "$Sigma2" = "auto" ] && {
-        Sigma2="$(awk "BEGIN {print $Sigma1 * 1.6}")"
-        note "Setting --sigma2=$Sigma2"
-      }
-      [ "$Sigma1" = "$Sigma2" ] && note "--sigma2 is same as --sigma1.
-  This is likely wrong."
-    ;;
+    experimental|blur|gaussian|log|unsharp) ;;
     *)
       [ -n "$Sigma2" ] && {
         error "Not used with --method=$Method: --sigma2=$Sigma2"
@@ -1730,10 +1741,6 @@ check_options() {
           [ "$Darknessweight" != "0" ]     && Resultimage="${Resultimage}d${Darknessweight}"
           [ "$Lightnessweight" != "0" ]    && Resultimage="${Resultimage}l${Lightnessweight}"
         }
-        case $Multiply in
-          0|"") ;;
-          *) Resultimage="${Resultimage}.multi$Multiply" ;;
-        esac
         case $Softcut in
           0|"") ;;
           *) Resultimage="${Resultimage}.soft$Softcut" ;;
