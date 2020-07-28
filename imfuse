@@ -176,12 +176,18 @@ General mask generation adjustments:
      --diff [=yes|no]        Difference comparision of mask with source image.
                              Configurable for few options yet.
  -f, --fusemode MODE         Choose fuse mode to combine source images.
-                             MODE can be 1 or 2.         Default MODE: 1
-                             Fuse mode 1 compares sharpness of source images
+                             MODE can be 1,2 or 3.         Default MODE: 1
+                             - Fuse mode 1 compares sharpness of source images
                              and generates the result of the sharpest 
-                             topmost areas.
-                             Fuse mode 2 compares sharpness of source and result
+                             topmost areas. Sharp contrast, but many artefacts.
+                             Every pixel matches exactly one pixel from one 
+                             source image.
+                             - Fuse mode 2 compares sharpness of source and result
                              in each iteration and overwrites parts of result.
+                             Interesting results, but not exactly real.
+                             - Fuse mode 3 uses semi-transparent layers with
+                             sharpest layers topmost. Soft result with decreased
+                             contrast and no artefacts.
      --grayscale=ARG         Grayscale converting method before mask generation.
                              Compare IM options -grayscale and -intensity.
                              ARG is one of: (number or name)
@@ -350,6 +356,7 @@ $(grep "\S" <<< "$Command")"
   
   return ${Error:-0}
 }
+
 compose_stepx() {
   local Stacklist Imagenumber Stackcount Stackdir Step Image1 Image2 Image3
   Stacklist="$Sourceimagelist"
@@ -406,6 +413,7 @@ compose_step2() {
   $Magickbin $Cachedir/max.overlay.tif $Cachedir/min.overlay.tif -compose overlay -composite $Cachedir/overlay.overlay.tif
   showimage $Cachedir/overlay.overlay.tif
 }
+
 evaluate_split() {
 
   local Sourceimagelist Resultimage Mode
@@ -491,7 +499,7 @@ focus_maskmethod() {
       # Concept and result is similar to Difference of Gaussian (DoG). Using -gaussian-blur gives same as DoG.
       # Code based on https://im.snibgo.com/simpalign.htm#twoBlrDiff.bat
       Maskgenerator="
-  ( $Sourceimage -blur ${Radius1}x${Sigma1} -write mpr:mask1 -delete 0 )"
+  ( $Sourceimage -blur ${Radius1:-0}x${Sigma1:-0.75} -write mpr:mask1 -delete 0 )"
       case "$Radius2$Sigma2" in
         "") 
           Maskgenerator="$Maskgenerator
@@ -499,7 +507,7 @@ focus_maskmethod() {
         ;;
         *) 
           Maskgenerator="$Maskgenerator
-  ( $Sourceimage -blur ${Radius2:-$Radius1}x${Sigma2:-$Sigma1} -write mpr:mask2 -delete 0 )
+  ( $Sourceimage -blur ${Radius2:-0}x${Sigma2:-1.2} -write mpr:mask2 -delete 0 )
   mpr:mask1 mpr:mask2"
         ;;
       esac
@@ -527,9 +535,9 @@ focus_maskmethod() {
     diffstat)
       Maskgenerator=""
       [ "$Diffstat1" = "source" ] && Maskgenerator="$Maskgenerator $Sourceimage" || Maskgenerator="$Maskgenerator
-  ( $Sourceimage -statistic $Diffstat1 ${Radius1} )"
+  ( $Sourceimage -statistic ${Diffstat1:-median} ${Radius1:-5} )"
       [ "$Diffstat2" = "source" ] && Maskgenerator="$Maskgenerator $Sourceimage" || Maskgenerator="$Maskgenerator
-  ( $Sourceimage -statistic $Diffstat2 ${Radius1} )"
+  ( $Sourceimage -statistic ${Diffstat2:-mean} ${Radius1:-5} )"
 Maskgenerator="$Maskgenerator
     -compose Difference -composite"
       [ "$Radius2" ] && {
@@ -537,9 +545,9 @@ Maskgenerator="$Maskgenerator
     -write mpr:mask1
     -delete 0"
         [ "$Diffstat1" = "source" ] && Maskgenerator="$Maskgenerator $Sourceimage" || Maskgenerator="$Maskgenerator
-  ( $Sourceimage -statistic $Diffstat1 ${Radius2} )"
+  ( $Sourceimage -statistic ${Diffstat1:-median} ${Radius2:-10} )"
         [ "$Diffstat2" = "source" ] && Maskgenerator="$Maskgenerator $Sourceimage" || Maskgenerator="$Maskgenerator
-  ( $Sourceimage -statistic $Diffstat2 ${Radius2} )"
+  ( $Sourceimage -statistic ${Diffstat2:-mean} ${Radius2:-10} )"
         Maskgenerator="$Maskgenerator
     -compose Difference -composite
     -write mpr:mask2
@@ -630,7 +638,7 @@ Maskgenerator="$Maskgenerator
       case $Sigma2 in
         "")
           Maskgenerator="
-  ( $Sourceimage -gaussian-blur ${Radius1}x${Sigma1} )
+  ( $Sourceimage -gaussian-blur ${Radius1:-0}x${Sigma1:-0.75} )
   $Sourceimage
     -compose Difference -composite"
         ;;
@@ -657,7 +665,7 @@ Maskgenerator="$Maskgenerator
   $Sourceimage
     -define convolve:bias=5%
     -define convolve:scale=100%!
-    -morphology Convolve Laplacian:$Maskgeneratorargument>"
+    -morphology Convolve Laplacian:${Maskgeneratorargument:-0}>"
     ;;
     log)  # LoG: Laplacian of Gaussian
       Maskgenerator="
@@ -701,14 +709,14 @@ Maskgenerator="$Maskgenerator
     ;;
     statistic)
       Maskgenerator="
-  ( $Sourceimage -statistic $Maskgeneratorargument ${Radius1}x${Radius1} )"
+  ( $Sourceimage -statistic $Maskgeneratorargument ${Radius1:-2}x${Radius1:-2} )"
         [ "$Radius2" ] && Maskgenerator="$Maskgenerator
-  ( $Sourceimage -statistic $Maskgeneratorargument ${Radius2}x${Radius2} )
+  ( $Sourceimage -statistic $Maskgeneratorargument ${Radius2:-5}x${Radius2:-5} )
     -compose Difference -composite"
     ;;
     unsharp)
       Maskgenerator="
-  ( $Sourceimage -unsharp ${Radius1}x${Sigma1} )
+  ( $Sourceimage -unsharp ${Radius1:-0}x${Sigma1:-5} )
   $Sourceimage
     -compose Difference -composite"
     ;;
@@ -1193,20 +1201,19 @@ $(grep "\S" <<< "$Command")"
   return ${Error:-0}
 }
 focus_fuse_mode3() {
+  # Soft focus stacking with semi-transparent layers
   # --fusemode=3
 
-  local Softimage
-  local M3resulttop M3resultbottom M3maxmask
+  local Resulttop Resultbottom
+  local Count Number
+  local Command
+  local Startzeit Dauer Restzeit
   
-  Softimage=$Cachedir/soft.tif
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Softimage
-  
-  M3resulttop="$Cachedir/M3top.tif"
-  M3resultbottom="$Cachedir/M3bottom.tif"
-  M3maxmask="$Cachedir/M3maxmask.tif"
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $M3resulttop
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $M3resultbottom
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type Grayscale $Tifstore $M3maxmask
+  Resulttop="$Cachedir/resulttop.tif"
+  Resultbottom="$Cachedir/resultbottom.tif"
+  $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Resulttop
+  $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Resultbottom
+  $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type Grayscale $Tifstore $Maskmax
   
   Startzeit="$(date +%s)"
   Count=0    
@@ -1224,19 +1231,19 @@ $Magickbin
   $Sourcemask
     -write mpr:sourcemask
     -delete 0
-  $M3maxmask
+  $Maskmax
     -write mpr:maxmask
     -delete 0
-  $M3resulttop
+  $Resulttop
     -write mpr:resultimagetop
     -delete 0
-  $M3resultbottom
+  $Resultbottom
     -write mpr:resultimagebottom
     -delete 0
   mpr:sourcemask mpr:maxmask 
     -evaluate-sequence max
     -write mpr:maxmask
-    -write $M3maxmask
+    -write $Maskmax
     -delete 0
   mpr:sourcemask 
   mpr:maxmask
@@ -1261,7 +1268,7 @@ $Magickbin
     -compose Over -composite
     -type TrueColorAlpha
     -write mpr:resultimagetop
-    -write $M3resulttop
+    -write $Resulttop
     -delete 0
   mpr:sourcemask 
   ( mpr:cutmask -negate )
@@ -1278,33 +1285,21 @@ $Magickbin
     -compose Over -composite
     -type TrueColorAlpha
     -write mpr:resultimagebottom
-    -write $M3resultbottom
+    -write $Resultbottom
     -delete 0
-  mpr:resultimagetop 
+  mpr:resultimagebottom
+  mpr:resultimagetop
+    -compose Over -composite
+    -type TrueColorAlpha
+    -write $Testimage
   $Resultimage"
-          #mpr:resultimagebottom mpr:resultimagetop
-          #  -compose SrcOver -composite
-          #  -type TrueColorAlpha
-          #$Tifstore $Resultimage"
-
-    false &&  Command="$Command
-          mpr:sourceimage mpr:sourcemask
-          -compose CopyOpacity -composite
-          -write $Cachedir/alpha$Number.tif
-          $Testimage -compose DstOver -composite
-          -write Testimage
-          -delete 0"
           
     [ "$Count" = "1" ] && verbose "Fusing with:
 $(grep "\S" <<< "$Command")"
 
     $Command || error "Error in fuse mode 3"
-     
-    #showimage $M3maxmask
-    showimage $Testimage
-    #showimage $M3maxmask
-    #showimage $M3resulttop
-    #showimage $Resultimage
+    
+    showimage $Resultimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
     verbose "$Method $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
