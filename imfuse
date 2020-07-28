@@ -298,6 +298,58 @@ unspecialstring() {             # replace special chars of $1 with -
 
 ### Image processing
 
+compose_stack() {
+  local Command
+  local Sourceimagelist Resultimage Mode
+  local Startzeit Dauer Restzeit
+  local Startzeit Dauer Restzeit Count
+  
+  Mode="${1:-}" ; shift
+  Resultimage="${1:-}" ; shift
+  while [ $# -gt 0 ]; do
+    Sourceimagelist="$Sourceimagelist
+${1:-}"
+    shift
+  done
+  Sourceimagelist="$(grep "\S" <<< "$Sourceimagelist")"
+  
+  [ "$Freemem" -lt "$Imagelistmemsize" ] && {
+  
+    verbose "--compose: Generating max image"
+    evaluate_split max $Cachedir/max.tif $Sourceimagelist
+    verbose "--compose: Generating min image"
+    evaluate_split min $Cachedir/min.tif $Sourceimagelist
+    verbose "--compose: compositing $Mode"
+    Command="$Magickbin
+  ( $Cachedir/max.tif -evaluate multiply ${Composefactor:-1} )
+  ( $Cachedir/min.tif -evaluate multiply ${Composefactor:-1} )
+    $Swapcompose
+    -compose $Mode -composite
+    $Tifstore
+  $Resultimage"
+            
+  } || {
+          
+    Command="$Magickbin
+  $(echo $Sourceimagelist)
+  ( -clone 0--1 -evaluate-sequence max -evaluate multiply ${Composefactor:-1} -write mpr:max -delete 0--1 )
+  ( -clone 0--1 -evaluate-sequence min -evaluate multiply ${Composefactor:-1} -write mpr:min -delete 0--1 )
+    -delete 0--1 \
+  mpr:max mpr:min 
+    $Swapcompose
+    -compose $Mode -composite
+    $Tifstore
+  $Resultimage"
+            
+  }
+            
+  verbose "compose command:
+$(grep "\S" <<< "$Command")"
+              
+  $Command || error "Error in --$Method=$Maskgeneratorargument"
+  
+  return ${Error:-0}
+}
 compose_stepx() {
   local Stacklist Imagenumber Stackcount Stackdir Step Image1 Image2 Image3
   Stacklist="$Sourceimagelist"
@@ -860,7 +912,9 @@ Contrastmaxlevel=%[fx:maxima*100]
   
   #Meandiff=$Cachedir/mean.tif
   #evaluate_split mean $Meandiff $Sourceimagelist
-  #Masknumber="$((Masknumber+1))"
+  Masknumber="$((Masknumber+1))"
+  Overlaydiff=$Cachedir/overlay.tif
+  #compose_stack overlay $Overlaydiff $Sourceimagelist
       
   Startzeit="$(date +%s)"
   Count=0
@@ -912,6 +966,9 @@ $Magickbin
     -compose screen -composite"
 false && Command="$Command
   ( $Meandiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((50/Masknumber))% -write $Testimage ) -compose screen -composite"
+false && Command="$Command
+  ( $Overlaydiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((100/Masknumber))% -write $Testimage ) -compose screen -composite"
+  
     Command="$Command
     -write mpr:sourcemask
     -delete 0"
@@ -942,8 +999,8 @@ $(grep "\S" <<< "$Command")"
    
     $Command || error "Error in leveling masks: $Method"
       
-    showimage $Testimage
-    #showimage "$Sourcemask"
+    #showimage $Testimage
+    showimage "$Sourcemask"
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
     verbose "Leveling $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
@@ -1181,44 +1238,50 @@ $Magickbin
     -write mpr:maxmask
     -write $M3maxmask
     -delete 0
-  mpr:sourcemask mpr:maxmask
+  mpr:sourcemask 
+  mpr:maxmask
     -compose MinusDst -composite -fill white +opaque black -negate
     -write mpr:cutmask
-    -delete 0
-  mpr:sourcemask mpr:cutmask
+     -write $Testimage
+   -delete 0
+  mpr:sourcemask 
+  mpr:cutmask
     -alpha off -compose CopyOpacity -composite
     -write mpr:sourcemaskpart
     -delete 0
-  mpr:sourceimage mpr:sourcemaskpart
+  mpr:sourceimage 
+  mpr:sourcemaskpart
+    -alpha off -compose CopyOpacity -composite
+    -background blue -fill blue -alpha background
+    -write mpr:semitransparent
+    -alpha off
+    -delete 0
+  mpr:resultimagetop
+  mpr:semitransparent
+    -compose Over -composite
+    -type TrueColorAlpha
+    -write mpr:resultimagetop
+    -write $M3resulttop
+    -delete 0
+  mpr:sourcemask 
+  ( mpr:cutmask -negate )
+    -alpha off -compose CopyOpacity -composite
+    -write mpr:sourcemaskpart
+    -delete 0
+  mpr:sourceimage 
+  mpr:sourcemaskpart
     -alpha off -compose CopyOpacity -composite
     -write mpr:semitransparent
-    -write $Softimage
     -delete 0
-          
-          -page +0+0 mpr:semitransparent +page 
-          mpr:resultimagetop 
--insert 0 
-          -background None -flatten
-            -write mpr:resultimagetop
-            -type TrueColorAlpha
-            -write $M3resulttop
-            -delete 0
-          mpr:sourcemask ( mpr:cutmask -negate )
-            -alpha off -compose CopyOpacity -composite
-            -write mpr:sourcemaskpart
-            -delete 0
-          mpr:sourceimage mpr:sourcemaskpart
-            -alpha off -compose CopyOpacity -composite
-            -write mpr:semitransparent
-            -delete 0
-          mpr:resultimagebottom mpr:semitransparent
-            -compose DstOver -composite
-            -write mpr:resultimagebottom
-            -type TrueColorAlpha
-            -write $M3resultbottom
-            -delete 0
-          mpr:resultimagetop 
-          $Resultimage"
+  mpr:resultimagebottom 
+  mpr:semitransparent
+    -compose Over -composite
+    -type TrueColorAlpha
+    -write mpr:resultimagebottom
+    -write $M3resultbottom
+    -delete 0
+  mpr:resultimagetop 
+  $Resultimage"
           #mpr:resultimagebottom mpr:resultimagetop
           #  -compose SrcOver -composite
           #  -type TrueColorAlpha
@@ -1228,17 +1291,19 @@ $Magickbin
           mpr:sourceimage mpr:sourcemask
           -compose CopyOpacity -composite
           -write $Cachedir/alpha$Number.tif
-          $Softimage -compose DstOver -composite
-          -write $Softimage
+          $Testimage -compose DstOver -composite
+          -write Testimage
           -delete 0"
           
     [ "$Count" = "1" ] && verbose "Fusing with:
 $(grep "\S" <<< "$Command")"
 
     $Command || error "Error in fuse mode 3"
-        
-    #showimage $Softimage
-    showimage $M3resulttop
+     
+    #showimage $M3maxmask
+    showimage $Testimage
+    #showimage $M3maxmask
+    #showimage $M3resulttop
     #showimage $Resultimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
@@ -1388,7 +1453,6 @@ declare_variables() {
   Sourceimagelist=""
   Sourcemasklist=""
   Startzeit="$(date +%s)"
-  Stepsize=""
   Storelayers=""
   Stripmask="no"
   Swapcompose=""
@@ -2081,58 +2145,14 @@ main() {
   Maskmax="$Cachedir/mask.max.tif"
   
   Testimage=$Cachedir/test.tif
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type Grayscale $Tifstore $Testimage
+  $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type TrueColorAlpha $Tifstore $Testimage
   
   case $Method in
     evaluate)
       evaluate_split "$Maskgeneratorargument" "$Resultimage" $Sourceimagelist || error "Error in --$Method=$Maskgeneratorargument"
     ;;
     compose)
-      case $Stepsize in
-        ""|0|all)
-          [ "$Freemem" -lt "$Imagelistmemsize" ] && {
-            verbose "--compose: Generating max image"
-            evaluate_split max $Cachedir/max.tif $Sourceimagelist
-            verbose "--compose: Generating min image"
-            evaluate_split min $Cachedir/min.tif $Sourceimagelist
-            verbose "--compose: compositing $Maskgeneratorargument"
-            Command="$Magickbin
-  ( $Cachedir/max.tif -evaluate multiply ${Composefactor:-1} )
-  ( $Cachedir/min.tif -evaluate multiply ${Composefactor:-1} )
-    $Swapcompose
-    -compose $Maskgeneratorargument -composite
-    $Tifstore
-  $Resultimage"
-            
-            verbose "--compose command:
-$Command"
-              
-            $Command || error "Error in --$Method=$Maskgeneratorargument"
-            
-          } || {
-          
-            Command="$Magickbin
-  $(echo $Sourceimagelist)
-  ( -clone 0--1 -evaluate-sequence max -evaluate multiply ${Composefactor:-1} -write mpr:max -delete 0--1 )
-  ( -clone 0--1 -evaluate-sequence min -evaluate multiply ${Composefactor:-1} -write mpr:min -delete 0--1 )
-    -delete 0--1 \
-  mpr:max mpr:min 
-    $Swapcompose
-    -compose $Maskgeneratorargument -composite
-    $Tifstore
-  $Resultimage"
-            
-            verbose "--compose command:
-$Command"
-
-            $Command || error "Error in --$Method=$Maskgeneratorargument"
-            
-          }
-        ;;
-        *)
-          compose_step
-        ;;
-      esac
+      compose_stack  "$Maskgeneratorargument" "$Resultimage" $Sourceimagelist || error "Error in --$Method=$Maskgeneratorargument"
     ;;
     *)
       $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Resultimage || error "Failed to create transparent base image."
