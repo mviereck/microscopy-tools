@@ -730,7 +730,7 @@ focus_generate_masks() {
   local Command Imageproperties
   local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Denoisemask
   local Count Number R1 R2 S1 S2 Masknumber
-  local Denoise1image Denoise2image Denoisediffimage
+  local Denoise1image Denoise2image #Denoisediffimage
   local Startzeit Dauer Restzeit
     
   # Generate mask generator command part. Regard multiple radii and sigma.
@@ -981,9 +981,11 @@ $Magickbin
     -compose Difference -composite 
     -grayscale RMS 
     -negate 
-    +level 0%,$((50/Masknumber))% ) 
+    +level 0%,$((100/Masknumber))% ) 
     -compose screen -composite"
-    
+#  $Denoisediffimage 
+#    -compose multiply -composite
+        
 false && Command="$Command
   ( $Meandiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((50/Masknumber))% -write $Testimage ) -compose screen -composite"
 false && Command="$Command
@@ -2167,22 +2169,20 @@ main() {
       [ "$Error" ] && return 1
       showimage "$Resultimage"
       
-      focus_generate_masks
-      [ "$Error" ] && return 1
-      focus_merge_masks
-      [ "$Error" ] && return 1
+      focus_generate_masks         || return 1
       
       case $Fusemode in
-        2) focus_fuse_mode2 || return 1 ;;
-        3) focus_fuse_mode3 || return 1 ;;
-        4) focus_fuse_mode4 || return 1 ;;
+        2|3|4) 
+          focus_merge_masks        || return 1
+          focus_fuse_mode$Fusemode || return 1 
+        ;;
         1)
           Softresult="$Cachedir/softresult.tif"
-          focus_fuse_mode3  || return 1
+          focus_fuse_mode3         || return 1
           cp $Resultimage $Softresult
-          focus_merge_masks || return 1
+          focus_merge_masks        || return 1
           $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Resultimage || error "Failed to create transparent base image."
-          focus_fuse_mode2  || return 1
+          focus_fuse_mode2         || return 1
         ;;
       esac
       [ "$Storelayers" ] && focus_sharpness_layer
