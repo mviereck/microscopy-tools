@@ -28,7 +28,7 @@ General options:
  
 imfuse provides two basic ways to get overall sharp results.
  - The traditional way is contrast comparision with the mask methods below.
-Noteable --denoise, --saturation-weight and --softcut reduce contrast artefacts.
+Reduce artefacts with --soft-weight, --saturation-weight, --denoise, --cutsoft.
  - Another, faster attempt compares max and min images and combines them
 with the compositing methods.                            
 Default method: Mask comparision with --diffstat
@@ -114,7 +114,7 @@ Mask generating methods:
                              Takes options: 
                                --radius                  Default: 0
                                --sigma1                  Default: 0.75
-     --morphology [=MODE]    Rude option to achieve strong contrasts.
+     --morphology [=MODE]    Achieves strong contrasts.
                              MODE can be one of '$(basename $Magickbin) -list morphology'
                              Takes options:
                                --radius1 (kernel radius)     Default: 2
@@ -202,7 +202,7 @@ General mask generation adjustments:
                 8 MS               (R'^2 + G'^2 + B'^2) / 3.0
                 9 RMS              sqrt( (R'^2 + G'^2 + B'^2) / 3.0 ) (default)
      --negate                Invert contrast mask.
-     --softcut [=SIGMA]      Add a semi-transparent blur around cut masks. 
+     --cutsoft [=SIGMA]      Add a semi-transparent blur around cut masks. 
                              Reduces some artefacts. Disable with SIGMA=0
                              Default: 1                  Option w/o SIGMA: 3
  -t, --threshold [=PERCENT]  Do not use pixels less significant than PERCENT%.
@@ -214,6 +214,8 @@ They are extracted from image colorspace calculations. (HSB, HCL and CieLAB).
 The different masks are combined with a customizable weight. (0..100)
      --contrast-weight [=PERCENT]   Contrast mask weight.          
                                     Default: 100         Option w/o PERCENT: 100
+     --soft-weight [=PERCENT]       Weight of soft mask from --fusemode=3.
+                                    Default: 0           Option w/o PERCENT: 50
      --saturation-weight [=PERCENT] Saturation weight. (HSB)
                                     Default: 5           Option w/o PERCENT: 15
      --chroma-weight [=PERCENT]     Color intensity weight. (HCL)
@@ -837,54 +839,13 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
     -depth 16
     -write mpr:sourceimage
     -delete 0"
-    Command="$Command
+    grep -q contrast <<< "$Needmask"  && Command="$Command
 $Maskgenerator
     -alpha off
     -write mpr:sourcemask
     $Tifstore 
     -write $Sourcemask
     -delete 0"
-    
-    
-    grep -q soft <<< "$Needmask" && Command="$Command
-  $Maskmax
-    -write mpr:maskmax
-    -delete 0
-  $Softresult
-    -write mpr:softresult
-    -delete 0
-  mpr:sourcemask 
-  mpr:maskmax 
-    -evaluate-sequence max
-    -write mpr:maskmax
-    -write $Maskmax
-    -delete 0
-  mpr:sourcemask 
-  mpr:maskmax
-    -compose MinusDst -composite -fill white +opaque black -negate
-    -write mpr:cutmask
-    -write $Testimage
-    -delete 0
-  mpr:sourcemask 
-  mpr:cutmask
-    -alpha off -compose CopyOpacity -composite
-    -write mpr:sourcemaskpart
-    -alpha off
-    -delete 0
-  mpr:sourceimage 
-  mpr:sourcemaskpart
-    -alpha off -compose CopyOpacity -composite
-    -background blue -fill blue -alpha background
-    -write mpr:semitransparent
-    -delete 0
-  mpr:softresult
-  mpr:semitransparent
-    -compose Over -composite
-    -type TrueColorAlpha
-    -write mpr:softresult
-    -write $Softresult
-    -delete 0"
-    
     # --saturation-weight
     grep -q saturation <<< "$Needmask" && Command="$Command
   mpr:sourceimage
@@ -920,7 +881,7 @@ $Maskgenerator
     -delete 0"
     # --denoise
     [ "$Denoise" ]                     && Command="$Command
-  mpr:${Denoise} $Denoisediffimage 
+  ${Denoise}.${Number}.tif $Denoisediffimage 
     -compose multiply -composite
     -write $Denoisemask
     -delete 0"
@@ -929,43 +890,102 @@ $Maskgenerator
           
     [ "$Count" = "1" ] && verbose "Generating masks with:
 $(grep "\S" <<< "$Command")"
-            
+
     $Command || error "Failure in mask generation"
-        
+    
     #showimage $Testimage
     showimage "$Sourcemask"
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "$Method: Generating masks $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+    verbose "$Method: Contrast mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
   done
+  
+  
+  # max of contrast masks to level single contrast masks
+  grep -q contrast <<< "$Needmask"  && {
+    evaluate_split max $Maskmax $Sourcemasklist || return 1
+    Imageproperties="$($Magickbin "$Maskmax" -format '
+Contrastminlevel=%[fx:minima*100]
+Contrastmaxlevel=%[fx:maxima*100]
+' info:)"
+    eval $Imageproperties
+  
+    Startzeit="$(date +%s)"
+    Count=0
+    for Sourceimage in $Sourceimagelist; do
+      [ "$Error" ] && break
+      Count="$((Count+1))"
+      Number="$(printnum $Count $Imagenumberlength)"
+      Sourcemask="$Cachedir/mask.${Number}.tif"
+            
+      Command="
+$Magickbin
+  $Sourcemask
+    -level ${Contrastminlevel}%,${Contrastmaxlevel}%
+  $Sourcemask"
+  
+      $Command || error "Failure in leveling contrast masks"
+  
+      showimage "$Sourcemask"
+      Dauer="$(( $(date +%s)-Startzeit))"
+      Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
+      verbose "Leveling $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+    done
+    [ "$Error" ] && return "${Error:-0}"
+  }
+    
+  # --soft-weight masks
+  grep -q soft <<< "$Needmask"  && {
+    focus_fuse_mode3
+      
+    # Generate masks
+    Startzeit="$(date +%s)"
+    Count=0
+    for Sourceimage in $Sourceimagelist; do
+      [ "$Error" ] && break
+      Count="$((Count+1))"
+      Number="$(printnum $Count $Imagenumberlength)"
+      Softmask="$Cachedir/soft.${Number}.tif"
         
+      Command="$Magickbin
+  ( $Sourceimage -grayscale $Grayscale -alpha off )
+  ( $Softresult  -grayscale $Grayscale -alpha off )
+    -compose Difference -composite
+    -negate
+  $Softmask"
+         
+       $Command || error "Failure in soft mask generation"
+  
+      [ "$Count" = "1" ] && verbose "Generating soft masks with:
+$(grep "\S" <<< "$Command")"
+
+      showimage $Softmask
+      Dauer="$(( $(date +%s)-Startzeit))"
+      Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
+      verbose "$Method: Soft mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+    done
+  }
+  
   return "${Error:-0}"
 }
 focus_merge_masks() {
-  # Level contrast mask into visible range. Merge --weight-xxx masks.
+  # Merge different masks.
   
   local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Denoisemask Softmask
   local Downweightoption 
   local Count Masknumber Number
   local Command
   local Startzeit Dauer Restzeit
-  
-  # max of masks to level single masks
-  evaluate_split max $Maskmax $Sourcemasklist || return 1
-  Imageproperties="$($Magickbin "$Maskmax" -format '
-Contrastminlevel=%[fx:minima*100]
-Contrastmaxlevel=%[fx:maxima*100]
-' info:)"
-  eval $Imageproperties
 
-  Masknumber="1"
+  Masknumber="0"
+  [ "$Contrastweight" != "0" ]   && Masknumber="$((Masknumber+1))"
   [ "$Saturationweight" != "0" ] && Masknumber="$((Masknumber+1))"
   [ "$Chromaweight" != "0" ]     && Masknumber="$((Masknumber+1))"
   [ "$Darknessweight" != "0" ]   && Masknumber="$((Masknumber+1))"
   [ "$Lightnessweight" != "0" ]  && Masknumber="$((Masknumber+1))"
   [ "$Softweight" != "0" ]       && Masknumber="$((Masknumber+1))"
   [ "$Denoiseweight" != "0" ]    && Masknumber="$((Masknumber+1))"
-
+  
   #Meandiff=$Cachedir/mean.tif
   #evaluate_split mean $Meandiff $Sourceimagelist
   #Masknumber="$((Masknumber+1))"
@@ -992,10 +1012,12 @@ Contrastmaxlevel=%[fx:maxima*100]
     [ "${Downweight:-0}" -gt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 + $Downweight*$((Imagenumber-Count))/$Imagenumber }")%"
             
     Command="
-$Magickbin
-  $Sourcemask
-    -level ${Contrastminlevel}%,${Contrastmaxlevel}%
-    +level 0%,$((Contrastweight/Masknumber))%"
+$Magickbin"
+    [ "$Contrastweight" = "0" ]  && Command="$Command
+  ( -size ${Imagewidth}x${Imageheight} xc:black )"
+    [ "$Contrastweight" != "0" ] && Command="$Command
+  ( $Sourcemask
+    +level 0%,$((Contrastweight/Masknumber))% )"
     # --saturation-weight
     [ "$Saturationweight" != "0" ] && Command="$Command
   ( $Saturationmask  
@@ -1021,20 +1043,11 @@ $Magickbin
   ( $Denoisemask
     +level 0%,$((Denoiseweight/Masknumber))% )
     -compose screen -composite"
-    # --fusemode 4
+    # --soft-weight
     [ "$Softweight" != "0" ]       && Command="$Command
-  mpr:sourceimage
-  ( -clone -1
-  $Softresult
-    -alpha off
-    -compose Difference -composite 
-    -grayscale RMS 
-    -negate
+  ( $Softmask
     +level 0%,$((Softweight/Masknumber))% )
-    -delete -2
     -compose screen -composite"
-#  $Denoisediffimage 
-#    -compose multiply -composite
         
 false && Command="$Command
   ( $Meandiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((50/Masknumber))% -write $Testimage ) -compose screen -composite"
@@ -1067,15 +1080,15 @@ false && Command="$Command
     $Tifstore 
   $Sourcemask"
   
-    [ "$Count" = "1" ] && verbose "Leveling masks with:
+    [ "$Count" = "1" ] && verbose "Merging masks with:
 $(grep "\S" <<< "$Command")"
    
-    $Command || error "Error in leveling masks: $Method"
+    $Command || error "Error in merging masks: $Method"
       
     showimage "$Sourcemask"
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "Leveling $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+    verbose "Merging $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
   done
   [ "$Error" ] && return "${Error:-0}"
       
@@ -1084,7 +1097,7 @@ $(grep "\S" <<< "$Command")"
   
   return ${Error:-0}
 }
-focus_fuse_mode2() {
+focus_fuse_mode1() {
   # --fusemode=2
   # Fuse images, hard contrast
 
@@ -1095,6 +1108,10 @@ focus_fuse_mode2() {
   
   # Default fuse mode: Find sharpest area in source (brightest in maskmax). First source image wins if it shares same sharpness with later source images.
   
+  mk_transparent ${Imagewidth}x${Imageheight} $Resultimage
+ 
+  # max of masks to compare single masks
+  evaluate_split max $Maskmax $Sourcemasklist || return 1
   # copy of max mask to remove already fused areas from it
   cp $Maskmax $Maskmax.strip.tif
   
@@ -1210,114 +1227,7 @@ $(grep "\S" <<< "$Command")"
        
   return "${Error:-0}"
 }
-focus_fuse_mode3() {
-  # Soft focus stacking with semi-transparent layers
-  # --fusemode=3
-
-  local Resulttop Resultbottom
-  local Count Number
-  local Command
-  local Startzeit Dauer Restzeit
-  
-  Resulttop="$Cachedir/resulttop.tif"
-  Resultbottom="$Cachedir/resultbottom.tif"
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Resulttop
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Resultbottom
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type Grayscale $Tifstore $Maskmax
-  
-  Startzeit="$(date +%s)"
-  Count=0    
-  for Sourceimage in $Sourceimagelist; do
-    [ "$Error" ] && break
-    Count="$((Count+1))"
-    Number="$(printnum $Count $Imagenumberlength)"
-    Sourcemask="$Cachedir/mask.${Number}.tif"
-    
-    Command="
-$Magickbin
-  $Sourceimage
-    -write mpr:sourceimage
-    -delete 0
-  $Sourcemask
-    -write mpr:sourcemask
-    -delete 0
-  $Maskmax
-    -write mpr:maskmax
-    -delete 0
-  $Resulttop
-    -write mpr:resultimagetop
-    -delete 0
-  $Resultbottom
-    -write mpr:resultimagebottom
-    -delete 0
-  mpr:sourcemask 
-  mpr:maskmax 
-    -evaluate-sequence max
-    -write mpr:maskmax
-    -write $Maskmax
-    -delete 0
-  mpr:sourcemask 
-  mpr:maskmax
-    -compose MinusDst -composite -fill white +opaque black -negate
-    -write mpr:cutmask
-   -delete 0
-  mpr:sourcemask 
-  mpr:cutmask
-    -alpha off -compose CopyOpacity -composite
-    -write mpr:sourcemaskpart
-    -delete 0
-  mpr:sourceimage 
-  mpr:sourcemaskpart
-    -alpha off -compose CopyOpacity -composite
-    -background blue -fill blue -alpha background
-    -write mpr:semitransparent
-    -delete 0
-  mpr:resultimagetop
-  mpr:semitransparent
-    -compose Over -composite
-    -type TrueColorAlpha
-    -write mpr:resultimagetop
-    -write $Resulttop
-    -delete 0
-  mpr:sourcemask 
-  ( mpr:cutmask -negate )
-    -alpha off -compose CopyOpacity -composite
-    -write mpr:sourcemaskpart
-    -delete 0
-  mpr:sourceimage 
-  mpr:sourcemaskpart
-    -alpha off -compose CopyOpacity -composite
-    -write mpr:semitransparent
-    -delete 0
-  mpr:resultimagebottom 
-  mpr:semitransparent
-    -compose Over -composite
-    -type TrueColorAlpha
-    -write mpr:resultimagebottom
-    -write $Resultbottom
-    -delete 0
-  mpr:resultimagebottom
-  mpr:resultimagetop
-    -compose Over -composite
-    -type TrueColorAlpha
-  $Resultimage"
-          
-    [ "$Count" = "1" ] && verbose "Fusing with:
-$(grep "\S" <<< "$Command")"
-
-    $Command || error "Error in fuse mode 3"
-    
-    showimage $Resultimage
-    Dauer="$(( $(date +%s)-Startzeit))"
-    Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "$Method $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
-  done
-  
-  $Magickbin $Resultimage -alpha off $Resultimage
-  
-  return "${Error:-0}"
-}
-focus_fuse_mode4() {
+focus_fuse_mode2() {
   # --fusemode=2: Compare on each step if source or result seem to be more sharp
   # Based on snibgo's focus stacking script at http://im.snibgo.com/focstack.htm
 
@@ -1327,6 +1237,7 @@ focus_fuse_mode4() {
   local Startzeit Dauer Restzeit
   
   cp "$(head -n1 <<< "$Sourceimagelist")" "$Resultimage" || error "Failed to copy first source image"
+  mk_transparent ${Imagewidth}x${Imageheight} $Resultimage
   
   Startzeit="$(date +%s)"
   Count=0
@@ -1371,6 +1282,130 @@ $(grep "\S" <<< "$Command")"
   done
   
   return ${Error:-0}
+}
+focus_fuse_mode3() {
+  # Soft focus stacking with semi-transparent layers
+  # --fusemode=3
+
+  local Resulttop Resultbottom
+  local Count Number
+  local Command
+  local Startzeit Dauer Restzeit
+  
+  Resulttop="$Cachedir/resulttop.tif"
+  Resultbottom="$Cachedir/resultbottom.tif"
+  $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type Grayscale $Tifstore $Maskmax
+  mk_transparent ${Imagewidth}x${Imageheight} $Resulttop
+  mk_transparent ${Imagewidth}x${Imageheight} $Resultbottom
+  mk_transparent ${Imagewidth}x${Imageheight} $Resultimage
+  
+  Startzeit="$(date +%s)"
+  Count=0    
+  for Sourceimage in $Sourceimagelist; do
+    [ "$Error" ] && break
+    Count="$((Count+1))"
+    Number="$(printnum $Count $Imagenumberlength)"
+    Sourcemask="$Cachedir/mask.${Number}.tif"
+    
+    Command="
+$Magickbin
+  $Sourceimage
+    -alpha off
+    -write mpr:sourceimage
+    -delete 0
+  $Sourcemask
+    -alpha off
+    -write mpr:sourcemask
+    -delete 0
+  $Maskmax
+    -alpha off
+    -write mpr:maskmax
+    -delete 0
+  $Resulttop
+    -alpha set
+    -write mpr:resultimagetop
+    -delete 0
+  $Resultbottom
+    -alpha set
+    -write mpr:resultimagebottom
+    -delete 0
+  mpr:sourcemask 
+  mpr:maskmax 
+    -evaluate-sequence max
+    -write mpr:maskmax
+    -write $Maskmax
+    -delete 0
+  mpr:sourcemask 
+  mpr:maskmax
+    -compose MinusDst -composite -fill white +opaque black -negate
+    -transparent white
+    -write mpr:cutmask
+    -delete 0
+  mpr:sourcemask 
+  mpr:cutmask
+    -compose Over -composite
+    -write mpr:sourcemaskpart
+    -delete 0
+  mpr:sourceimage 
+  mpr:sourcemaskpart
+    -alpha off -compose CopyOpacity -composite
+    -write mpr:semitransparent
+    -alpha off
+    -delete 0
+  mpr:resultimagetop
+  mpr:semitransparent
+    -compose Over -composite
+    -type TrueColorAlpha
+    -write mpr:resultimagetop
+    -write $Resulttop
+    -delete 0
+  mpr:sourcemask 
+  ( mpr:cutmask -negate )
+    -compose Over -composite
+    -write mpr:sourcemaskpart
+    -delete 0
+  mpr:sourceimage 
+  mpr:sourcemaskpart
+    -alpha off -compose CopyOpacity -composite
+    -write mpr:semitransparent
+    -delete 0
+  mpr:resultimagebottom 
+  mpr:semitransparent
+    -compose Over -composite
+    -type TrueColorAlpha
+    -write mpr:resultimagebottom
+    -write $Resultbottom
+    -delete 0
+  null:"
+#  mpr:resultimagebottom
+#  mpr:resultimagetop
+#    -compose Over -composite
+#    -type TrueColorAlpha
+#  $Resultimage"
+          
+    [ "$Count" = "1" ] && verbose "Fusing with:
+$(grep "\S" <<< "$Command")"
+
+    $Command || error "Error in fuse mode 3"
+    
+    #showimage $Testimage
+    showimage $Resulttop
+    Dauer="$(( $(date +%s)-Startzeit))"
+    Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
+    verbose "soft stack $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+  done
+  
+  [ "$Error" ] && return $Error
+
+  $Magickbin \
+    $Resultbottom \
+    $Resulttop \
+      -compose Over -composite \
+      -alpha off \
+      -type TrueColor \
+    $Resultimage || error "Failed to compose top and bottom of soft image"
+  
+  return "${Error:-0}"
 }
 focus_sharpness_layer() {
   # --layers: Layered TIF with sharpness layers
@@ -1452,7 +1487,9 @@ $Magickbin
   
   return "${Error:-0}"
 }
-
+mk_transparent() {
+  $Magickbin -size ${1:-100x100} xc:blue -transparent blue -type TrueColorAlpha $Tifstore ${2:-transparent.tif} || error "Failed to create transparent image."
+}
 ### main
 
 declare_variables() {
@@ -1532,7 +1569,7 @@ parse_options() {
   Shortoptions="d::,f:g::hn::o:r:R::s:S::t::vV"
   Longoptions="basename::,cachedir:,help,verbose,version,output:,showimage"
   Longoptions="$Longoptions,chroma-weight::,darkness-weight::,denoise-weight::,lightness-weight::,contrast-weight::,saturation-weight::,soft-weight::"
-  Longoptions="$Longoptions,denoise::,diff::,downweight::,factor::,fusemode:,grayscale:,gamma::,layers::,negate,radius:,radius1::,radius2::,revert,sigma:,sigma1:,sigma2::,softcut::,swap,threshold::"
+  Longoptions="$Longoptions,denoise::,diff::,downweight::,factor::,fusemode:,grayscale:,gamma::,layers::,negate,radius:,radius1::,radius2::,revert,sigma:,sigma1:,sigma2::,cutsoft::,swap,threshold::"
   Longoptions="$Longoptions,blur::,comet::,compass::,compose::,diffstat::,gaussian::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
@@ -1568,7 +1605,7 @@ parse_options() {
          --saturation-weight) Saturationweight="${2:-auto}" ; shift ;;
       -s|--sigma|--sigma1)    Sigma1="${2:-}" ; shift ;;
       -S|--sigma2)            Sigma2="${2:-auto}" ; shift ;;
-         --softcut)           Softcut="${2:-auto}" ; shift ;;
+         --cutsoft)           Softcut="${2:-auto}" ; shift ;;
          --soft-weight)       Softweight="${2:-auto}" ; shift ;;
          --swap)              Swapcompose="-swap 0,1" ;;
       -t|--threshold)         Threshold="${2:-auto}" ; shift ;;
@@ -1759,7 +1796,7 @@ check_options() {
         case $Denoise in
           "") ;;
           auto) Denoise="saturation" ;;
-          1|2|3|4|chroma|darkness|lightness|saturation) ;;
+          1|2|3|4|5|chroma|darkness|lightness|saturation|soft) ;;
           *) error "--denoise: Unknown argument $Denoise"
         esac
         case $Denoise in
@@ -1767,6 +1804,7 @@ check_options() {
           2|darkness)   Denoiseindex=2 ; Denoise="darkness" ;;
           3|lightness)  Denoiseindex=3 ; Denoise="lightness" ;;
           4|saturation) Denoiseindex=4 ; Denoise="saturation" ;;
+          5|soft)       Denoiseindex=5 ; Denoise="soft" ;;
         esac
       ;;
     esac
@@ -1955,17 +1993,17 @@ check_options() {
     ;;
   esac
   
-  # --softcut
+  # --cutsoft
   case $Method in
     evaluate|compose) 
-      [ "$Softcut" ] && error "--softcut has no effect with --$Method"
+      [ "$Softcut" ] && error "--cutsoft has no effect with --$Method"
     ;;
     *)
       case $Softcut in
         "") ;;
         auto)
           Softcut="2"
-          note "Setting --softcut=$Softcut"
+          note "Setting --cutsoft=$Softcut"
         ;;
         *) Softcut="$(sed s/%// <<< "$Softcut")" ;;
       esac
@@ -2033,7 +2071,8 @@ check_options() {
       #[ "$Contrastweight" = "0" ] && [ "$Softweight" = "0" ] && Method="none"
     ;;
   esac
-  [ "$Softweight" != "0" ]       && Needmask="$Needmask soft"
+  [ "$Contrastweight" != "0" ]   && Needmask="$Needmask contrast"
+  [ "$Softweight" != "0" ]       && Needmask="$Needmask contrast soft"
   [ "$Saturationweight" != "0" ] && Needmask="$Needmask saturation"
   [ "$Chromaweight" != "0" ]     && Needmask="$Needmask chroma"
   [ "$Darknessweight" != "0" ]   && Needmask="$Needmask darkness"
@@ -2089,7 +2128,7 @@ check_options() {
       compose|evaluate) ;;
       *)
         case $Fusemode in
-          XXX1) ;;
+          1) ;;
           *) Resultimage="${Resultimage}.f$Fusemode" ;;
         esac
         [ "${Contrastweight}${Softweight}${Saturationweight}${Chromaweight}${Darknessweight}${Lightnessweight}" != "10000000" ] && {
@@ -2153,7 +2192,7 @@ check_options() {
 --radius2=$Radius2
 --sigma=$Sigma1
 --sigma2=$Sigma2
---softcut=$Softcut
+--cutsoft=$Softcut
 --threshold=$Threshold
 --contrast-weight=$Contrastweight
 --denoise-weight=$Denoiseweight
@@ -2216,9 +2255,7 @@ main() {
   Maskmax="$Cachedir/mask.max.tif"
   $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type Grayscale $Tifstore $Maskmax
   Softresult="$Cachedir/softresult.tif"
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Softresult
-  Testimage=$Cachedir/test.tif
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type TrueColorAlpha $Tifstore $Testimage
+  Testimage="$Cachedir/test.tif"
   
   case $Method in
     evaluate)
@@ -2228,25 +2265,9 @@ main() {
       compose_stack  "$Maskgeneratorargument" "$Resultimage" $Sourceimagelist || error "Error in --$Method=$Maskgeneratorargument"
     ;;
     *)
-      $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Resultimage || error "Failed to create transparent base image."
-      [ "$Error" ] && return 1
-      showimage "$Resultimage"
-      
-      focus_generate_masks         || return 1
-      
-      case $Fusemode in
-        2|3|4) 
-          focus_merge_masks        || return 1
-          focus_fuse_mode$Fusemode || return 1 
-        ;;
-        1)
-          focus_fuse_mode3         || return 1
-          cp $Resultimage $Softresult
-          focus_merge_masks        || return 1
-          $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Resultimage || error "Failed to create transparent base image."
-          focus_fuse_mode2         || return 1
-        ;;
-      esac
+      focus_generate_masks     || return 1
+      focus_merge_masks        || return 1
+      focus_fuse_mode$Fusemode || return 1
       [ "$Storelayers" ] && focus_sharpness_layer
     ;;
   esac
