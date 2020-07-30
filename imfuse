@@ -728,10 +728,19 @@ focus_generate_masks() {
   # Generate masks for focus image stackshot.
   
   local Command Imageproperties
-  local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Denoisemask
+  local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Denoisemask Softmask
   local Count Number R1 R2 S1 S2 Masknumber
   local Denoise1image Denoise2image #Denoisediffimage
   local Startzeit Dauer Restzeit
+    
+  # --grayscale
+  Maskgenerator="
+  mpr:sourceimage"
+  [ "$Grayscaleconverter" ] && Maskgenerator="$Maskgenerator
+    $Grayscaleconverter"
+  Maskgenerator="$Maskgenerator
+    -write mpr:sourcegray
+    -delete 0"
     
   # Generate mask generator command part. Regard multiple radii and sigma.
   Radius1="$(comma2whitespace "$Radius1")"
@@ -755,7 +764,7 @@ focus_generate_masks() {
           [ "$S2" = "auto" ] && S2="$(awk "BEGIN {print $S1 * 1.6}")"
           Masknumber="$((Masknumber+1))"
           Maskgenerator="$Maskgenerator 
-$(focus_maskmethod "$Method" "mpr:sourceimage" "$R1" "$R2" "$S1" "$S2" "$Maskgeneratorargument" "$Diffstat1" "$Diffstat2")
+$(focus_maskmethod "$Method" "mpr:sourcegray" "$R1" "$R2" "$S1" "$S2" "$Maskgeneratorargument" "$Diffstat1" "$Diffstat2")
     -write mpr:contrastmask$Masknumber
     -delete 0"
         done
@@ -783,14 +792,6 @@ $(focus_maskmethod "$Method" "mpr:sourceimage" "$R1" "$R2" "$S1" "$S2" "$Maskgen
     Maskgenerator="$Maskgenerator
     -negate"
   }
-
-  # --grayscale
-  [ "$Grayscaleconverter" ] && Maskgenerator="
-  mpr:sourceimage 
-    $Grayscaleconverter
-    -write mpr:sourceimage
-    -delete 0
-$Maskgenerator"
       
   # --denoise
   [ "$Denoise" ] && {
@@ -826,6 +827,7 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
     Darknessmask="$Cachedir/darkness.${Number}.tif"      
     Lightnessmask="$Cachedir/lightness.${Number}.tif"
     Denoisemask="$Cachedir/denoise.${Number}.tif"
+    Softmask="$Cachedir/soft.${Number}.tif"
         
     Sourcemasklist="$Sourcemasklist $Sourcemask"
         
@@ -835,6 +837,54 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
     -depth 16
     -write mpr:sourceimage
     -delete 0"
+    Command="$Command
+$Maskgenerator
+    -alpha off
+    -write mpr:sourcemask
+    $Tifstore 
+    -write $Sourcemask
+    -delete 0"
+    
+    
+    grep -q soft <<< "$Needmask" && Command="$Command
+  $Maskmax
+    -write mpr:maskmax
+    -delete 0
+  $Softresult
+    -write mpr:softresult
+    -delete 0
+  mpr:sourcemask 
+  mpr:maskmax 
+    -evaluate-sequence max
+    -write mpr:maskmax
+    -write $Maskmax
+    -delete 0
+  mpr:sourcemask 
+  mpr:maskmax
+    -compose MinusDst -composite -fill white +opaque black -negate
+    -write mpr:cutmask
+    -write $Testimage
+    -delete 0
+  mpr:sourcemask 
+  mpr:cutmask
+    -alpha off -compose CopyOpacity -composite
+    -write mpr:sourcemaskpart
+    -alpha off
+    -delete 0
+  mpr:sourceimage 
+  mpr:sourcemaskpart
+    -alpha off -compose CopyOpacity -composite
+    -background blue -fill blue -alpha background
+    -write mpr:semitransparent
+    -delete 0
+  mpr:softresult
+  mpr:semitransparent
+    -compose Over -composite
+    -type TrueColorAlpha
+    -write mpr:softresult
+    -write $Softresult
+    -delete 0"
+    
     # --saturation-weight
     grep -q saturation <<< "$Needmask" && Command="$Command
   mpr:sourceimage
@@ -875,17 +925,14 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
     -write $Denoisemask
     -delete 0"
     Command="$Command
-$Maskgenerator
-    -alpha off
-    $Tifstore 
-    $Sourcemask"
+  null:"
           
     [ "$Count" = "1" ] && verbose "Generating masks with:
 $(grep "\S" <<< "$Command")"
             
     $Command || error "Failure in mask generation"
         
-    #showimage $Denoisemask
+    #showimage $Testimage
     showimage "$Sourcemask"
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
@@ -897,7 +944,7 @@ $(grep "\S" <<< "$Command")"
 focus_merge_masks() {
   # Level contrast mask into visible range. Merge --weight-xxx masks.
   
-  local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Denoisemask
+  local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Denoisemask Softmask
   local Downweightoption 
   local Count Masknumber Number
   local Command
@@ -916,15 +963,14 @@ Contrastmaxlevel=%[fx:maxima*100]
   [ "$Chromaweight" != "0" ]     && Masknumber="$((Masknumber+1))"
   [ "$Darknessweight" != "0" ]   && Masknumber="$((Masknumber+1))"
   [ "$Lightnessweight" != "0" ]  && Masknumber="$((Masknumber+1))"
-  [ "$Denoise" ]                 && Masknumber="$((Masknumber+1))"
-  
+  [ "$Softweight" != "0" ]       && Masknumber="$((Masknumber+1))"
+  [ "$Denoiseweight" != "0" ]    && Masknumber="$((Masknumber+1))"
+
   #Meandiff=$Cachedir/mean.tif
   #evaluate_split mean $Meandiff $Sourceimagelist
   #Masknumber="$((Masknumber+1))"
   Overlaydiff=$Cachedir/overlay.tif
   #compose_stack overlay $Overlaydiff $Sourceimagelist
-
-  [ -e "$Softresult" ] && Masknumber="$((Masknumber+1))"
       
   Startzeit="$(date +%s)"
   Count=0
@@ -939,6 +985,7 @@ Contrastmaxlevel=%[fx:maxima*100]
     Darknessmask="$Cachedir/darkness.${Number}.tif"     
     Lightnessmask="$Cachedir/lightness.${Number}.tif"
     Denoisemask="$Cachedir/denoise.${Number}.tif"
+    Softmask="$Cachedir/soft.${Number}.tif"
         
     # -downweight
     [ "${Downweight:-0}" -lt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 - $Downweight*$Count/$Imagenumber }")%"
@@ -975,13 +1022,16 @@ $Magickbin
     +level 0%,$((Denoiseweight/Masknumber))% )
     -compose screen -composite"
     # --fusemode 4
-    [ -e "$Softresult" ] && Command="$Command
-  ( $Softresult 
-  $Sourceimage 
+    [ "$Softweight" != "0" ]       && Command="$Command
+  mpr:sourceimage
+  ( -clone -1
+  $Softresult
+    -alpha off
     -compose Difference -composite 
     -grayscale RMS 
-    -negate 
-    +level 0%,$((100/Masknumber))% ) 
+    -negate
+    +level 0%,$((Softweight/Masknumber))% )
+    -delete -2
     -compose screen -composite"
 #  $Denoisediffimage 
 #    -compose multiply -composite
@@ -1022,7 +1072,6 @@ $(grep "\S" <<< "$Command")"
    
     $Command || error "Error in leveling masks: $Method"
       
-    #showimage $Testimage
     showimage "$Sourcemask"
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
@@ -1193,7 +1242,7 @@ $Magickbin
     -write mpr:sourcemask
     -delete 0
   $Maskmax
-    -write mpr:maxmask
+    -write mpr:maskmax
     -delete 0
   $Resulttop
     -write mpr:resultimagetop
@@ -1202,13 +1251,13 @@ $Magickbin
     -write mpr:resultimagebottom
     -delete 0
   mpr:sourcemask 
-  mpr:maxmask 
+  mpr:maskmax 
     -evaluate-sequence max
-    -write mpr:maxmask
+    -write mpr:maskmax
     -write $Maskmax
     -delete 0
   mpr:sourcemask 
-  mpr:maxmask
+  mpr:maskmax
     -compose MinusDst -composite -fill white +opaque black -negate
     -write mpr:cutmask
    -delete 0
@@ -1449,7 +1498,6 @@ declare_variables() {
   Maskmax=""
   Method=""
   Needmask=""
-  Softcut=""
   Maskgeneratorargument=""
   Mode=""
   Negate="no"
@@ -1458,7 +1506,9 @@ declare_variables() {
   Preservecache="no"
   Saturationweight=""
   Showimageprocessing="no"
+  Softcut=""
   Softresult=""
+  Softweight=""
   Sourceimage=""
   Sourceimagelist=""
   Sourcemasklist=""
@@ -1481,7 +1531,7 @@ parse_options() {
   
   Shortoptions="d::,f:g::hn::o:r:R::s:S::t::vV"
   Longoptions="basename::,cachedir:,help,verbose,version,output:,showimage"
-  Longoptions="$Longoptions,darkness-weight::,denoise-weight::,lightness-weight::,contrast-weight::,saturation-weight::,chroma-weight::"
+  Longoptions="$Longoptions,chroma-weight::,darkness-weight::,denoise-weight::,lightness-weight::,contrast-weight::,saturation-weight::,soft-weight::"
   Longoptions="$Longoptions,denoise::,diff::,downweight::,factor::,fusemode:,grayscale:,gamma::,layers::,negate,radius:,radius1::,radius2::,revert,sigma:,sigma1:,sigma2::,softcut::,swap,threshold::"
   Longoptions="$Longoptions,blur::,comet::,compass::,compose::,diffstat::,gaussian::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
@@ -1519,6 +1569,7 @@ parse_options() {
       -s|--sigma|--sigma1)    Sigma1="${2:-}" ; shift ;;
       -S|--sigma2)            Sigma2="${2:-auto}" ; shift ;;
          --softcut)           Softcut="${2:-auto}" ; shift ;;
+         --soft-weight)       Softweight="${2:-auto}" ; shift ;;
          --swap)              Swapcompose="-swap 0,1" ;;
       -t|--threshold)         Threshold="${2:-auto}" ; shift ;;
       -v|--verbose)           Verbose="yes" ;;
@@ -1937,20 +1988,27 @@ check_options() {
       esac
     ;;
   esac
-  
-  # --contrast-weight --saturation-weight --chroma-weight --lightness-weight --darkness-weight
+
+  # --contrast-weight --saturation-weight --chroma-weight --lightness-weight --darkness-weight --soft-weight
   case $Method in
-    compose|evaluate) [ "${Darknessweight}${Lightnessweight}${Contrastweight}${Saturationweight}${Chromaweight}" ] && error "--$Method does not support options
+    compose|evaluate) [ "${Softweight}${Darknessweight}${Lightnessweight}${Contrastweight}${Saturationweight}${Chromaweight}${Denoiseweight}" ] && error "--$Method does not support options
   --contrast-weight --saturation-weight --chroma-weight 
-  --darkness-weight --lightness-weight  --denoise-weight" ;;
+  --darkness-weight --lightness-weight  --denoise-weight
+  --soft-weight" ;;
     *)
       Contrastweight="$(sed   s/%// <<< "$Contrastweight")"
+      Softweight="$(sed       s/%// <<< "$Softweight")"
       Saturationweight="$(sed s/%// <<< "$Saturationweight")"
       Chromaweight="$(sed     s/%// <<< "$Chromaweight")"
       Darknessweight="$(sed   s/%// <<< "$Darknessweight")"
       Lightnessweight="$(sed  s/%// <<< "$Lightnessweight")"
+      Denoiseweight="$(sed    s/%// <<< "$Denoiseweight")"
       case $Contrastweight in
         ""|auto) Contrastweight="100" ;;
+      esac
+      case $Softweight in
+        "")   Softweight="0" ;;
+        auto) Softweight="50" ;;
       esac
       case $Saturationweight in
         "")   Saturationweight="0" ;;
@@ -1972,14 +2030,15 @@ check_options() {
         "")   Denoiseweight="0" ;;
         auto) Denoiseweight="100" ;;
       esac
-      [ "$Contrastweight" = "0" ] && Method="none"
+      #[ "$Contrastweight" = "0" ] && [ "$Softweight" = "0" ] && Method="none"
     ;;
   esac
+  [ "$Softweight" != "0" ]       && Needmask="$Needmask soft"
   [ "$Saturationweight" != "0" ] && Needmask="$Needmask saturation"
   [ "$Chromaweight" != "0" ]     && Needmask="$Needmask chroma"
   [ "$Darknessweight" != "0" ]   && Needmask="$Needmask darkness"
   [ "$Lightnessweight" != "0" ]  && Needmask="$Needmask lightness"
-  
+
   # --cachedir
   [ -z "$Cachedir" ] && Cachedir="$(pwd)/imfuse.$RANDOM"
   Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
@@ -2033,14 +2092,15 @@ check_options() {
           XXX1) ;;
           *) Resultimage="${Resultimage}.f$Fusemode" ;;
         esac
-        [ "${Contrastweight}${Saturationweight}${Chromaweight}${Darknessweight}${Lightnessweight}" != "1000000" ] && {
+        [ "${Contrastweight}${Softweight}${Saturationweight}${Chromaweight}${Darknessweight}${Lightnessweight}" != "10000000" ] && {
           Resultimage="${Resultimage}."
           [ "$Contrastweight"   != "100" ] && Resultimage="${Resultimage}cont${Contrastweight}"
+          [ "$Softweight" != "0" ]         && Resultimage="${Resultimage}soft${Softweight}"
           [ "$Saturationweight" != "0" ]   && Resultimage="${Resultimage}sat${Saturationweight}"
           [ "$Chromaweight"  != "0" ]      && Resultimage="${Resultimage}cr${Chromaweight}"
           [ "$Darknessweight" != "0" ]     && Resultimage="${Resultimage}dark${Darknessweight}"
           [ "$Lightnessweight" != "0" ]    && Resultimage="${Resultimage}light${Lightnessweight}"
-          [ "$Denoiseweight" != "0" ] && [ "$Denoiseweight" != "1000" ] && Resultimage="${Resultimage}noise${Denoiseweight}"
+          [ "$Denoiseweight" != "0" ]      && Resultimage="${Resultimage}noise${Denoiseweight}"
         }
         case $Denoiseindex in
           "") ;;
@@ -2048,7 +2108,7 @@ check_options() {
         esac
         case $Softcut in
           0|"") ;;
-          *) Resultimage="${Resultimage}.soft$Softcut" ;;
+          *) Resultimage="${Resultimage}.sc$Softcut" ;;
         esac
         case $Threshold in
           0|"") ;;
@@ -2098,6 +2158,7 @@ check_options() {
 --contrast-weight=$Contrastweight
 --denoise-weight=$Denoiseweight
 --saturation-weight=$Saturationweight
+--soft-weight=$Softweight
 --chroma-weight=$Chromaweight
 --lightness-weight=$Lightnessweight
 "
@@ -2153,7 +2214,9 @@ main() {
   [ "$Error" ] && return 1
 
   Maskmax="$Cachedir/mask.max.tif"
-  
+  $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type Grayscale $Tifstore $Maskmax
+  Softresult="$Cachedir/softresult.tif"
+  $Magickbin -size ${Imagewidth}x${Imageheight} xc:blue -transparent blue -type TrueColorAlpha $Tifstore $Softresult
   Testimage=$Cachedir/test.tif
   $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type TrueColorAlpha $Tifstore $Testimage
   
@@ -2177,7 +2240,6 @@ main() {
           focus_fuse_mode$Fusemode || return 1 
         ;;
         1)
-          Softresult="$Cachedir/softresult.tif"
           focus_fuse_mode3         || return 1
           cp $Resultimage $Softresult
           focus_merge_masks        || return 1
