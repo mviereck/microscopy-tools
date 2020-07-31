@@ -924,6 +924,9 @@ $Magickbin
     -level ${Contrastminlevel}%,${Contrastmaxlevel}%
   $Sourcemask"
   
+    [ "$Count" = "1" ] && verbose "Leveling contrast masks with:
+$(grep "\S" <<< "$Command")"
+  
       $Command || error "Failure in leveling contrast masks"
   
       showimage "$Sourcemask"
@@ -1015,38 +1018,72 @@ focus_merge_masks() {
 $Magickbin"
     [ "$Contrastweight" = "0" ]  && Command="$Command
   ( -size ${Imagewidth}x${Imageheight} xc:black )"
-    [ "$Contrastweight" != "0" ] && Command="$Command
+    [ "$Contrastweight" -gt "0" ] && Command="$Command
   ( $Sourcemask
     +level 0%,$((Contrastweight/Masknumber))% )"
+    [ "$Contrastweight" -lt "0" ] && Command="$Command
+  ( $Sourcemask
+    -negate
+    +level 0%,$((-1*Contrastweight/Masknumber))% )"
     # --saturation-weight
-    [ "$Saturationweight" != "0" ] && Command="$Command
+    [ "$Saturationweight" -gt "0" ] && Command="$Command
   ( $Saturationmask  
     +level 0%,$((Saturationweight/Masknumber))% ) 
     -compose screen -composite"
+    [ "$Saturationweight" -lt "0" ] && Command="$Command
+  ( $Saturationmask
+    -negate
+    +level 0%,$((-1*Saturationweight/Masknumber))% ) 
+    -compose screen -composite"
     # --chroma-weight
-    [ "$Chromaweight" != "0" ]     && Command="$Command
+    [ "$Chromaweight" -gt "0" ]     && Command="$Command
   ( $Chromamask      
     +level 0%,$((Chromaweight/Masknumber))% )     
     -compose screen -composite"
+    [ "$Chromaweight" -lt "0" ]     && Command="$Command
+  ( $Chromamask
+    -negate
+    +level 0%,$((-1*Chromaweight/Masknumber))% )     
+    -compose screen -composite"
     # --darkness-weight
-    [ "$Darknessweight" != "0" ]   && Command="$Command
+    [ "$Darknessweight" -gt "0" ]   && Command="$Command
   ( $Darknessmask    
     +level 0%,$((Darknessweight/Masknumber))% )
     -compose screen -composite"
+    [ "$Darknessweight" -lt "0" ]   && Command="$Command
+  ( $Darknessmask
+    -negate
+    +level 0%,$((-1*Darknessweight/Masknumber))% )
+    -compose screen -composite"
     # --lightness-weight
-    [ "$Lightnessweight" != "0" ]  && Command="$Command
+    [ "$Lightnessweight" -gt "0" ]  && Command="$Command
   ( $Lightnessmask
     +level 0%,$((Lightnessweight/Masknumber))% )
     -compose screen -composite"
+    [ "$Lightnessweight" -lt "0" ]  && Command="$Command
+  ( $Lightnessmask
+    -negate
+    +level 0%,$((-1*Lightnessweight/Masknumber))% )
+    -compose screen -composite"
     # --denoise
-    [ "$Denoiseweight" != "0" ]    && Command="$Command
+    [ "$Denoiseweight" -gt "0" ]    && Command="$Command
   ( $Denoisemask
     +level 0%,$((Denoiseweight/Masknumber))% )
     -compose screen -composite"
+    [ "$Denoiseweight" -lt "0" ]    && Command="$Command
+  ( $Denoisemask
+    -negate
+    +level 0%,$((-1*Denoiseweight/Masknumber))% )
+    -compose screen -composite"
     # --soft-weight
-    [ "$Softweight" != "0" ]       && Command="$Command
+    [ "$Softweight" -gt "0" ]       && Command="$Command
   ( $Softmask
     +level 0%,$((Softweight/Masknumber))% )
+    -compose screen -composite"
+    [ "$Softweight" -lt "0" ]       && Command="$Command
+  ( $Softmask
+    -negate
+    +level 0%,$((-1*Softweight/Masknumber))% )
     -compose screen -composite"
         
 false && Command="$Command
