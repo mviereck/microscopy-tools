@@ -211,10 +211,11 @@ General mask generation adjustments:
 Mask weighting options:
 Imfuse can add other masks to the contrast mask to reduce stacking artefacts.
 They are extracted from image colorspace calculations. (HSB, HCL and CieLAB).
-The different masks are combined with a customizable weight. (0..100)
+The different masks are combined with a customizable weight given in percent.
+Negative percent values or greater than 100 are possible.
      --contrast-weight [=PERCENT]   Contrast mask weight.          
                                     Default: 100         Option w/o PERCENT: 100
-     --soft-weight [=PERCENT]       Weight of soft mask from --fusemode=3.
+     --soft-weight [=PERCENT]       Weight of soft mask taken from --fusemode=3.
                                     Default: 0           Option w/o PERCENT: 50
      --saturation-weight [=PERCENT] Saturation weight. (HSB)
                                     Default: 5           Option w/o PERCENT: 15
@@ -881,7 +882,7 @@ $Maskgenerator
     -delete 0"
     # --denoise
     [ "$Denoise" ]                     && Command="$Command
-  ${Denoise}.${Number}.tif $Denoisediffimage 
+  $Cachedir/${Denoise}.${Number}.tif $Denoisediffimage 
     -compose multiply -composite
     -write $Denoisemask
     -delete 0"
