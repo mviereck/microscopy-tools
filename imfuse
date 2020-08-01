@@ -71,7 +71,7 @@ Mask generating methods:
                                --sigma2                  Default: 1.6*sigma1
      --comet [=MODE]         Comet edge detection. Compares rotated mean areas.
                              MODE can be one of '$(basename $Magickbin) -list compose'
-                             Recommended: Saturate (default), Lighten, Darken.
+                             Recommended: Lighten (default), Darken.
                              Takes options: (low influence)
                                --radius                  Default: 0
                                --sigma                   Default: 5                            
@@ -457,7 +457,7 @@ ${1:-}"
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
         [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
-        verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+        verbose "Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
       done
       Startzeit="$(date +%s)"
       for Part in $(seq 0 $((Split-1))) ; do
@@ -470,7 +470,7 @@ ${1:-}"
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Split-Part+1) / (Part+1) ))"
         [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
-        verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+        verbose "Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
       done
       [ "$Error" ] && return 1
       $Magickbin $Partimagelist -append $Tifstore $Resultimage  || error "Error in evaluate_split / appending parts"
@@ -478,6 +478,45 @@ ${1:-}"
   esac
   showimage $Resultimage
   return "${Error:-0}"
+}
+
+level_masks() {
+  local Masklist Maskmax Maskmin
+  local Startzeit Dauer Restzeit
+  local Count Mask
+  
+  Masklist="$@"
+  Maskmax=$Cachedir/level.mask.max.tif
+  Maskmin=$Cachedir/level.mask.min.tif
+
+  evaluate_split max $Maskmax $Masklist || return 1
+  Contrastmaxlevel="$($Magickbin "$Maskmax" -format '%[fx:maxima*100]' info:)"
+  evaluate_split min $Maskmin $Masklist || return 1
+  Contrastminlevel="$($Magickbin "$Maskmin" -format '%[fx:minima*100]' info:)"
+  
+  Startzeit="$(date +%s)"
+  Count=0
+  for Mask in $Masklist; do
+    [ "$Error" ] && break
+    Count="$((Count+1))"
+            
+    Command="
+$Magickbin
+  $Mask
+    -level ${Contrastminlevel}%,${Contrastmaxlevel}%
+  $Mask"
+  
+  [ "$Count" = "1" ] && verbose "Leveling masks with:
+$(grep "\S" <<< "$Command")"
+  
+    $Command || error "Failure in leveling masks"
+  
+    showimage "$Mask"
+    Dauer="$(( $(date +%s)-Startzeit))"
+    Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
+    verbose "Leveling $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+  done
+  [ "$Error" ] && return "${Error:-0}"
 }
 
 focus_maskmethod() {
@@ -731,7 +770,7 @@ focus_generate_masks() {
   # Generate masks for focus image stackshot.
   
   local Command Imageproperties
-  local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Denoisemask Softmask
+  local Sourcemask Contrastmask Chromamask Saturationmask Darknessmask Lightnessmask Denoisemask Softmask
   local Count Number R1 R2 S1 S2 Masknumber
   local Denoise1image Denoise2image #Denoisediffimage
   local Startzeit Dauer Restzeit
@@ -801,8 +840,8 @@ $(focus_maskmethod "$Method" "mpr:sourcegray" "$R1" "$R2" "$S1" "$S2" "$Maskgene
     Denoise1image="$Cachedir/denoise_compare1.tif"
     Denoise2image="$Cachedir/denoise_compare2.tif"
     Denoisediffimage="$Cachedir/denoise_diff.mpc"
-    evaluate_split min $Denoise1image $Sourceimagelist || error "--denoise: Failed to generate mean image"
-    evaluate_split max $Denoise2image $Sourceimagelist || error "--denoise: Failed to generate median image"
+    evaluate_split max $Denoise1image $Sourceimagelist || error "--denoise: Failed to generate max image"
+    evaluate_split min $Denoise2image $Sourceimagelist || error "--denoise: Failed to generate min image"
     $Magickbin \
       $Denoise1image $Denoise2image \
         -compose Difference -composite \
@@ -825,15 +864,14 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
     Number="$(printnum $Count $Imagenumberlength)"
         
     Sourcemask="$Cachedir/mask.${Number}.tif"
+    Contrastmask="$Cachedir/contrast.${Number}.tif"
     Saturationmask="$Cachedir/saturation.${Number}.tif"
     Chromamask="$Cachedir/chroma.${Number}.tif"
     Darknessmask="$Cachedir/darkness.${Number}.tif"      
     Lightnessmask="$Cachedir/lightness.${Number}.tif"
     Denoisemask="$Cachedir/denoise.${Number}.tif"
     Softmask="$Cachedir/soft.${Number}.tif"
-        
-    Sourcemasklist="$Sourcemasklist $Sourcemask"
-        
+            
     Command="$Magickbin
   $Sourceimage
     -alpha off
@@ -845,7 +883,7 @@ $Maskgenerator
     -alpha off
     -write mpr:sourcemask
     $Tifstore 
-    -write $Sourcemask
+    -write $Contrastmask
     -delete 0"
     # --saturation-weight
     grep -q saturation <<< "$Needmask" && Command="$Command
@@ -895,61 +933,34 @@ $(grep "\S" <<< "$Command")"
     $Command || error "Failure in mask generation"
     
     #showimage $Testimage
-    showimage "$Sourcemask"
+    showimage "$Contrastmask"
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "$Method: Contrast mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+    verbose "Contrast mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
   done
   
   
-  # max of contrast masks to level single contrast masks
-  grep -q contrast <<< "$Needmask"  && {
-    evaluate_split max $Maskmax $Sourcemasklist || return 1
-    Imageproperties="$($Magickbin "$Maskmax" -format '
-Contrastminlevel=%[fx:minima*100]
-Contrastmaxlevel=%[fx:maxima*100]
-' info:)"
-    eval $Imageproperties
-  
-    Startzeit="$(date +%s)"
-    Count=0
-    for Sourceimage in $Sourceimagelist; do
-      [ "$Error" ] && break
-      Count="$((Count+1))"
-      Number="$(printnum $Count $Imagenumberlength)"
-      Sourcemask="$Cachedir/mask.${Number}.tif"
-            
-      Command="
-$Magickbin
-  $Sourcemask
-    -level ${Contrastminlevel}%,${Contrastmaxlevel}%
-  $Sourcemask"
-  
-    [ "$Count" = "1" ] && verbose "Leveling contrast masks with:
-$(grep "\S" <<< "$Command")"
-  
-      $Command || error "Failure in leveling contrast masks"
-  
-      showimage "$Sourcemask"
-      Dauer="$(( $(date +%s)-Startzeit))"
-      Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-      verbose "Leveling $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
-    done
-    [ "$Error" ] && return "${Error:-0}"
-  }
+  # Level masks to full black-white spectrum
+  grep -q contrast <<< "$Needmask"  && level_masks $Cachedir/contrast*
+ # for Line in contrast saturation darkness lightness chroma ; do
+ #   grep -q $Line <<< "$Needmask" && level_masks $Cachedir/$Line*
+ # done
     
   # --soft-weight masks
   grep -q soft <<< "$Needmask"  && {
     focus_fuse_mode3
+    cp $Resultimage $Softresult
       
     # Generate masks
     Startzeit="$(date +%s)"
     Count=0
+    Masklist=""
     for Sourceimage in $Sourceimagelist; do
       [ "$Error" ] && break
       Count="$((Count+1))"
       Number="$(printnum $Count $Imagenumberlength)"
       Softmask="$Cachedir/soft.${Number}.tif"
+      Masklist="$Masklist $Softmask"
         
       Command="$Magickbin
   ( $Sourceimage -grayscale $Grayscale -alpha off )
@@ -966,8 +977,9 @@ $(grep "\S" <<< "$Command")"
       showimage $Softmask
       Dauer="$(( $(date +%s)-Startzeit))"
       Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-      verbose "$Method: Soft mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+      verbose "Soft mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
     done
+    #level_masks $Masklist
   }
   
   return "${Error:-0}"
@@ -975,7 +987,7 @@ $(grep "\S" <<< "$Command")"
 focus_merge_masks() {
   # Merge different masks.
   
-  local Sourcemask Chromamask Saturationmask Darknessmask Lightnessmask Denoisemask Softmask
+  local Sourcemask Contrastmask Chromamask Saturationmask Darknessmask Lightnessmask Denoisemask Softmask
   local Downweightoption 
   local Count Masknumber Number
   local Command
@@ -993,9 +1005,9 @@ focus_merge_masks() {
   #Meandiff=$Cachedir/mean.tif
   #evaluate_split mean $Meandiff $Sourceimagelist
   #Masknumber="$((Masknumber+1))"
-  Overlaydiff=$Cachedir/overlay.tif
+  #Overlaydiff=$Cachedir/overlay.tif
   #compose_stack overlay $Overlaydiff $Sourceimagelist
-      
+  
   Startzeit="$(date +%s)"
   Count=0
   for Sourceimage in $Sourceimagelist; do
@@ -1003,7 +1015,8 @@ focus_merge_masks() {
     Count="$((Count+1))"
     Number="$(printnum $Count $Imagenumberlength)"
     
-    Sourcemask="$Cachedir/mask.${Number}.tif"
+    Sourcemask="$Cachedir/sourcemask.${Number}.tif"
+    Contrastmask="$Cachedir/contrast.${Number}.tif"
     Saturationmask="$Cachedir/saturation.${Number}.tif"
     Chromamask="$Cachedir/chroma.${Number}.tif"
     Darknessmask="$Cachedir/darkness.${Number}.tif"     
@@ -1017,19 +1030,21 @@ focus_merge_masks() {
             
     Command="
 $Magickbin"
-    [ "$Contrastweight" = "0" ]  && Command="$Command
+    Command="$Command
   ( -size ${Imagewidth}x${Imageheight} xc:black )"
     [ "$Contrastweight" -gt "0" ] && Command="$Command
-  ( $Sourcemask
-    +level 0%,$((Contrastweight/Masknumber))% )"
+  ( $Contrastmask
+    +level 0%,$((Contrastweight/Masknumber))% )
+    -compose screen -composite"
     [ "$Contrastweight" -lt "0" ] && Command="$Command
-  ( $Sourcemask
+  ( $Contrastmask
     -negate
-    +level 0%,$((-1*Contrastweight/Masknumber))% )"
+    +level 0%,$((-1*Contrastweight/Masknumber))% )
+    -compose screen -composite"
     # --saturation-weight
     [ "$Saturationweight" -gt "0" ] && Command="$Command
-  ( $Saturationmask  
-    +level 0%,$((Saturationweight/Masknumber))% ) 
+  ( $Saturationmask
+    +level 0%,$((Saturationweight/Masknumber))% )
     -compose screen -composite"
     [ "$Saturationweight" -lt "0" ] && Command="$Command
   ( $Saturationmask
@@ -1095,11 +1110,12 @@ false && Command="$Command
     Command="$Command
     -write mpr:sourcemask
     -delete 0"
-    #Command="$Command
-    #  mpr:sourcemask
-    #    +level 1%,99% 
-    #    -write mpr:sourcemask
-    #    -delete 0"
+    
+    false && Command="$Command
+      mpr:sourcemask
+        +level 1%,99% 
+        -write mpr:sourcemask
+        -delete 0"
     
     # --threshold
     [ "$Threshold" ] && Command="$Command
@@ -1126,32 +1142,28 @@ $(grep "\S" <<< "$Command")"
     showimage "$Sourcemask"
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "Merging $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+    verbose "Merging $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
   done
   [ "$Error" ] && return "${Error:-0}"
-      
-  # max of masks to compare single masks
-  evaluate_split max $Maskmax $Sourcemasklist || return 1
   
   return ${Error:-0}
 }
 focus_fuse_mode1() {
-  # --fusemode=2
+  # --fusemode=1
   # Fuse images, hard contrast
+  # Default fuse mode: Find sharpest area in source (brightest in maskmax). First source image wins if it shares same sharpness with later source images.
 
-  local Sourcemask
+  local Sourcemask Maskmax
   local Count Number
   local Command
   local Startzeit Dauer Restzeit  
   
-  # Default fuse mode: Find sharpest area in source (brightest in maskmax). First source image wins if it shares same sharpness with later source images.
-  
+  # transparent base image to paint on
   mk_transparent ${Imagewidth}x${Imageheight} $Resultimage
  
   # max of masks to compare single masks
-  evaluate_split max $Maskmax $Sourcemasklist || return 1
-  # copy of max mask to remove already fused areas from it
-  cp $Maskmax $Maskmax.strip.tif
+  Maskmax="$Cachedir/mask.max.tif"
+  evaluate_split max $Maskmax $Cachedir/sourcemask* || return 1
   
   Startzeit="$(date +%s)"
   Count=0
@@ -1159,12 +1171,12 @@ focus_fuse_mode1() {
     [ "$Error" ] && break
     Count="$((Count+1))"
     Number="$(printnum $Count $Imagenumberlength)"
-    Sourcemask="$Cachedir/mask.${Number}.tif"
+    Sourcemask="$Cachedir/sourcemask.${Number}.tif"
     
     # Load maskmax, sourcemask and sourceimage into memory. 
     Command="
 $Magickbin
-  $Maskmax.strip.tif
+  $Maskmax
     -write mpr:maskmax
     -delete 0
   $Sourcemask
@@ -1172,16 +1184,6 @@ $Magickbin
     -delete 0
   $Sourceimage
     -write mpr:sourceimage
-    -delete 0"
-            
-  false &&  Command="$Command
-  mpr:sourceimage 
-  mpr:sourcemask
-    -alpha off -compose CopyOpacity -composite
-    -write $Cachedir/alpha$Number.tif
-  $Testimage
-    -compose DstOver -composite
-    -write $Testimage
     -delete 0"
           
     # keep only parts of source mask that fit maskmax (greatest sharpness in stack)
@@ -1194,31 +1196,12 @@ $Magickbin
     -write mpr:sourcepartmask
     -delete 0"
     
-    # remove source mask from maskmax to avoid overwrite by later masks with same sharpness areas.
-    [ "$Stripmask" = "yes" ] && Command="$Command
-  mpr:sourcepartmask 
-  mpr:maskmax
-    -evaluate-sequence max
-    -write $Maskmax.strip.tif
-    -delete 0"
-    
     # Soft mask edges
     [ "$Softcut" ] && Command="$Command
   ( mpr:sourcepartmask -blur 0x${Softcut} -auto-level )
   ( mpr:sourcepartmask -transparent black )
     -compose over -composite
     -write mpr:sourcepartmask
-    -delete 0"
-    
-    # Soft mask edges -> store    
-  false &&  Command="$Command
-  mpr:sourceimage 
-  ( mpr:sourcepartmask -blur 0x${Softcut:-3} )
-    -alpha Off -compose CopyOpacity -composite
-  $Testimage
-    -compose Over -composite
-    -type TrueColorAlpha
-    -write $Testimage
     -delete 0"
             
     # get part of source image
@@ -1228,20 +1211,6 @@ $Magickbin
     -alpha Off -compose CopyOpacity -composite
     -write mpr:sourcepart
     -delete 0"
-    # save source image parts for layered tif
-    [ "$Storelayers" ] && Command="$Command
-  mpr:sourcepart
-    -type TrueColorAlpha
-    $Tifstore 
-    -write $Sourcemask
-    -delete 0"
-    
-    false && Command="$Command
-  mpr:sourcepart mpr:sourcemask
-    -compose CopyAlpha -composite
-    -write mpr:sourcepart
-    -delete 0
-    "
     
     # add source image part to result
     Command="$Command
@@ -1257,10 +1226,11 @@ $(grep "\S" <<< "$Command")"
 
     $Command || error "Error in fuse mode 1"
             
+    #showimage $Testimage
     showimage $Resultimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "$Method $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+    verbose "Fusing $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
   done
        
   return "${Error:-0}"
@@ -1275,7 +1245,6 @@ focus_fuse_mode2() {
   local Startzeit Dauer Restzeit
   
   cp "$(head -n1 <<< "$Sourceimagelist")" "$Resultimage" || error "Failed to copy first source image"
-  mk_transparent ${Imagewidth}x${Imageheight} $Resultimage
   
   Startzeit="$(date +%s)"
   Count=0
@@ -1283,7 +1252,7 @@ focus_fuse_mode2() {
     [ "$Error" ] && break
     Count="$((Count+1))"
     Number="$(printnum $Count $Imagenumberlength)"
-    Sourcemask="$Cachedir/mask.${Number}.tif"
+    Sourcemask="$Cachedir/sourcemask.${Number}.tif"
     
     Command="
 $Magickbin
@@ -1316,7 +1285,7 @@ $(grep "\S" <<< "$Command")"
     showimage $Resultimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "$Method $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+    verbose "Fusing $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
   done
   
   return ${Error:-0}
@@ -1325,13 +1294,14 @@ focus_fuse_mode3() {
   # Soft focus stacking with semi-transparent layers
   # --fusemode=3
 
-  local Resulttop Resultbottom
+  local Resulttop Resultbottom Maskmax
   local Count Number
   local Command
   local Startzeit Dauer Restzeit
   
   Resulttop="$Cachedir/resulttop.tif"
   Resultbottom="$Cachedir/resultbottom.tif"
+  Maskmax="$Cachedir/mask.max.tif"
   $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type Grayscale $Tifstore $Maskmax
   mk_transparent ${Imagewidth}x${Imageheight} $Resulttop
   mk_transparent ${Imagewidth}x${Imageheight} $Resultbottom
@@ -1343,7 +1313,8 @@ focus_fuse_mode3() {
     [ "$Error" ] && break
     Count="$((Count+1))"
     Number="$(printnum $Count $Imagenumberlength)"
-    Sourcemask="$Cachedir/mask.${Number}.tif"
+    Sourcemask="$Cachedir/sourcemask.${Number}.tif"
+    [ -e "$Sourcemask" ] || Sourcemask="$Cachedir/contrast.${Number}.tif"
     
     Command="
 $Magickbin
@@ -1369,7 +1340,7 @@ $Magickbin
     -delete 0
   mpr:sourcemask 
   mpr:maskmax 
-    -evaluate-sequence max
+    -compose Lighten -composite
     -write mpr:maskmax
     -write $Maskmax
     -delete 0
@@ -1420,6 +1391,14 @@ $Magickbin
 #    -compose Over -composite
 #    -type TrueColorAlpha
 #  $Resultimage"
+
+
+#  mpr:sourcemask 
+#  mpr:maskmax 
+#    -evaluate-sequence max
+#    -write mpr:maskmax
+#    -write $Maskmax
+#    -delete 0
           
     [ "$Count" = "1" ] && verbose "Fusing with:
 $(grep "\S" <<< "$Command")"
@@ -1430,7 +1409,7 @@ $(grep "\S" <<< "$Command")"
     showimage $Resulttop
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "soft stack $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+    verbose "soft stack $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
   done
   
   [ "$Error" ] && return $Error
@@ -1450,7 +1429,10 @@ focus_sharpness_layer() {
   local Graylevel Graylevel1 Graylevel2 Pixelnumber Pixelcount Image Layerimage Layerimagelist Layerminpixel Graylevels Histogramm
   local Layercount Count
   local Startzeit Dauer Restzeit
+  local Maskmax
   
+  Maskmax="$Cachedir/mask.max.tif"
+  evaluate_split max $Maskmax $Cachedir/sourcemask*
   Histogramm="$($Magickbin $Maskmax -depth 16 -define histogram:unique-colors=true -format %c histogram:info:-)"
   Graylevels="$(awk '{print $3}' <<< "$Histogramm" | wc -l)"
   Layerminpixel="$(( Imagewidth*Imageheight/(Layernumber-1) ))"
@@ -1512,7 +1494,7 @@ $Magickbin
       showimage $Layerimage
       Dauer="$(( $(date +%s)-Startzeit))"
       Restzeit="$(( Dauer*(Graylevels-Count) / Count ))"
-      verbose "Layer $Layercount/$Layernumber. Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+      verbose "Layer $Layercount/$Layernumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
     }
     Graylevel2="$Graylevel"
   done <<< "$Histogramm"
@@ -1570,15 +1552,14 @@ declare_variables() {
   Magickpixelmemory=""
   Magickversion=""
   Maskgenerator=""
-  Maskmax=""
-  Method=""
-  Needmask=""
   Maskgeneratorargument=""
+  Method=""
   Mode=""
+  Needmask=""
   Negate="no"
   Outputimage=""
-  Revertimagelist="no"
   Preservecache="no"
+  Revertimagelist="no"
   Saturationweight=""
   Showimageprocessing="no"
   Softcut=""
@@ -1586,7 +1567,6 @@ declare_variables() {
   Softweight=""
   Sourceimage=""
   Sourceimagelist=""
-  Sourcemasklist=""
   Startzeit="$(date +%s)"
   Storelayers=""
   Stripmask="no"
@@ -1712,7 +1692,7 @@ check_options() {
       grep -q -x -i "$Maskgeneratorargument" <<< "$($Magickbin -list compose)" || {
         error "--$Method=$Maskgeneratorargument: unknown argument.
   Please choose one out of '$Magickbin -list compose'
-  Recommended: Darken, Lighten, Saturate"
+  Recommended: Darken, Lighten"
       }
       Maskgeneratorargument="$(lowercase "$Maskgeneratorargument")"
     ;;
@@ -2117,7 +2097,7 @@ check_options() {
   [ "$Lightnessweight" != "0" ]  && Needmask="$Needmask lightness"
 
   # --cachedir
-  [ -z "$Cachedir" ] && Cachedir="$(pwd)/imfuse.$RANDOM"
+  [ -z "$Cachedir" ] && Cachedir="$(pwd)/cache.imfuse.$RANDOM"
   Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
   Cachedir="$(realpath -m "$Cachedir")"
   
@@ -2178,6 +2158,7 @@ check_options() {
           [ "$Darknessweight" != "0" ]     && Resultimage="${Resultimage}dark${Darknessweight}"
           [ "$Lightnessweight" != "0" ]    && Resultimage="${Resultimage}light${Lightnessweight}"
           [ "$Denoiseweight" != "0" ]      && Resultimage="${Resultimage}noise${Denoiseweight}"
+          [ "$Fusemode" = "2" ] && note "--fusemode=2 does not integrate well the *-weight options."
         }
         case $Denoiseindex in
           "") ;;
@@ -2290,8 +2271,6 @@ main() {
   rm $Cachedir/*
   [ "$Error" ] && return 1
 
-  Maskmax="$Cachedir/mask.max.tif"
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type Grayscale $Tifstore $Maskmax
   Softresult="$Cachedir/softresult.tif"
   Testimage="$Cachedir/test.tif"
   
