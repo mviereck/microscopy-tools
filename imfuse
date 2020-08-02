@@ -1004,9 +1004,10 @@ focus_merge_masks() {
   
   #Meandiff=$Cachedir/mean.tif
   #evaluate_split mean $Meandiff $Sourceimagelist
-  #Masknumber="$((Masknumber+1))"
   #Overlaydiff=$Cachedir/overlay.tif
+  #Swapcompose="-swap 0,1"
   #compose_stack overlay $Overlaydiff $Sourceimagelist
+  #Masknumber="$((Masknumber+1))"
   
   Startzeit="$(date +%s)"
   Count=0
@@ -1105,7 +1106,7 @@ $Magickbin"
 false && Command="$Command
   ( $Meandiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((50/Masknumber))% -write $Testimage ) -compose screen -composite"
 false && Command="$Command
-  ( $Overlaydiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((100/Masknumber))% -write $Testimage ) -compose screen -composite"
+  ( $Overlaydiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((25/Masknumber))% -write $Testimage ) -compose screen -composite"
   
     Command="$Command
     -write mpr:sourcemask
@@ -2045,7 +2046,7 @@ check_options() {
     ;;
   esac
 
-  # --contrast-weight --saturation-weight --chroma-weight --lightness-weight --darkness-weight --soft-weight
+  # --contrast-weight --saturation-weight --chroma-weight --lightness-weight --darkness-weight --soft-weight --denoise-weight
   case $Method in
     compose|evaluate) [ "${Softweight}${Darknessweight}${Lightnessweight}${Contrastweight}${Saturationweight}${Chromaweight}${Denoiseweight}" ] && error "--$Method does not support options
   --contrast-weight --saturation-weight --chroma-weight 
@@ -2084,7 +2085,7 @@ check_options() {
       esac
       case $Denoiseweight in
         "")   Denoiseweight="0" ;;
-        auto) Denoiseweight="100" ;;
+        auto) Denoiseweight="25" ;;
       esac
       #[ "$Contrastweight" = "0" ] && [ "$Softweight" = "0" ] && Method="none"
     ;;
@@ -2149,7 +2150,7 @@ check_options() {
           1) ;;
           *) Resultimage="${Resultimage}.f$Fusemode" ;;
         esac
-        [ "${Contrastweight}${Softweight}${Saturationweight}${Chromaweight}${Darknessweight}${Lightnessweight}" != "10000000" ] && {
+        [ "${Contrastweight}${Softweight}${Saturationweight}${Chromaweight}${Darknessweight}${Lightnessweight}${Denoiseweight}" != "100000000" ] && {
           Resultimage="${Resultimage}."
           [ "$Contrastweight"   != "100" ] && Resultimage="${Resultimage}cont${Contrastweight}"
           [ "$Softweight" != "0" ]         && Resultimage="${Resultimage}soft${Softweight}"
