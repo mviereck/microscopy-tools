@@ -1009,6 +1009,7 @@ focus_merge_masks() {
   #compose_stack overlay $Overlaydiff $Sourceimagelist
   #Masknumber="$((Masknumber+1))"
   
+  
   Startzeit="$(date +%s)"
   Count=0
   for Sourceimage in $Sourceimagelist; do
@@ -1138,9 +1139,11 @@ false && Command="$Command
     [ "$Count" = "1" ] && verbose "Merging masks with:
 $(grep "\S" <<< "$Command")"
    
-    $Command || error "Error in merging masks: $Method"
+    #$Command || error "Error in merging masks: $Method"
+    mv $Contrastmask $Sourcemask
       
     showimage "$Sourcemask"
+    #showimage $Testimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
     verbose "Merging $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
@@ -1152,7 +1155,7 @@ $(grep "\S" <<< "$Command")"
 focus_fuse_mode1() {
   # --fusemode=1
   # Fuse images, hard contrast
-  # Default fuse mode: Find sharpest area in source (brightest in maskmax). First source image wins if it shares same sharpness with later source images.
+  # Default fuse mode: Find sharpest area in source (brightest in maskmax). Topmost source image wins if it shares same sharpness with deeper source images.
 
   local Sourcemask Maskmax
   local Count Number
@@ -1160,11 +1163,20 @@ focus_fuse_mode1() {
   local Startzeit Dauer Restzeit  
   
   # transparent base image to paint on
-  mk_transparent ${Imagewidth}x${Imageheight} $Resultimage
+  mkimg_transparent $Resultimage
+  mkimg_transparent $Resultimage.maxonly.tif
+  mkimg_transparent $Resultimage.lessonly.tif
  
   # max of masks to compare single masks
   Maskmax="$Cachedir/mask.max.tif"
   evaluate_split max $Maskmax $Cachedir/sourcemask* || return 1
+  
+  
+  Currentmax=$Cachedir/current.max.tif 
+  mkimg_black $Currentmax
+  Lessthanmax=$Cachedir/lessthanmax.tif 
+  mkimg_black $Lessthanmax
+  
   
   Startzeit="$(date +%s)"
   Count=0
@@ -1194,45 +1206,158 @@ $Magickbin
     -compose MinusDst -composite
     -fill white +opaque black 
     -negate
-    -write mpr:sourcepartmask
+    -write mpr:cutmask_max
     -delete 0"
     
-    # Soft mask edges
-    [ "$Softcut" ] && Command="$Command
-  ( mpr:sourcepartmask -blur 0x${Softcut} -auto-level )
-  ( mpr:sourcepartmask -transparent black )
-    -compose over -composite
-    -write mpr:sourcepartmask
-    -delete 0"
-            
-    # get part of source image
+    # get max sharp part of source image
     Command="$Command
   mpr:sourceimage 
-  mpr:sourcepartmask
+  mpr:cutmask_max
     -alpha Off -compose CopyOpacity -composite
-    -write mpr:sourcepart
+    -write mpr:sourcepart_max
     -delete 0"
     
-    # add source image part to result
+    # write max sharp part of source image in result image
     Command="$Command
   $Resultimage 
-  mpr:sourcepart
+  mpr:sourcepart_max
+    -compose SrcOver -composite
+    -type TrueColorAlpha
+    $Tifstore 
+    -write $Resultimage
+    -write mpr:result
+    -delete 0"  
+    # separate for debug in Testimage
+    true && Command="$Command
+  $Resultimage.maxonly.tif
+  mpr:sourcepart_max
+    -compose SrcOver -composite
+    -type TrueColorAlpha
+    $Tifstore 
+    -write $Resultimage.maxonly.tif
+    -delete 0"  
+    
+    [ "$Lessthanmax" ] && {
+      Command="$Command
+    $Lessthanmax
+      -write mpr:lessthanmax
+      -delete 0"
+      
+      # get part of actual maxmask
+      Command="$Command
+  mpr:maskmax
+  mpr:cutmask_max
+    -alpha Off -compose CopyOpacity -composite
+    -write mpr:maskpart_max
+    -delete 0"
+    
+      # paint actual maxmask part into lessmask
+      Command="$Command
+  mpr:lessthanmax
+  mpr:maskpart_max
+    -compose Over -composite
+    -write mpr:lessthanmax
+    -write $Lessthanmax
+    -delete 0"
+    
+      # get area of source mask that is stronger (+offset) than lessmask) ### FIXME
+      Command="$Command
+  mpr:sourcemask 
+  ( mpr:lessthanmax -evaluate Add ${Lessthanmaxoffset}% )
+    -compose MinusSrc -composite
+    -fill white +opaque black 
+    -write mpr:cutmask_less
+    -delete 0"   
+    true && Command="$Command
+  mpr:sourceimage 
+  mpr:cutmask_less
+    -alpha Off -compose CopyOpacity -composite
+    -write mpr:sourcepart_less
+    -delete 0"
+    
+      # write less part into result
+      Command="$Command
+  $Resultimage 
+  mpr:sourcepart_less
     -compose Over -composite
     -type TrueColorAlpha
     $Tifstore 
-  $Resultimage"
-          
+    -write $Resultimage
+    -write mpr:result
+    -delete 0"
+      # write less part into result copy for debugging
+      true && Command="$Command
+  $Resultimage.lessonly.tif
+  mpr:sourcepart_less
+    -compose Over -composite
+    -type TrueColorAlpha
+    $Tifstore 
+    -write $Resultimage.lessonly.tif
+    -delete 0"
+    
+      # draw current less part of source over lessmask
+      false && Command="$Command
+  mpr:sourcemask
+  mpr:cutmask_less
+    -alpha Off -compose CopyOpacity -composite
+    -write mpr:maskpart_less
+    -delete 0
+  mpr:lessthanmax
+  mpr:maskpart_less
+    -compose SrcOver -composite
+    -write mpr:lessthanmax
+    -delete 0"
+    
+      # darken lessmask to get a mask with decreasing sharpness after a max peak
+      Command="$Command
+  mpr:lessthanmax
+  mpr:sourcemask
+    -compose Darken -composite
+    -write mpr:lessthanmax
+    -delete 0"
+      
+      # store lessmask
+      Command="$Command
+  mpr:lessthanmax
+    -write $Lessthanmax
+    -delete 0"
+            
+      Command="$Command
+  (  
+    mpr:sourcemask
+    mpr:lessthanmax
+    mpr:cutmask_max
+    mpr:cutmask_less 
+      +append
+  )
+  (
+    mpr:sourceimage
+    $Resultimage.maxonly.tif
+    $Resultimage.lessonly.tif
+    mpr:result
+      +append
+  )
+    -append
+    -alpha off
+    -write $Testimage
+    null:"
+    
+#    ( mpr:sourcemask mpr:lessthanmax -compose Difference -composite )
+    }
+    
     [ "$Count" = "1" ] && verbose "Fusing with:
 $(grep "\S" <<< "$Command")"
 
     $Command || error "Error in fuse mode 1"
             
-    #showimage $Testimage
-    showimage $Resultimage
+    showimage $Testimage
+    #showimage $Resultimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
     verbose "Fusing $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
   done
+  
+  cp $Testimage $Resultimage
        
   return "${Error:-0}"
 }
@@ -1303,10 +1428,10 @@ focus_fuse_mode3() {
   Resulttop="$Cachedir/resulttop.tif"
   Resultbottom="$Cachedir/resultbottom.tif"
   Maskmax="$Cachedir/mask.max.tif"
-  $Magickbin -size ${Imagewidth}x${Imageheight} xc:black -type Grayscale $Tifstore $Maskmax
-  mk_transparent ${Imagewidth}x${Imageheight} $Resulttop
-  mk_transparent ${Imagewidth}x${Imageheight} $Resultbottom
-  mk_transparent ${Imagewidth}x${Imageheight} $Resultimage
+  mkimg_black       $Maskmax
+  mkimg_transparent $Resulttop
+  mkimg_transparent $Resultbottom
+  mkimg_transparent $Resultimage
   
   Startzeit="$(date +%s)"
   Count=0    
@@ -1508,8 +1633,17 @@ $Magickbin
   
   return "${Error:-0}"
 }
-mk_transparent() {
-  $Magickbin -size ${1:-100x100} xc:blue -transparent blue -type TrueColorAlpha $Tifstore ${2:-transparent.tif} || error "Failed to create transparent image."
+mkimg_black() {
+  local Size
+  Size="${2:-}"
+  [ -z "$Size" ] && Size="${Imagewidth:-100}x${Imageheight:-100}"
+  $Magickbin -size "$Size" xc:black                  -type Grayscale      $Tifstore "${1:-black.tif}"       || error "Failed to create black image."
+}
+mkimg_transparent() {
+  local Size
+  Size="${2:-}"
+  [ -z "$Size" ] && Size="${Imagewidth:-100}x${Imageheight:-100}"
+  $Magickbin -size "$Size" xc:blue -transparent blue -type TrueColorAlpha $Tifstore "${1:-transparent.tif}" || error "Failed to create transparent image."
 }
 ### main
 
@@ -1548,6 +1682,7 @@ declare_variables() {
   Layernumber=""
   Layerminpixel=""
   Layers=""
+  Lessthanmaxoffset=8
   Loadmaskfile=""
   Magickbin=""
   Magickpixelmemory=""
