@@ -457,7 +457,7 @@ ${1:-}"
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
         [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
-        verbose "Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+        verbose "Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
       done
       Startzeit="$(date +%s)"
       for Part in $(seq 0 $((Split-1))) ; do
@@ -470,7 +470,7 @@ ${1:-}"
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Split-Part+1) / (Part+1) ))"
         [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
-        verbose "Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+        verbose "Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
       done
       [ "$Error" ] && return 1
       $Magickbin $Partimagelist -append $Tifstore $Resultimage  || error "Error in evaluate_split / appending parts"
@@ -514,7 +514,7 @@ $(grep "\S" <<< "$Command")"
     showimage "$Mask"
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "Leveling $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+    verbose "Leveling $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   [ "$Error" ] && return "${Error:-0}"
 }
@@ -623,23 +623,35 @@ Maskgenerator="$Maskgenerator
     -evaluate-sequence min"
     ;;
     experimental)
-      Maskgenerator="
+      case $Maskgeneratorargument in
+        "")
+          Maskgenerator="
   (
   $Sourceimage
-    -define convolve:scale=100%!
-    -define morphology:compose=Screen
-    -define convolve:bias=5%
-    -morphology Convolve FreiChen:1
+    -define convolve:scale=100%
+    -define morphology:compose=Exclusion
+    -define convolve:bias=50%
+    -morphology Convolve FreiChen:1>
   )
   (
   $Sourceimage
-    -define convolve:scale=100%!
-    -define morphology:compose=Screen
-    -define convolve:bias=5%
-    -morphology Convolve FreiChen:2
+    -define convolve:scale=100%
+    -define morphology:compose=Exclusion
+    -define convolve:bias=50%
+    -morphology Convolve FreiChen:2>
   )
     -compose Screen
     -composite"
+        ;;
+        *)
+          Maskgenerator="
+  $Sourceimage
+    -define convolve:scale=100%
+    -define morphology:compose=Exclusion
+    -define convolve:bias=50%
+    -morphology Convolve FreiChen:${Maskgeneratorargument:-0}>"
+        ;;
+      esac
     ;;
     free)
       Maskgenerator="$Sourceimage 
@@ -936,7 +948,7 @@ $(grep "\S" <<< "$Command")"
     showimage "$Contrastmask"
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "Contrast mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+    verbose "Contrast mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   
   
@@ -977,7 +989,7 @@ $(grep "\S" <<< "$Command")"
       showimage $Softmask
       Dauer="$(( $(date +%s)-Startzeit))"
       Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-      verbose "Soft mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+      verbose "Soft mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
     done
     #level_masks $Masklist
   }
@@ -1009,6 +1021,8 @@ focus_merge_masks() {
   #compose_stack overlay $Overlaydiff $Sourceimagelist
   #Masknumber="$((Masknumber+1))"
   
+ # Masknumber=1
+  Mergemethod="screen"
   
   Startzeit="$(date +%s)"
   Count=0
@@ -1029,7 +1043,8 @@ focus_merge_masks() {
     # -downweight
     [ "${Downweight:-0}" -lt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 - $Downweight*$Count/$Imagenumber }")%"
     [ "${Downweight:-0}" -gt "0" ] && Downweightoption="+level 0,$(awk "BEGIN { print 100 + $Downweight*$((Imagenumber-Count))/$Imagenumber }")%"
-            
+    
+    
     Command="
 $Magickbin"
     Command="$Command
@@ -1037,77 +1052,77 @@ $Magickbin"
     [ "$Contrastweight" -gt "0" ] && Command="$Command
   ( $Contrastmask
     +level 0%,$((Contrastweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     [ "$Contrastweight" -lt "0" ] && Command="$Command
   ( $Contrastmask
     -negate
     +level 0%,$((-1*Contrastweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     # --saturation-weight
     [ "$Saturationweight" -gt "0" ] && Command="$Command
   ( $Saturationmask
     +level 0%,$((Saturationweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     [ "$Saturationweight" -lt "0" ] && Command="$Command
   ( $Saturationmask
     -negate
     +level 0%,$((-1*Saturationweight/Masknumber))% ) 
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     # --chroma-weight
     [ "$Chromaweight" -gt "0" ]     && Command="$Command
   ( $Chromamask      
     +level 0%,$((Chromaweight/Masknumber))% )     
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     [ "$Chromaweight" -lt "0" ]     && Command="$Command
   ( $Chromamask
     -negate
     +level 0%,$((-1*Chromaweight/Masknumber))% )     
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     # --darkness-weight
     [ "$Darknessweight" -gt "0" ]   && Command="$Command
   ( $Darknessmask    
     +level 0%,$((Darknessweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     [ "$Darknessweight" -lt "0" ]   && Command="$Command
   ( $Darknessmask
     -negate
     +level 0%,$((-1*Darknessweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     # --lightness-weight
     [ "$Lightnessweight" -gt "0" ]  && Command="$Command
   ( $Lightnessmask
     +level 0%,$((Lightnessweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     [ "$Lightnessweight" -lt "0" ]  && Command="$Command
   ( $Lightnessmask
     -negate
     +level 0%,$((-1*Lightnessweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     # --denoise
     [ "$Denoiseweight" -gt "0" ]    && Command="$Command
   ( $Denoisemask
     +level 0%,$((Denoiseweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     [ "$Denoiseweight" -lt "0" ]    && Command="$Command
   ( $Denoisemask
     -negate
     +level 0%,$((-1*Denoiseweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     # --soft-weight
     [ "$Softweight" -gt "0" ]       && Command="$Command
   ( $Softmask
     +level 0%,$((Softweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
     [ "$Softweight" -lt "0" ]       && Command="$Command
   ( $Softmask
     -negate
     +level 0%,$((-1*Softweight/Masknumber))% )
-    -compose screen -composite"
+    -compose $Mergemethod -composite"
         
 false && Command="$Command
-  ( $Meandiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((50/Masknumber))% -write $Testimage ) -compose screen -composite"
+  ( $Meandiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((50/Masknumber))% -write $Testimage ) -compose $Mergemethod -composite"
 false && Command="$Command
-  ( $Overlaydiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((25/Masknumber))% -write $Testimage ) -compose screen -composite"
+  ( $Overlaydiff $Sourceimage -compose Difference -composite -grayscale RMS -negate +level 0%,$((25/Masknumber))% -write $Testimage ) -compose $Mergemethod -composite"
   
     Command="$Command
     -write mpr:sourcemask
@@ -1139,14 +1154,14 @@ false && Command="$Command
     [ "$Count" = "1" ] && verbose "Merging masks with:
 $(grep "\S" <<< "$Command")"
    
-    #$Command || error "Error in merging masks: $Method"
-    mv $Contrastmask $Sourcemask
+    $Command || error "Error in merging masks: $Method"
+    #mv $Contrastmask $Sourcemask
       
     showimage "$Sourcemask"
     #showimage $Testimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "Merging $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+    verbose "Merging $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   [ "$Error" ] && return "${Error:-0}"
   
@@ -1209,6 +1224,14 @@ $Magickbin
     -write mpr:cutmask_max
     -delete 0"
     
+    # Soft mask edges
+    [ "$Softcut" ] && Command="$Command
+  ( mpr:cutmask_max -blur 0x${Softcut} -auto-level )
+  ( mpr:cutmask_max -transparent black )
+    -compose Over -composite
+    -write mpr:cutmask_max
+    -delete 0"
+    
     # get max sharp part of source image
     Command="$Command
   mpr:sourceimage 
@@ -1216,7 +1239,7 @@ $Magickbin
     -alpha Off -compose CopyOpacity -composite
     -write mpr:sourcepart_max
     -delete 0"
-    
+
     # write max sharp part of source image in result image
     Command="$Command
   $Resultimage 
@@ -1237,7 +1260,7 @@ $Magickbin
     -write $Resultimage.maxonly.tif
     -delete 0"  
     
-    [ "$Lessthanmax" ] && {
+    [ "$Lessthanmaxoffset" ] && {
       Command="$Command
     $Lessthanmax
       -write mpr:lessthanmax
@@ -1268,12 +1291,23 @@ $Magickbin
     -fill white +opaque black 
     -write mpr:cutmask_less
     -delete 0"   
+    
+    
+      # Soft mask edges
+      [ "$Softcut" ] && Command="$Command
+  ( mpr:cutmask_less -blur 0x${Softcut} -auto-level )
+  ( mpr:cutmask_less -transparent black )
+    -compose Over -composite
+    -write mpr:cutmask_less
+    -delete 0"
+    
     true && Command="$Command
   mpr:sourceimage 
   mpr:cutmask_less
     -alpha Off -compose CopyOpacity -composite
     -write mpr:sourcepart_less
     -delete 0"
+    
     
       # write less part into result
       Command="$Command
@@ -1340,24 +1374,26 @@ $Magickbin
     -append
     -alpha off
     -write $Testimage
-    null:"
+    -delete 0"
     
 #    ( mpr:sourcemask mpr:lessthanmax -compose Difference -composite )
     }
+    Command="$Command
+    null:"
     
     [ "$Count" = "1" ] && verbose "Fusing with:
 $(grep "\S" <<< "$Command")"
 
     $Command || error "Error in fuse mode 1"
             
-    showimage $Testimage
-    #showimage $Resultimage
+    #showimage $Testimage
+    showimage $Resultimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "Fusing $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+    verbose "Fusing $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   
-  cp $Testimage $Resultimage
+  #cp $Testimage $Resultimage
        
   return "${Error:-0}"
 }
@@ -1411,7 +1447,7 @@ $(grep "\S" <<< "$Command")"
     showimage $Resultimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "Fusing $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+    verbose "Fusing $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   
   return ${Error:-0}
@@ -1470,9 +1506,10 @@ $Magickbin
     -write mpr:maskmax
     -write $Maskmax
     -delete 0
-  mpr:sourcemask 
-  mpr:maskmax
-    -compose MinusDst -composite -fill white +opaque black -negate
+  mpr:sourcemask
+  ( mpr:maskmax -evaluate Subtract ${Lessthanmaxoffset:-0}% )
+    -compose MinusDst -composite -fill white +opaque black
+    -negate
     -transparent white
     -write mpr:cutmask
     -delete 0
@@ -1535,7 +1572,7 @@ $(grep "\S" <<< "$Command")"
     showimage $Resulttop
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "soft stack $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+    verbose "soft stack $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   
   [ "$Error" ] && return $Error
@@ -1620,7 +1657,7 @@ $Magickbin
       showimage $Layerimage
       Dauer="$(( $(date +%s)-Startzeit))"
       Restzeit="$(( Dauer*(Graylevels-Count) / Count ))"
-      verbose "Layer $Layercount/$Layernumber. Duration: $(date -u -d @$Dauer +"%T"); eta: $(date -u -d @$Restzeit +"%T")"
+      verbose "Layer $Layercount/$Layernumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
     }
     Graylevel2="$Graylevel"
   done <<< "$Histogramm"
@@ -1682,7 +1719,7 @@ declare_variables() {
   Layernumber=""
   Layerminpixel=""
   Layers=""
-  Lessthanmaxoffset=8
+  Lessthanmaxoffset=""
   Loadmaskfile=""
   Magickbin=""
   Magickpixelmemory=""
@@ -1723,7 +1760,8 @@ parse_options() {
   Shortoptions="d::,f:g::hn::o:r:R::s:S::t::vV"
   Longoptions="basename::,cachedir:,help,verbose,version,output:,showimage"
   Longoptions="$Longoptions,chroma-weight::,darkness-weight::,denoise-weight::,lightness-weight::,contrast-weight::,saturation-weight::,soft-weight::"
-  Longoptions="$Longoptions,denoise::,diff::,downweight::,factor::,fusemode:,grayscale:,gamma::,layers::,negate,radius:,radius1::,radius2::,revert,sigma:,sigma1:,sigma2::,cutsoft::,swap,threshold::"
+  Longoptions="$Longoptions,radius:,radius1::,radius2::,sigma:,sigma1:,sigma2::,swap"
+  Longoptions="$Longoptions,denoise::,diff::,downweight::,factor::,fusemode:,grayscale:,gamma::,layers::,lessthanmax::,negate,revert,cutsoft::,threshold::"
   Longoptions="$Longoptions,blur::,comet::,compass::,compose::,diffstat::,gaussian::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
@@ -1751,6 +1789,7 @@ parse_options() {
          --grayscale)         Grayscale="${2:-auto}" ; shift ;;
          --chroma-weight)     Chromaweight="${2:-auto}" ; shift ;;
          --layers)            Storelayers="yes" ; Layernumber="${2:-auto}" ; shift ;;
+         --lessthanmax)       Lessthanmaxoffset="${2:-auto}" ; shift ;;
          --negate)            Negate="yes" ;;
       -o|--output)            Outputimage="${2:-}" ; shift ;;
       -r|--radius|--radius1)  Radius1="${2:-}" ; shift ;;
@@ -2083,6 +2122,16 @@ check_options() {
     ;;
   esac
   
+  # --lessthanmax
+  case $Method in
+    evaluate|compose) [ "$Lessthanmaxoffset" ] && error "--lessthanmax has no effect with --$Method" ;;
+    *)
+      case $Lessthanmaxoffset in
+        auto) Lessthanmaxoffset="8" ;;
+      esac
+    ;;
+  esac
+  
   [ "${Radius1}${Radius2}${Sigma1}${Sigma2}" ] && case $Method in
     evaluate|compose) error "Options --radius, --radius2, --sigma, --sigma2
   have no effect for method --${Method}." ;;
@@ -2307,6 +2356,10 @@ check_options() {
         case $Threshold in
           0|"") ;;
           *) Resultimage="${Resultimage}.t$Threshold" ;;
+        esac
+        case $Lessthanmaxoffset in
+          "") ;;
+          *) Resultimage="${Resultimage}.less$Lessthanmaxoffset" ;;
         esac
         case $Grayscalenumber in
           9) ;;
