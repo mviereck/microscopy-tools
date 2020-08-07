@@ -29,6 +29,7 @@ General options:
 imfuse provides two basic ways to get overall sharp results.
  - The traditional way is contrast comparision with the mask methods below.
 Reduce artefacts with --soft-weight, --saturation-weight, --denoise, --cutsoft.
+Use --lessthanmask if background is stronger than objects in front.
  - Another, faster attempt compares max and min images and combines them
 with the compositing methods.                            
 Default method: Mask comparision with --diffstat
@@ -201,6 +202,12 @@ General mask generation adjustments:
                 7 Average          (R' + G' + B') / 3.0
                 8 MS               (R'^2 + G'^2 + B'^2) / 3.0
                 9 RMS              sqrt( (R'^2 + G'^2 + B'^2) / 3.0 ) (default)
+     --lessthanmax [=PERCENT]  Use also parts of image less than maximal sharp.
+                             Helps to preserve less sharp objects in front
+                             where the background might shine through otherwise.
+                             PERCENT is a threshold to avoid noise.
+                             Works best with --morphology and --log.
+                             Default PERCENT: 0          Option w/o PERCENT: 8
      --negate                Invert contrast mask.
      --cutsoft [=SIGMA]      Add a semi-transparent blur around cut masks. 
                              Reduces some artefacts. Disable with SIGMA=0
@@ -518,7 +525,71 @@ $(grep "\S" <<< "$Command")"
   done
   [ "$Error" ] && return "${Error:-0}"
 }
-
+lessthanmax_code() {
+  # --lessthanmax
+  # same code used for focus_fuse_mode1() and focus_fuse_mode3()
+  
+  local Command
+  
+  Command="
+  $Lessthanmax
+    -write mpr:lessthanmax
+    -delete 0
+  mpr:cutmask
+    -write mpr:cutmask_max
+    -delete 0"
+      
+  # get part of actual maxmask
+  Command="$Command
+  mpr:maskmax
+  mpr:cutmask_max
+    -alpha Off -compose CopyOpacity -composite
+    -write mpr:maskpart_max
+    -delete 0"
+    
+  # paint actual maxmask part into lessmask
+  Command="$Command
+  mpr:lessthanmax
+  mpr:maskpart_max
+    -compose Over -composite
+    -write mpr:lessthanmax
+    -write $Lessthanmax
+    -delete 0"
+    
+  # get area of source mask that is stronger (+offset) than lessmask) ### FIXME
+  Command="$Command
+  mpr:sourcemask 
+  ( mpr:lessthanmax -evaluate Add ${Lessthanmaxoffset:-0}% )
+    -compose MinusSrc -composite
+    -fill white +opaque black 
+    -write mpr:cutmask_less
+    -delete 0"   
+  
+  # unite original max mask with new less mask area
+  Command="$Command
+  mpr:cutmask_max
+  mpr:cutmask_less
+    -alpha off 
+    -compose Lighten -composite
+    -write mpr:cutmask
+    -delete 0"
+    
+  # darken lessmask to get a mask with decreasing sharpness after a max peak
+  Command="$Command
+  mpr:lessthanmax
+  mpr:sourcemask
+    -compose Darken -composite
+    -write mpr:lessthanmax
+    -delete 0"
+      
+  # store lessmask
+  Command="$Command
+  mpr:lessthanmax
+    -write $Lessthanmax
+    -delete 0" 
+    
+  echo "$Command"
+}
 focus_maskmethod() {
   # Mask generating ImageMagick options
   # Most of them are based on edge detection: http://www.imagemagick.org/Usage/convolve/#edgedet
@@ -1172,26 +1243,19 @@ focus_fuse_mode1() {
   # Fuse images, hard contrast
   # Default fuse mode: Find sharpest area in source (brightest in maskmax). Topmost source image wins if it shares same sharpness with deeper source images.
 
-  local Sourcemask Maskmax
+  local Sourcemask Maskmax Lessthanmax
   local Count Number
   local Command
-  local Startzeit Dauer Restzeit  
+  local Startzeit Dauer Restzeit 
   
   # transparent base image to paint on
   mkimg_transparent $Resultimage
-  mkimg_transparent $Resultimage.maxonly.tif
-  mkimg_transparent $Resultimage.lessonly.tif
  
   # max of masks to compare single masks
   Maskmax="$Cachedir/mask.max.tif"
   evaluate_split max $Maskmax $Cachedir/sourcemask* || return 1
-  
-  
-  Currentmax=$Cachedir/current.max.tif 
-  mkimg_black $Currentmax
-  Lessthanmax=$Cachedir/lessthanmax.tif 
-  mkimg_black $Lessthanmax
-  
+  Lessthanmax="$Cachedir/lessthanmax.tif"
+  mkimg_black "$Lessthanmax"
   
   Startzeit="$(date +%s)"
   Count=0
@@ -1214,172 +1278,50 @@ $Magickbin
     -write mpr:sourceimage
     -delete 0"
           
-    # keep only parts of source mask that fit maskmax (greatest sharpness in stack)
+    # get part of source mask that fits maskmax (greatest sharpness in stack)
     Command="$Command
   mpr:sourcemask 
   mpr:maskmax
     -compose MinusDst -composite
     -fill white +opaque black 
     -negate
+    -write mpr:cutmask
     -write mpr:cutmask_max
-    -delete 0"
-    
-    # Soft mask edges
-    [ "$Softcut" ] && Command="$Command
-  ( mpr:cutmask_max -blur 0x${Softcut} -auto-level )
-  ( mpr:cutmask_max -transparent black )
-    -compose Over -composite
-    -write mpr:cutmask_max
-    -delete 0"
-    
-    # get max sharp part of source image
-    Command="$Command
-  mpr:sourceimage 
-  mpr:cutmask_max
-    -alpha Off -compose CopyOpacity -composite
-    -write mpr:sourcepart_max
     -delete 0"
 
-    # write max sharp part of source image in result image
+    # --lessthanmax
+    [ "$Lessthanmaxoffset" ] && Command="$Command
+$(lessthanmax_code)"
+    
+    # --cutsoft: Soft mask edges
+    [ "$Softcut" ] && Command="$Command
+  ( mpr:cutmask -blur 0x${Softcut} -auto-level )
+  ( mpr:cutmask -transparent black )
+    -compose Over -composite
+    -write mpr:cutmask
+    -delete 0"
+    
+    # get part of source image
     Command="$Command
-  $Resultimage 
-  mpr:sourcepart_max
-    -compose SrcOver -composite
-    -type TrueColorAlpha
-    $Tifstore 
-    -write $Resultimage
-    -write mpr:result
-    -delete 0"  
-    # separate for debug in Testimage
-    true && Command="$Command
-  $Resultimage.maxonly.tif
-  mpr:sourcepart_max
-    -compose SrcOver -composite
-    -type TrueColorAlpha
-    $Tifstore 
-    -write $Resultimage.maxonly.tif
-    -delete 0"  
-    
-    [ "$Lessthanmaxoffset" ] && {
-      Command="$Command
-    $Lessthanmax
-      -write mpr:lessthanmax
-      -delete 0"
-      
-      # get part of actual maxmask
-      Command="$Command
-  mpr:maskmax
-  mpr:cutmask_max
-    -alpha Off -compose CopyOpacity -composite
-    -write mpr:maskpart_max
-    -delete 0"
-    
-      # paint actual maxmask part into lessmask
-      Command="$Command
-  mpr:lessthanmax
-  mpr:maskpart_max
-    -compose Over -composite
-    -write mpr:lessthanmax
-    -write $Lessthanmax
-    -delete 0"
-    
-      # get area of source mask that is stronger (+offset) than lessmask) ### FIXME
-      Command="$Command
-  mpr:sourcemask 
-  ( mpr:lessthanmax -evaluate Add ${Lessthanmaxoffset}% )
-    -compose MinusSrc -composite
-    -fill white +opaque black 
-    -write mpr:cutmask_less
-    -delete 0"   
-    
-    
-      # Soft mask edges
-      [ "$Softcut" ] && Command="$Command
-  ( mpr:cutmask_less -blur 0x${Softcut} -auto-level )
-  ( mpr:cutmask_less -transparent black )
-    -compose Over -composite
-    -write mpr:cutmask_less
-    -delete 0"
-    
-    true && Command="$Command
   mpr:sourceimage 
-  mpr:cutmask_less
+  mpr:cutmask
     -alpha Off -compose CopyOpacity -composite
-    -write mpr:sourcepart_less
+    -write mpr:sourcepart
     -delete 0"
     
-    
-      # write less part into result
-      Command="$Command
+    # draw into result
+    Command="$Command
   $Resultimage 
-  mpr:sourcepart_less
+  mpr:sourcepart
     -compose Over -composite
     -type TrueColorAlpha
     $Tifstore 
     -write $Resultimage
     -write mpr:result
     -delete 0"
-      # write less part into result copy for debugging
-      true && Command="$Command
-  $Resultimage.lessonly.tif
-  mpr:sourcepart_less
-    -compose Over -composite
-    -type TrueColorAlpha
-    $Tifstore 
-    -write $Resultimage.lessonly.tif
-    -delete 0"
     
-      # draw current less part of source over lessmask
-      false && Command="$Command
-  mpr:sourcemask
-  mpr:cutmask_less
-    -alpha Off -compose CopyOpacity -composite
-    -write mpr:maskpart_less
-    -delete 0
-  mpr:lessthanmax
-  mpr:maskpart_less
-    -compose SrcOver -composite
-    -write mpr:lessthanmax
-    -delete 0"
-    
-      # darken lessmask to get a mask with decreasing sharpness after a max peak
-      Command="$Command
-  mpr:lessthanmax
-  mpr:sourcemask
-    -compose Darken -composite
-    -write mpr:lessthanmax
-    -delete 0"
-      
-      # store lessmask
-      Command="$Command
-  mpr:lessthanmax
-    -write $Lessthanmax
-    -delete 0"
-            
-      Command="$Command
-  (  
-    mpr:sourcemask
-    mpr:lessthanmax
-    mpr:cutmask_max
-    mpr:cutmask_less 
-      +append
-  )
-  (
-    mpr:sourceimage
-    $Resultimage.maxonly.tif
-    $Resultimage.lessonly.tif
-    mpr:result
-      +append
-  )
-    -append
-    -alpha off
-    -write $Testimage
-    -delete 0"
-    
-#    ( mpr:sourcemask mpr:lessthanmax -compose Difference -composite )
-    }
     Command="$Command
-    null:"
+  null:"
     
     [ "$Count" = "1" ] && verbose "Fusing with:
 $(grep "\S" <<< "$Command")"
@@ -1468,6 +1410,8 @@ focus_fuse_mode3() {
   mkimg_transparent $Resulttop
   mkimg_transparent $Resultbottom
   mkimg_transparent $Resultimage
+  Lessthanmax="$Cachedir/lessthanmax.tif"
+  mkimg_black "$Lessthanmax"
   
   Startzeit="$(date +%s)"
   Count=0    
@@ -1478,6 +1422,7 @@ focus_fuse_mode3() {
     Sourcemask="$Cachedir/sourcemask.${Number}.tif"
     [ -e "$Sourcemask" ] || Sourcemask="$Cachedir/contrast.${Number}.tif"
     
+    # Load images
     Command="
 $Magickbin
   $Sourceimage
@@ -1499,69 +1444,86 @@ $Magickbin
   $Resultbottom
     -alpha set
     -write mpr:resultimagebottom
-    -delete 0
+    -delete 0"
+    
+    # stepwise increase maskmax
+    Command="$Command
   mpr:sourcemask 
   mpr:maskmax 
     -compose Lighten -composite
     -write mpr:maskmax
     -write $Maskmax
-    -delete 0
+    -delete 0"
+    
+    # get area of source mask sharper than current max
+    Command="$Command
   mpr:sourcemask
-  ( mpr:maskmax -evaluate Subtract ${Lessthanmaxoffset:-0}% )
+  mpr:maskmax
     -compose MinusDst -composite -fill white +opaque black
     -negate
     -transparent white
     -write mpr:cutmask
-    -delete 0
+    -delete 0"
+    
+    # --lessthanmax
+    [ "$Lessthanmaxoffset" ] && Command="$Command
+$(lessthanmax_code)"
+    
+    # get part of source mask
+    Command="$Command
   mpr:sourcemask 
   mpr:cutmask
     -compose Over -composite
     -write mpr:sourcemaskpart
-    -delete 0
+    -delete 0"
+    
+    # get part of source image (with semi transparency)
+    Command="$Command
   mpr:sourceimage 
   mpr:sourcemaskpart
     -alpha off -compose CopyOpacity -composite
     -write mpr:semitransparent
     -alpha off
-    -delete 0
+    -delete 0"
+    
+    # draw into top half of result
+    Command="$Command
   mpr:resultimagetop
   mpr:semitransparent
     -compose Over -composite
     -type TrueColorAlpha
     -write mpr:resultimagetop
     -write $Resulttop
-    -delete 0
+    -delete 0"
+    
+    # get area of source less sharp than current max
+    Command="$Command
   mpr:sourcemask 
   ( mpr:cutmask -negate )
     -compose Over -composite
     -write mpr:sourcemaskpart
-    -delete 0
+    -delete 0"
+    
+    # get part of source mask less sharp than current max (with semi transparency)
+    Command="$Command
   mpr:sourceimage 
   mpr:sourcemaskpart
     -alpha off -compose CopyOpacity -composite
     -write mpr:semitransparent
-    -delete 0
+    -delete 0"
+    
+    # draw part of source image less sharp than current max in lower result 
+    Command="$Command
   mpr:resultimagebottom 
   mpr:semitransparent
     -compose Over -composite
     -type TrueColorAlpha
     -write mpr:resultimagebottom
     -write $Resultbottom
-    -delete 0
+    -delete 0"
+    
+    Command="$Command
   null:"
-#  mpr:resultimagebottom
-#  mpr:resultimagetop
-#    -compose Over -composite
-#    -type TrueColorAlpha
-#  $Resultimage"
-
-
-#  mpr:sourcemask 
-#  mpr:maskmax 
-#    -evaluate-sequence max
-#    -write mpr:maskmax
-#    -write $Maskmax
-#    -delete 0
           
     [ "$Count" = "1" ] && verbose "Fusing with:
 $(grep "\S" <<< "$Command")"
