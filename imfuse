@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.3"
+Version="0.4"
 
 usage() {
   echo "imfuse v$Version - combine focus stackshot images to an overall sharp image.
@@ -17,19 +17,19 @@ Usage:
 General options:
      --cachedir=DIR          Specify a cache folder.
  -h, --help                  Show this help and exit.
-     --layers [=NUMBER]      Additonally store two layered TIFF images
-                             with segregated source part and sharpness layers.
+     --layers [=NUMBER]      Additonally store a layered TIFF image where
+                             the layers contain different sharpness areas.
                              NUMBER is number of sharpness layers. Default: 24
                              Does not work with --compose or --evaluate.
- -o, --output=FILE           Specify result image.
+ -o, --output=FILE           Specify result image file name.
  -v, --verbose               Show verbose output.
      --version               Show imfuse version and exit.
- -V, --showimage             Show intermediate results with geeqie.
+ -V, --showimage             Show intermediate results with image viewer geeqie.
  
 imfuse provides two basic ways to get overall sharp results.
  - The traditional way is contrast comparision with the mask methods below.
 Reduce artefacts with --soft-weight, --saturation-weight, --denoise, --cutsoft.
-Use --lessthanmask if background is stronger than objects in front.
+Use --lessthanmax if background is stronger than objects in front.
  - Another, faster attempt compares max and min images and combines them
 with the compositing methods.                            
 Default method: Mask comparision with --diffstat
@@ -167,6 +167,9 @@ For example, --radius=2,3,4 will generate three contrast masks
 with different radii and combine them to one mask.
 
 General mask generation adjustments:
+     --closegap [=RADIUS]    Close gaps between mask contrast lines. Can help
+                             to enhance thin shiny objects like hairs.
+                                                           Default RADIUS: 4
  -d, --denoise [=ARG]        Flatten stacking artefacts based on a min/max
                              comparision of the full stack.
                              ARG is a mask to paint over and is one of:
@@ -207,6 +210,7 @@ General mask generation adjustments:
                              where the background might shine through otherwise.
                              PERCENT is a threshold to avoid noise.
                              Works best with --morphology and --log.
+                             Works well in combination with --closegap.
                              Default PERCENT: 0          Option w/o PERCENT: 8
      --negate                Invert contrast mask.
      --cutsoft [=SIGMA]      Add a semi-transparent blur around cut masks. 
@@ -223,7 +227,7 @@ Negative percent values or greater than 100 are possible.
      --contrast-weight [=PERCENT]   Contrast mask weight.          
                                     Default: 100         Option w/o PERCENT: 100
      --soft-weight [=PERCENT]       Weight of soft mask taken from --fusemode=3.
-                                    Default: 0           Option w/o PERCENT: 50
+                                    Default: 0           Option w/o PERCENT: 25
      --saturation-weight [=PERCENT] Saturation weight. (HSB)
                                     Default: 5           Option w/o PERCENT: 15
      --chroma-weight [=PERCENT]     Color intensity weight. (HCL)
@@ -238,10 +242,6 @@ Negative percent values or greater than 100 are possible.
                              Helps to strengthen weak objects in foreground.
                              A negative PERCENT reduces weight of upper layers.
                                                          Option w/o PERCENT: 50
-
-Method independent adjustments:
- -g, --gamma [=GAMMA]        Adjust gamma of result. GAMMA>1 brightens,
-                             GAMMA<1 darkens the image.  Default GAMMA: auto
 "
 }
 
@@ -293,6 +293,10 @@ multiply() {
   [ -z "$Factor1" ] && return 1
   [ -z "$Factor2" ] && return 1
   awk "BEGIN {print $Factor1*$Factor2}"
+}
+nopercent() {
+  # remove % from string
+  sed s/%//g <<< "${1:-}"
 }
 printnum(){
   # print number $1 with leading zeroes.
@@ -511,7 +515,20 @@ level_masks() {
 $Magickbin
   $Mask
     -level ${Contrastminlevel}%,${Contrastmaxlevel}%
-  $Mask"
+    -write mpr:sourcemask
+    -delete 0"
+        
+    [ "$Closegap" ] && Command="$Command
+  mpr:sourcemask
+    -morphology Close Octagon:${Closegap:-3}
+    -write mpr:sourcemask
+    -delete 0"
+    
+    Command="$Command
+  mpr:sourcemask
+    -write $Mask
+    -delete 0
+  null:"
   
   [ "$Count" = "1" ] && verbose "Leveling masks with:
 $(grep "\S" <<< "$Command")"
@@ -532,7 +549,7 @@ lessthanmax_code() {
   local Command
   
   Command="
-  $Lessthanmax
+  $Lessthanmaxmask
     -write mpr:lessthanmax
     -delete 0
   mpr:cutmask
@@ -553,13 +570,13 @@ lessthanmax_code() {
   mpr:maskpart_max
     -compose Over -composite
     -write mpr:lessthanmax
-    -write $Lessthanmax
+    -write $Lessthanmaxmask
     -delete 0"
     
   # get area of source mask that is stronger (+offset) than lessmask) ### FIXME
   Command="$Command
   mpr:sourcemask 
-  ( mpr:lessthanmax -evaluate Add ${Lessthanmaxoffset:-0}% )
+  ( mpr:lessthanmax -evaluate Add ${Lessthanmax:-0}% )
     -compose MinusSrc -composite
     -fill white +opaque black 
     -write mpr:cutmask_less
@@ -585,7 +602,7 @@ lessthanmax_code() {
   # store lessmask
   Command="$Command
   mpr:lessthanmax
-    -write $Lessthanmax
+    -write $Lessthanmaxmask
     -delete 0" 
     
   echo "$Command"
@@ -1243,7 +1260,7 @@ focus_fuse_mode1() {
   # Fuse images, hard contrast
   # Default fuse mode: Find sharpest area in source (brightest in maskmax). Topmost source image wins if it shares same sharpness with deeper source images.
 
-  local Sourcemask Maskmax Lessthanmax
+  local Sourcemask Maskmax Lessthanmaxmask
   local Count Number
   local Command
   local Startzeit Dauer Restzeit 
@@ -1254,8 +1271,9 @@ focus_fuse_mode1() {
   # max of masks to compare single masks
   Maskmax="$Cachedir/mask.max.tif"
   evaluate_split max $Maskmax $Cachedir/sourcemask* || return 1
-  Lessthanmax="$Cachedir/lessthanmax.tif"
-  mkimg_black "$Lessthanmax"
+  # --lessthanmax
+  Lessthanmaxmask="$Cachedir/lessthanmax.tif"
+  mkimg_black "$Lessthanmaxmask" || return 1
   
   Startzeit="$(date +%s)"
   Count=0
@@ -1286,11 +1304,10 @@ $Magickbin
     -fill white +opaque black 
     -negate
     -write mpr:cutmask
-    -write mpr:cutmask_max
     -delete 0"
 
     # --lessthanmax
-    [ "$Lessthanmaxoffset" ] && Command="$Command
+    [ "$Lessthanmax" ] && Command="$Command
 $(lessthanmax_code)"
     
     # --cutsoft: Soft mask edges
@@ -1410,8 +1427,8 @@ focus_fuse_mode3() {
   mkimg_transparent $Resulttop
   mkimg_transparent $Resultbottom
   mkimg_transparent $Resultimage
-  Lessthanmax="$Cachedir/lessthanmax.tif"
-  mkimg_black "$Lessthanmax"
+  Lessthanmaxmask="$Cachedir/lessthanmax.tif"
+  mkimg_black "$Lessthanmaxmask"
   
   Startzeit="$(date +%s)"
   Count=0    
@@ -1466,7 +1483,7 @@ $Magickbin
     -delete 0"
     
     # --lessthanmax
-    [ "$Lessthanmaxoffset" ] && Command="$Command
+    [ "$Lessthanmax" ] && Command="$Command
 $(lessthanmax_code)"
     
     # get part of source mask
@@ -1650,6 +1667,7 @@ declare_variables() {
   Basename=""
   Lightnessweight=""
   Cachedir=""
+  Closegap=""
   Composefactor=""
   Compress=""
   Contrastmaxlevel=""
@@ -1666,7 +1684,6 @@ declare_variables() {
   Error=""
   Freemem=""
   Fusemode=""
-  Gamma=""
   Grayscale=""
   Grayscaleconverter=""
   Grayscalenumber=""
@@ -1681,7 +1698,7 @@ declare_variables() {
   Layernumber=""
   Layerminpixel=""
   Layers=""
-  Lessthanmaxoffset=""
+  Lessthanmax=""
   Loadmaskfile=""
   Magickbin=""
   Magickpixelmemory=""
@@ -1707,6 +1724,7 @@ declare_variables() {
   Stripmask="no"
   Swapcompose=""
   Testimage=""
+  Testsetup=""
   Threshold=
   Tifstore="+repage -quality 100% -compress lzw"
   Radius1=""
@@ -1719,11 +1737,11 @@ declare_variables() {
 parse_options() {
   local Shortoptions Longoptions Parsedoptions Parsererror Parsererrorfile
   
-  Shortoptions="d::,f:g::hn::o:r:R::s:S::t::vV"
-  Longoptions="basename::,cachedir:,help,verbose,version,output:,showimage"
+  Shortoptions="d::,f:hn::o:r:R::s:S::t::vV"
+  Longoptions="basename::,cachedir:,help,verbose,version,output:,showimage,test::"
   Longoptions="$Longoptions,chroma-weight::,darkness-weight::,denoise-weight::,lightness-weight::,contrast-weight::,saturation-weight::,soft-weight::"
   Longoptions="$Longoptions,radius:,radius1::,radius2::,sigma:,sigma1:,sigma2::,swap"
-  Longoptions="$Longoptions,denoise::,diff::,downweight::,factor::,fusemode:,grayscale:,gamma::,layers::,lessthanmax::,negate,revert,cutsoft::,threshold::"
+  Longoptions="$Longoptions,closegap::,denoise::,diff::,downweight::,factor::,fusemode:,grayscale:,layers::,lessthanmax::,negate,revert,cutsoft::,threshold::"
   Longoptions="$Longoptions,blur::,comet::,compass::,compose::,diffstat::,gaussian::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
@@ -1737,6 +1755,7 @@ parse_options() {
     case "${1:-}" in
       -h|--help)              usage ; exit 0 ;;
          --basename)          Basename="${2:-auto}" ; shift ;;
+         --closegap)          Closegap="${2:-auto}" ; shift ;;
          --lightness-weight)  Lightnessweight="${2:-auto}" ; shift ;;
          --cachedir)          Cachedir="${2:-}" ; Preservecache="yes" ; shift ;;
          --contrast-weight)   Contrastweight="${2:-auto}" ; shift ;;
@@ -1747,11 +1766,10 @@ parse_options() {
          --downweight)        Downweight="${2:-auto}" ; shift ;;
          --factor)            Composefactor="${2:-auto}" ; shift ;;
       -f|--fusemode)          Fusemode="${2:-auto}" ; shift ;;
-      -g|--gamma)             Gamma="${2:-auto}" ; shift ;;
          --grayscale)         Grayscale="${2:-auto}" ; shift ;;
          --chroma-weight)     Chromaweight="${2:-auto}" ; shift ;;
          --layers)            Storelayers="yes" ; Layernumber="${2:-auto}" ; shift ;;
-         --lessthanmax)       Lessthanmaxoffset="${2:-auto}" ; shift ;;
+         --lessthanmax)       Lessthanmax="${2:-auto}" ; shift ;;
          --negate)            Negate="yes" ;;
       -o|--output)            Outputimage="${2:-}" ; shift ;;
       -r|--radius|--radius1)  Radius1="${2:-}" ; shift ;;
@@ -1763,6 +1781,7 @@ parse_options() {
          --cutsoft)           Softcut="${2:-auto}" ; shift ;;
          --soft-weight)       Softweight="${2:-auto}" ; shift ;;
          --swap)              Swapcompose="-swap 0,1" ;;
+         --test)              Testsetup="${2:-test}" ; shift ;;
       -t|--threshold)         Threshold="${2:-auto}" ; shift ;;
       -v|--verbose)           Verbose="yes" ;;
          --version)           echo "imfuse v$Version"; exit 0 ;;
@@ -1783,7 +1802,7 @@ $(realpath "${1:-}")"
   return ${Error:-0}
 }
 check_options() {
-  
+   
   # --fusemode
   case $Method in
     evaluate|compose) 
@@ -1939,7 +1958,17 @@ check_options() {
     ;;
     *) [ -n "$Maskgeneratorargument" ] && error "Arguments not used in --$Method=$Maskgeneratorargument" ;;
   esac
-  
+ 
+  # --closegap
+  case $Method in
+    evaluate|compose) [ "$Closegap" ] && error "--closegap has no effect with --$Method" ;;
+    *)
+      case $Closegap in
+        "") ;;
+        auto) Closegap="4" ;;
+      esac
+    ;;
+  esac
   
   # --denoise
   [ "${Denoise}${Denoiseweight}" ] && {
@@ -2014,7 +2043,7 @@ check_options() {
       case $Downweight in
         "")   ;;
         auto) Downweight="50" ;;
-        *)    Downweight="$(sed s/%// <<< "$Downweight")" ;;
+        *)    Downweight="$(nopercent "$Downweight")" ;;
       esac
     ;;
   esac
@@ -2085,11 +2114,12 @@ check_options() {
   esac
   
   # --lessthanmax
+  Lessthanmax="$(nopercent "$Lessthanmax")"
   case $Method in
-    evaluate|compose) [ "$Lessthanmaxoffset" ] && error "--lessthanmax has no effect with --$Method" ;;
+    evaluate|compose) [ "$Lessthanmax" ] && error "--lessthanmax has no effect with --$Method" ;;
     *)
-      case $Lessthanmaxoffset in
-        auto) Lessthanmaxoffset="8" ;;
+      case $Lessthanmax in
+        auto) Lessthanmax="8" ;;
       esac
     ;;
   esac
@@ -2170,7 +2200,7 @@ check_options() {
           Softcut="2"
           note "Setting --cutsoft=$Softcut"
         ;;
-        *) Softcut="$(sed s/%// <<< "$Softcut")" ;;
+        *) Softcut="$(nopercent "$Softcut")" ;;
       esac
     ;;
   esac
@@ -2187,7 +2217,7 @@ check_options() {
           Threshold="5"
           note "Setting --threshold=$Threshold"
         ;;
-        *) Threshold="$(sed s/%// <<< "$Threshold")" ;;
+        *) Threshold="$(nopercent "$Threshold")" ;;
       esac
     ;;
   esac
@@ -2199,19 +2229,19 @@ check_options() {
   --darkness-weight --lightness-weight  --denoise-weight
   --soft-weight" ;;
     *)
-      Contrastweight="$(sed   s/%// <<< "$Contrastweight")"
-      Softweight="$(sed       s/%// <<< "$Softweight")"
-      Saturationweight="$(sed s/%// <<< "$Saturationweight")"
-      Chromaweight="$(sed     s/%// <<< "$Chromaweight")"
-      Darknessweight="$(sed   s/%// <<< "$Darknessweight")"
-      Lightnessweight="$(sed  s/%// <<< "$Lightnessweight")"
-      Denoiseweight="$(sed    s/%// <<< "$Denoiseweight")"
+      Contrastweight="$(nopercent   "$Contrastweight")"
+      Softweight="$(nopercent       "$Softweight")"
+      Saturationweight="$(nopercent "$Saturationweight")"
+      Chromaweight="$(nopercent     "$Chromaweight")"
+      Darknessweight="$(nopercent   "$Darknessweight")"
+      Lightnessweight="$(nopercent  "$Lightnessweight")"
+      Denoiseweight="$(nopercent    "$Denoiseweight")"
       case $Contrastweight in
         ""|auto) Contrastweight="100" ;;
       esac
       case $Softweight in
         "")   Softweight="0" ;;
-        auto) Softweight="50" ;;
+        auto) Softweight="25" ;;
       esac
       case $Saturationweight in
         "")   Saturationweight="0" ;;
@@ -2313,19 +2343,23 @@ check_options() {
         esac
         case $Softcut in
           0|"") ;;
-          *) Resultimage="${Resultimage}.sc$Softcut" ;;
+          *) Resultimage="${Resultimage}.cs$Softcut" ;;
         esac
         case $Threshold in
           0|"") ;;
           *) Resultimage="${Resultimage}.t$Threshold" ;;
         esac
-        case $Lessthanmaxoffset in
+        case $Lessthanmax in
           "") ;;
-          *) Resultimage="${Resultimage}.less$Lessthanmaxoffset" ;;
+          *) Resultimage="${Resultimage}.less$Lessthanmax" ;;
+        esac
+        case $Closegap in
+          "") ;;
+          *) Resultimage="${Resultimage}.gap$Closegap" ;;
         esac
         case $Grayscalenumber in
           9) ;;
-          *) Resultimage="${Resultimage}.g$Grayscalenumber" ;;
+          *) Resultimage="${Resultimage}.gray$Grayscalenumber" ;;
         esac
         case $Downweight in
           ""|0) ;;
@@ -2334,11 +2368,7 @@ check_options() {
         [ "$Revertimagelist" = "yes" ] && Resultimage="${Resultimage}.rev"
       ;;
     esac
-    case $Gamma in
-      "") ;;
-      auto) Resultimage="${Resultimage}.G" ;;
-      *)    Resultimage="${Resultimage}.G$Gamma" ;;
-    esac
+    [ "$Testsetup" ] && Resultimage="${Resultimage}.$Testsetup"
     Resultimage="${Resultimage}.${Imageformat}"
     
   [ -z "$Outputimage" ] && {
@@ -2350,12 +2380,13 @@ check_options() {
     
   verbose "--$Method=$Maskgeneratorargument
 --cachedir=$Cachedir
+--closegap=$Closegap
 --denoise=$Denoise
 --fusemode=$Fusemode
 --downweight=$Downweight
---gamma=$Gamma
 --grayscale=$Grayscale
 --layers=$Layernumber
+--lessthanmax=$Lessthanmax
 --mode=$Mode
 --output=$Outputimage
 --radius=$Radius1
@@ -2438,14 +2469,6 @@ main() {
       focus_fuse_mode$Fusemode || return 1
       [ "$Storelayers" ] && focus_sharpness_layer
     ;;
-  esac
-  [ "$Error" ] && return 1
-
-  # --gamma
-  case $Gamma in
-    "") ;;
-    auto) $Magickbin "$Resultimage" -auto-gamma     $Tifstore "$Resultimage" || error "Error in --gamma=$Gamma" ;;
-    *)    $Magickbin "$Resultimage" -gamma "$Gamma" $Tifstore "$Resultimage" || error "Error in --gamma=$Gamma" ;;
   esac
   [ "$Error" ] && return 1
 
