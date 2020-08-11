@@ -272,6 +272,9 @@ showimage() {
 comma2whitespace() {
   sed "s/,/ /g" <<< "${1:-}"
 }
+calc() {
+  awk "BEGIN {print $* }"
+}
 freememory() {
   local Freemem Line Zram
   Freemem="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
@@ -491,11 +494,21 @@ ${1:-}"
   return "${Error:-0}"
 }
 
+cutsoft_code() {
+echo "
+  ( mpr:cutmask -blur 0x${Cutsoft:-2} -auto-level )
+  ( mpr:cutmask -transparent black )
+    -compose Over -composite
+    -write mpr:cutmask
+    -delete 0"
+}
 level_masks() {
   local Masklist Maskmax Maskmin
   local Startzeit Dauer Restzeit
   local Count Mask
+  local Closegapopt
   
+  [ "${1:-}" = "--closegap" ] && Closegapopt="yes" && shift
   Masklist="$@"
   Maskmax=$Cachedir/level.mask.max.tif
   Maskmin=$Cachedir/level.mask.min.tif
@@ -504,6 +517,8 @@ level_masks() {
   Contrastmaxlevel="$($Magickbin "$Maskmax" -format '%[fx:maxima*100]' info:)"
   evaluate_split min $Maskmin $Masklist || return 1
   Contrastminlevel="$($Magickbin "$Maskmin" -format '%[fx:minima*100]' info:)"
+  
+  [ "$Contrastminlevel" = "0" ] && [ "$Contrastmaxlevel" = "100" ] && return 0 
   
   Startzeit="$(date +%s)"
   Count=0
@@ -518,9 +533,9 @@ $Magickbin
     -write mpr:sourcemask
     -delete 0"
         
-    [ "$Closegap" ] && Command="$Command
+    [ "$Closegapopt" ] && [ "$Closegap" ] && Command="$Command
   mpr:sourcemask
-    -morphology Close Octagon:${Closegap:-3}
+    -morphology Close:${Closegapiteration:-1} Octagon:${Closegapradius:-4}
     -write mpr:sourcemask
     -delete 0"
     
@@ -1041,7 +1056,7 @@ $(grep "\S" <<< "$Command")"
   
   
   # Level masks to full black-white spectrum
-  grep -q contrast <<< "$Needmask"  && level_masks $Cachedir/contrast*
+  grep -q contrast <<< "$Needmask"  && level_masks --closegap $Cachedir/contrast*
  # for Line in contrast saturation darkness lightness chroma ; do
  #   grep -q $Line <<< "$Needmask" && level_masks $Cachedir/$Line*
  # done
@@ -1139,72 +1154,72 @@ $Magickbin"
   ( -size ${Imagewidth}x${Imageheight} xc:black )"
     [ "$Contrastweight" -gt "0" ] && Command="$Command
   ( $Contrastmask
-    +level 0%,$((Contrastweight/Masknumber))% )
+    +level 0%,$(calc $Contrastweight / $Masknumber)% )
     -compose $Mergemethod -composite"
     [ "$Contrastweight" -lt "0" ] && Command="$Command
   ( $Contrastmask
     -negate
-    +level 0%,$((-1*Contrastweight/Masknumber))% )
+    +level 0%,$(calc -1*$Contrastweight / $Masknumber)% )
     -compose $Mergemethod -composite"
     # --saturation-weight
     [ "$Saturationweight" -gt "0" ] && Command="$Command
   ( $Saturationmask
-    +level 0%,$((Saturationweight/Masknumber))% )
+    +level 0%,$(calc $Saturationweight / $Masknumber)% )
     -compose $Mergemethod -composite"
     [ "$Saturationweight" -lt "0" ] && Command="$Command
   ( $Saturationmask
     -negate
-    +level 0%,$((-1*Saturationweight/Masknumber))% ) 
+    +level 0%,$(calc -1*$Saturationweight / $Masknumber)% ) 
     -compose $Mergemethod -composite"
     # --chroma-weight
     [ "$Chromaweight" -gt "0" ]     && Command="$Command
   ( $Chromamask      
-    +level 0%,$((Chromaweight/Masknumber))% )     
+    +level 0%,$(calc $Chromaweight / $Masknumber)% )     
     -compose $Mergemethod -composite"
     [ "$Chromaweight" -lt "0" ]     && Command="$Command
   ( $Chromamask
     -negate
-    +level 0%,$((-1*Chromaweight/Masknumber))% )     
+    +level 0%,$(calc -1*$Chromaweight / $Masknumber)% )     
     -compose $Mergemethod -composite"
     # --darkness-weight
     [ "$Darknessweight" -gt "0" ]   && Command="$Command
   ( $Darknessmask    
-    +level 0%,$((Darknessweight/Masknumber))% )
+    +level 0%,$(calc $Darknessweight / $Masknumber)% )
     -compose $Mergemethod -composite"
     [ "$Darknessweight" -lt "0" ]   && Command="$Command
   ( $Darknessmask
     -negate
-    +level 0%,$((-1*Darknessweight/Masknumber))% )
+    +level 0%,$(calc -1*$Darknessweight / $Masknumber)% )
     -compose $Mergemethod -composite"
     # --lightness-weight
     [ "$Lightnessweight" -gt "0" ]  && Command="$Command
   ( $Lightnessmask
-    +level 0%,$((Lightnessweight/Masknumber))% )
+    +level 0%,$(calc $Lightnessweight / $Masknumber)% )
     -compose $Mergemethod -composite"
     [ "$Lightnessweight" -lt "0" ]  && Command="$Command
   ( $Lightnessmask
     -negate
-    +level 0%,$((-1*Lightnessweight/Masknumber))% )
+    +level 0%,$(calc -1*$Lightnessweight / $Masknumber)% )
     -compose $Mergemethod -composite"
     # --denoise
     [ "$Denoiseweight" -gt "0" ]    && Command="$Command
   ( $Denoisemask
-    +level 0%,$((Denoiseweight/Masknumber))% )
+    +level 0%,$(calc $Denoiseweight / $Masknumber)% )
     -compose $Mergemethod -composite"
     [ "$Denoiseweight" -lt "0" ]    && Command="$Command
   ( $Denoisemask
     -negate
-    +level 0%,$((-1*Denoiseweight/Masknumber))% )
+    +level 0%,$(calc -1*$Denoiseweight / $Masknumber)% )
     -compose $Mergemethod -composite"
     # --soft-weight
     [ "$Softweight" -gt "0" ]       && Command="$Command
   ( $Softmask
-    +level 0%,$((Softweight/Masknumber))% )
+    +level 0%,$(calc $Softweight / $Masknumber)% )
     -compose $Mergemethod -composite"
     [ "$Softweight" -lt "0" ]       && Command="$Command
   ( $Softmask
     -negate
-    +level 0%,$((-1*Softweight/Masknumber))% )
+    +level 0%,$(calc -1*$Softweight / $Masknumber)% )
     -compose $Mergemethod -composite"
         
 false && Command="$Command
@@ -1252,6 +1267,8 @@ $(grep "\S" <<< "$Command")"
     verbose "Merging $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   [ "$Error" ] && return "${Error:-0}"
+  
+  [ "$Lessthanmax" ] && level_masks $Cachedir/sourcemask*
   
   return ${Error:-0}
 }
@@ -1309,14 +1326,10 @@ $Magickbin
     # --lessthanmax
     [ "$Lessthanmax" ] && Command="$Command
 $(lessthanmax_code)"
-    
+
     # --cutsoft: Soft mask edges
-    [ "$Softcut" ] && Command="$Command
-  ( mpr:cutmask -blur 0x${Softcut} -auto-level )
-  ( mpr:cutmask -transparent black )
-    -compose Over -composite
-    -write mpr:cutmask
-    -delete 0"
+    [ "$Cutsoft" ] && Command="$Command
+$(cutsoft_code)"
     
     # get part of source image
     Command="$Command
@@ -1485,6 +1498,10 @@ $Magickbin
     # --lessthanmax
     [ "$Lessthanmax" ] && Command="$Command
 $(lessthanmax_code)"
+
+    # --cutsoft: Soft mask edges
+    [ "$Cutsoft" ] && Command="$Command
+$(cutsoft_code)"
     
     # get part of source mask
     Command="$Command
@@ -1668,11 +1685,14 @@ declare_variables() {
   Lightnessweight=""
   Cachedir=""
   Closegap=""
+  Closegapradius=""
+  Closegapiteration=""
   Composefactor=""
   Compress=""
   Contrastmaxlevel=""
   Contrastminlevel=""
   Contrastweight=""
+  Cutsoft=""
   Darknessweight=""
   Denoise=""
   Denoiseindex=""
@@ -1714,7 +1734,6 @@ declare_variables() {
   Revertimagelist="no"
   Saturationweight=""
   Showimageprocessing="no"
-  Softcut=""
   Softresult=""
   Softweight=""
   Sourceimage=""
@@ -1778,7 +1797,7 @@ parse_options() {
          --saturation-weight) Saturationweight="${2:-auto}" ; shift ;;
       -s|--sigma|--sigma1)    Sigma1="${2:-}" ; shift ;;
       -S|--sigma2)            Sigma2="${2:-auto}" ; shift ;;
-         --cutsoft)           Softcut="${2:-auto}" ; shift ;;
+         --cutsoft)           Cutsoft="${2:-auto}" ; shift ;;
          --soft-weight)       Softweight="${2:-auto}" ; shift ;;
          --swap)              Swapcompose="-swap 0,1" ;;
          --test)              Testsetup="${2:-test}" ; shift ;;
@@ -1963,10 +1982,15 @@ check_options() {
   case $Method in
     evaluate|compose) [ "$Closegap" ] && error "--closegap has no effect with --$Method" ;;
     *)
+      [ "$Closegap" ] && {
+        Closegapradius="$(cut    -d, -f1    <<< "$Closegap")"
+        Closegapiteration="$(cut -d, -f2 -s <<< "$Closegap")"
+      }
       case $Closegap in
         "") ;;
-        auto) Closegap="4" ;;
+        auto) Closegapradius="4" ; Closegapiteration="1" ;;
       esac
+      Closegapiteration="${Closegapiteration:-1}"
     ;;
   esac
   
@@ -2191,16 +2215,16 @@ check_options() {
   # --cutsoft
   case $Method in
     evaluate|compose) 
-      [ "$Softcut" ] && error "--cutsoft has no effect with --$Method"
+      [ "$Cutsoft" ] && error "--cutsoft has no effect with --$Method"
     ;;
     *)
-      case $Softcut in
+      case $Cutsoft in
         "") ;;
         auto)
-          Softcut="2"
-          note "Setting --cutsoft=$Softcut"
+          Cutsoft="2"
+          note "Setting --cutsoft=$Cutsoft"
         ;;
-        *) Softcut="$(nopercent "$Softcut")" ;;
+        *) Cutsoft="$(nopercent "$Cutsoft")" ;;
       esac
     ;;
   esac
@@ -2341,9 +2365,9 @@ check_options() {
           "") ;;
           *) Resultimage="${Resultimage}.n$Denoiseindex" ;;
         esac
-        case $Softcut in
+        case $Cutsoft in
           0|"") ;;
-          *) Resultimage="${Resultimage}.cs$Softcut" ;;
+          *) Resultimage="${Resultimage}.cs$Cutsoft" ;;
         esac
         case $Threshold in
           0|"") ;;
@@ -2355,7 +2379,8 @@ check_options() {
         esac
         case $Closegap in
           "") ;;
-          *) Resultimage="${Resultimage}.gap$Closegap" ;;
+          *) Resultimage="${Resultimage}.gap$Closegapradius"
+             [ "$Closegapiteration" != "1" ] && Resultimage="$Resultimage,$Closegapiteration";;
         esac
         case $Grayscalenumber in
           9) ;;
@@ -2381,6 +2406,7 @@ check_options() {
   verbose "--$Method=$Maskgeneratorargument
 --cachedir=$Cachedir
 --closegap=$Closegap
+--cutsoft=$Cutsoft
 --denoise=$Denoise
 --fusemode=$Fusemode
 --downweight=$Downweight
@@ -2393,7 +2419,6 @@ check_options() {
 --radius2=$Radius2
 --sigma=$Sigma1
 --sigma2=$Sigma2
---cutsoft=$Softcut
 --threshold=$Threshold
 --contrast-weight=$Contrastweight
 --denoise-weight=$Denoiseweight
