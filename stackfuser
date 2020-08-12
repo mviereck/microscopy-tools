@@ -748,7 +748,7 @@ getfunctionsettings() {
 runbatchone() {
   local $Batchlocal
   local Iterate
-  for Function in orient crop whitebalance align_vidstab align_hugin align_ais; do
+  for Function in imageformat orient crop align_vidstab align_hugin align_ais; do
     askkaptain -c $Function > /dev/null && {
       getfunctionsettings $Function
       cmd -f "$Function" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Stackdir"
@@ -1958,14 +1958,17 @@ evaluate_split() {
   
   Mode="${Opt1:-min}"
   Stepsize=40
-  [ -n "$Destinationfile" ] && Destinationfile="$Destinationdir/$Destinationfile" || Destinationfile="$Cachedir/$Mode.tif"
+  case $Destinationfile in
+    "") Destinationfile="$Cachedir/$Mode.tif" ;;
+    *)  [ -n "$Destinationdir" ] && Destinationfile="$Destinationdir/$Destinationfile" ;;
+  esac
   Splitdir="$Cachedir/evaluate_split.$RANDOM"
   
   Split="$((Imagelistmemsize/$(freememory) +1))"
   
   case $Split in
     1) 
-      $Magickbin $Imagelist -evaluate-sequence $Mode $Destinationfile
+      $Magickbin $Imagelist -evaluate-sequence $Mode $Destinationfile || return 1
     ;;
     *)
       mkdir -p "$Splitdir"
@@ -2154,7 +2157,7 @@ imageformat() {
   Destinationformat="${Opt9:-tif}"
   Destinationformat="${Destinationformat,,}"
   
-  [ "$Sourceformat" = "$Destinationformat" ] && {
+  false && [ "$Sourceformat" = "$Destinationformat" ] && {
     note "imageformat(): Files already have desired image format $Destinationformat"
     cp $Imagelist $Destinationdir
     showpercent 100 100
@@ -2175,7 +2178,7 @@ imageformat() {
     showpercent $Imagecount $Imagenumber
     Destinationfile="$(rev <<< "$Image" | cut -d. -f2- | rev).$Destinationformat"
     Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
-    multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || Error=1 
+    multicore "$Magickbin $Image +repage -orient topleft -quality 100% $Destinationfile" "$Destinationfile" || Error=1 
     [ "$Error" ] && break
 #    case $Imageraw in
 #      no)  multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || return 1 ;;
@@ -3219,24 +3222,17 @@ start "stackfuser '$Version'"  -> frameset;
         batchframeleft:framed              -> batchblock1 batchblock2 ;
         batchframeright:framed             -> batchblock3 runbatchframe @fill stopframe;
           
-      batchblock1 "batch block 1: crop and balance directory magick" -> orientline cropline whitebalanceline align_vidstabline align_huginline align_aisline;
+      batchblock1 "batch block 1: crop and balance directory magick" -> imageformatline cropline align_vidstabline align_huginline align_aisline;
+        imageformatline:beside                                -> imageformat imageformatopt9combo imageformatmagick imageformatfuse imageformatevaluate;
+          imageformatopt9combo                                  -> @combow('$Imageformatcombo')="TIF" ;
+          imageformatmagick                                     -> @button="magick" ;
+          imageformatevaluate                                   -> @button="evaluate" ;
+          imageformatfuse                                       -> @button="fuse" ;
+          imageformat:beside          "change image format"     -> "on" | ! "" ;
         orientline:beside                                     -> orient orientopt1combo orientmagick;
           orientopt1combo                                       -> @combo("topleft","topright","bottomleft","bottomright")="topleft" ;
           orientmagick                                          -> @button="magick" ;
           orient:beside               "orient (fixate image exif rotation)" -> "on" | "";
-        meanbalanceline:beside                                -> meanbalance meanbalanceopt1combo meanbalancemagick meanbalancefuse meanbalanceevaluate;
-          meanbalanceopt1combo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
-          meanbalancemagick                                     -> @button="magick" ;
-          meanbalanceevaluate                                   -> @button="evaluate" ;
-          meanbalancefuse                                       -> @button="fuse" ;
-          meanbalance:beside          "meanbalance"             -> "on"  | ! "";
-        whitebalanceline:beside                               -> whitebalance whitebalanceopt1combo whitebalanceopt2combo whitebalancemagick whitebalancefuse whitebalanceevaluate;
-          whitebalanceopt1combo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
-          whitebalanceopt2combo                                 -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#CCCCCC" ;
-          whitebalancemagick                                    -> @button="magick" ;
-          whitebalanceevaluate                                  -> @button="evaluate" ;
-          whitebalancefuse                                      -> @button="fuse" ;
-          whitebalance:beside         "whitebalance"            ->  "on"  | ! "";
         cropline:beside                                       -> crop cropopt1combo cropopt2combo cropmagick cropfuse cropevaluate;
           cropopt1combo                                         -> @combo("interactive","shrink","even","geometry")="interactive" ;
           cropopt2combo                                         -> @combow("","1","2","5","10","200x200+15+15")="" ;
@@ -3344,7 +3340,7 @@ start "stackfuser '$Version'"  -> frameset;
           killviewnior                                            -> @action("killall viewnior ffplay")="killall viewnior ffplay";
                 
     specialtab:framed "Special operations" -> specialframe @fill undoframe;
-      specialframe "Special operations" -> imageformatline videoline animationline cuberotateline lightbalanceline evalstepline rulerline ;
+      specialframe "Special operations" -> videoline animationline cuberotateline whitebalanceline lightbalanceline evalstepline rulerline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
           ruleropt1combo                                        -> @combo('$Imgrulermodecombo')="100z" ;
           ruleropt2combo:beside       "Title:"                  -> @string ;
@@ -3371,6 +3367,19 @@ start "stackfuser '$Version'"  -> frameset;
           cuberotateopt1combo:beside                            -> @combo("90","180","270","reverse-order","back-left","back-top","left","right","top","bottom")="reverse-order";
           cuberotatemagick                                      -> @button="magick" ;
           cuberotate:beside           "cuberotate"              -> "" ;
+        meanbalanceline:beside                                -> meanbalance meanbalanceopt1combo meanbalancemagick meanbalancefuse meanbalanceevaluate;
+          meanbalanceopt1combo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
+          meanbalancemagick                                     -> @button="magick" ;
+          meanbalanceevaluate                                   -> @button="evaluate" ;
+          meanbalancefuse                                       -> @button="fuse" ;
+          meanbalance:beside          "meanbalance"             -> "";
+        whitebalanceline:beside                               -> whitebalance whitebalanceopt1combo whitebalanceopt2combo whitebalancemagick whitebalancefuse whitebalanceevaluate;
+          whitebalanceopt1combo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
+          whitebalanceopt2combo                                 -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#CCCCCC" ;
+          whitebalancemagick                                    -> @button="magick" ;
+          whitebalanceevaluate                                  -> @button="evaluate" ;
+          whitebalancefuse                                      -> @button="fuse" ;
+          whitebalance:beside         "whitebalance"            ->  "";
         lightbalanceline:beside                               -> lightbalance lightbalanceopt1combo lightbalanceopt2combo lightbalancemagick lightbalancefuse lightbalanceevaluate;
           lightbalanceopt1combo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
           lightbalanceopt2combo                                 -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
@@ -3378,12 +3387,6 @@ start "stackfuser '$Version'"  -> frameset;
           lightbalanceevaluate                                  -> @button="evaluate" ;
           lightbalancefuse                                      -> @button="fuse" ;
           lightbalance:beside         "lightbalance"            -> "" ;
-        imageformatline:beside                                -> imageformat imageformatopt9combo imageformatmagick imageformatfuse imageformatevaluate;
-          imageformatopt9combo                                  -> @combow('$Imageformatcombo')="TIF" ;
-          imageformatmagick                                     -> @button="magick" ;
-          imageformatevaluate                                   -> @button="evaluate" ;
-          imageformatfuse                                       -> @button="fuse" ;
-          imageformat:beside          "change image format"     -> "";
         evalstepline:beside                                   -> evalstep evalstepopt1combo evalstepopt2combo evalstepmagick;
           evalstepopt1combo                                     -> @combow("max","min","mean","median")="median" ;
           evalstepopt2combo                                     -> @combow("3","5","7","9","15","25")="5" ;
