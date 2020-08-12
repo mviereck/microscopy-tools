@@ -152,6 +152,11 @@ Mask generating methods:
                              Higher values for --sigma1 results in strong edges.
                              Two-mask difference calculation with options:
                                --sigma2                  Default: 1.6*sigma1
+     --wavelet [=PERCENT]    Based on IM option -wavelet-denoise.
+                             PERCENT is a threshold value. Low PERCENT gives
+                             more detail and noise, high PERCENT more contrast.
+                             --lessthanmax needs high values to work properly.
+                                                         Default PERCENT: 10
                                       
 Compositing adjustments:
      --swap                  Invert order of max/min in --compose.
@@ -209,9 +214,10 @@ General mask generation adjustments:
                              Helps to preserve less sharp objects in front
                              where the background might shine through otherwise.
                              PERCENT is a threshold to avoid noise.
-                             Works best with --morphology and --log.
                              Works well in combination with --closegap.
                              Default PERCENT: 0          Option w/o PERCENT: 8
+                             Effect and useful PERCENT values depend highly on
+                             the mask generation method.
      --negate                Invert contrast mask.
      --cutsoft [=SIGMA]      Add a semi-transparent blur around cut masks. 
                              Reduces some artefacts. Disable with SIGMA=0
@@ -873,7 +879,14 @@ Maskgenerator="$Maskgenerator
     ;;
     unsharp)
       Maskgenerator="
-  ( $Sourceimage -unsharp ${Radius1:-0}x${Sigma1:-5} )
+  $Sourceimage -unsharp ${Radius1:-0}x${Sigma1:-5}
+  $Sourceimage
+    -compose Difference -composite"
+    ;;
+    wavelet)
+      Maskgenerator="
+  $Sourceimage 
+    -wavelet-denoise ${Maskgeneratorargument:-10}%
   $Sourceimage
     -compose Difference -composite"
     ;;
@@ -941,7 +954,7 @@ $(focus_maskmethod "$Method" "mpr:sourcegray" "$R1" "$R2" "$S1" "$S2" "$Maskgene
   
   # --diff
   [ "$Differencemask" = "yes" ] && Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  mpr:sourcegray
     -compose Difference -composite"
 
   # --negate
@@ -1761,7 +1774,7 @@ parse_options() {
   Longoptions="$Longoptions,chroma-weight::,darkness-weight::,denoise-weight::,lightness-weight::,contrast-weight::,saturation-weight::,soft-weight::"
   Longoptions="$Longoptions,radius:,radius1::,radius2::,sigma:,sigma1:,sigma2::,swap"
   Longoptions="$Longoptions,closegap::,denoise::,diff::,downweight::,factor::,fusemode:,grayscale:,layers::,lessthanmax::,negate,revert,cutsoft::,threshold::"
-  Longoptions="$Longoptions,blur::,comet::,compass::,compose::,diffstat::,gaussian::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::"  
+  Longoptions="$Longoptions,blur::,comet::,compass::,compose::,diffstat::,gaussian::,evaluate::,experimental::,free::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
 
   Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@" 2>"$Parsererrorfile")"
@@ -1805,7 +1818,7 @@ parse_options() {
       -v|--verbose)           Verbose="yes" ;;
          --version)           echo "imfuse v$Version"; exit 0 ;;
       -V|--showimage)         Showimageprocessing="yes" ;;
-         --blur|--comet|--compass|--compose|--diffstat|--gaussian|--evaluate|--experimental|--free|--freichen|--kirsch|--laplacian|--log|--morphology|--none|--prewitt|--roberts|--sobel|--statistic|--unsharp)
+         --blur|--comet|--compass|--compose|--diffstat|--gaussian|--evaluate|--experimental|--free|--freichen|--kirsch|--laplacian|--log|--morphology|--none|--prewitt|--roberts|--sobel|--statistic|--unsharp|--wavelet)
         Method="${1#--}"
         Maskgeneratorargument="${2:-}"  && shift
       ;;  
@@ -1956,7 +1969,6 @@ check_options() {
   or compare IM option -morphology."
       }
       Maskgeneratorargument="$(lowercase "$Maskgeneratorargument")"
-    
     ;;
     statistic)
       case $Maskgeneratorargument in
@@ -1974,6 +1986,9 @@ check_options() {
                                 Maskgeneratorargument="standarddeviation" ;;
         *) error "--statistic: Unknown STAT $Maskgeneratorargument" ;;
       esac
+    ;;
+    wavelet)
+      Maskgeneratorargument="$(nopercent "${Maskgeneratorargument:-5}")"
     ;;
     *) [ -n "$Maskgeneratorargument" ] && error "Arguments not used in --$Method=$Maskgeneratorargument" ;;
   esac
@@ -2327,7 +2342,7 @@ check_options() {
       compose|evaluate|laplacian)             Resultimage="$Resultimage.${Method}.${Maskgeneratorargument}" ;;
       diffstat)                               Resultimage="$Resultimage.${Method}.${Diffstat1}-${Diffstat2}.r${Radius1}"
         [ "$Radius2" ] &&                     Resultimage="${Resultimage}-r${Radius2}" ;;
-      freichen)                               Resultimage="$Resultimage.${Method}"
+      freichen|wavelet)                       Resultimage="$Resultimage.${Method}"
         [ "$Maskgeneratorargument" ] &&       Resultimage="$Resultimage.${Maskgeneratorargument}" ;;
       morphology)                             Resultimage="$Resultimage.${Method}.${Maskgeneratorargument}"
         [ "$Radius1" ] &&                     Resultimage="${Resultimage}.r${Radius1}"
