@@ -4,10 +4,10 @@ Tools for microscopy and image focus stacking.
 
  - Tools ready for use:
    - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image (Terminal)
- - Tools in active development:
+ - Tools already useable, in active development:
    - [`imfuse`](#imfuse): Fuse focus stackshot images with imagemagick. (Terminal)
    - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
- - Tools awaiting further development:
+ - Tools already useable, awaiting further development:
    - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
    
@@ -16,12 +16,13 @@ However, if you are already interested to try them out, please give me some feed
 
 ## imfuse
 
-Fuse focus stackshot images with ImageMagick. In active development, beta stage. (Terminal) 
+Combines focus stackshot images to an overall sharp image.
+Aims to be similar to enfuse, but based on ImageMagick.
+In active development, beta stage. (Terminal) 
 
 Dependencies:
  - `imagemagick`
- - `geeqie` (optional)
- - `enfuse` (optional)
+ - `geeqie` (optional image viewer)
 
 ## imgruler
 
@@ -125,7 +126,6 @@ computer.
  - `gphoto2`: The gphoto2 library allows access and control of various digital camera models. Command line tool, used by `stackshooter`.
  - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `stackfuser` and `stackshooter`.
  - `hugin`: Hugin is a panorama photo stitching program for several overlapping photos taken from the same location, transforming the photos to one larger image.
- - `macrofusion`: GUI for stacking software `enfuse`. Fork with some bug fixes: https://github.com/mviereck/macrofusion
  - `rawtherapee`: RawTherapee is an advanced program for developing raw photos and for processing
 non-raw photos.
 
