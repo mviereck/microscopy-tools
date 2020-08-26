@@ -830,7 +830,7 @@ align_ais() {
     [ -z "$Stacklist" ] && break
     Aligndir=$Cachedir/align.$Stackcount
     mkdir $Aligndir
-    nice align_image_stack $Opt1 -v -l -g3 --use-given-order -p $Cachedir/ais.$Stackcount.pto -a $Aligndir/align $Firstimage $Stacklist || Error=1
+    nice align_image_stack $Opt1 -v -l --use-given-order -p $Cachedir/ais.$Stackcount.pto -a $Aligndir/align $Firstimage $Stacklist || Error=1
     Firstimage="$(fileglob "$Aligndir/align*" | tail -n1)"
     showimage $Firstimage
     Dauer="$(( $(date +%s)-Startzeit))"
