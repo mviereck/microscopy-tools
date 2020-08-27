@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.5.1"
+Version="0.5.2"
 
 usage() {
   echo "imfuse v$Version - combine focus stackshot images to an overall sharp image.
@@ -211,6 +211,7 @@ Image comparision mask options: (Intended for artefact removal)
                       Greater radius removes more light.
                       sigma is a -blur sigma for a soft cut.
                       Needs high 'weight' values even greater than 100.
+                      Well to combine with --darkness.
  --image [=ARG]       Loads an image and generates masks based on 
                       similarity with source images.
                       ARG additionally takes arguments:
@@ -738,8 +739,9 @@ $(grep "\S" <<< "$Command")"
   return "${Error:-0}"
 }
 focus_generate_masks() {
-  local Maskgenerator Maskbasenamelist= Maskready=
-  
+  local Maskgenerator Maskbasenamelist= Maskready= Maskmax Showimage Mode Line Imagename
+  local Startzeit Dauer Restzeit Count
+
   Showimage="$Cachedir/mask.progress.tif"
 
   # Generate command to generate masks
@@ -808,13 +810,13 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
     [ "$Error" ] && break
     Imagename="$Cachedir/compose.$Mode.$Firstimagemd5.tif"
     [ -e "$Imagename" ] || {
-      verbose "--compose=$Mode: Generating compose image"
+      verbose "--compose=$Mode: Generating compose image $Imagename"
       $Magickbin $Cachedir/evaluate.min.$Firstimagemd5.tif $Cachedir/evaluate.max.$Firstimagemd5.tif           -compose $Mode -composite $Imagename || error "Error compositing $Mode: $Image"
       showimage "$Imagename"
     }
     Imagename="$Cachedir/compose.$Mode.swap.$Firstimagemd5.tif"
     [ -e "$Imagename" ] || {
-      verbose "--compose=$Mode,swap: Generating compose image"
+      verbose "--compose=$Mode,swap: Generating compose image $Imagename"
       $Magickbin $Cachedir/evaluate.min.$Firstimagemd5.tif $Cachedir/evaluate.max.$Firstimagemd5.tif -swap 0,1 -compose $Mode -composite $Imagename || error "Error compositing $Mode -swap: $Image"
       showimage "$Imagename"
     }
@@ -882,6 +884,7 @@ $(grep "\S" <<< "$Command")"
     verbose "Contrast mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   
+  # less,soft
   while read Line; do
     [ "$Error" ] && break
     maskarg_parse "$Line"
@@ -905,10 +908,10 @@ $(grep "\S" <<< "$Command")"
       Levelmin=""
       Levelmax=""
       maskarg_store
-      Image="$Cachedir/$Maskbasename.prepare-less.tif"
+      Imagename="$Cachedir/$Maskbasename.prepare-less.tif"
       Maskmax="$Cachedir/$Maskbasename.lessmask.tif"
       [ -e "$Maskmax" ] || {
-        focus_fuse --lessthanmax $Less --maskmax $Maskmax $Image $Cachedir/$Maskbasename.* || break
+        focus_fuse --lessthanmax $Less --maskmax $Maskmax $Imagename $Cachedir/$Maskbasename.* || break
       }
       Darkenmask="$Maskmax"
       maskarg_store
@@ -916,9 +919,9 @@ $(grep "\S" <<< "$Command")"
     # soft
     [ "$Soft" ] && {
       Softready="${Less:-noless}"
-      Image="$Cachedir/$Maskbasename.soft-$Softready.tif"
-      [ -e "$Image" ] || {
-        focus_fuse --soft $Image $Cachedir/$Maskbasename.* || break
+      Imagename="$Cachedir/$Maskbasename.soft-$Softready.tif"
+      [ -e "$Imagename" ] || {
+        focus_fuse --soft $Imagename $Cachedir/$Maskbasename.* || break
       }
       Levelmin=""
       Levelmax=""
@@ -927,7 +930,7 @@ $(grep "\S" <<< "$Command")"
       maskarg_parse "$Line,SOFTREADY=$Softready" # new $Maskbasename with $Softready
       maskexist "$Maskbasename" || {
         rm -f $(masklist "$Maskbasename")
-        maskfromimage $Image $Cachedir/$Maskbasename || break  ### FIXME issue with --cache
+        maskfromimage $Imagename $Cachedir/$Maskbasename || break  ### FIXME issue with --cache
       }
     }
   done <<< "$Maskmethodlist"
@@ -998,7 +1001,7 @@ focus_maskmethod() {
         *)
           Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( $Cachedir/compose.$Word1.swap.tif $Grayscaleconverter -alpha off )
+  ( $Cachedir/compose.$Word1.swap.$Firstimagemd5.tif $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
         ;;
@@ -1117,6 +1120,7 @@ Maskgenerator="$Maskgenerator
       Maskgenerator="
   mpr:sourcegray
     -threshold $(calc "100-${Radius1:-20}")%
+    -morphology Dilate Octagon:${Radius2:-2}
     -blur 0x${Sigma1:-5}
     -auto-level
     -negate"
@@ -1210,7 +1214,7 @@ focus_merge_masks() {
   
   local Sourcemask
   local Weightscaleoption Mergemethod
-  local Count Number
+  local Count Number Weightmax
   local Command
   local Mergemethod Mergeneeded Methodmask
   local Startzeit Dauer Restzeit
@@ -1221,6 +1225,11 @@ focus_merge_masks() {
   [ "$Maskmethodnumber" -gt "1" ] && Mergeneeded="yes"
   [ "${Weightscale:-0}" != "0" ]  && Mergeneeded="yes" 
 
+  while read Line; do
+    maskarg_parse "$Line"
+    [ "${Weight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Weight:-100}"
+  done <<< "$Maskmethodlist"
+    
   Startzeit="$(date +%s)"
   Count=0
   for Sourceimage in $Sourceimagelist; do
@@ -1262,7 +1271,7 @@ $Magickbin"
   $Multiplymedianmeanimage
     -compose Multiply -composite"
       Command="$Command
-    +level 0%,$(calc ${Weight:-100} / ${Maskmethodnumber:-1})% 
+    +level 0%,$(calc "(100 * ${Weight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
   )
     -compose $Mergemethod -composite"
     done <<< "$Maskmethodlist"
@@ -1391,6 +1400,8 @@ $Magickbin
 level_masks() {
   local Startzeit Dauer Restzeit
   local Count Mask
+    
+  [ "${Levelmin}%,${Levelmax}%" = "0%,100%" ] && return 0
     
   Startzeit="$(date +%s)"
   Count=0
@@ -2185,7 +2196,8 @@ $Maskmethodlist
 
   Testimage="$Cachedir/test.tif"
     
-  mkdir -p $Cachedir || error "Error creating cache folder $Cachedir"
+  mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
+  [ "$Preservecache" ] || rm -f $Cachedir/*
   
   Firstimage="$(head -n1 <<< "$Sourceimagelist")" 
   Firstimagemd5="$(md5sum "$(head -n1 <<< "$Firstimage")" | cut -d' ' -f1)"
