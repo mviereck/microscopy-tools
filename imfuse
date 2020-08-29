@@ -330,16 +330,19 @@ showimage() {
 ### Misc
 
 comma2whitespace() {
-  sed "s/,/ /g" <<< "${1:-}"
+  #sed "s/,/ /g" <<< "${1:-}"
+  echo "${1//,/ /}"
 }
 calc() {
   awk "BEGIN {print $* }"
 }
 digitonly() {
-  sed "s/[^0-9.]//g" <<< "${1:-}"
+  #sed "s/[^0-9.]//g" <<< "${1:-}"
+  echo "${1//[^0-9.]/}"
 }
 digitrm() {
-  sed "s/[0-9.]//g" <<< "${1:-}"
+  #sed "s/[0-9.]//g" <<< "${1:-}"
+  echo "${1//[0-9.]/}"
 }
 freememory() {
   local Freemem Line Zram
@@ -370,7 +373,8 @@ masklist() {
 }
 percentrm() {
   # remove % from string
-  sed s/%//g <<< "${1:-}"
+  #sed s/%//g <<< "${1:-}"
+  echo "${1//%/}"
 }
 printnum(){
   # print number $1 with leading zeroes.
@@ -766,17 +770,17 @@ focus_generate_masks() {
     
     [ -z "$Maskready" ] && {
       Maskgenerator="$Maskgenerator 
-$(focus_maskmethod "$Method")"
+$(focus_maskmethod "$Argmethod")"
         
-      [ "$Diff" ] && Maskgenerator="$Maskgenerator
+      [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -compose Difference -composite"
     
-      [ "$Negate" ] && Maskgenerator="$Maskgenerator
+      [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
     -negate"
     
-      [ "${Close1:-1}x${Close2:-1}" != "1x1" ] && Maskgenerator="$Maskgenerator
-    -morphology Close:${Close2:-1} Octagon:${Close1:-4}"
+      [ "${Argclose1:-1}x${Argclose2:-1}" != "1x1" ] && Maskgenerator="$Maskgenerator
+    -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-4}"
 
       Maskgenerator="$Maskgenerator 
     -write $Cachedir/$Maskbasename.NUMBER.tif"
@@ -867,7 +871,8 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
     -depth 16
     -write mpr:sourceimage
     -delete 0
-$(sed s/NUMBER/$Number/g <<<"$Maskgenerator")"
+${Maskgenerator//NUMBER/$Number}"
+#$(sed s/NUMBER/$Number/g <<<"$Maskgenerator")"
     
     Command="$Command
   null:"
@@ -889,49 +894,44 @@ $(grep "\S" <<< "$Command")"
     [ "$Error" ] && break
     maskarg_parse "$Line"
     # get -level min/max values for contrast masks
-    [ "$Level" = "yes" ] && {
-      Maskmax=$Cachedir/$Maskbasename.max.tif
-      Maskmin=$Cachedir/$Maskbasename.min.tif
-      [ -e "$Maskmax" ] || {
-        evaluate_split max $Maskmax $(masklist "$Maskbasename") || break
-      }
-      Levelmax="$($Magickbin "$Maskmax" -format '%[fx:maxima*100]' info:)"
-      [ -e "$Maskmin" ] || {
-        evaluate_split min $Maskmin $(masklist "$Maskbasename") || break
-      }
-      Levelmin="$($Magickbin "$Maskmin" -format '%[fx:minima*100]' info:)"
+    [ "$Arglevel" = "yes" ] && {
+      level_check
       maskarg_store
     }
     # less
-    [ "$Less" ] && {
-      [ "$Level" = "yes" ] && level_masks
-      Levelmin=""
-      Levelmax=""
+    [ "$Argless" ] && {
+      [ "$Arglevel" = "yes" ] && level_masks
+      Arglevelmin=""
+      Arglevelmax=""
       maskarg_store
       Imagename="$Cachedir/$Maskbasename.prepare-less.tif"
-      Maskmax="$Cachedir/$Maskbasename.lessmask.tif"
+      Maskmax="$Cachedir/$Maskbasename.less${Argless}mask.tif"
       [ -e "$Maskmax" ] || {
-        focus_fuse --lessthanmax $Less --maskmax $Maskmax $Imagename $Cachedir/$Maskbasename.* || break
+        focus_fuse --lessthanmax $Argless --maskmax $Maskmax $Imagename $(masklist "$Maskbasename") || break
       }
-      Darkenmask="$Maskmax"
+      Argdarkenmask="$Maskmax"
       maskarg_store
     }
     # soft
-    [ "$Soft" ] && {
-      Softready="${Less:-noless}"
-      Imagename="$Cachedir/$Maskbasename.soft-$Softready.tif"
+    [ "$Argsoft" ] && {
+      Argsoftready="soft-${Argless:-noless}"
+      Imagename="$Cachedir/$Maskbasename.$Argsoftready.tif"
+      Maskmax="$Cachedir/$Maskbasename.${Argsoftready}mask.tif"
       [ -e "$Imagename" ] || {
-        focus_fuse --soft $Imagename $Cachedir/$Maskbasename.* || break
+        focus_fuse --soft --maskmax "$Maskmax" "$Imagename" $(masklist "$Maskbasename") || break
       }
-      Levelmin=""
-      Levelmax=""
-      Darkenmask=""
+      maskarg_parse "$Line,SOFTREADY=$Argsoftready" # new $Maskbasename with $Argsoftready
+      Arglevelmin=""
+      Arglevelmax=""
+      Argdarkenmask="$Maskmax"
       maskarg_store
-      maskarg_parse "$Line,SOFTREADY=$Softready" # new $Maskbasename with $Softready
+      #$Magickbin $Maskmax -negate $Maskmax
       maskexist "$Maskbasename" || {
         rm -f $(masklist "$Maskbasename")
         maskfromimage $Imagename $Cachedir/$Maskbasename || break  ### FIXME issue with --cache
       }
+      #level_check
+      #maskarg_store
     }
   done <<< "$Maskmethodlist"
 
@@ -951,15 +951,15 @@ focus_maskmethod() {
       # Concept and result is similar to Difference of Gaussian (DoG). Using -gaussian-blur gives same as DoG.
       # Code based on https://im.snibgo.com/simpalign.htm#twoBlrDiff.bat
       Maskgenerator="
-  ( mpr:sourcegray -blur ${Radius1:-0}x${Sigma1:-0.75} -write mpr:mask1 -delete 0 )"
-      case "$Radius2$Sigma2" in
+  ( mpr:sourcegray -blur ${Argradius1:-0}x${Argsigma1:-0.75} -write mpr:mask1 -delete 0 )"
+      case "$Argradius2$Argsigma2" in
         "") 
           Maskgenerator="$Maskgenerator
   mpr:sourcegray mpr:mask1"
         ;;
         *) 
           Maskgenerator="$Maskgenerator
-  ( mpr:sourcegray -blur ${Radius2:-0}x${Sigma2:-1.2} -write mpr:mask2 -delete 0 )
+  ( mpr:sourcegray -blur ${Argradius2:-0}x${Argsigma2:-1.2} -write mpr:mask2 -delete 0 )
   mpr:mask1 mpr:mask2"
         ;;
       esac
@@ -971,12 +971,12 @@ focus_maskmethod() {
     channel)
       Maskgenerator="
   mpr:sourceimage
-    -colorspace $Word1 -channel $Word2 -separate"
+    -colorspace $Argword1 -channel $Argword2 -separate"
     ;;
     comet) ### FIXME saturate drops some angles
       Maskgenerator="
-    -define morphology:compose=${Word1:-Lighten}
-  mpr:sourcegray -morphology Convolve Comet:${Radius1:-0}x${Sigma1:-5}:>
+    -define morphology:compose=${Argword1:-Lighten}
+  mpr:sourcegray -morphology Convolve Comet:${Argradius1:-0}x${Argsigma1:-5}:>
   mpr:sourcegray
     -compose difference -composite"
     ;;
@@ -990,18 +990,18 @@ focus_maskmethod() {
 #-compose Difference -composite" # sort of interesting.
     ;;
     compose)
-      case $Swap in
+      case $Argswap in
         "")
           Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( $Cachedir/compose.$Word1.$Firstimagemd5.tif $Grayscaleconverter -alpha off )
+  ( $Cachedir/compose.$Argword1.$Firstimagemd5.tif $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
         ;;
         *)
           Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( $Cachedir/compose.$Word1.swap.$Firstimagemd5.tif $Grayscaleconverter -alpha off )
+  ( $Cachedir/compose.$Argword1.swap.$Firstimagemd5.tif $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
         ;;
@@ -1009,17 +1009,17 @@ focus_maskmethod() {
     ;;
     diffstat)
       Maskgenerator=""
-      [ "$Word1" = "source" ] && Maskgenerator="$Maskgenerator mpr:sourcegray" || Maskgenerator="$Maskgenerator
-  ( mpr:sourcegray -statistic ${Word1:-median} ${Radius1:-5} )"
-      [ "$Word2" = "source" ] && Maskgenerator="$Maskgenerator mpr:sourcegray" || Maskgenerator="$Maskgenerator
-  ( mpr:sourcegray -statistic ${Word2:-mean} ${Radius1:-5} )"
+      [ "$Argword1" = "source" ] && Maskgenerator="$Maskgenerator mpr:sourcegray" || Maskgenerator="$Maskgenerator
+  ( mpr:sourcegray -statistic ${Argword1:-median} ${Argradius1:-5} )"
+      [ "$Argword2" = "source" ] && Maskgenerator="$Maskgenerator mpr:sourcegray" || Maskgenerator="$Maskgenerator
+  ( mpr:sourcegray -statistic ${Argword2:-mean} ${Argradius1:-5} )"
 Maskgenerator="$Maskgenerator
     -compose Difference -composite"
     ;;
     evaluate)
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( $Cachedir/evaluate.$Word1.$Firstimagemd5.tif $Grayscaleconverter -alpha off )
+  ( $Cachedir/evaluate.$Argword1.$Firstimagemd5.tif $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
     ;;
@@ -1027,24 +1027,24 @@ Maskgenerator="$Maskgenerator
       Maskgenerator="
   mpr:sourcegray
     -define convolve:scale=-100,200%
-    -morphology Convolve Gaussian:${Radius1:-0}x${Sigma1:-0.75}
+    -morphology Convolve Gaussian:${Argradius1:-0}x${Argsigma1:-0.75}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
     CROSSMORPHexperimental)
       Maskgenerator="
-  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Radius2:-1} Rectangle:${Radius1:-3}x1+1+0 )
-  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Radius2:-1} Rectangle:${Radius1:-3}x1+${Radius1:-3}+0 )
-  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Radius2:-1} Rectangle:1x${Radius1:-3}+0+1 )
-  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Radius2:-1} Rectangle:1x${Radius1:-3}+0+${Radius1:-3} )
+  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1:-3}x1+1+0 )
+  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1:-3}x1+${Argradius1:-3}+0 )
+  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:1x${Argradius1:-3}+0+1 )
+  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:1x${Argradius1:-3}+0+${Argradius1:-3} )
     -evaluate-sequence min"
     ;;
     CROSSMORPH2experimental)
       Maskgenerator="
-  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Radius2:-1} Rectangle:${Radius1}x$((Radius1/2))+0+$((Radius1/4)) )
-  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Radius2:-1} Rectangle:${Radius1}x$((Radius1/2))+$((Radius1-1))+$((Radius1/4)) )
-  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Radius2:-1} Rectangle:$((Radius1/2))x$((Radius1))+$((Radius1/4))+0 )
-  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Radius2:-1} Rectangle:$((Radius1/2))x$((Radius1))+$((Radius1/4))+$((Radius1-1)) )
+  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1}x$((Argradius1/2))+0+$((Argradius1/4)) )
+  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1}x$((Argradius1/2))+$((Argradius1-1))+$((Argradius1/4)) )
+  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:$((Argradius1/2))x$((Argradius1))+$((Argradius1/4))+0 )
+  ( mpr:sourcegray -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:$((Argradius1/2))x$((Argradius1))+$((Argradius1/4))+$((Argradius1-1)) )
     -evaluate-sequence min"
     ;;
     experimental)
@@ -1058,17 +1058,17 @@ Maskgenerator="$Maskgenerator
     free)
       Maskgenerator="
   mpr:sourcegray 
-    $Word1"
+    $Argword1"
     ;;
     freediff)
       Maskgenerator="
   mpr:sourcegray 
-    $Word1
+    $Argword1
   mpr:sourcegray
     -compose Difference -composite"
     ;;
     freichen)
-      case $Word1 in
+      case $Argword1 in
         "")
           Maskgenerator="
   (
@@ -1094,15 +1094,15 @@ Maskgenerator="$Maskgenerator
     -define convolve:scale=100%!
     -define morphology:compose=Screen
     -define convolve:bias=10%
-    -morphology Convolve FreiChen:${Word1:-0}>"
+    -morphology Convolve FreiChen:${Argword1:-0}>"
         ;;
       esac
     ;;
     gaussian) 
-      case $Sigma2 in
+      case $Argsigma2 in
         "")
           Maskgenerator="
-  ( mpr:sourcegray -gaussian-blur ${Radius1:-0}x${Sigma1:-0.75} )
+  ( mpr:sourcegray -gaussian-blur ${Argradius1:-0}x${Argsigma1:-0.75} )
   mpr:sourcegray
     -compose Difference -composite"
         ;;
@@ -1110,7 +1110,7 @@ Maskgenerator="$Maskgenerator
           Maskgenerator="
   mpr:sourcegray
     -define convolve:scale=100,100%
-    -morphology Convolve DoG:${Radius1:-0},${Sigma1:-0.75},${Sigma2:-1.2}
+    -morphology Convolve DoG:${Argradius1:-0},${Argsigma1:-0.75},${Argsigma2:-1.2}
   mpr:sourcegray
     -compose Difference -composite"
         ;;
@@ -1119,16 +1119,16 @@ Maskgenerator="$Maskgenerator
     halo)
       Maskgenerator="
   mpr:sourcegray
-    -threshold $(calc "100-${Radius1:-20}")%
-    -morphology Dilate Octagon:${Radius2:-2}
-    -blur 0x${Sigma1:-5}
+    -threshold $(calc "100-${Argradius1:-20}")%
+    -morphology Dilate Octagon:${Argradius2:-2}
+    -blur 0x${Argsigma1:-5}
     -auto-level
     -negate"
     ;;
     image)
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( $Word1 $Grayscaleconverter -alpha off )
+  ( $Argword1 $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
     ;;
@@ -1145,20 +1145,20 @@ Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:bias=5%
     -define convolve:scale=100%!
-    -morphology Convolve Laplacian:${Word1:-0}>"
+    -morphology Convolve Laplacian:${Argword1:-0}>"
     ;;
     log)  # LoG: Laplacian of Gaussian
       Maskgenerator="
   mpr:sourcegray
     -define convolve:scale=100,100%
-    -morphology Convolve LoG:${Radius1:-0}x${Sigma1:-0.75}
+    -morphology Convolve LoG:${Argradius1:-0}x${Argsigma1:-0.75}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
     morphology)
       Maskgenerator="
   mpr:sourcegray
-    -morphology ${Word1:-edge}:${Radius2:-1} Octagon:${Radius1:-2}"
+    -morphology ${Argword1:-edge}:${Argradius2:-1} Octagon:${Argradius1:-2}"
     ;;
     none)
       Maskgenerator="mpr:sourcegray"
@@ -1190,18 +1190,18 @@ Maskgenerator="$Maskgenerator
     statistic)
       Maskgenerator="
   mpr:sourcegray
-    -statistic ${Word1:-standarddeviation} ${Radius1:-2}x${Radius1:-2}"
+    -statistic ${Argword1:-standarddeviation} ${Argradius1:-2}x${Argradius1:-2}"
     ;;
     unsharp)
       Maskgenerator="
-  mpr:sourcegray -unsharp ${Radius1:-0}x${Sigma1:-5}
+  mpr:sourcegray -unsharp ${Argradius1:-0}x${Argsigma1:-5}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
     wavelet)
       Maskgenerator="
   mpr:sourcegray 
-    -wavelet-denoise ${Radius1:-10}%
+    -wavelet-denoise ${Argradius1:-10}%
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -1227,7 +1227,7 @@ focus_merge_masks() {
 
   while read Line; do
     maskarg_parse "$Line"
-    [ "${Weight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Weight:-100}"
+    [ "${Argweight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Argweight:-100}"
   done <<< "$Maskmethodlist"
     
   Startzeit="$(date +%s)"
@@ -1252,26 +1252,52 @@ $Magickbin"
       maskarg_parse "$Line"
       Methodmask="$Cachedir/$Maskbasename.$Number.tif"
       
-      #[ "${Levelmin:-0}%,${Levelmax:-100}%" != "0%,100%" ] && Mergeneeded="yes" 
-      [ "$Multiplymedianmean" ]                            && Mergeneeded="yes" 
-      [ "$Multiplyminmax" ]                                && Mergeneeded="yes" 
-      [ "$Darkenmask" ]                                    && Mergeneeded="yes" 
+      #[ "${Arglevelmin:-0}%,${Arglevelmax:-100}%" != "0%,100%" ] && Mergeneeded="yes" 
+      [ "$Argmultiplymedianmean" ]                            && Mergeneeded="yes" 
+      [ "$Argmultiplyminmax" ]                                && Mergeneeded="yes" 
+      [ "$Argdarkenmask" ]                                    && Mergeneeded="yes" 
       [ "$Mergeneeded" = "no" ] && break
       Command="$Command
   ( 
   $Methodmask
-    -level ${Levelmin:-0}%,${Levelmax:-100}%"
-      [ "$Darkenmask" ] && Command="$Command
-  $Darkenmask
+    -level ${Arglevelmin:-0}%,${Arglevelmax:-100}%"
+    
+      true && [ "$Argdarkenmask" ] && Command="$Command
+  $Argdarkenmask
     -compose Darken -composite"
-      [ "$Multiplyminmax" ] && Command="$Command
+    
+      false && [ "$Argdarkenmask" ] && Command="$Command
+    -write mpr:methodmask
+    -delete 0
+  mpr:methodmask
+  $Argdarkenmask
+    -write mpr:darkenmask
+    -compose Difference -composite
+    -threshold 2%
+    -negate
+    -write mpr:samemax
+    -write $Testimage
+    -delete 0
+  mpr:darkenmask
+  mpr:samemax
+    -compose CopyOpacity -composite
+    -evaluate Add 25%
+  mpr:darkenmask
+    -compose DstOver -composite
+    -write mpr:darkenmask
+    -delete 0
+  mpr:methodmask
+  mpr:darkenmask
+    -compose Darken -composite"
+    
+      [ "$Argmultiplyminmax" ] && Command="$Command
   $Multiplyminmaximage
     -compose Multiply -composite"
-      [ "$Multiplymedianmean" ] && Command="$Command
+      [ "$Argmultiplymedianmean" ] && Command="$Command
   $Multiplymedianmeanimage
     -compose Multiply -composite"
       Command="$Command
-    +level 0%,$(calc "(100 * ${Weight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
+    +level 0%,$(calc "(100 * ${Argweight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
   )
     -compose $Mergemethod -composite"
     done <<< "$Maskmethodlist"
@@ -1355,7 +1381,7 @@ focus_sharpness_layer() {
 $Magickbin
   $Maskmax
     -depth 16
-    -color-threshold "${Graylevel1:-$Graylevel2}"-"$Graylevel"
+    -color-threshold ${Graylevel1:-$Graylevel2}-$Graylevel
     -write mpr:layermask
     -delete 0
   $Resultimage
@@ -1397,30 +1423,43 @@ $Magickbin
   
   return "${Error:-0}"
 }
+level_check() {
+  local Maskmax Maskmin
+  Maskmax=$Cachedir/$Maskbasename.max.tif
+  Maskmin=$Cachedir/$Maskbasename.min.tif
+  [ -e "$Maskmax" ] || {
+    evaluate_split max $Maskmax $(masklist "$Maskbasename") || break
+  }
+  Arglevelmax="$($Magickbin "$Maskmax" -format '%[fx:maxima*100]' info:)"
+  [ -e "$Maskmin" ] || {
+    evaluate_split min $Maskmin $(masklist "$Maskbasename") || break
+  }
+  Arglevelmin="$($Magickbin "$Maskmin" -format '%[fx:minima*100]' info:)"
+}
 level_masks() {
   local Startzeit Dauer Restzeit
   local Count Mask
     
-  [ "${Levelmin}%,${Levelmax}%" = "0%,100%" ] && return 0
+  [ "${Arglevelmin}%,${Arglevelmax}%" = "0%,100%" ] && return 0
     
   Startzeit="$(date +%s)"
   Count=0
-  for Mask in $Cachedir/$Maskbasename* ; do
+  for Mask in $(masklist "$Maskbasename") ; do
     [ "$Error" ] && break
     Count="$((Count+1))"
             
     Command="
 $Magickbin
   $Mask
-    -level ${Levelmin}%,${Levelmax}%
+    -level ${Arglevelmin}%,${Arglevelmax}%
     -write mpr:sourcemask
     -delete 0"
         
-    [ "$Close1" ] && Command="$Command
-  mpr:sourcemask
-    -morphology Close:${Close2:-1} Octagon:${Close1:-2}
-    -write mpr:sourcemask
-    -delete 0"
+#    [ "$Argclose1" ] && Command="$Command
+#  mpr:sourcemask
+#    -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-2}
+#    -write mpr:sourcemask
+#    -delete 0"
     
     Command="$Command
   mpr:sourcemask
@@ -1431,12 +1470,12 @@ $Magickbin
   [ "$Count" = "1" ] && verbose "Leveling masks with:
 $(grep "\S" <<< "$Command")"
   
-    $Command || error "Failure in leveling $Method masks"
+    $Command || error "Failure in leveling $Argmethod masks"
   
     showimage "$Mask"
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "Leveling $Method $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
+    verbose "Leveling $Argmethod $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   return "${Error:-0}"
 }
@@ -1499,7 +1538,28 @@ trap_sigint() {
   error "Received SIGINT"
 }
 declare_variables() {
-  
+  Argclose1=""
+  Argclose2=""
+  Argdarkenmask=""
+  Argdiff=""
+  Argless=""
+  Arglevel=""
+  Arglevelmin=""
+  Arglevelmax=""
+  Argmethod=
+  Argmultiplymedianmean=""
+  Argmultiplyminmax=""
+  Argnegate=""
+  Argradius1=""
+  Argradius2=""
+  Argsigma1=""
+  Argsigma2=""
+  Argsoft=""
+  Argsoftready=""
+  Argswap=""
+  Argweight=""
+  Argword1=""
+  Argword2=""
   Basename=""
   Cachedir=""
   Composefactor="" ### FIXME
@@ -1545,30 +1605,6 @@ declare_variables() {
   Verbose=""
   Weightscale=""
   
-  # Vars for [=ARG]
-  Close1=""
-  Close2=""
-  Darkenmask=""
-  Diff=""
-  Less=""
-  Level=""
-  Levelmin=""
-  Levelmax=""
-  Multiplymedianmean=""
-  Multiplyminmax=""
-  Method=
-  Negate=""
-  Radius1=""
-  Radius2=""
-  Sigma1=""
-  Sigma2=""
-  Soft=""
-  Softready=""
-  Swap=""
-  Weight=""
-  Word1=""
-  Word2=""
-  
   return 0
 }
 parse_options() {
@@ -1610,7 +1646,7 @@ parse_options() {
 --experimental|--free|--freediff|\
 --freichen|--gaussian|--halo|--image|--kirsch|--laplacian|--lightness|--log|--morphology|--none|\
 --prewitt|--roberts|--saturation|--sobel|--statistic|--unsharp|--wavelet)
-        Method="${1#--}"
+        Argmethod="${1#--}"
         Maskgeneratorargument="${2:-}" && shift
         Maskmethodnumber="$((Maskmethodnumber+1))"
         Maskmethodcount="$Maskmethodnumber"
@@ -1636,228 +1672,227 @@ check_options() {
   [ -z "$Maskmethodlist" ] && {
     Maskmethodnumber="1"
     Maskmethodcount="1"
-    Method="diffstat"
-    Radius1="5"
-    Level="yes"
+    Argmethod="diffstat"
+    Argradius1="5"
+    Arglevel="yes"
     maskarg_store "$Maskmethodcount"
   }
   while read Line; do
     maskarg_parse "$Line"
   
-    case $Method in
+    case $Argmethod in
       blur|gaussian)
-        [ -z "$Sigma1" ] && Sigma1="0.75"
-        [ "$Sigma2" = "auto" ] && Sigma2="$(calc "$Sigma1 * 1.6")"
-        Level="yes"
+        [ -z "$Argsigma1" ] && Argsigma1="0.75"
+        [ "$Argsigma2" = "auto" ] && Argsigma2="$(calc "$Argsigma1 * 1.6")"
+        Arglevel="yes"
         maskarg_donttake swap word1 word2
       ;;
       channel)
-        [ -z "$Word1" ] && Word1="HSL"
-        [ -z "$Word2" ] && Word2="2"
+        [ -z "$Argword1" ] && Argword1="HSL"
+        [ -z "$Argword2" ] && Argword2="2"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap
       ;;
       chroma)
-        Method="channel"
-        Word1="HCL"
-        Word2="1"
+        Argmethod="channel"
+        Argword1="HCL"
+        Argword2="1"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap
       ;;
       comet)
-        #[ -z "$Word1" ] && Word1="Lighten"
-        #Word1="$(lowercase "$Word1")"
-        #grep -q -x -i "$Word1" <<< "$($Magickbin -list compose)" || {
-        #  error "--$Method=$Word1: unknown argument.
+        #[ -z "$Argword1" ] && Argword1="Lighten"
+        #Argword1="$(lowercase "$Argword1")"
+        #grep -q -x -i "$Argword1" <<< "$($Magickbin -list compose)" || {
+        #  error "--$Argmethod=$Argword1: unknown argument.
   #Please choose one out of '$Magickbin -list compose'
   #Recommended: Darken, Lighten"
         #}
-        [ -z "$Sigma1" ]       && Sigma1="5"
-        Level="yes"
+        [ -z "$Argsigma1" ]       && Argsigma1="5"
+        Arglevel="yes"
         maskarg_donttake radius1 radius2 sigma2 swap word1 word2
       ;;
       compass)
-        Level="yes"
+        Arglevel="yes"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word1 word2
       ;;
       compose)
-        [ -z "$Word1" ] && Word1="overlay"
-        Word1="$(lowercase "$Word1")"
-        grep -q -x -i "$Word1" <<< "$($Magickbin -list compose)" || {
-          error "--$Method=$Word1: unknown argument.
+        [ -z "$Argword1" ] && Argword1="overlay"
+        Argword1="$(lowercase "$Argword1")"
+        grep -q -x -i "$Argword1" <<< "$($Magickbin -list compose)" || {
+          error "--$Argmethod=$Argword1: unknown argument.
   Please choose one out of '$Magickbin -list compose'
   or compare ImageMagick option -compose."
         }
         Evaluate_needlist="$Evaluate_needlist max min"
-        Compose_needlist="$Compose_needlist $Word1"
+        Compose_needlist="$Compose_needlist $Argword1"
         maskarg_donttake radius1 radius2 sigma1 sigma2 word2
       ;;
       diffstat)
-        case ${Word1,,} in
-          ""|auto)                Word1="" ;;
-          0|source|none)          Word1="source" ;;
-          1|gradient|grad)        Word1="gradient" ;;
-          2|maximum|max)          Word1="maximum" ;;
-          3|mean)                 Word1="mean" ;;
-          4|median)               Word1="median" ;;
-          5|minimum|min)          Word1="minimum" ;;
-          6|mode)                 Word1="mode" ;;
-          7|nonpeak)              Word1="nonpeak" ;;
-          8|9|rms|rootmeansquare) Word1="rms" ;;
+        case ${Argword1,,} in
+          ""|auto)                Argword1="" ;;
+          0|source|none)          Argword1="source" ;;
+          1|gradient|grad)        Argword1="gradient" ;;
+          2|maximum|max)          Argword1="maximum" ;;
+          3|mean)                 Argword1="mean" ;;
+          4|median)               Argword1="median" ;;
+          5|minimum|min)          Argword1="minimum" ;;
+          6|mode)                 Argword1="mode" ;;
+          7|nonpeak)              Argword1="nonpeak" ;;
+          8|9|rms|rootmeansquare) Argword1="rms" ;;
           10|standarddeviation|standard_deviation|standard-deviation|dev) 
-                                  Word1="standarddeviation" ;;
-          *) error "--diffstat: Unknown mode $Word1" ;;
+                                  Argword1="standarddeviation" ;;
+          *) error "--diffstat: Unknown mode $Argword1" ;;
         esac
-        case ${Word2,,} in
-          ""|auto)                Word2="" ;;
-          1|gradient|grad)        Word2="gradient" ;;
-          2|maximum|max)          Word2="maximum" ;;
-          3|mean)                 Word2="mean" ;;
-          4|median)               Word2="median" ;;
-          5|minimum|min)          Word2="minimum" ;;
-          6|mode)                 Word2="mode" ;;
-          7|nonpeak)              Word2="nonpeak" ;;
-          8|9|rms|rootmeansquare) Word2="rms" ;;
+        case ${Argword2,,} in
+          ""|auto)                Argword2="" ;;
+          1|gradient|grad)        Argword2="gradient" ;;
+          2|maximum|max)          Argword2="maximum" ;;
+          3|mean)                 Argword2="mean" ;;
+          4|median)               Argword2="median" ;;
+          5|minimum|min)          Argword2="minimum" ;;
+          6|mode)                 Argword2="mode" ;;
+          7|nonpeak)              Argword2="nonpeak" ;;
+          8|9|rms|rootmeansquare) Argword2="rms" ;;
           10|standarddeviation|standard_deviation|standard-deviation|dev)
-                                  Word2="standarddeviation" ;;
-          *) error "--diffstat: Unknown mode $Word2" ;;
+                                  Argword2="standarddeviation" ;;
+          *) error "--diffstat: Unknown mode $Argword2" ;;
         esac
-        [ -z "$Radius1" ]       && Radius1="5"
-        Level="yes"
+        [ -z "$Argradius1" ]       && Argradius1="5"
+        Arglevel="yes"
         maskarg_donttake radius2 sigma1 sigma2 swap
       ;;
       darkness)
-        Method="channel"
-        Word1="HSL"
-        Word2="2"
-        Negate="yes"
+        Argmethod="channel"
+        Argword1="HSL"
+        Argword2="2"
+        Argnegate="yes"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap
       ;;
       
       evaluate)
-        [ -z "$Word1" ] && Word1="max"
-        Word1="$(lowercase "$Word1")"
-        grep -q -x -i "$Word1" <<< "$($Magickbin -list evaluate)" || {
-          error "--$Method=$Word1: unknown argument.
+        [ -z "$Argword1" ] && Argword1="max"
+        Argword1="$(lowercase "$Argword1")"
+        grep -q -x -i "$Argword1" <<< "$($Magickbin -list evaluate)" || {
+          error "--$Argmethod=$Argword1: unknown argument.
   Please choose one out of '$Magickbin -list evaluate'
   or compare ImageMagick option -evaluate-sequence."
         }
-        Evaluate_needlist="$Evaluate_needlist $Word1"
+        Evaluate_needlist="$Evaluate_needlist $Argword1"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word2
       ;;
       experimental) ;;
       free)
-        #[ -z "$Word1" ] && Word1="-sharpen 0x3"
-        Level="yes"
+        #[ -z "$Argword1" ] && Argword1="-sharpen 0x3"
+        Arglevel="yes"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word2
       ;;
       freediff)
-        [ -z "$Word1" ] && Word1="-sharpen 0x3"
-        Level="yes"
+        [ -z "$Argword1" ] && Argword1="-sharpen 0x3"
+        Arglevel="yes"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word2
       ;;    
       freichen)
-        Level="yes"
+        Arglevel="yes"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word2
       ;;
       halo)
         maskarg_donttake radius2 sigma2 swap word1 word2
       ;;
       laplacian)
-        Level="yes"
+        Arglevel="yes"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word2
       ;;
       lightness)
-        Method="channel"
-        Word1="HSL"
-        Word2="2"
+        Argmethod="channel"
+        Argword1="HSL"
+        Argword2="2"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap
       ;;
       log)
-        [ -z "$Sigma1" ]       && Sigma1="0.75"
-        Level="yes"
+        [ -z "$Argsigma1" ]       && Argsigma1="0.75"
+        Arglevel="yes"
         maskarg_donttake radius2 sigma2 swap word1 word2
       ;;
       image)
-        [ -e "$Word1" ] || error "--image needs an image file name as argument."
-        Method="image"
+        [ -e "$Argword1" ] || error "--image needs an image file name as argument."
+        Argmethod="image"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word2
       ;;
       kirsch)
-        Level="yes"
+        Arglevel="yes"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word1 word2
       ;;
       morphology)
-        Word1="$(lowercase "$Word1")"
-        [ -z "$Word1" ] && Word1="edge"
-        grep -q -x -i "${Word1:-}" <<< "$($Magickbin -list morphology)" || {
-          error "--$Method=$Word1: unknown argument.
+        Argword1="$(lowercase "$Argword1")"
+        [ -z "$Argword1" ] && Argword1="edge"
+        grep -q -x -i "${Argword1:-}" <<< "$($Magickbin -list morphology)" || {
+          error "--$Argmethod=$Argword1: unknown argument.
   Please choose one out of '$Magickbin -list morphology'
   or compare ImageMagick option -morphology."
         }
-        [ -z "$Radius1" ] && Radius1="2"
-        # FIXME Radius2/Iteration
-        case $Word1 in
+        #[ -z "$Argradius1" ] && Argradius1="2"
+        case $Argword1 in
           edge|edgein|edgeout|tophat|bottomhat) ;;
-          *) Diff="yes" ;;
+          *) Argdiff="yes" ;;
         esac
-        [ "$Word1" = "edge" ] && Word1=""
-        Level="yes"
+        [ "$Argword1" = "edge" ] && Argword1=""
+        Arglevel="yes"
         maskarg_donttake radius2 sigma1 sigma2 swap word2
       ;;
       none)
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word1 word2
       ;;
       prewitt)
-        Level="yes"
+        Arglevel="yes"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word1 word2
       ;;
       roberts)
-        Level="yes"
+        Arglevel="yes"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word1 word2
       ;;
       saturation)
-        Method="channel"
-        Word1="HSL"
-        Word2="1"
+        Argmethod="channel"
+        Argword1="HSL"
+        Argword2="1"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap
       ;;
       sobel)
-        Level="yes"
+        Arglevel="yes"
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word1 word2
       ;;
       statistic)
-        Word1="$(lowercase "$Word1")"
-        case $Word1 in
-          ""|auto)                Word1="standarddeviation" ;;
-          1|gradient|grad)        Word1="gradient" ;;
-          2|maximum|max)          Word1="maximum" ;;
-          3|mean)                 Word1="mean" ;;
-          4|median)               Word1="median" ;;
-          5|minimum|min)          Word1="minimum" ;;
-          6|mode)                 Word1="mode" ;;
-          7|nonpeak)              Word1="nonpeak" ;;
-          8|9|rms|rootmeansquare) Word1="rms" ;;
+        Argword1="$(lowercase "$Argword1")"
+        case $Argword1 in
+          ""|auto)                Argword1="standarddeviation" ;;
+          1|gradient|grad)        Argword1="gradient" ;;
+          2|maximum|max)          Argword1="maximum" ;;
+          3|mean)                 Argword1="mean" ;;
+          4|median)               Argword1="median" ;;
+          5|minimum|min)          Argword1="minimum" ;;
+          6|mode)                 Argword1="mode" ;;
+          7|nonpeak)              Argword1="nonpeak" ;;
+          8|9|rms|rootmeansquare) Argword1="rms" ;;
           10|standarddeviation|standard_deviation|standard-deviation|dev) 
-                                  Word1="standarddeviation" ;;
-          *) error "--statistic: Unknown mode $Word1" ;;
+                                  Argword1="standarddeviation" ;;
+          *) error "--statistic: Unknown mode $Argword1" ;;
         esac
-        [ -z "$Radius1" ] && Radius1="2"
-        case $Word1 in
+        #[ -z "$Argradius1" ] && Argradius1="2"
+        case $Argword1 in
           gradient|standarddeviation|"") ;;
-          *) Diff="yes" ;;
+          *) Argdiff="yes" ;;
         esac
-        [ "$Word1" = "standarddeviation" ] && Word1=""
-        Level="yes"
+        [ "$Argword1" = "standarddeviation" ] && Argword1=""
+        Arglevel="yes"
         maskarg_donttake radius2 sigma1 sigma2 swap word2
       ;;
       unsharp)
-        #[ -z "$Radius1" ] && Radius1="0"
-        #[ -z "$Sigma1" ]  && Sigma1="2"
-        Level="yes"
+        #[ -z "$Argradius1" ] && Argradius1="0"
+        #[ -z "$Argsigma1" ]  && Argsigma1="2"
+        Arglevel="yes"
         maskarg_donttake radius2 sigma2 swap word1 word2
       ;;
       wavelet)
-        [ -z "$Radius1" ] && Radius1="5"
-        Level="yes"
+        #[ -z "$Argradius1" ] && Argradius1="5"
+        Arglevel="yes"
         maskarg_donttake radius2 sigma1 sigma2 swap word1 word2
       ;;
     esac
@@ -1873,7 +1908,7 @@ check_options() {
   
   # --factor ### FIXME
   [ "$Composefactor" = "auto" ] && {
-    case $Method in
+    case $Argmethod in
       compose)
         case $Maskgeneratorargument in
           blend|colordodge|lighten*|lineardodge|plus|screen) 
@@ -1975,22 +2010,22 @@ check_options() {
         
   while read Line; do
     maskarg_parse "$Line"   
-    Resultimage="$Resultimage-${Method}="
-    [ "$Multiplyminmax" ]     && Resultimage="$Resultimage,M"
-    [ "$Multiplymedianmean" ] && Resultimage="$Resultimage,m"
-    [ "$Weight" ]  && Resultimage="$Resultimage,w$Weight"
-    [ "$Radius1" ] && Resultimage="$Resultimage,r$Radius1"
-    [ "$Sigma1" ]  && Resultimage="$Resultimage,s$Sigma1"
-    [ "$Radius2" ] && Resultimage="$Resultimage,R$Radius2"
-    [ "$Sigma2" ]  && Resultimage="$Resultimage,s$Sigma2"
-    [ "$Soft" ]    && Resultimage="$Resultimage,soft"
-    [ "$Less" ]    && Resultimage="$Resultimage,less$Less"
-    [ "$Close1" ]  && Resultimage="$Resultimage,c$Close1"
-    [ "$Close2" ]  && Resultimage="${Resultimage}x$Close2"
-    [ "$Swap" ]    && Resultimage="$Resultimage,swap"
-    [ "$Negate" ]  && Resultimage="$Resultimage,neg"
-    [ "$Method" != "image" ] && [ "$Word1" ] && Resultimage="$Resultimage,$(unspecialstring "$Word1")"
-    [ "$Word2" ]   && Resultimage="$Resultimage,$(unspecialstring "$Word2")"
+    Resultimage="$Resultimage-${Argmethod}="
+    [ "$Argmultiplyminmax" ]     && Resultimage="$Resultimage,M"
+    [ "$Argmultiplymedianmean" ] && Resultimage="$Resultimage,m"
+    [ "$Argweight" ]  && Resultimage="$Resultimage,w$Argweight"
+    [ "$Argradius1" ] && Resultimage="$Resultimage,r$Argradius1"
+    [ "$Argsigma1" ]  && Resultimage="$Resultimage,s$Argsigma1"
+    [ "$Argradius2" ] && Resultimage="$Resultimage,R$Argradius2"
+    [ "$Argsigma2" ]  && Resultimage="$Resultimage,s$Argsigma2"
+    [ "$Argsoft" ]    && Resultimage="$Resultimage,soft"
+    [ "$Argless" ]    && Resultimage="$Resultimage,less$Argless"
+    [ "$Argclose1" ]  && Resultimage="$Resultimage,c$Argclose1"
+    [ "$Argclose2" ]  && Resultimage="${Resultimage}x$Argclose2"
+    [ "$Argswap" ]    && Resultimage="$Resultimage,swap"
+    [ "$Argnegate" ]  && Resultimage="$Resultimage,neg"
+    [ "$Argmethod" != "image" ] && [ "$Argword1" ] && Resultimage="$Resultimage,$(unspecialstring "$Argword1")"
+    [ "$Argword2" ]   && Resultimage="$Resultimage,$(unspecialstring "$Argword2")"
   done <<< "$Maskmethodlist"
   Resultimage="$(sed "s/=,/=/g ; s/=-/-/g  ; s/=$//g" <<< "$Resultimage")"
   Resultimage="$(sed "s/=,/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
@@ -2009,29 +2044,30 @@ check_options() {
   return ${Error:-0}
 }
 maskarg_parse() {
-  local Key Line
-  Close1=""
-  Close2=""
-  Diff=""
-  Less=""
-  Level=""
-  Levelmin=""
-  Levelmax=""
-  #Method=
-  Darkenmask=""
-  Multiplymedianmean=""
-  Multiplyminmax=""
-  Negate=""
-  Radius1=""
-  Radius2=""
-  Sigma1=""
-  Sigma2=""
-  Soft=""
-  Softready=""
-  Swap=""
-  Weight=""
-  Word1=""
-  Word2=""
+  local Key Line Value
+  Argclose1=""
+  Argclose2=""
+  Argdarkenmask=""
+  Argdiff=""
+  Argless=""
+  Arglevel=""
+  Arglevelmin=""
+  Arglevelmax=""
+  #Argmethod=
+  Argmultiplymedianmean=""
+  Argmultiplyminmax=""
+  Argnegate=""
+  Argradius1=""
+  Argradius2=""
+  Argsigma1=""
+  Argsigma2=""
+  Argsoft=""
+  Argsoftready=""
+  Argswap=""
+  Argweight=""
+  Argword1=""
+  Argword2=""
+  Maskbasename=""
   while read -d, Line; do
     grep -q "=" <<< "$Line" && {
       Key="$(cut   -d= -f1    <<< "$Line")"
@@ -2042,75 +2078,75 @@ maskarg_parse() {
       Value="$(sed "s/${Key:-NOKEY}//"  <<< "$Line")"
     }
     case $Key in
-      "%"|"w"|"w%")       Weight="$Value" ;;
-      "r")                Radius1="$Value" ;;
-      "R")                Radius2="${Value:-auto}" ;;
-      "s")                Sigma1="$Value" ;;
-      "S")                Sigma2="${Value:-auto}" ;;
-      "swap")             Swap="swap" ;;
-      "soft")             Soft="soft" ;;
-      "SOFTREADY")        Softready="${Value:-soft}" ;;
-      "d"|"diff")         Diff="s" ;;
-      "less")             Less="${Value:-auto}" ;;
-      "M")                Multiplyminmax="M"
+      "%"|"w"|"w%")       Argweight="$Value" ;;
+      "r")                Argradius1="$Value" ;;
+      "R")                Argradius2="${Value:-auto}" ;;
+      "s")                Argsigma1="$Value" ;;
+      "S")                Argsigma2="${Value:-auto}" ;;
+      "swap")             Argswap="swap" ;;
+      "soft")             Argsoft="soft" ;;
+      "SOFTREADY")        Argsoftready="${Value:-soft}" ;;
+      "d"|"diff")         Argdiff="s" ;;
+      "less")             Argless="${Value:-auto}" ;;
+      "M")                Argmultiplyminmax="M"
         Difference_needlist="$Difference_needlist minmaxdiff"
         Evaluate_needlist="$Evaluate_needlist min max" ;;
-      "m")                Multiplymedianmean="m"
+      "m")                Argmultiplymedianmean="m"
         Difference_needlist="$Difference_needlist medianmeandiff"
         Evaluate_needlist="$Evaluate_needlist median mean" ;;
-      "n"|"neg"|"negate") Negate="neg" ;;
+      "n"|"neg"|"negate") Argnegate="neg" ;;
       "c"|"close"|"cx"|"closex") 
         Value="$(tr -d "close" <<< "$Line")"
-        Close1=$(cut -dx    -f1 <<< "$Value")
-        Close2=$(cut -dx -s -f2 <<< "$Value")
-        Close1="$(digitonly "$Close1")"
-        Close2="$(digitonly "$Close2")"
-        Close1="${Close1:-4}"
+        Argclose1=$(cut -dx    -f1 <<< "$Value")
+        Argclose2=$(cut -dx -s -f2 <<< "$Value")
+        Argclose1="$(digitonly "$Argclose1")"
+        Argclose2="$(digitonly "$Argclose2")"
+        Argclose1="${Argclose1:-4}"
       ;;
-      "CLOSE1")           Close1="$Value" ;;
-      "CLOSE2")           Close2="$Value" ;;
-      "LEVEL")            Level="yes" ;;
-      "LEVELMIN")         Levelmin="$Value" ;;
-      "LEVELMAX")         Levelmax="$Value" ;;
-      "DARKENMASK")       Darkenmask="$Value" ;;
+      "CLOSE1")           Argclose1="$Value" ;;
+      "CLOSE2")           Argclose2="$Value" ;;
+      "LEVEL")            Arglevel="yes" ;;
+      "LEVELMIN")         Arglevelmin="$Value" ;;
+      "LEVELMAX")         Arglevelmax="$Value" ;;
+      "DARKENMASK")       Argdarkenmask="$Value" ;;
       "NUM")              Maskmethodcount="$Value" ;;
-      "METHOD")           Method="$Value" ;;
+      "METHOD")           Argmethod="$Value" ;;
       *|WORD1|WORD2) ### FIXME
-        [ -z "$Word1" ] && Word1="$Line" || Word2="$Line" 
-        Word1="${Word1#WORD1=}"
-        Word2="${Word2#WORD2=}"
+        [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
+        Argword1="${Argword1#WORD1=}"
+        Argword2="${Argword2#WORD2=}"
       ;;
     esac
   done <<< "${1:-},"
-  [ "$Less" = "auto" ] && case $Method in
-    blur)       Less="15" ;;
-    diffstat)   Less="5" ;;
-    compass)    Less="4" ;;
-    freichen)   Less="4" ;;
-    gaussian)   Less="15" ;;
-    kirsch)     Less="2" ;;
-    log)        Less="15" ;;
-    morphology) Less="20" ;;
-    sobel)      Less="2" ;;
-    wavelet)    Less="60" ;;
-    *)          Less="8" ;;
+  [ "$Argless" = "auto" ] && case $Argmethod in
+    blur)       Argless="15" ;;
+    diffstat)   Argless="5" ;;
+    compass)    Argless="4" ;;
+    freichen)   Argless="4" ;;
+    gaussian)   Argless="15" ;;
+    kirsch)     Argless="2" ;;
+    log)        Argless="15" ;;
+    morphology) Argless="20" ;;
+    sobel)      Argless="2" ;;
+    wavelet)    Argless="60" ;;
+    *)          Argless="8" ;;
   esac
-  Maskbasename="mask.$Method.r$Radius1.R$Radius2.s$Sigma1.S$Sigma2.$(unspecialstring "$Word1").$(unspecialstring "$Word2").c$Close1.$Close2.$Diff.$Negate.$Swap.$Softready.$Firstimagemd5"
+  Maskbasename="mask.$Argmethod.r$Argradius1.R$Argradius2.s$Argsigma1.S$Argsigma2.$(unspecialstring "$Argword1").$(unspecialstring "$Argword2").c$Argclose1.$Argclose2.$Argdiff.$Argnegate.$Argswap.$Argsoftready.$Firstimagemd5"
 }
 maskarg_donttake() {
   while [ $# -gt 0 ]; do
     case ${1:-} in
-      weight)  [ "$Weight" ]        && error "--$Method does not take argument w (weight)"              && Weight="" ;;
-      radius1) [ "$Radius1" ]       && error "--$Method does not take argument r (radius1)"             && Radius1="" ;;
-      radius2) [ "$Radius2" ]       && error "--$Method does not take argument R (radius2)"             && Radius2="" ;;
-      sigma1)  [ "$Sigma1" ]        && error "--$Method does not take argument s (sigma1)"              && Sigma1="" ;;
-      sigma2)  [ "$Sigma2" ]        && error "--$Method does not take argument S (sigma2)"              && Sigma2="" ;;
-      soft)    [ "$Soft" ]          && error "--$Method does not take argument soft"                    && Soft="" ;;
-      swap)    [ "$Swap" ]          && error "--$Method does not take argument swap"                    && Swap="" ;;
-      close)   [ "$Close1$Close2" ] && error "--$Method does not take argument c (close)"               && Close1="" && Close2="" ;;
-      word1)   [ "$Word1" ]         && error "--$Method does not take a word argument ($Word1)"         && Word1="" ;;
-      word2)   [ "$Word2" ]         && error "--$Method does not take a second word argument ($Word2)"  && Word2="" ;;
-      negate)  [ "$Negate" ]        && error "--$Method does not take argument n (negate)"              && Negate="" ;;
+      weight)  [ "$Argweight" ]           && error "--$Argmethod does not take argument w (weight)"                 && Argweight="" ;;
+      radius1) [ "$Argradius1" ]          && error "--$Argmethod does not take argument r (radius1)"                && Argradius1="" ;;
+      radius2) [ "$Argradius2" ]          && error "--$Argmethod does not take argument R (radius2)"                && Argradius2="" ;;
+      sigma1)  [ "$Argsigma1" ]           && error "--$Argmethod does not take argument s (sigma1)"                 && Argsigma1="" ;;
+      sigma2)  [ "$Argsigma2" ]           && error "--$Argmethod does not take argument S (sigma2)"                 && Argsigma2="" ;;
+      soft)    [ "$Argsoft" ]             && error "--$Argmethod does not take argument soft"                       && Argsoft="" ;;
+      swap)    [ "$Argswap" ]             && error "--$Argmethod does not take argument swap"                       && Argswap="" ;;
+      close)   [ "$Argclose1$Argclose2" ] && error "--$Argmethod does not take argument c (close)"                  && Argclose1="" && Argclose2="" ;;
+      word1)   [ "$Argword1" ]            && error "--$Argmethod does not take a word argument ($Argword1)"         && Argword1="" ;;
+      word2)   [ "$Argword2" ]            && error "--$Argmethod does not take a second word argument ($Argword2)"  && Argword2="" ;;
+      negate)  [ "$Argnegate" ]           && error "--$Argmethod does not take argument n (negate)"                 && Argnegate="" ;;
     esac
     shift
   done
@@ -2118,29 +2154,29 @@ maskarg_donttake() {
 maskarg_store() {
   Maskmethodcount="${1:-$Maskmethodcount}"
   Newoption="NUM=$Maskmethodcount"
-  Newoption="$Newoption,METHOD=$Method"
-  #Newoption="$Newoption,BASENAME=mask.$Maskmethodcount.$Method"
-  [ "$Weight" ]             && Newoption="$Newoption,w=$Weight"
-  [ "$Radius1" ]            && Newoption="$Newoption,r=$Radius1"
-  [ "$Radius2" ]            && Newoption="$Newoption,R=$Radius2"
-  [ "$Sigma1" ]             && Newoption="$Newoption,s=$Sigma1"
-  [ "$Sigma2" ]             && Newoption="$Newoption,S=$Sigma2"
-  [ "$Less" ]               && Newoption="$Newoption,less=$Less"
-  [ "$Close1" ]             && Newoption="$Newoption,CLOSE1=$Close1"
-  [ "$Close2" ]             && Newoption="$Newoption,CLOSE2=$Close2"
-  [ "$Word1" ]              && Newoption="$Newoption,WORD1=$Word1"
-  [ "$Word2" ]              && Newoption="$Newoption,WORD2=$Word2"
-  [ "$Diff" ]               && Newoption="$Newoption,diff"
-  [ "$Soft" ]               && Newoption="$Newoption,soft"
-  [ "$Softready" ]          && Newoption="$Newoption,SOFTREADY=$Softready"
-  [ "$Negate" ]             && Newoption="$Newoption,negate"
-  [ "$Swap" ]               && Newoption="$Newoption,swap"
-  [ "$Darkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Darkenmask"
-  [ "$Multiplyminmax" ]     && Newoption="$Newoption,M"
-  [ "$Multiplymedianmean" ] && Newoption="$Newoption,m"
-  [ "$Level" ]              && Newoption="$Newoption,LEVEL"
-  [ "$Levelmin" ]           && Newoption="$Newoption,LEVELMIN=$Levelmin"
-  [ "$Levelmax" ]           && Newoption="$Newoption,LEVELMAX=$Levelmax"
+  Newoption="$Newoption,METHOD=$Argmethod"
+  #Newoption="$Newoption,BASENAME=mask.$Maskmethodcount.$Argmethod"
+  [ "$Argweight" ]             && Newoption="$Newoption,w=$Argweight"
+  [ "$Argradius1" ]            && Newoption="$Newoption,r=$Argradius1"
+  [ "$Argradius2" ]            && Newoption="$Newoption,R=$Argradius2"
+  [ "$Argsigma1" ]             && Newoption="$Newoption,s=$Argsigma1"
+  [ "$Argsigma2" ]             && Newoption="$Newoption,S=$Argsigma2"
+  [ "$Argless" ]               && Newoption="$Newoption,less=$Argless"
+  [ "$Argclose1" ]             && Newoption="$Newoption,CLOSE1=$Argclose1"
+  [ "$Argclose2" ]             && Newoption="$Newoption,CLOSE2=$Argclose2"
+  [ "$Argword1" ]              && Newoption="$Newoption,WORD1=$Argword1"
+  [ "$Argword2" ]              && Newoption="$Newoption,WORD2=$Argword2"
+  [ "$Argdiff" ]               && Newoption="$Newoption,diff"
+  [ "$Argsoft" ]               && Newoption="$Newoption,soft"
+  [ "$Argsoftready" ]          && Newoption="$Newoption,SOFTREADY=$Argsoftready"
+  [ "$Argnegate" ]             && Newoption="$Newoption,negate"
+  [ "$Argswap" ]               && Newoption="$Newoption,swap"
+  [ "$Argdarkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Argdarkenmask"
+  [ "$Argmultiplyminmax" ]     && Newoption="$Newoption,M"
+  [ "$Argmultiplymedianmean" ] && Newoption="$Newoption,m"
+  [ "$Arglevel" ]              && Newoption="$Newoption,LEVEL"
+  [ "$Arglevelmin" ]           && Newoption="$Newoption,LEVELMIN=$Arglevelmin"
+  [ "$Arglevelmax" ]           && Newoption="$Newoption,LEVELMAX=$Arglevelmax"
   Maskmethodlist="$(sed "/NUM=$Maskmethodcount,/d" <<< "$Maskmethodlist")"
   Maskmethodlist="$Maskmethodlist
 $Newoption"
