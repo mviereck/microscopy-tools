@@ -36,7 +36,8 @@ Arguments taken by all mask options:
             This will generate two masks. The saturation mask will only have
             noteable effect where the morphology mask strength is below 25%.
   c, close  Closes gaps between nearby contrast lines to mark the area between
-            as strong contrast, too. Default for c only: c4.
+            as strong contrast, too. Default for c only: c3x3
+            First value is a kernel radius, second a kernel iteration.
             Can reduce artefacts in partial transparent objects.
             Helps e.g. to strengthen thin shiny objects like hairs.
             For big values rather use e.g. c4x4 instead of c16, the result 
@@ -591,6 +592,13 @@ $Magickbin
     -write $Maskmax
     -delete 0"
     
+    false && Command="$Command
+  mpr:sourcemask
+  ( mpr:sourcemask_part -evaluate add 25% )
+    -compose Over -composite
+    -write $Sourcemask
+    -delete 0"
+    
       # darken lessmask with current source mask to get a mask with decreasing sharpness after a max peak
       Command="$Command
   mpr:lessthanmax
@@ -742,65 +750,9 @@ $(grep "\S" <<< "$Command")"
   
   return "${Error:-0}"
 }
-focus_generate_masks() {
-  local Maskgenerator Maskbasenamelist= Maskready= Maskmax Showimage Mode Line Imagename
-  local Startzeit Dauer Restzeit Count
-
-  Showimage="$Cachedir/mask.progress.tif"
-
-  # Generate command to generate masks
-  Maskgenerator="
-  mpr:sourceimage"
-  # --grayscale
-  [ "$Grayscaleconverter" ] && Maskgenerator="$Maskgenerator
-    $Grayscaleconverter"
-  Maskgenerator="$Maskgenerator
-    -write mpr:sourcegray
-    -delete 0"
-    
-  Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
-  while read Line; do
-    [ "$Error" ] && break
-    maskarg_parse "$Line"
-    
-    # avoid [double] creating of existing masks
-    Maskready=""
-    maskexist "$Maskbasename"                          && Maskready="yes" || rm -f $(masklist "$Maskbasename")
-    grep -q -x "$Maskbasename" <<< "$Maskbasenamelist" && Maskready="yes"
-    
-    [ -z "$Maskready" ] && {
-      Maskgenerator="$Maskgenerator 
-$(focus_maskmethod "$Argmethod")"
-        
-      [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
-  mpr:sourcegray
-    -compose Difference -composite"
-    
-      [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
-    -negate"
-    
-      [ "${Argclose1:-1}x${Argclose2:-1}" != "1x1" ] && Maskgenerator="$Maskgenerator
-    -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-4}"
-
-      Maskgenerator="$Maskgenerator 
-    -write $Cachedir/$Maskbasename.NUMBER.tif"
-      [ "$Showimageprocessing" ] && Maskgenerator="$Maskgenerator
-    -auto-level -write SHOWIMAGE"
-      Maskgenerator="$Maskgenerator
-    -delete 0"
-    }
-    
-    Maskbasenamelist="$Maskbasenamelist
-$Maskbasename"
-  done <<< "$Maskmethodlist"
+focus_generate_composite() {
+  local Mode Imagename
   
-  Maskgenerator="$(sed "1,/SHOWIMAGE/{s%SHOWIMAGE%$Showimage%}" <<< "$Maskgenerator")"
-  Maskgenerator="$(sed "/SHOWIMAGE/d" <<< "$Maskgenerator")"
-  
-  grep -q morphology <<< "$Maskgenerator" && verbose "Mask generator kernels:
-$($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgenerator null: 2>&1)
-"    
-
   # --evaluate
   for Mode in $Evaluate_needlist; do
     [ "$Error" ] && break
@@ -855,6 +807,78 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
       ;;
     esac
   done
+}
+focus_generate_masks() {
+  local Maskgenerator Maskbasenamelist= Maskready= Maskmax Showimage Mode Line Imagename
+  local Startzeit Dauer Restzeit Count
+
+  Showimage="$Cachedir/mask.progress.tif"
+
+  # Generate command to generate masks
+  Maskgenerator="
+  mpr:sourceimage"
+  # --grayscale
+  [ "$Grayscaleconverter" ] && Maskgenerator="$Maskgenerator
+    $Grayscaleconverter"
+  Maskgenerator="$Maskgenerator
+    -write mpr:sourcegray
+    -delete 0"
+    
+  Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
+  while read Line; do
+    [ "$Error" ] && break
+    maskarg_parse "$Line"
+    
+    # avoid [double] creating of existing masks
+    Maskready=""
+    maskexist "$Maskbasename"                          && Maskready="yes" || rm -f $(masklist "$Maskbasename")
+    grep -q -x "$Maskbasename" <<< "$Maskbasenamelist" && Maskready="yes"
+    
+    [ -z "$Maskready" ] && {
+      Maskgenerator="$Maskgenerator 
+$(focus_maskmethod "$Argmethod")"
+        
+      [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
+  mpr:sourcegray
+    -compose Difference -composite"
+    
+      [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
+    -negate"
+    
+      [ "$Testsetup" ] && Maskgenerator="$Maskgenerator
+    -statistic standarddeviation 2"
+    
+      false && [ "$Testsetup" ] && Maskgenerator="$Maskgenerator
+    -write mpr:m1
+    -define convolve:scale=100,100%
+    -morphology Convolve LoG:${Argradius1:-0}x${Argsigma1:-0.75}
+    mpr:m1
+    -compose Difference -composite"
+    
+      [ "${Argclose1:-1}x${Argclose2:-1}" != "1x1" ] && Maskgenerator="$Maskgenerator
+    -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-4}"
+    
+      Maskgenerator="$Maskgenerator 
+    -write $Cachedir/$Maskbasename.NUMBER.tif"
+      [ "$Showimageprocessing" ] && Maskgenerator="$Maskgenerator
+    -auto-level -write SHOWIMAGE"
+      Maskgenerator="$Maskgenerator
+    -delete 0"
+    }
+    
+    Maskbasenamelist="$Maskbasenamelist
+$Maskbasename"
+  done <<< "$Maskmethodlist"
+  
+  Maskgenerator="$(sed "1,/SHOWIMAGE/{s%SHOWIMAGE%$Showimage%}" <<< "$Maskgenerator")"
+  Maskgenerator="$(sed "/SHOWIMAGE/d" <<< "$Maskgenerator")"
+  
+  grep -q morphology <<< "$Maskgenerator" && verbose "Mask generator kernels:
+$($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgenerator null: 2>&1)
+"    
+
+  # --evaluate, --compose, M,m
+  focus_generate_composite
 
   # Generate masks
   Startzeit="$(date +%s)"
@@ -893,12 +917,14 @@ $(grep "\S" <<< "$Command")"
   while read Line; do
     [ "$Error" ] && break
     maskarg_parse "$Line"
+    
     # get -level min/max values for contrast masks
     [ "$Arglevel" = "yes" ] && {
       level_check
       maskarg_store
     }
     # less
+    #[ "$Maskmethodnumber" != "1" ] && [ -z "$Argsoft" ] && [ "$Argless" ] && {
     [ "$Argless" ] && {
       [ "$Arglevel" = "yes" ] && level_masks
       Arglevelmin=""
@@ -909,8 +935,18 @@ $(grep "\S" <<< "$Command")"
       [ -e "$Maskmax" ] || {
         focus_fuse --lessthanmax $Argless --maskmax $Maskmax $Imagename $(masklist "$Maskbasename") || break
       }
+      
       Argdarkenmask="$Maskmax"
       maskarg_store
+      
+      false && {
+      Maskmethodnumber="$((Maskmethodnumber+1))"
+      Maskmethodcount="$Maskmethodnumber"
+      maskarg_parse "NUM=$Maskmethodcount,METHOD=image,w=$(calc "${Argweight:-100}/2"),M,WORD1=$Imagename"
+      maskarg_store
+      focus_generate_composite
+      maskfromimage $Imagename $Cachedir/$Maskbasename
+      }
     }
     # soft
     [ "$Argsoft" ] && {
@@ -923,7 +959,7 @@ $(grep "\S" <<< "$Command")"
       maskarg_parse "$Line,SOFTREADY=$Argsoftready" # new $Maskbasename with $Argsoftready
       Arglevelmin=""
       Arglevelmax=""
-      Argdarkenmask="$Maskmax"
+      #Argdarkenmask="$Maskmax"
       maskarg_store
       #$Magickbin $Maskmax -negate $Maskmax
       maskexist "$Maskbasename" || {
@@ -971,7 +1007,9 @@ focus_maskmethod() {
     channel)
       Maskgenerator="
   mpr:sourceimage
-    -colorspace $Argword1 -channel $Argword2 -separate"
+    -colorspace $Argword1 
+    -channel $Argword2 -separate
+    +channel"
     ;;
     comet) ### FIXME saturate drops some angles
       Maskgenerator="
@@ -1113,6 +1151,17 @@ Maskgenerator="$Maskgenerator
     -morphology Convolve DoG:${Argradius1:-0},${Argsigma1:-0.75},${Argsigma2:-1.2}
   mpr:sourcegray
     -compose Difference -composite"
+    
+          false && Maskgenerator="$Maskgenerator
+    -write mpr:m1
+    -morphology Convolve DoG:${Argradius1:-0},${Argsigma1:-0.75},${Argsigma2:-1.2}
+    -write mpr:m2
+    -morphology Convolve DoG:${Argradius1:-0},${Argsigma1:-0.75},${Argsigma2:-1.2}
+    -write mpr:m3
+    -delete 0
+  mpr:m1 mpr:m2 mpr:m3
+    -compose Screen -composite"
+
         ;;
       esac
     ;;
@@ -1204,6 +1253,18 @@ Maskgenerator="$Maskgenerator
     -wavelet-denoise ${Argradius1:-10}%
   mpr:sourcegray
     -compose Difference -composite"
+    
+    
+          false && Maskgenerator="$Maskgenerator
+    -write mpr:m1
+    -wavelet-denoise ${Argradius1:-10}%
+    -write mpr:m2
+    -wavelet-denoise ${Argradius1:-10}%
+    -write mpr:m3
+    -delete 0
+  mpr:m1 mpr:m2 mpr:m3
+    -compose Screen -composite"
+    
     ;;
   esac
     
@@ -1219,7 +1280,7 @@ focus_merge_masks() {
   local Mergemethod Mergeneeded Methodmask
   local Startzeit Dauer Restzeit
   
-  Mergemethod="screen"
+  Mergemethod="Screen"
 
   Mergeneeded="no"
   [ "$Maskmethodnumber" -gt "1" ] && Mergeneeded="yes"
@@ -1262,9 +1323,12 @@ $Magickbin"
   $Methodmask
     -level ${Arglevelmin:-0}%,${Arglevelmax:-100}%"
     
-      true && [ "$Argdarkenmask" ] && Command="$Command
+      [ "$Argdarkenmask" ] && Command="$Command
   $Argdarkenmask
     -compose Darken -composite"
+    
+      false && Command="$Command
+    -black-threshold 10%"
     
       false && [ "$Argdarkenmask" ] && Command="$Command
     -write mpr:methodmask
@@ -1425,22 +1489,25 @@ $Magickbin
 }
 level_check() {
   local Maskmax Maskmin
+  
   Maskmax=$Cachedir/$Maskbasename.max.tif
   Maskmin=$Cachedir/$Maskbasename.min.tif
-  [ -e "$Maskmax" ] || {
-    evaluate_split max $Maskmax $(masklist "$Maskbasename") || break
-  }
+  evaluate_split max $Maskmax $(masklist "$Maskbasename") || return 1
+  evaluate_split min $Maskmin $(masklist "$Maskbasename") || return 1
   Arglevelmax="$($Magickbin "$Maskmax" -format '%[fx:maxima*100]' info:)"
-  [ -e "$Maskmin" ] || {
-    evaluate_split min $Maskmin $(masklist "$Maskbasename") || break
-  }
   Arglevelmin="$($Magickbin "$Maskmin" -format '%[fx:minima*100]' info:)"
+  
+  verbose "level_check(): ${Arglevelmin},${Arglevelmax} for $Maskbasename"
+  return ${Error:-0}
 }
 level_masks() {
   local Startzeit Dauer Restzeit
   local Count Mask
     
-  [ "${Arglevelmin}%,${Arglevelmax}%" = "0%,100%" ] && return 0
+  [ "${Arglevelmin}%,${Arglevelmax}%" = "0%,100%" ] && {
+    verbose "Skipping level_masks(), already 0%,100%: $Maskbasename"
+    return 0
+  }
     
   Startzeit="$(date +%s)"
   Count=0
@@ -2101,7 +2168,10 @@ maskarg_parse() {
         Argclose2=$(cut -dx -s -f2 <<< "$Value")
         Argclose1="$(digitonly "$Argclose1")"
         Argclose2="$(digitonly "$Argclose2")"
-        Argclose1="${Argclose1:-4}"
+        [ -z "$Argclose1" ] && {
+          Argclose1="3"
+          Argclose2="3"
+        }
       ;;
       "CLOSE1")           Argclose1="$Value" ;;
       "CLOSE2")           Argclose2="$Value" ;;
@@ -2128,8 +2198,9 @@ maskarg_parse() {
     log)        Argless="15" ;;
     morphology) Argless="20" ;;
     sobel)      Argless="2" ;;
-    wavelet)    Argless="60" ;;
-    *)          Argless="8" ;;
+    statistic)  Argless="15" ;;
+    wavelet)    Argless="40" ;;
+    *)          Argless="10" ;;
   esac
   Maskbasename="mask.$Argmethod.r$Argradius1.R$Argradius2.s$Argsigma1.S$Argsigma2.$(unspecialstring "$Argword1").$(unspecialstring "$Argword2").c$Argclose1.$Argclose2.$Argdiff.$Argnegate.$Argswap.$Argsoftready.$Firstimagemd5"
 }
