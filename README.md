@@ -123,6 +123,8 @@ image. Command line tool, used by `stackfuser`.
  - `entangle`: Entangle provides a graphical interface for "tethered shooting", aka
 taking photographs with a digital camera completely controlled from the
 computer.
+ - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack): A cross-platform tool for focus stacking images based on wavelet algorithms.
+ - [`pulsar123/Macro-scripts`](https://github.com/pulsar123/Macro-scripts): A set of BASH scripts and C++ programs representing a complete workflow for processing macro focus stacking photographs.
  - `gphoto2`: The gphoto2 library allows access and control of various digital camera models. Command line tool, used by `stackshooter`.
  - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `stackfuser` and `stackshooter`.
  - `hugin`: Hugin is a panorama photo stitching program for several overlapping photos taken from the same location, transforming the photos to one larger image.
