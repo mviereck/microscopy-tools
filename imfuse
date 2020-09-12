@@ -1393,7 +1393,7 @@ $Magickbin"
   $Methodmask
     -level ${Arglevelmin:-0}%,${Arglevelmax:-100}%"
     
-      false && [ "$Argdarkenmask" ] && Command="$Command
+      [ "$Argdarkenmask" ] && Command="$Command
   $Argdarkenmask
     -compose Darken -composite"
     
