@@ -28,7 +28,7 @@ General options:
 
 The mask generating options below can take additionally arguments [=ARG].
 Multiple arguments are comma-separated. 
-  Example: --morphology=r3,less20,close --saturation=w50,M
+  Example: --morphology=r3,less20,close,blur --saturation=w50,M
 Arguments taken by all mask options:
   w         Mask weight. Percent value from 0 to 100.
             Of interest if specifying more than one mask generation method.
@@ -58,6 +58,7 @@ Arguments taken by all mask options:
             hit artefact areas only. For use with colorspace and image 
             comparision mask options. (Experimental)
   negate    Negate/invert the mask. Rarely needed.
+  t         Threshold of mask below percent. Default without percent: t10
 Arguments taken by only few options:
   r         Radius. Must be an integer value.
             Increased radius mostly causes less noise, less details and
@@ -544,6 +545,15 @@ $Magickbin
     -write mpr:cutmask
     -delete 0"
     
+    # drop areas with contrast=0
+    Command="$Command
+  mpr:cutmask
+  ( mpr:sourcemask -threshold 0% )
+    -compose MinusSrc -composite
+    -alpha off
+    -write mpr:cutmask
+    -delete 0"
+    
     ## --lessthanmax,less
     [ "$Lessthanmax" ] && { 
       Command="$Command
@@ -615,7 +625,7 @@ $Magickbin
     -write $Lessthanmaxmask
     -delete 0" 
     
-      # get area of source mask equal or sharper than current max (same code asabove, but now with less adjusted maskmax.
+      # get area of source mask equal or sharper than current max (same code as above, but now with less-adjusted maskmax.
       Command="$Command
   mpr:sourcemask
   mpr:maskmax
@@ -1436,6 +1446,7 @@ focus_merge_masks() {
   Mergemethod="Screen"
 
   Mergeneeded="no"
+  #Mergeneeded="yes"
   [ "$Maskmethodnumber" -gt "1" ] && Mergeneeded="yes"
   [ "${Weightscale:-0}" != "0" ]  && Mergeneeded="yes" 
 
@@ -1470,6 +1481,7 @@ $Magickbin"
       [ "$Argmultiplymedianmean" ]                            && Mergeneeded="yes" 
       [ "$Argmultiplyminmax" ]                                && Mergeneeded="yes" 
       [ "$Argdarkenmask" ]                                    && Mergeneeded="yes" 
+      [ "$Argthreshold" ]                                     && Mergeneeded="yes" 
       [ "$Mergeneeded" = "no" ] && break
       Command="$Command
   ( 
@@ -1555,6 +1567,9 @@ $Magickbin"
     +level 0%,$(calc "(100 * ${Argweight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
   )
     -compose $Mergemethod -composite"
+    
+      [ "$Argthreshold" ] && Command="$Command
+    -black-threshold $Argthreshold%"
     done <<< "$Maskmethodlist"
         
     Command="$Command
@@ -1572,7 +1587,6 @@ $Magickbin"
     $Tifstore 
   $Sourcemask"
   
-    #Mergeneeded=yes
     case $Mergeneeded in
       yes)
         [ "$Count" = "1" ] && verbose "Merging masks with:
@@ -1817,6 +1831,7 @@ declare_variables() {
   Argsoft=""
   Argsoftready=""
   Argswap=""
+  Argthreshold=""
   Argweight=""
   Argword1=""
   Argword2=""
@@ -2283,9 +2298,10 @@ check_options() {
     [ "$Argless" ]    && Resultimage="$Resultimage,less$Argless"
     [ "$Argclose1" ]  && Resultimage="$Resultimage,c$Argclose1"
     [ "$Argclose2" ]  && Resultimage="${Resultimage}x$Argclose2"
-    [ "$Argblur" ]  && Resultimage="$Resultimage,blur$Argblur"
+    [ "$Argblur" ]    && Resultimage="$Resultimage,blur$Argblur"
     [ "$Argswap" ]    && Resultimage="$Resultimage,swap"
     [ "$Argnegate" ]  && Resultimage="$Resultimage,neg"
+    [ "$Argthreshold" ]  && Resultimage="$Resultimage,t$Argthreshold"
     [ "$Argmethod" != "image" ] && [ "$Argword1" ] && Resultimage="$Resultimage,$(unspecialstring "$Argword1")"
     [ "$Argword2" ]   && Resultimage="$Resultimage,$(unspecialstring "$Argword2")"
   done <<< "$Maskmethodlist"
@@ -2326,6 +2342,7 @@ maskarg_parse() {
   Argsoft=""
   Argsoftready=""
   Argswap=""
+  Argthreshold=""
   Argweight=""
   Argword1=""
   Argword2=""
@@ -2358,6 +2375,7 @@ maskarg_parse() {
         Evaluate_needlist="$Evaluate_needlist median mean" ;;
       "b"|"blur")         Argblur="${Value:-0.5}" ;;
       "n"|"neg"|"negate") Argnegate="neg" ;;
+      "t"|"threshold")    Argthreshold="${Value:-10}" ;;
       "c"|"close"|"cx"|"closex") 
         Value="$(tr -d "close" <<< "$Line")"
         Argclose1=$(cut -dx    -f1 <<< "$Value")
@@ -2413,6 +2431,7 @@ maskarg_donttake() {
       close)   [ "$Argclose1$Argclose2" ] && error "--$Argmethod does not take argument c (close)"                  && Argclose1="" && Argclose2="" ;;
       word1)   [ "$Argword1" ]            && error "--$Argmethod does not take a word argument ($Argword1)"         && Argword1="" ;;
       word2)   [ "$Argword2" ]            && error "--$Argmethod does not take a second word argument ($Argword2)"  && Argword2="" ;;
+      threshold)  [ "$Argthreshold" ]     && error "--$Argmethod does not take argument n (negate)"                 && Argthreshold="" ;;
       negate)  [ "$Argnegate" ]           && error "--$Argmethod does not take argument n (negate)"                 && Argnegate="" ;;
       blur)    [ "$Argblur" ]             && error "--$Argmethod does not take argument b (blur)"                   && Argblur="" ;;
     esac
@@ -2438,6 +2457,7 @@ maskarg_store() {
   [ "$Argsoft" ]               && Newoption="$Newoption,soft"
   [ "$Argsoftready" ]          && Newoption="$Newoption,SOFTREADY=$Argsoftready"
   [ "$Argblur" ]               && Newoption="$Newoption,blur=$Argblur"
+  [ "$Argthreshold" ]          && Newoption="$Newoption,threshold=$Argthreshold"
   [ "$Argnegate" ]             && Newoption="$Newoption,negate"
   [ "$Argswap" ]               && Newoption="$Newoption,swap"
   [ "$Argdarkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Argdarkenmask"
