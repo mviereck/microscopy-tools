@@ -35,6 +35,8 @@ Arguments taken by all mask options:
             Example: --morphology --saturation=w25
             This will generate two masks. The saturation mask will only have
             noteable effect where the morphology mask strength is below 25%.
+  b, blur   Blurs the generated masks. Default without a sigma value: blur0.5
+            Almost always improves the result with stronger contrasts.
   c, close  Closes gaps between nearby contrast lines to mark the area between
             as strong contrast, too. Default for c only: c3x3
             First value is a kernel radius, second a kernel iteration.
@@ -837,6 +839,9 @@ focus_generate_masks() {
     [ -z "$Maskready" ] && {
       Maskgenerator="$Maskgenerator 
 $(focus_maskmethod "$Argmethod")"
+
+      [ "$Argblur" ] && Maskgenerator="$Maskgenerator
+    -blur 0x$Argblur"
         
       [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
   mpr:sourcegray
@@ -845,7 +850,7 @@ $(focus_maskmethod "$Argmethod")"
       [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
     -negate"
     
-      [ "$Testsetup" ] && Maskgenerator="$Maskgenerator
+      false && [ "$Testsetup" ] && Maskgenerator="$Maskgenerator
     -statistic standarddeviation 2"
     
       [ "${Argclose1:-1}x${Argclose2:-1}" != "1x1" ] && Maskgenerator="$Maskgenerator
@@ -906,6 +911,7 @@ $(grep "\S" <<< "$Command")"
     verbose "Contrast mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   
+  
   # less,soft
   while read Line; do
     [ "$Error" ] && break
@@ -916,6 +922,81 @@ $(grep "\S" <<< "$Command")"
       level_check
       maskarg_store
     }
+    
+    
+    
+    [ "$Testsetup" ] && {
+      
+      [ "$Arglevel" = "yes" ] && level_masks
+      Arglevelmin=""
+      Arglevelmax=""
+      maskarg_store
+      
+      Testarg="${Testarg:-15}"
+      
+      Maskmax="$Cachedir/$Maskbasename.max.tif"
+      evaluate_split max $Maskmax $(masklist "$Maskbasename")
+      $Magickbin $Maskmax -threshold $Testarg% -negate $Maskmax
+      
+      while read Mask; do
+        true && Command="$Magickbin
+  $Mask
+    -write mpr:mask
+    -delete 0
+  mpr:mask
+    -threshold $Testarg%
+    -negate
+    -write mpr:cutmask
+    -delete 0
+  mpr:mask
+    -white-threshold $Testarg%
+    -fill gray$Testarg -opaque white
+    -filter Gaussian -resize 50%
+    -define filter:sigma=1 -resize 200% 
+    -write $Testimage
+    -write mpr:close
+    -delete 0
+  mpr:close
+  mpr:cutmask
+    -alpha off
+    -compose CopyOpacity -composite
+    -write mpr:close
+    -delete 0
+  mpr:mask
+  mpr:close
+    -compose SrcOver -composite
+    -write $Mask
+    -delete 0
+  null:
+    "
+        false && Command="$Magickbin
+  $Mask
+    -write mpr:mask
+    -delete 0
+  mpr:mask
+    -negate
+    -write mpr:close
+    -delete 0
+  mpr:close
+  $Maskmax
+    -alpha off
+    -compose CopyOpacity -composite
+    -write mpr:close
+    -delete 0
+  mpr:mask
+  mpr:close
+    -compose SrcOver -composite
+    -write $Mask
+    -delete 0
+  null:
+    "
+        $Command
+        showimage $Mask
+        verbose $Mask
+      done < <(masklist "$Maskbasename" | tac)
+    }
+    
+    
     # less
     #[ "$Maskmethodnumber" != "1" ] && [ -z "$Argsoft" ] && [ "$Argless" ] && {
     [ "$Argless" ] && {
@@ -1002,6 +1083,8 @@ $Magickbin
           showimage $Mask
         done < <(masklist "$Maskbasename" | tac)
       }
+
+
       
       true && {
       Argdarkenmask="$Maskmax"
@@ -1714,6 +1797,7 @@ trap_sigint() {
   error "Received SIGINT"
 }
 declare_variables() {
+  Argblur=""
   Argclose1=""
   Argclose2=""
   Argdarkenmask=""
@@ -1775,6 +1859,7 @@ declare_variables() {
   Sourceimage=""
   Sourceimagelist=""
   Startzeit="$(date +%s)"
+  Testarg=""
   Testimage=""
   Testsetup=""
   Tifstore="+repage -quality 100% -compress lzw"
@@ -1813,7 +1898,7 @@ parse_options() {
          --revert)            Revertimagelist="yes"     ;;
       -V|--showimage)         Showimageprocessing="yes" ;;
          --softmode)          Softmode="yes"            ;;
-         --test)              Testsetup="${2:-test}"    ; shift ;;
+         --test)              Testsetup="test" Testarg="${2:-}"    ; shift ;;
       -v|--verbose)           Verbose="yes"             ;;
          --version)           echo "imfuse v$Version"   ; exit 0 ;;
          --weightscale)       Weightscale="${2:-auto}"  ; shift ;;
@@ -2198,6 +2283,7 @@ check_options() {
     [ "$Argless" ]    && Resultimage="$Resultimage,less$Argless"
     [ "$Argclose1" ]  && Resultimage="$Resultimage,c$Argclose1"
     [ "$Argclose2" ]  && Resultimage="${Resultimage}x$Argclose2"
+    [ "$Argblur" ]  && Resultimage="$Resultimage,blur$Argblur"
     [ "$Argswap" ]    && Resultimage="$Resultimage,swap"
     [ "$Argnegate" ]  && Resultimage="$Resultimage,neg"
     [ "$Argmethod" != "image" ] && [ "$Argword1" ] && Resultimage="$Resultimage,$(unspecialstring "$Argword1")"
@@ -2206,7 +2292,7 @@ check_options() {
   Resultimage="$(sed "s/=,/=/g ; s/=-/-/g  ; s/=$//g" <<< "$Resultimage")"
   Resultimage="$(sed "s/=,/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
         
-  [ "$Testsetup" ] && Resultimage="${Resultimage}.$Testsetup"
+  [ "$Testsetup" ] && Resultimage="${Resultimage}.test$Testarg"
     
   Resultimage="${Resultimage}.${Imageformat}"
     
@@ -2270,6 +2356,7 @@ maskarg_parse() {
       "m")                Argmultiplymedianmean="m"
         Difference_needlist="$Difference_needlist medianmeandiff"
         Evaluate_needlist="$Evaluate_needlist median mean" ;;
+      "b"|"blur")         Argblur="${Value:-0.5}" ;;
       "n"|"neg"|"negate") Argnegate="neg" ;;
       "c"|"close"|"cx"|"closex") 
         Value="$(tr -d "close" <<< "$Line")"
@@ -2301,7 +2388,7 @@ maskarg_parse() {
     blur)       Argless="15" ;;
     diffstat)   Argless="5" ;;
     compass)    Argless="4" ;;
-    freichen)   Argless="4" ;;
+    freichen)   Argless="20" ;;
     gaussian)   Argless="15" ;;
     kirsch)     Argless="2" ;;
     log)        Argless="15" ;;
@@ -2311,7 +2398,7 @@ maskarg_parse() {
     wavelet)    Argless="40" ;;
     *)          Argless="10" ;;
   esac
-  Maskbasename="mask.$Argmethod.r$Argradius1.R$Argradius2.s$Argsigma1.S$Argsigma2.$(unspecialstring "$Argword1").$(unspecialstring "$Argword2").c$Argclose1.$Argclose2.$Argdiff.$Argnegate.$Argswap.$Argsoftready.$Firstimagemd5"
+  Maskbasename="mask.$Argmethod.r$Argradius1.R$Argradius2.s$Argsigma1.S$Argsigma2.$(unspecialstring "$Argword1").$(unspecialstring "$Argword2").c$Argclose1.$Argclose2.$Argdiff.$Argnegate.$Argblur.$Argswap.$Argsoftready.$Firstimagemd5"
 }
 maskarg_donttake() {
   while [ $# -gt 0 ]; do
@@ -2327,6 +2414,7 @@ maskarg_donttake() {
       word1)   [ "$Argword1" ]            && error "--$Argmethod does not take a word argument ($Argword1)"         && Argword1="" ;;
       word2)   [ "$Argword2" ]            && error "--$Argmethod does not take a second word argument ($Argword2)"  && Argword2="" ;;
       negate)  [ "$Argnegate" ]           && error "--$Argmethod does not take argument n (negate)"                 && Argnegate="" ;;
+      blur)    [ "$Argblur" ]             && error "--$Argmethod does not take argument b (blur)"                   && Argblur="" ;;
     esac
     shift
   done
@@ -2349,6 +2437,7 @@ maskarg_store() {
   [ "$Argdiff" ]               && Newoption="$Newoption,diff"
   [ "$Argsoft" ]               && Newoption="$Newoption,soft"
   [ "$Argsoftready" ]          && Newoption="$Newoption,SOFTREADY=$Argsoftready"
+  [ "$Argblur" ]               && Newoption="$Newoption,blur=$Argblur"
   [ "$Argnegate" ]             && Newoption="$Newoption,negate"
   [ "$Argswap" ]               && Newoption="$Newoption,swap"
   [ "$Argdarkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Argdarkenmask"
