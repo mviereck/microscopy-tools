@@ -475,7 +475,7 @@ focus_fuse() {
   local Resultimage Sourceimage Maskimagelist
   local Resulttop Resultbottom Lessthanmaxmask
   local Maskmax
-  local Count Number
+  local Count Number Alphaoff=
   local Contrastmaxlevel Softfusion= Lessthanmax=
   local Command
   local Startzeit Dauer Restzeit
@@ -488,7 +488,10 @@ focus_fuse() {
   Maskimagelist="$@"
   [ -z "$Maskimagelist" ] && Maskimagelist="$(find $Cachedir/sourcemask* | tr '\n' ' ')"
   
-  [ -e "$Resultimage" ] || mkimg_transparent $Resultimage
+  [ -e "$Resultimage" ] || {
+    mkimg_transparent $Resultimage
+    Alphaoff="yes"
+  }
   Maskmax="${Maskmax:-$Cachedir/mask.max.tif}"
   mkimg_black       $Maskmax
   
@@ -496,7 +499,7 @@ focus_fuse() {
     Resulttop="$Cachedir/resulttop.tif"
     Resultbottom="$Cachedir/resultbottom.tif"
     mkimg_transparent $Resulttop
-    mkimg_transparent $Resultbottom
+    cp $Resultimage $Resultbottom
   }
   
   [ "$Lessthanmax" ] && {
@@ -519,7 +522,6 @@ focus_fuse() {
     Command="
 $Magickbin
   $Resultimage
-    -alpha off
     -write mpr:resultimage
     -delete 0
   $Sourceimage
@@ -559,7 +561,7 @@ $Magickbin
   mpr:cutmask
   ( mpr:sourcemask -threshold 0% )
     -compose MinusSrc -composite
-    -alpha off
+    -transparent white
     -write mpr:cutmask
     -delete 0"
     
@@ -764,10 +766,7 @@ $(grep "\S" <<< "$Command")"
   
   [ "$Error" ] && return $Error
 
-  $Magickbin \
-    $Resultimage \
-    -alpha off \
-    $Resultimage || error "Failed to store result"
+  [ "$Alphaoff" ] && $Magickbin $Resultimage -alpha off $Resultimage
   
   return "${Error:-0}"
 }
@@ -1490,7 +1489,9 @@ $Magickbin"
       [ "$Argmultiplymedianmean" ]                            && Mergeneeded="yes" 
       [ "$Argmultiplyminmax" ]                                && Mergeneeded="yes" 
       [ "$Argdarkenmask" ]                                    && Mergeneeded="yes" 
+      [ "$Argsoft" ]                                          && Mergeneeded="yes" 
       [ "$Argthreshold" ]                                     && Mergeneeded="yes" 
+      [ "$Softmode" ]                                         && Mergeneeded="yes" 
       [ "$Mergeneeded" = "no" ] && break
       
       Command="$Command
@@ -2544,11 +2545,15 @@ $Maskmethodlist
   Multiplymedianmeanimage="$Cachedir/difference.meanmediandiff.$Firstimagemd5.tif"
   
   # --background
-  Background="${Background:-mean}"
+  case $Softmode in
+    yes) ;;
+    no) Background="${Background:-mean}" ;;
+  esac
   checkmagicklist compose  "$Background" && Background="compose,$Background"
   checkmagicklist evaluate "$Background" && Background="evaluate,$Background"
   checkmagicklist color    "$Background" && Background="color,$Background"
   case $Background in
+    "") ;;
     *transparent) 
       mkimg_transparent "$Resultimage" 
     ;;
