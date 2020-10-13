@@ -58,7 +58,7 @@ Arguments taken by all mask options:
             hit artefact areas only. For use with colorspace and image 
             comparision mask options. (Experimental)
   negate    Negate/invert the mask. Rarely needed.
-  t         Threshold of mask below percent. Default without percent: t10
+  t         Threshold of mask below percent. Default without value: t10
 Arguments taken by only few options:
   r         Radius. Must be an integer value.
             Increased radius mostly causes less noise, less details and
@@ -237,6 +237,12 @@ Colorspace channel mask options: (Intended for artefact removal)
  --saturation         Saturation channel from HSB colorspace.
 
 Mask generation and fusion adjustments:
+ --background BG      Specify a background to paint on. Default: mean
+                      BG can be a color name or a compose or evaluate mode.
+                      Choose an image name or from:
+                      $Magickbin -list color
+                      $Magickbin -list evaluate
+                      $Magickbin -list compose
  --cutsoft [=SIGMA]        Add a semi-transparent blur around cut masks. 
                            Reduces some artefacts.         Default: 3
  --grayscale=MODE          Grayscale converting method before mask generation.
@@ -339,6 +345,9 @@ comma2whitespace() {
 }
 calc() {
   awk "BEGIN {print $* }"
+}
+checkmagicklist() {
+  $Magickbin -list "${1:-}" | cut -d' ' -f1 | grep -q -x -i "${2:-XXX}"
 }
 digitonly() {
   #sed "s/[^0-9.]//g" <<< "${1:-}"
@@ -479,7 +488,7 @@ focus_fuse() {
   Maskimagelist="$@"
   [ -z "$Maskimagelist" ] && Maskimagelist="$(find $Cachedir/sourcemask* | tr '\n' ' ')"
   
-  mkimg_transparent $Resultimage
+  [ -e "$Resultimage" ] || mkimg_transparent $Resultimage
   Maskmax="${Maskmax:-$Cachedir/mask.max.tif}"
   mkimg_black       $Maskmax
   
@@ -849,9 +858,6 @@ focus_generate_masks() {
     [ -z "$Maskready" ] && {
       Maskgenerator="$Maskgenerator 
 $(focus_maskmethod "$Argmethod")"
-
-      [ "$Argblur" ] && Maskgenerator="$Maskgenerator
-    -blur 0x$Argblur"
         
       [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
   mpr:sourcegray
@@ -865,6 +871,9 @@ $(focus_maskmethod "$Argmethod")"
     
       [ "${Argclose1:-1}x${Argclose2:-1}" != "1x1" ] && Maskgenerator="$Maskgenerator
     -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-4}"
+
+      [ "$Argblur" ] && Maskgenerator="$Maskgenerator
+    -blur 0x$Argblur"
     
       Maskgenerator="$Maskgenerator 
     -write $Cachedir/$Maskbasename.NUMBER.tif"
@@ -1483,11 +1492,17 @@ $Magickbin"
       [ "$Argdarkenmask" ]                                    && Mergeneeded="yes" 
       [ "$Argthreshold" ]                                     && Mergeneeded="yes" 
       [ "$Mergeneeded" = "no" ] && break
+      
       Command="$Command
   ( 
   $Methodmask
     -level ${Arglevelmin:-0}%,${Arglevelmax:-100}%"
     
+      # threshold
+      [ "$Argthreshold" ] && Command="$Command
+    -black-threshold $Argthreshold%"
+    
+      # less
       [ "$Argdarkenmask" ] && Command="$Command
   $Argdarkenmask
     -compose Darken -composite"
@@ -1567,9 +1582,6 @@ $Magickbin"
     +level 0%,$(calc "(100 * ${Argweight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
   )
     -compose $Mergemethod -composite"
-    
-      [ "$Argthreshold" ] && Command="$Command
-    -black-threshold $Argthreshold%"
     done <<< "$Maskmethodlist"
         
     Command="$Command
@@ -1601,7 +1613,8 @@ $(grep "\S" <<< "$Command")"
     esac
       
     showimage "$Sourcemask"
-    #showimage $Testimage
+#    $Magickbin $Sourcemask histogram: | $Magickbin - -type TrueColor -fill green -opaque black $Testimage
+#    showimage $Testimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
     verbose "Merging $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
@@ -1703,7 +1716,7 @@ level_check() {
   Arglevelmax="$($Magickbin "$Maskmax" -format '%[fx:maxima*100]' info:)"
   Arglevelmin="$($Magickbin "$Maskmin" -format '%[fx:minima*100]' info:)"
   
-  verbose "level_check(): ${Arglevelmin},${Arglevelmax} for $Maskbasename"
+  verbose "level_check(): ${Arglevelmin}%,${Arglevelmax}% for $Maskbasename"
   return ${Error:-0}
 }
 level_masks() {
@@ -1725,20 +1738,7 @@ level_masks() {
 $Magickbin
   $Mask
     -level ${Arglevelmin}%,${Arglevelmax}%
-    -write mpr:sourcemask
-    -delete 0"
-        
-#    [ "$Argclose1" ] && Command="$Command
-#  mpr:sourcemask
-#    -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-2}
-#    -write mpr:sourcemask
-#    -delete 0"
-    
-    Command="$Command
-  mpr:sourcemask
-    -write $Mask
-    -delete 0
-  null:"
+  $Mask"
   
   [ "$Count" = "1" ] && verbose "Leveling masks with:
 $(grep "\S" <<< "$Command")"
@@ -1798,6 +1798,12 @@ mkimg_black() {
   [ -z "$Size" ] && Size="${Imagewidth:-100}x${Imageheight:-100}"
   $Magickbin -size "$Size" xc:black                  -type Grayscale      $Tifstore "${1:-black.tif}"       || error "Failed to create black image."
 }
+mkimg_color() {
+  local Size
+  Size="${2:-}"
+  [ -z "$Size" ] && Size="${Imagewidth:-100}x${Imageheight:-100}"
+  $Magickbin -size "$Size" xc:${3:-black}            -type TrueColor      $Tifstore "${1:-color.tif}"       || error "Failed to create colored image."
+}
 mkimg_transparent() {
   local Size
   Size="${2:-}"
@@ -1835,8 +1841,11 @@ declare_variables() {
   Argweight=""
   Argword1=""
   Argword2=""
+  Background=""
   Basename=""
   Cachedir=""
+  Caseeval=""
+  Casecompose=""
   Composefactor="" ### FIXME
   Compose_needlist=""
   Cutsoft=""
@@ -1857,7 +1866,8 @@ declare_variables() {
   Imagememsize=""
   Imagenumber=""
   Imagewidth=""
-  Layers=""  
+  Layers=""
+  Line=""
   Magickbin=""
   Magickpixelmemory=""
   Magickversion=""
@@ -1869,6 +1879,7 @@ declare_variables() {
   Outputimage=""
   Preservecache=""
   Revertimagelist=""
+  Resultimage=""
   Showimageprocessing=""
   Softmode=""
   Sourceimage=""
@@ -1889,7 +1900,7 @@ parse_options() {
   Shortoptions="ho:vV"
   
   Longoptions="basename::,cache::,help,verbose,version,output:,showimage,test::"
-  Longoptions="$Longoptions,cutsoft::,grayscale:,layers::,revert,softmode,weightscale::"
+  Longoptions="$Longoptions,background:,cutsoft::,grayscale:,layers::,revert,softmode,weightscale::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -1903,6 +1914,7 @@ parse_options() {
   while [ $# -gt 0 ]; do
     [ "$Error" ] && break
     case "${1:-}" in
+         --background)        Background="${2:-}"       ; shift ;;
          --basename)          Basename="${2:-auto}"     ; shift ;;
          --cache)             Preservecache="yes"       ; Cachedir="${2:-auto}" ; shift ;;
          --cutsoft)           Cutsoft="${2:-auto}"      ; shift ;;
@@ -1991,9 +2003,8 @@ check_options() {
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word1 word2
       ;;
       compose)
-        [ -z "$Argword1" ] && Argword1="overlay"
-        Argword1="$(lowercase "$Argword1")"
-        grep -q -x -i "$Argword1" <<< "$($Magickbin -list compose)" || {
+        Argword1="$(lowercase "${Argword1:-overlay}")"
+        checkmagicklist compose "$Argword1" || {
           error "--$Argmethod=$Argword1: unknown argument.
   Please choose one out of '$Magickbin -list compose'
   or compare ImageMagick option -compose."
@@ -2045,9 +2056,8 @@ check_options() {
       ;;
       
       evaluate)
-        [ -z "$Argword1" ] && Argword1="max"
-        Argword1="$(lowercase "$Argword1")"
-        grep -q -x -i "$Argword1" <<< "$($Magickbin -list evaluate)" || {
+        Argword1="$(lowercase "${Argword1:-max}")"
+        checkmagicklist evaluate "$Argword1" || {
           error "--$Argmethod=$Argword1: unknown argument.
   Please choose one out of '$Magickbin -list evaluate'
   or compare ImageMagick option -evaluate-sequence."
@@ -2098,9 +2108,8 @@ check_options() {
         maskarg_donttake radius1 radius2 sigma1 sigma2 swap word1 word2
       ;;
       morphology)
-        Argword1="$(lowercase "$Argword1")"
-        [ -z "$Argword1" ] && Argword1="edge"
-        grep -q -x -i "${Argword1:-}" <<< "$($Magickbin -list morphology)" || {
+        Argword1="$(lowercase "${Argword1:-edge}")"
+        checkmagicklist morphology "${Argword1:-}" || {
           error "--$Argmethod=$Argword1: unknown argument.
   Please choose one out of '$Magickbin -list morphology'
   or compare ImageMagick option -morphology."
@@ -2534,6 +2543,45 @@ $Maskmethodlist
   Multiplyminmaximage="$Cachedir/difference.minmaxdiff.$Firstimagemd5.tif"
   Multiplymedianmeanimage="$Cachedir/difference.meanmediandiff.$Firstimagemd5.tif"
   
+  # --background
+  Background="${Background:-mean}"
+  checkmagicklist compose  "$Background" && Background="compose,$Background"
+  checkmagicklist evaluate "$Background" && Background="evaluate,$Background"
+  checkmagicklist color    "$Background" && Background="color,$Background"
+  case $Background in
+    *transparent) 
+      mkimg_transparent "$Resultimage" 
+    ;;
+    evaluate*)    
+      Background="$(lowercase $Background)"
+      Background="$(cut -d, -f2 <<< "$Background")"
+      Evaluate_needlist="$Evaluate_needlist $Background"
+      focus_generate_composite
+      cp "$Cachedir/evaluate.$Background.$Firstimagemd5.tif" "$Resultimage" || error "--background: Copy failure"
+    ;;
+    compose*)
+      Background="$(lowercase $Background)"
+      Background="$(cut -d, -f2 <<< "$Background")"
+      Evaluate_needlist="$Evaluate_needlist min max"
+      Compose_needlist="$Compose_needlist $Background"
+      focus_generate_composite
+      cp "$Cachedir/compose.$Background.$Firstimagemd5.tif" "$Resultimage" || error "--background: Copy failure"
+    ;;
+    color*)
+      Background="$(cut -d, -f2 <<< "$Background")"
+      mkimg_color "$Resultimage" "" "$(cut -d, -f2 <<< "$Background")"
+    ;;
+    *)
+      [ -f "$Background" ] && identify "$Background" && cp "$Background" "$Resultimage" || error "Option --background: Failed to load image '$Background'.
+  Either specify an image or a color name or a mode out of:
+    $Magickbin -list color
+    $Magickbin -list evaluate
+    $Magickbin -list compose"
+    ;;
+  esac
+  [ "$Error" ] && return 1
+
+  # Generating stackshot image
   focus_generate_masks                  || return 1
   focus_merge_masks                     || return 1
   case $Softmode in
