@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.5.2-beta"
+Version="0.5.3-beta"
 
 usage() {
   echo "imfuse v$Version - combine focus stackshot images to an overall sharp image.
@@ -243,6 +243,7 @@ Mask generation and fusion adjustments:
                       $Magickbin -list color
                       $Magickbin -list evaluate
                       $Magickbin -list compose
+                      Nice to combine with --soft. Possible use with threshold.
  --cutsoft [=SIGMA]        Add a semi-transparent blur around cut masks. 
                            Reduces some artefacts.         Default: 3
  --grayscale=MODE          Grayscale converting method before mask generation.
@@ -260,6 +261,7 @@ Mask generation and fusion adjustments:
                 9 RMS              sqrt( (R'^2 + G'^2 + B'^2) / 3.0 ) (default)
  --soft                    Enable soft fuse mode. Gives a blurry soft result 
                            free of noise artefacts. Compare 'soft' in mask ARG.
+                           Nice to combine with some different --background.
  --weightscale [=PERCENT]  Reduce weight of sharpness masks of lower layers.
                            Helps to strengthen weak objects in foreground.
                            A negative PERCENT reduces weight of upper layers.
@@ -1901,7 +1903,7 @@ parse_options() {
   Shortoptions="ho:vV"
   
   Longoptions="basename::,cache::,help,verbose,version,output:,showimage,test::"
-  Longoptions="$Longoptions,background:,cutsoft::,grayscale:,layers::,revert,softmode,weightscale::"
+  Longoptions="$Longoptions,bg:,background:,cutsoft::,grayscale:,layers::,revert,softmode,weightscale::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -1915,7 +1917,7 @@ parse_options() {
   while [ $# -gt 0 ]; do
     [ "$Error" ] && break
     case "${1:-}" in
-         --background)        Background="${2:-}"       ; shift ;;
+         --bg|--background)   Background="${2:-}"       ; shift ;;
          --basename)          Basename="${2:-auto}"     ; shift ;;
          --cache)             Preservecache="yes"       ; Cachedir="${2:-auto}" ; shift ;;
          --cutsoft)           Cutsoft="${2:-auto}"      ; shift ;;
@@ -2192,6 +2194,15 @@ check_options() {
     *)    Weightscale="$(percentrm "$Weightscale")" ;;
   esac
   
+  # --background
+  case $Softmode in
+    yes) ;;
+    no) Background="${Background:-compose,mean}" ;;
+  esac
+  checkmagicklist compose  "$Background" && Background="compose,$Background"
+  checkmagicklist evaluate "$Background" && Background="evaluate,$Background"
+  checkmagicklist color    "$Background" && Background="color,$Background"
+  
   # --factor ### FIXME
   [ "$Composefactor" = "auto" ] && {
     case $Argmethod in
@@ -2319,6 +2330,8 @@ check_options() {
   Resultimage="$(sed "s/=,/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
         
   [ "$Testsetup" ] && Resultimage="${Resultimage}.test$Testarg"
+  [ "$Background" ] && [ ! -f "$Background" ] && Resultimage="${Resultimage}.bg=$(cut -d, -f2 <<< "$Background")"
+  [ "$Background" ] && [   -f "$Background" ] && Resultimage="${Resultimage}.bg=image"
     
   Resultimage="${Resultimage}.${Imageformat}"
     
@@ -2545,13 +2558,6 @@ $Maskmethodlist
   Multiplymedianmeanimage="$Cachedir/difference.meanmediandiff.$Firstimagemd5.tif"
   
   # --background
-  case $Softmode in
-    yes) ;;
-    no) Background="${Background:-mean}" ;;
-  esac
-  checkmagicklist compose  "$Background" && Background="compose,$Background"
-  checkmagicklist evaluate "$Background" && Background="evaluate,$Background"
-  checkmagicklist color    "$Background" && Background="color,$Background"
   case $Background in
     "") ;;
     *transparent) 
