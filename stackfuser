@@ -748,7 +748,7 @@ getfunctionsettings() {
 runbatchone() {
   local $Batchlocal
   local Iterate
-  for Function in imageformat orient crop align_vidstab align_hugin align_ais; do
+  for Function in imageformat orient crop align_focusstack align_vidstab align_hugin align_ais; do
     askkaptain -c $Function > /dev/null && {
       getfunctionsettings $Function
       cmd -f "$Function" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Stackdir"
@@ -799,7 +799,41 @@ setup_imagelist() {
 }
 
 #### image sequence operations
-
+align_focusstack() {
+  local $Batchlocal
+  local $Imagelocal
+  local Pid Logfile
+  local Part Full
+  
+  parse_batchoptions "$@" || return 1
+  setup_imagelist         || return 1
+  
+  Logfile=$Cachedir/focus-stack.log
+  
+  focus-stack --verbose --output="$Destinationdir/" --align-only $(fileglob "$Sourcedir/$Sourcefileglob") >$Logfile 2>&1 & Pid=$!
+#  tail -F -n+1 --pid $Pid $Logfile &
+  while ps -p $Pid >/dev/null; do
+    sleep 0.1
+    ifcmdbreak && {
+      kill $Pid
+      break
+    }
+    Line="$(tail $Logfile)"
+    
+    grep -q "Starting task: Save" <<< "$Line" && {
+      Line="$(grep -m1 "Starting task: Save" <<< "$Line")"
+      echo "$Line"
+      Image="$(sed -n -e 's/^.*Save //p' <<< "$Line")"
+      showimage "$Image"
+      Line="$(cut -d[ -f2 <<< "$Line")"
+      Line="$(cut -d] -f1 <<< "$Line")"
+      Part="$(cut -d "/" -f1 <<< "$Line")"
+      Full="$(cut -d "/" -f2 <<< "$Line")"
+      showpercent $Part $Full
+    }
+  done
+  ifcmdbreak && return 1 || return 0
+}
 align_ais() {
 
   local $Batchlocal
@@ -3222,7 +3256,7 @@ start "stackfuser '$Version'"  -> frameset;
         batchframeleft:framed              -> batchblock1 batchblock2 ;
         batchframeright:framed             -> batchblock3 runbatchframe @fill stopframe;
           
-      batchblock1 "batch block 1: crop and balance directory magick" -> imageformatline cropline align_vidstabline align_huginline align_aisline;
+      batchblock1 "batch block 1: crop and balance directory magick" -> imageformatline cropline align_focusstackline align_vidstabline align_huginline align_aisline;
         imageformatline:beside                                -> imageformat imageformatopt9combo imageformatmagick imageformatfuse imageformatevaluate;
           imageformatopt9combo                                  -> @combow('$Imageformatcombo')="TIF" ;
           imageformatmagick                                     -> @button="magick" ;
@@ -3240,6 +3274,9 @@ start "stackfuser '$Version'"  -> frameset;
           cropevaluate                                          -> @button="evaluate" ;
           cropfuse                                              -> @button="fuse" ;
           crop:beside                 "crop"                    -> "on" | ! "";
+        align_focusstackline:beside                             -> align_focusstack align_focusstackbutton ;
+          align_focusstackbutton                                  -> @button="magick" ;
+          align_focusstack:beside     "align with focus-stack"    -> "on" | ! "";
         align_vidstabline:beside                              -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabopt3combo align_vidstabbutton ;
           align_vidstabopt1combo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
           align_vidstabopt2combo:beside   "Iterations:"         -> @combo("1","2","3")="3";
@@ -4372,7 +4409,7 @@ parse_kaptainsignal() {
       fuse_config &
     ;;
     
-    *magick|*compose|*evaluate|*fuse|evaluatemagick|align_vidstab|align_ais|align_hugin)
+    *magick|*compose|*evaluate|*fuse|evaluatemagick|align_vidstab|align_ais|align_hugin|align_focusstack)
       Command="$Kaptainsignal"
       Command="${Command%evaluate}"
       Command="${Command%fuse}"
