@@ -5,7 +5,7 @@
 
 Version="0.1"
 
-#### Messages, Log
+#### Messages, Logf
 
 error() {
   echo "stackfuser ERROR: $*" >&2
@@ -915,11 +915,12 @@ align_ais() {
   Imagecount=0
   Startzeit="$(date +%s)"
   for Image in $Alignlist; do
+    ifcmdbreak && break
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$(head -n$Imagecount <<< "$Imagelist" | tail -n1)"
     Destinationfile="$Destinationdir/$(basename $Destinationfile)"
     multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || Error=1
-    [ "$Error" ] && return 1
+    [ "$Error" ] && break
     showpercent $Imagecount $Imagenumber
     Restzeit="$(( Dauer*(Imagenumber-Imagecount) / Imagecount ))"
     note "align_ais: Cropping to $Cropgeometry. Duration: $(date -u -d @$Dauer +"%T"); Estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
@@ -971,6 +972,7 @@ align_ais_ONE() {
   note "align_ais: Cropping images with rotation $Rotate and geometry $Cropgeometry"
   Imagecount=0
   for Image in $Alignlist; do
+    ifcmdbreak && break
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$(head -n$Imagecount <<< "$Imagelist" | tail -n1)"
     Destinationfile="$Destinationdir/$(basename $Destinationfile)"
@@ -987,6 +989,7 @@ align_ais_TWO() {
   local Count Imagehalf
   local Part1dir Part2dir Distortdir
   local Cropminimage Rotate
+  local Error
   
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
@@ -1059,13 +1062,16 @@ $Imagelist2"
   Imagelist="$(fileglob "$Distortdir/*")"
   Imagecount=0
   for Image in $Imagelist; do
+    ifcmdbreak && Error=1
+    [ "$Error" = "1" ] && break
     Imagecount="$((Imagecount + 1))"
     Destinationfile="$Destinationdir/$(basename $Image)"
     Destinationfile="${Destinationfile%.tif}"
-    multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || return 1
+    multicore "$Magickbin $Image -rotate $Rotate +repage -crop $Cropgeometry $Destinationfile" "$Destinationfile" || Error=1
     showpercent $Imagecount $Imagenumber
   done
   multicore_wait || return 1
+  return ${Error:-0}
 }
 align_hugin() {
   # Align image stack with some panotools. Similar to align_image_stack
@@ -1261,10 +1267,11 @@ align_vidstab() {
       Cropgeometry="$(calc_evengeometry "${Imagewidth}x${Imageheight}+0+0")"
       Imagecount=0
       for Image in $Imagelist; do
+        ifcmdbreak && Error=1
+        [ "$Error" ] && break
         Imagecount="$((Imagecount + 1))"
         Destinationfile="$Framedir/frame$(zeronumber $Imagecount).png"
         multicore "$Magickbin $Image -crop $Cropgeometry -channel red -level ${Imageminlevelred}%x${Imagemaxlevelred}% -channel green -level ${Imageminlevelgreen}%x${Imagemaxlevelgreen}% -channel blue -level ${Imageminlevelblue}%x${Imagemaxlevelblue}% +channel $Destinationfile" "$Destinationfile" || Error=1
-        [ "$Error" ] && break
         showpercent "$Imagecount" "$Imagenumber"
       done
       multicore_wait || return 1
@@ -1278,6 +1285,7 @@ align_vidstab() {
     ;;
   esac
   
+  [ "$Error" = "1" ] && return 1
   align_vidstab_ffmpeg -2 "10" -s "$Framedir" -g "*" -c "$Cachedir" || return 1
   note "align_vidstab: Distorting frames (Shakiness=10)"
   distort -2 "$Cachedir/align.10.log" -s "$Framedir" -g "*" -d "$Distortdir" -c "$Cachedir" || return 1
@@ -2027,11 +2035,12 @@ evaluate_split() {
       Startzeit="$(date +%s)"
       Count="0"
       for Part in $(seq 0 $((Split-1))) ; do
+        ifcmdbreak && Error=1
+        [ "$Error" ] && break
         Count="$((Count+1))"
         note "Evaluating part $((Part+1)) / $Split"
         Partimage=$Splitdir/$Mode.part$Part.tif
         nice $Magickbin $Splitdir/split$(printnum $Part 3).*.tif -evaluate-sequence $Mode $Partimage || Error=1
-        [ "$Error" ] && break
         Partimagelist="$Partimagelist $Partimage"
         showimage $Partimage
         Dauer="$(( $(date +%s)-Startzeit))"
@@ -3171,7 +3180,7 @@ multicore() {
     multicore_wait || return 1
   }
   
-  storeinfo test cmdbreak && return 1
+  ifcmdbreak && return 1
 
   Multicore_processcount=$((Multicore_processcount +1))
 
@@ -3789,6 +3798,8 @@ $Image"
     showpercent "$Count" "$Dircount"
     Dirarray[$Count]="$Projecthome/$(cut -d/ -f2- <<< "$Dir")"
     
+    ifterminating && break
+    
     # generate thumbnail. Check existing thumbnail with md5
     Image="$(sed "${Count}q;d" <<< "$Imagelist")"
     Image="${Image:-$Emptyimage}"
@@ -3840,6 +3851,7 @@ $Projectline ;"
 $Image"
   done
   showpercent idle
+  ifterminating && return 1
  
   # prepare kaptain
   local Kaptainpid Kaptainsignal Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptaingrammarfile
@@ -3874,6 +3886,7 @@ $Entrylist
     
   while ps -p $Kaptainpid >/dev/null; do
     read -t1 Kaptainsignal
+    ifterminating && break
     [ "$Kaptainsignal" ] && {
       echo $Kaptainsignal
       Button="$(cut -d: -f1 <<< "$Kaptainsignal")"
@@ -4032,6 +4045,7 @@ start 'stackfuser enfuse settings' -> frameset;
 
   storeinfo "refreshgui_fuse=yes"
   while ps -p $Kaptainpid >/dev/null; do
+    ifterminating && break
     storeinfo test refreshgui_fuse && {
       storeinfo drop refreshgui_fuse
       Projectname="$(storeinfo dump projectname)"
@@ -4452,6 +4466,7 @@ cmd() {
   echo "$Command" >> $Commandstackfile
 }
 ifcmdbreak() {
+  ifterminating             && return 0
   storeinfo test cmdbreak && return 0 || return 1
 }
 stack_cmd() {
@@ -4460,10 +4475,12 @@ stack_cmd() {
 
   while :; do
     read -t1 Command
-    storeinfo test cmdbreak && {
+   
+    ifcmdbreak && {
       [ "$Command" ] || storeinfo drop cmdbreak
       Command=""
     }
+    ifterminating && break
     [ "$Command" ] && {
       eval set -- $Command 
       
@@ -4632,10 +4649,17 @@ check_dependencies() {
   done
   ffmpeg 2>&1 | grep -q libvidstab || failure "Dependency libvidstab in ffmpeg not found. Please install ffmpeg with vidstab."
 }
+terminate() {
+  rm "$Maincachedir/run"
+}
+ifterminating() {
+  [ ! -e "$Maincachedir/run" ]
+}
 finish() {
   local Line Pid Comm
 
   trap - SIGINT
+  rm $Maincachedir/run
 
   while read Line; do
     Pid="$(awk  '{print $1}' <<< "$Line")"
@@ -4670,6 +4694,8 @@ main() {
   storeinfo drop stackshot_selector
   storeinfo drop fuse_config
   
+  date > $Maincachedir/run
+  
   fuse_declare
   [ -e "$Enfuseconfigfile" ] || fuse_defaultconfig
 
@@ -4696,6 +4722,7 @@ main() {
   # watch signals of kaptain
   while ps -p $Kaptainpid >/dev/null; do
     storeinfo test exit && break
+    ifterminating && break
     storeinfo test refreshgui_main && {
       storeinfo drop refreshgui_main
       kaptain_update
