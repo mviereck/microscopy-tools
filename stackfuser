@@ -185,10 +185,11 @@ check_stackdir() {
     yes)
       storeinfo "stackshotdir_valid=yes"
       storeinfo "history=$Newstackdir/wizard.history"
-
       grep -q "$Projecthome" <<< "$Newstackdir" && {
-        Projectname="${Newstackdir#$Projecthome/}"
-        Projectname="$(dirname "$Projectname")"
+        Projectname="${Newstackdir#$Projecthome}"
+        Projectname="$(dirname "$Projectname" | tr "/" ".")"
+        Projectname="${Projectname#.}"
+        
         [ "$Projectname" = "$(basename "$Newstackdir")" ] && Projectname=""
         [ "$Projectname" = "." ]                          && Projectname=""
       }
@@ -810,7 +811,7 @@ align_focusstack() {
   
   Logfile=$Cachedir/focus-stack.log
   
-  focus-stack --verbose --output="$Destinationdir/" --align-only $(fileglob "$Sourcedir/$Sourcefileglob") >$Logfile 2>&1 & Pid=$!
+  focus-stack --verbose --output="$Destinationdir/" --align-only $(fileglob "$Sourcedir/$Sourcefileglob") >$Logfile 2>&1 || storeinfo "cmdbreak=yes" & Pid=$!
 #  tail -F -n+1 --pid $Pid $Logfile &
   while ps -p $Pid >/dev/null; do
     sleep 0.1
@@ -818,15 +819,15 @@ align_focusstack() {
       kill $Pid
       break
     }
-    Line="$(tail $Logfile)"
+    Line="$(tail $Logfile | head -n9 | tac)"
     
     grep -q "Starting task: Save" <<< "$Line" && {
       Line="$(grep -m1 "Starting task: Save" <<< "$Line")"
       echo "$Line"
       Image="$(sed -n -e 's/^.*Save //p' <<< "$Line")"
       showimage "$Image"
-      Line="$(cut -d[ -f2 <<< "$Line")"
-      Line="$(cut -d] -f1 <<< "$Line")"
+      Line="$(cut -d "[" -f2 <<< "$Line")"
+      Line="$(cut -d "]" -f1 <<< "$Line")"
       Part="$(cut -d "/" -f1 <<< "$Line")"
       Full="$(cut -d "/" -f2 <<< "$Line")"
       showpercent $Part $Full
@@ -4646,6 +4647,7 @@ finish() {
 }
 main() {
   local Kaptainpid Kaptainsignal Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile Kaptaingrammarfile
+  local Projecthome
   #trap finish EXIT
   trap "storeinfo cmdbreak=yes ; storeinfo exit=yes" SIGINT
   
@@ -4713,7 +4715,10 @@ main() {
         Gallerydir="$(askkaptain gallerydir)"
         storeinfo "gallerydir=$Gallerydir"
         storeinfo "allow_dir_invalid=$(askkaptain allownonconformant)"
-        storeinfo "projecthome=$(askkaptain storagebasedir)"
+        #storeinfo "projecthome=$(askkaptain storagebasedir)"
+        Projecthome="$(askkaptain storagebasedir)"
+        Projecthome="${Projecthome%/}"
+        storeinfo "projecthome=$Projecthome"
       }
       Kaptainsignal="${Kaptainsignal%:pressed}"
     }
