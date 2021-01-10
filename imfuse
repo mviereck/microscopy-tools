@@ -328,11 +328,11 @@ error() {
   #exit 1
 }
 note() {
-  [ -z "$Error" ] && echo "imfuse note: $*"
+  [ -z "$Error" ] && echo "imfuse note: $*" >&2
   return 0
 }
 verbose() {
-  [ "$Verbose" = "yes" ] && echo "imfuse: $*"
+  [ "$Verbose" = "yes" ] && echo "imfuse: $*" >&2
   return 0
 }
 showimage() {
@@ -483,7 +483,7 @@ focus_fuse() {
   local Contrastmaxlevel Softfusion= Lessthanmax=
   local Command
   local Startzeit Dauer Restzeit
-  local Stepwise Sourcepartimage Sourcepartimagelist=
+  local Stepwise Sourcepartimage Sourcepartimagelist= Sourcepartbottomimage= Sourcepartbottomimagelist=
   
   [ "${1:-}" = "--soft" ] && Softfusion="yes" && shift
   [ "${1:-}" = "--lessthanmax" ] && shift && Lessthanmax="${1:-}" && shift
@@ -518,7 +518,7 @@ focus_fuse() {
   
   Stepwise="no"
   [ "$Lessthanmax" ]        && Stepwise="yes"
-  [ "$Softfusion" = "yes" ] && Stepwise="yes"
+  #[ "$Softfusion" = "yes" ] && Stepwise="yes"
   
   case $Stepwise in
     yes)
@@ -536,8 +536,10 @@ focus_fuse() {
     Count="$((Count+1))"
     Number="$(printnum $Count $Imagenumberlength)"
     Sourcemask="$(cut -d' ' -f$Number <<< "$Maskimagelist")"
-    Sourcepartimage="$Cachedir/sourcepart$Number.tif"
+    Sourcepartimage="$Cachedir/sourcepart$Number.png"
+    Sourcepartimage_bottom="$Cachedir/sourcepartbottom$Number.png"
     Sourcepartimagelist="$Sourcepartimagelist $Sourcepartimage"
+    [ "$Softfusion" = "yes" ] && Sourcepartbottomimagelist="$Sourcepartbottomimagelist $Sourcepartimage_bottom"
     
     # Load images
     Command="
@@ -638,13 +640,6 @@ $Magickbin
     -write $Maskmax
     -delete 0"
     
-    false && Command="$Command
-  mpr:sourcemask
-  ( mpr:sourcemask_part -evaluate add 25% )
-    -compose Over -composite
-    -write $Sourcemask
-    -delete 0"
-    
       # darken lessmask with current source mask to get a mask with decreasing sharpness after a max peak
       Command="$Command
   mpr:lessthanmax
@@ -704,11 +699,15 @@ $Magickbin
   mpr:sourcemask_part
     -alpha off -compose CopyOpacity -composite
     -write mpr:semitransparent
-    -alpha off
+    -delete 0"
+        [ "$Stepwise" = "no" ] && Command="$Command
+  mpr:semitransparent
+    -type TrueColorAlpha
+    -write $Sourcepartimage
     -delete 0"
     
         # draw into top half of result
-        Command="$Command
+        [ "$Stepwise" = "yes" ] && Command="$Command
   mpr:resultimagetop
   mpr:semitransparent
     -compose Over -composite
@@ -732,9 +731,14 @@ $Magickbin
     -alpha off -compose CopyOpacity -composite
     -write mpr:semitransparent
     -delete 0"
+        [ "$Stepwise" = "no" ] && Command="$Command
+  mpr:semitransparent
+    -type TrueColorAlpha
+    -write $Sourcepartimage_bottom
+    -delete 0"
     
         # draw part of source image less sharp than current max in lower result 
-        Command="$Command
+        [ "$Stepwise" = "yes" ] && Command="$Command
   mpr:resultimagebottom 
   mpr:semitransparent
     -compose Over -composite
@@ -743,8 +747,8 @@ $Magickbin
     -write $Resultbottom
     -delete 0"
     
-        # compose to and bottom result to final result
-        Command="$Command
+        # compose top and bottom result to final result
+        [ "$Stepwise" = "yes" ] && Command="$Command
   mpr:resultimagebottom
   mpr:resultimagetop
     -compose Over -composite
@@ -809,13 +813,29 @@ $(grep "\S" <<< "$Command")"
     #showimage $Testimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
-    verbose "Fusing $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
+    verbose "Cutting $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
   multicore_wait || error "Error while fusing images"
   
   case $Stepwise in
     no)
-      $Magickbin $Resultimage $Sourcepartimagelist -background transparent -layers flatten $Tifstore -type TrueColorAlpha $Resultimage || error "Error flattening source parts"
+      verbose "Fusing $Resultimage"
+      #$Magickbin $Resultimage $Sourcepartbottomimagelist $Sourcepartimagelist -background transparent -layers flatten $Tifstore -type TrueColorAlpha $Resultimage || error "Error flattening source parts"
+      Resulttop="${Resulttop:-}"
+      Sourcepartbottomimagelist=""
+      Command="$Magickbin
+  $Resultimage
+    -alpha set"
+      for Image in $Sourcepartbottomimagelist $Sourcepartimagelist; do
+        Command="$Command
+  $Image
+    -compose Over -composite"
+      done
+      Command="$Command
+    -type TrueColorAlpha
+  $Resultimage"
+      #echo "$Command"
+      time $Command
     ;;
   esac
   
@@ -1551,7 +1571,9 @@ focus_merge_masks() {
     
     Command="
 $Magickbin"
+
     Command="$Command
+  -colorspace gray
   ( -size ${Imagewidth}x${Imageheight} xc:black )"
   
     while read Line; do
@@ -1619,9 +1641,6 @@ $Magickbin"
     -compose Darken -composite
     -write mpr:methodmask"
     
-      false && Command="$Command
-    -black-threshold 10%"
-    
       false && [ "$Argdarkenmask" ] && Command="$Command
     -write mpr:methodmask
     -delete 0
@@ -1658,6 +1677,11 @@ $Magickbin"
     -compose $Mergemethod -composite"
     done <<< "$Maskmethodlist"
         
+#    Command="$Command
+#  -colorspace gray
+#  -evaluate-sequence MEAN"
+  
+  
     Command="$Command
     -write mpr:sourcemask
     -delete 0"
@@ -1679,24 +1703,23 @@ $Magickbin"
 $(grep "\S" <<< "$Command")"
    
         #$Command || error "Error while merging masks"
-        multicore "$Command" || error "Error while merging masks"
+        multicore "$Command" "$Sourcemask" || error "Error while merging masks"
       ;;
       no)
-        [ "$Count" = "1" ] && verbose "Skipping merge, just copying $Methodmask to $Sourcemask"
-        cp $Methodmask $Sourcemask || error "Error while merging/copying $Methodmask"
+        [ "$Count" = "1" ] && verbose "Skipping merge, just moving $Methodmask to $Sourcemask"
+        multicore "mv $Methodmask $Sourcemask" || error "Error while merging/moving $Methodmask"
       ;;
     esac
-    multicore_wait || error "Error while merging masks"
       
-    showimage "$Sourcemask"
+#    showimage "$Sourcemask"
 #    $Magickbin $Sourcemask histogram: | $Magickbin - -type TrueColor -fill green -opaque black $Testimage
 #    showimage $Testimage
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
     verbose "Merging $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
-  [ "$Error" ] && return "${Error:-0}"
-    
+  multicore_wait || error "Error while merging masks"
+  
   return ${Error:-0}
 }
 focus_sharpness_layer() {
@@ -1982,7 +2005,7 @@ multicore() {
   return 0
 }
 multicore_wait() {
-  local Process Error=
+  local Process= Error=
   for Process in $(seq $Multicore_maxprocesses); do
     [ "${Multicore_process[$Process]}" ] && {
       multicore_waitprocess "${Multicore_process[$Process]}" || {
@@ -2012,7 +2035,7 @@ multicore_waitprocess() {
   return $?
 }
 multicore_break() {
-  local Process
+  local Process  
   for Process in $(seq $Multicore_maxprocesses); do
     [ "${Multicore_process[$Process]}" ] && {
       kill "${Multicore_process[$Process]}"
@@ -2025,13 +2048,13 @@ multicore_break() {
 }
 multicore_init() {
   # declare global variables
-  local i
+  local Process
   Multicore_maxprocesses="$(nproc)"
   Multicore_maxprocesses="${Multicore_maxprocesses:-1}"
-  for i in $Multicore_maxprocesses; do
-    Multicore_process[$i]=""
-    Multicore_image[$i]=""
-    Multicore_memory[$i]="0"
+  for Process in $(seq $Multicore_maxprocesses); do
+    Multicore_process[$Process]=""
+    Multicore_image[$Process]=""
+    Multicore_memory[$Process]="0"
   done
   Multicore_processcount=0
   Multicore_minram=250000
@@ -2085,6 +2108,7 @@ declare_variables() {
   Firstimage=""
   Firstimagemd5=""
   Firstimagemd5file=""
+  Forceoverwrite=""
   Freemem=""
   Grayscale=""
   Grayscaleconverter=""
@@ -2107,10 +2131,12 @@ declare_variables() {
   Multiplymedianmeanimage=""
   Multiplyminmaximage=""
   Outputimage=""
+  Parsedoptions=""
   Preservecache=""
   Revertimagelist=""
   Resultimage=""
   Showimageprocessing=""
+  Showname=""
   Softmode=""
   Sourceimage=""
   Sourceimagelist=""
@@ -2125,11 +2151,11 @@ declare_variables() {
   return 0
 }
 parse_options() {
-  local Shortoptions Longoptions Parsedoptions Parsererror Parsererrorfile Maskgeneratorargument
+  local Shortoptions Longoptions Parsererror Parsererrorfile Maskgeneratorargument
+  #local Parsedoptions
   
   Shortoptions="ho:vV"
-  
-  Longoptions="basename::,cache::,help,verbose,version,output:,showimage,test::"
+  Longoptions="basename:,cache::,force,help,verbose,version,output:,showimage,showname,test::"
   Longoptions="$Longoptions,bg:,background:,cutsoft::,grayscale:,layers::,revert,softmode,weightscale::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
@@ -2148,9 +2174,11 @@ parse_options() {
          --basename)          Basename="${2:-auto}"     ; shift ;;
          --cache)             Preservecache="yes"       ; Cachedir="${2:-auto}" ; shift ;;
          --cutsoft)           Cutsoft="${2:-auto}"      ; shift ;;
+         --force)             Forceoverwrite="yes"      ;;
          --grayscale)         Grayscale="${2:-auto}"    ; shift ;;
       -h|--help)              usage                     ; exit 0 ;;
          --layers)            Layers="${2:-auto}"       ; shift ;;
+         --showname)          Showname="yes"            ;;
       -o|--output)            Outputimage="${2:-}"      ; shift ;;
          --revert)            Revertimagelist="yes"     ;;
       -V|--showimage)         Showimageprocessing="yes" ;;
@@ -2509,7 +2537,7 @@ check_options() {
   
   # --basename
   case $Basename in
-    "")   Basename="imfuse" ;;
+    #"")   Basename="imfuse" ;;
     auto) Basename="$(basename "$(pwd)")" ;;
   esac
   Outputdir="$(dirname "$Basename")"
@@ -2517,7 +2545,7 @@ check_options() {
   [ "$Basename" != "$(unspecialstring "$Basename")" ] && error "--basename: Name must not contain special chars or whitespace: '$Basename'"
   
   # --output
-  Resultimage=""
+  Resultimage="imfuse."
   [ "$Softmode" ] && Resultimage="${Resultimage}.soft"
   [ "$Revertimagelist" = "yes" ] && Resultimage="${Resultimage}.rev"
   case $Grayscalenumber in
@@ -2535,7 +2563,7 @@ check_options() {
         
   while read Line; do
     maskarg_parse "$Line"   
-    Resultimage="$Resultimage-${Argmethod}="
+    Resultimage="${Resultimage}_${Argmethod}="
     [ "$Argmultiplyminmax" ]     && Resultimage="$Resultimage,M"
     [ "$Argmultiplymedianmean" ] && Resultimage="$Resultimage,m"
     [ "$Argweight" ]  && Resultimage="$Resultimage,w$Argweight"
@@ -2554,15 +2582,19 @@ check_options() {
     [ "$Argmethod" != "image" ] && [ "$Argword1" ] && Resultimage="$Resultimage,$(unspecialstring "$Argword1")"
     [ "$Argword2" ]   && Resultimage="$Resultimage,$(unspecialstring "$Argword2")"
   done <<< "$Maskmethodlist"
-  Resultimage="$(sed "s/=,/=/g ; s/=-/-/g  ; s/=$//g" <<< "$Resultimage")"
-  Resultimage="$(sed "s/=,/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
+  Resultimage="$(sed "s/=,/=/g ; s/=_/_/g  ; s/\._/\./g ; s/\.\./\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
+  #Resultimage="$(sed "s/=,/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
         
   [ "$Testsetup" ] && Resultimage="${Resultimage}.test$Testarg"
-  [ "$Background" ] && [ ! -f "$Background" ] && Resultimage="${Resultimage}.bg=$(cut -d, -f2 <<< "$Background")"
-  [ "$Background" ] && [   -f "$Background" ] && Resultimage="${Resultimage}.bg=image"
-    
-  Resultimage="${Resultimage}.${Imageformat}"
+  [ "$Background" ] && [ ! -f "$Background" ] && Resultimage="${Resultimage}_bg=$(cut -d, -f2 <<< "$Background")"
+  [ "$Background" ] && [   -f "$Background" ] && Resultimage="${Resultimage}_bg=image"
   
+  [ "$Error" ] && return 1
+  
+  Parsedoptions="$(sed 's/--basename [^ ]* // ; s/--output [^ ]* // ; s/--cache [^ ]* // ; s/--layers [^ ]* // ; s/--force// ; s/-v// ; s/--verbose// ; s/-V// ; s/--showimage// ; s/--showname// ; s/ -- .*// ; s/  */ /g '  <<< "$Parsedoptions" )"
+  Fusemd5sum="$(echo "$(unspecialstring "$Parsedoptions") $(find $Sourceimagelist -ls)" | md5sum | cut -c1-6)"
+  verbose "md5 options: $Parsedoptions"
+  Resultimage="${Resultimage}.$Fusemd5sum.${Imageformat}"
   [ -z "$Outputdir" ] && Outputdir="$(pwd)"
   case $Outputimage in
     "")
@@ -2579,7 +2611,7 @@ check_options() {
       [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="$Outputdir/$Outputimage"
     ;;
   esac
-  note "Setting --output=$Outputimage"
+  Outputimage="$(realpath "$Outputimage")"
   Resultimage="$Cachedir/${Basename:-imfuse}$Resultimage"
   
   return ${Error:-0}
@@ -2760,6 +2792,22 @@ main() {
   
   parse_options "$@"
   check_options
+  
+  # --showname
+  [ "$Showname" = "yes" ] && {
+    echo $Outputimage
+    return "${Error:-0}"
+  }
+  note "Setting --output=$Outputimage"
+  
+  # --force
+  [ -f "$Outputimage" ] && [ -z "$Forceoverwrite" ] && { 
+    note "Output image already exists with matching md5sum:
+$Outputimage"
+    showimage "$Outputimage"
+    return "${Error:-0}"
+  }
+  
   verbose "Mask options:
 $Maskmethodlist
 "

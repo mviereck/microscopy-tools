@@ -1,0 +1,11 @@
+imfuse --diffstat
+imfuse --statistic
+imfuse --morphology
+imfuse --log
+imfuse --gaussian
+imfuse --laplacian
+imfuse --freichen
+imfuse --comet
+imfuse --compass
+#imfuse --prewitt
+imfuse --sobel

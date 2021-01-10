@@ -1,0 +1,3 @@
+imfuse --log
+imfuse --gaussian
+imfuse --laplacian

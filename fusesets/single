@@ -1,0 +1,6 @@
+[morphology-sat50] imfuse --morphology --saturation=w50
+[statistic-sat25]  imfuse --statistic --saturation=w25
+[comet-sat25]      imfuse --comet --saturation=w25
+[saturation]       imfuse --saturation
+[diffstat]         imfuse --diffstat
+[diffstat-sat25]   imfuse --diffstat --saturation=w25

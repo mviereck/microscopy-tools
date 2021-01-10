@@ -2,14 +2,14 @@
 
 Tools for microscopy and image focus stacking.
 
- - Tools ready for use:
-   - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image (Terminal)
  - Tools already useable, in active development:
    - [`imfuse`](#imfuse): Fuse focus stackshot images with imagemagick. (Terminal)
    - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
  - Tools already useable, awaiting further development:
    - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
+ - Tools considered to be ready:
+   - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image (Terminal)
    
 `stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
 However, if you are already interested to try them out, please give me some feedback in the [issue tracker](https://github.com/mviereck/microscopy-tools/issues) and I'll help to set them up.
@@ -59,16 +59,20 @@ Folder structure:
 ```
 `stackfuser` will create further subfolders in `somedir` containing intermediate and final results.
 
-Dependencies:
+Dependencies, most essentiell:
  - `align_image_stack` (hugin tools)
  - `enfuse`
- - `ffmpeg`
  - `geeqie`
  - `imagemagick`
- - [`imgruler`](#imgruler)
+ - [`imfuse`](#imfuse)
  - [`kaptain`](https://github.com/mviereck/kaptain)
- - `ufraw`
  - `viewnior`
+
+Dependencies, also recommended:
+ - `ffmpeg`
+ - [`imgruler`](#imgruler)
+ - `ufraw`
+ - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack)
  
 ## stackshooter
 GUI for foto stacking with a stepper motor controlled by an Arduino and a camera connected on USB. 
@@ -100,7 +104,7 @@ Dependencies:
  - `gphoto2`
 
 ## Example
-Image of pollen. Generated with `stackshooter` and `stackfuser`. 
+Image of some flower pollen. Generated with `stackshooter` and `stackfuser`. 
 Technic: Microscope from [Hund/Wetzlar](https://www.hund.de/en/) with a stepper motor and an arduino. 
 Camera: Canon EOS 1000D. 
 Stackshot result of 240 single captures with slightly different focus:
