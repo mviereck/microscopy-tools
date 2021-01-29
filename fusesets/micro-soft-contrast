@@ -1,0 +1,9 @@
+# basic mask generators
+imfuse --comet=contrast --soft
+imfuse --compass=contrast --soft
+imfuse --diffstat=contrast --soft
+imfuse --freichen=contrast --soft
+imfuse --morphology=contrast --soft
+imfuse --prewitt=contrast --soft
+imfuse --sobel=contrast --soft
+imfuse --statistic=contrast --soft

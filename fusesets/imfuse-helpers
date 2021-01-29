@@ -1,0 +1,13 @@
+
+# denoise helper masks
+imfuse --compose
+imfuse --enfuse
+imfuse --evaluate=max
+imfuse --evaluate=min
+imfuse --evaluate=mean
+imfuse --evaluate=median
+# color channels
+imfuse --chroma
+imfuse --darkness
+imfuse --lightness
+imfuse --saturation

@@ -1,0 +1,10 @@
+imfuse --comet --soft
+imfuse --compass --soft
+imfuse --diffstat=r5 --soft
+imfuse --diffstat=r9 --soft
+imfuse --freichen --soft
+imfuse --morphology --soft
+imfuse --prewitt --soft
+imfuse --sobel --soft
+imfuse --statistic --soft
+imfuse --statistic=r5 --soft

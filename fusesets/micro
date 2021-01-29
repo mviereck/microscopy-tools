@@ -1,0 +1,10 @@
+imfuse --comet
+imfuse --compass
+imfuse --diffstat=r5
+imfuse --diffstat=r9
+imfuse --freichen
+imfuse --morphology
+imfuse --prewitt
+imfuse --sobel
+imfuse --statistic
+imfuse --statistic=r5

@@ -1,6 +1,0 @@
-imfuse --diffstat
-imfuse --diffstat=min,max
-imfuse --statistic
-imfuse --statistic=r5
-imfuse --statistic=r9
-imfuse --morphology

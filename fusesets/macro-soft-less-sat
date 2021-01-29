@@ -1,0 +1,5 @@
+imfuse --diffstat=r2,close2x2,soft=25,less=5   --saturation=w
+imfuse --dog=s0.3,close2x2,soft=25,less=4      --saturation=w
+imfuse --freichen=15,close2x2,soft=1,less=0.1  --saturation=w
+#imfuse --gaussian=s0.3,close2x2,soft=25,less=2 --saturation=w
+imfuse --wavelet=p10,close2x2,soft=75,less=35  --saturation=w
