@@ -124,16 +124,27 @@ storeinfo() {
   #   $1 test
   #   $2 codeword
   #
+  local i Return
   [ -e "$Storeinfofile" ] || return 1
+  [ -e "$Storeinfofile.lock" ] && {
+    for i in $(seq 10); do
+      verbose "storeinfo is locked"
+      sleep 0.1
+      [ -e "$Storeinfofile.lock" ] || break
+    done
+  }
+  :> "$Storeinfofile.lock"
   case "${1:-}" in
     dump) grep     "^${2:-}="   $Storeinfofile | sed "s/^${2:-}=//" ;;      # dump entry
     drop) sed -i  "/^${2:-}=/d" $Storeinfofile ;;                           # drop entry
-    test) grep -q  "^${2:-}="   $Storeinfofile ;;                           # test for entry
+    test) grep -q  "^${2:-}="   $Storeinfofile ; Return=$? ;;               # test for entry
     *)                                                                      # store entry
       sed -i "/^$(echo "${1:-}" | cut -d= -f1)=/d"     $Storeinfofile       # drop possible old entry
       echo "${1:-}"                                 >> $Storeinfofile
     ;;
   esac
+  rm "$Storeinfofile.lock"
+  return ${Return:-0}
 }
 storepid() {
   # store pid and command name. Use in finish() to kill background processes
@@ -320,16 +331,40 @@ rmrecursive() {
   Dir="${2:-INVALIDDIR}"
   case "${1:-}" in
     bak)
-      find "$Dir" -type d -name "*.bak"      -exec rm -r {} +
+      find "$Dir" -type d -name "*.bak"        -exec rm -r {} +
     ;;
     cache) 
-      find "$Dir" -type d -name "cache"      -exec rm -r {} +
+      find "$Dir" -type d -name "cache"        -exec rm -r {} +
+      find "$Dir" -type d -name "cache.imfuse" -exec rm -r {} +
     ;;
     magick) 
-      find "$Dir" -type d -name "magick"     -exec rm -r {} +
-      find "$Dir" -type d -name "magick.bak" -exec rm -r {} +
+      find "$Dir" -type d -name "magick"       -exec rm -r {} +
+      find "$Dir" -type d -name "magick.bak"   -exec rm -r {} +
     ;;
   esac
+}
+setup_targetdirnames() {
+  local Targetdir
+  
+  Targetdir="${1:-}"
+  Targetdir="$(realpath "$Targetdir")"
+  Projectname="$(storeinfo dump projectname)"
+  
+  [ -d "$Targetdir" ] || {
+    failure "No target directory found. Please specify a target directory or make a stackshot.
+  Wrong Target: $Targetdir"
+    return 1
+  }
+  
+  [ -d "$Targetdir/stackshot" ]          && Targetstackshotdir="$Targetdir/stackshot" || Targetstackshotdir="$Targetdir"
+  [ -d "$Targetdir/stackshot-median" ]   && Targetstackshotdir="$Targetdir/stackshot-median"
+  Targetbasename="$Projectname.$(basename "$Targetdir")" 
+  Targetmagickdir="$Targetdir/magick"
+  Targetfusedir="$Targetdir/fuse"
+  Targetcomposedir="$Targetdir/compose"
+  Targetevaluatedir="$Targetdir/evaluate"
+  Targetvideodir="$Targetdir/video"
+  Targetcachedir="$Targetdir/cache"
 }
 setup_workdir() {
   # Detect possible source directories in $2 for function $1
@@ -372,27 +407,12 @@ setup_workdir() {
   Destinationdir=""
   Destinationfile=""
 
-  Targetdir="$(realpath "$Targetdir")"
-  [ -d "$Targetdir" ] || {
-    failure "No target directory found. Please specify a target directory or make a stackshot.
-  Wrong Target: $Targetdir"
-    return 1
-  }
   Projectname="$(storeinfo dump projectname)"
+  setup_targetdirnames "$Targetdir"
   
-  [ -d "$Targetdir/stackshot" ]          && Targetstackshotdir="$Targetdir/stackshot" || Targetstackshotdir="$Targetdir"
-  [ -d "$Targetdir/stackshot-median" ]   && Targetstackshotdir="$Targetdir/stackshot-median"
-  Targetmagickdir="$Targetdir/magick"
-  Targetfusedir="$Targetdir/fuse"
-  Targetcomposedir="$Targetdir/compose"
-  Targetevaluatedir="$Targetdir/evaluate"
-  Targetvideodir="$Targetdir/video"
-  
-  Targetcachedir="$Targetdir/cache"
-  myrmdir     "$Targetcachedir"
+  storeinfo test rmcache_before && myrmdir "$Targetcachedir"
   mkdir -p "$Targetcachedir"
   Cachedir="$Targetcachedir"
-  Targetbasename="$Projectname.$(basename "$Targetdir")"
   
   grep -q -- "fuse" <<< "$Function"      && Targetnewdir="$Targetfusedir"
   grep -q -- "compose" <<< "$Function"   && Targetnewdir="$Targetcomposedir"
@@ -454,7 +474,7 @@ setup_workdir() {
       Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
       mkdir -p $Targetcomposedir
       Sourcefileglob="$(fuse_glob "$Opt1")"
-      Sourcefilelist="$(fuse_glob "$Opt1" --list)"
+      Sourcefilelist="$(fuse_glob --list "$Opt1")"
       check_filelist $Sourcefilelist || return 1
     ;;
     compose)
@@ -463,7 +483,7 @@ setup_workdir() {
       #Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
     ;;
     
-    align*|brightness*|contrast*|crop*|cuberotate*|imageformat*|lightbalance*|gamma*|level*|orient*|rotate*|ruler*|sharpen*|statistic*|evalstep*|stretch*|wizard*)
+    align*|brightness*|contrast*|crop*|cuberotate*|imageformat*|fakehdr*|gamma*|level*|orient*|rotate*|ruler*|sharpen*|statistic*|evalstep*|stretch*|wizard*)
       Sourcedir="$Targetprevdir"
       Destinationdir="$Targetnewdir"
     ;;
@@ -512,7 +532,21 @@ setup_workdir() {
 
 showimage() {
   local Imagelist Image Shrinkimage
-  Imagelist="$(fileglob "${1:-}")" >&2
+  case $# in
+    0) ;;
+    1)
+      Imagelist="$(fileglob "${1:-}")" >&2
+    ;;
+    *)
+      while [ "$#" -gt "0" ] ; do
+        Imagelist="$Imagelist
+${1:-}"
+        shift
+      done
+      Imagelist="$(grep . <<< "$Imagelist")"
+    ;;
+  esac
+    
   case $(grep -c . <<< "$Imagelist") in
     0) 
       failure "showimage: Not found: ${1:-}"
@@ -655,7 +689,7 @@ batch_function() {
     esac
   }
   
-  storeinfo test rmcache && rm -R "$Cachedir"
+  storeinfo test rmcache_after && rm -R "$Cachedir"
   
   [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluate" ] && {
     
@@ -794,8 +828,8 @@ runbatchthree() {
   askkaptain evaluate1 >/dev/null        && cmd -f evaluatemagick -t "$Stackdir"
   askkaptain fuse >/dev/null             && {
     Opt1="$(askkaptain fuseopt1combo)"
-                                            cmd -f fuse           -t "$Stackdir" -1 "$Opt1"
-    [ "$Opt1" = "${Opt1#[}" ]            && cmf -f evaluatefuse   -t "$Stackdir" -1 "$Opt1"
+                                            cmd -f fuse           -t "$Stackdir" -1 "$Opt1" -2 "$Opt2"
+    [ "$Opt2" = "all" ]                  && cmd -f evaluatefuse   -t "$Stackdir" -1 "$Opt1"
   }
   askkaptain evaluate2 >/dev/null        && cmd -f evaluatefuse   -t "$Stackdir" -1 "$(askkaptain evaluateopt1combo)"
   askkaptain deletebackups2 >/dev/null   && cmd -f deletebackups  -t "$Stackdir"
@@ -1978,6 +2012,9 @@ evaluate() {
   parse_batchoptions "$@" || return 1
   setup_imagelist         || return 1
   
+  verbose "evaluate: Source images
+$Imagelist"
+  
   Destinationfilebasename="$Destinationfile"
   for Mode in min mean max median; do
     case "$(basename $Sourcedir)" in
@@ -2085,9 +2122,20 @@ fuse() {
   Destinationfilebasename="$Destinationfile"
   
   Fuseset="${Opt1:-set1}"
-  Fusenumber="$(fuse_getset "$Fuseset" -n)"
+  Fusesetchoice="${Opt2:-all}"
+  case "$Fusesetchoice" in
+    all)
+      Fusenumber="$(fuse_getset "$Fuseset" -n)"
+      Fuseset="$(fuse_getset "$Fuseset")"
+    ;;
+    *)
+      Fuseset="$Fusesetchoice"
+      Fusenumber="1"
+    ;;
+  esac
   Fusecount=0
   while read Line; do
+    ifcmdbreak   && Error=1
     [ "$Error" ] && break
     Fusecount="$((Fusecount+1))"
     Fusecmd="$(cut -d' ' -f1      <<< "$Line")"
@@ -2113,18 +2161,19 @@ fuse() {
         Destinationfile="$(imfuse --showname $Fusecmd)"
         Fusecmd="imfuse $Fusecmd"
         note "$Destinationfile"
-        [ -e "$Destinationfile" ] && note "Already exists, skipping: $(basename "Destinationfile")" || {
+        [ -e "$Destinationfile" ] && note "Already exists, skipping: $(basename "$Destinationfile")" || {
           nice $Fusecmd || Error=1
         }
         showimage "$Destinationfile"
       ;;
     esac
     showpercent $Fusecount $Fusenumber
-  done < <(fuse_getset "$Fuseset")
+  done <<< "$Fuseset"
   case $Fusenumber in
     1) ;;
     *) multicore_wait || Error=1 ;;
   esac
+  return ${Error:-0}
 }
 imageformat() {
   local $Batchlocal
@@ -2170,71 +2219,6 @@ imageformat() {
   done
   multicore_wait || return 1
   return ${Error:-0}  
-}
-lightbalance() {
-  # simulate a HDR image with multiple exposures combined to one image with balanced light.
-  # To achieve this some brightened and darkened images are generated with IM and combined with enfuse.
-
-  local $Batchlocal
-  local $Imagelocal
-  local Darkfactor Brightfactor Darkpercent Brightpercent
-  local Error
-  
-  parse_batchoptions "$@" || return 1
-  setup_imagelist         || return 1
-  
-  Opt1="${Opt1:-level}"
-  Opt2="${Opt2:-50%}"
-  Opt2="${Opt2%"%"}"
-  
-  Darkpercent="$(awk   "BEGIN {print  100-$Opt2}")"
-  Brightpercent="$(awk "BEGIN {print  100+$Opt2}")"
-  Darkfactor="$(awk    "BEGIN {print (100-$Opt2)/100}")"
-  Brightfactor="$(awk  "BEGIN {print (100+$Opt2)/100}")"
-  #Brightfactor="$(awk  "BEGIN {print  1/$Darkfactor}")"
-
-  for Image in $Imagelist; do
-    Imagecount=$((Imagecount+1))
-    Destinationfile="$(basename $Image)"
-    Convertline="$Magickbin $Image -write mpr:image +delete"  
-    Convertline="$Convertline     \( mpr:image                                           -write $Cachedir/$Destinationfile.exp.source.tif \)" 
-    case $Opt1 in
-      brightness)    
-        Convertline="$Convertline \( mpr:image -brightness-contrast  ${Opt2}%  -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
-        Convertline="$Convertline \( mpr:image -brightness-contrast -${Opt2}%  -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
-      ;;
-      modulate)    
-        Convertline="$Convertline \( mpr:image -modulate ${Brightpercent}%               -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
-        Convertline="$Convertline \( mpr:image -modulate ${Darkpercent}%                 -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
-      ;;
-      multiply)    
-        Convertline="$Convertline \( mpr:image -evaluate multiply ${Brightfactor}        -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
-        Convertline="$Convertline \( mpr:image -evaluate multiply ${Darkfactor}          -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
-      ;;
-      levelgamma)    
-        Convertline="$Convertline \( mpr:image -level 0%x${Darkpercent}%,${Brightfactor} -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
-        Convertline="$Convertline \( mpr:image +level 0%x${Darkpercent}%,${Brightfactor} -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
-      ;;
-      level)    
-        Convertline="$Convertline \( mpr:image -level 0%x${Darkpercent}%                 -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
-        Convertline="$Convertline \( mpr:image +level 0%x${Darkpercent}%                 -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
-      ;;
-      gamma)
-        Convertline="$Convertline \( mpr:image -gamma ${Brightfactor}                    -write $Cachedir/$Destinationfile.exp.bright.tif  \)" 
-        Convertline="$Convertline \( mpr:image -gamma ${Darkfactor}                      -write $Cachedir/$Destinationfile.exp.dark.tif   \)" 
-      ;;
-    esac
-    Convertline="$Convertline info: >/dev/null"
-    echo $Convertline
-    multicore "$Convertline" || Error=1
-    multicore_wait || Error=1
-    [ "$Error" ] && break
-    multicore "enfuse $(find $Cachedir/${Destinationfile}.exp* | tr "\n" " ") -o $Destinationdir/$Destinationfile --gray-projector=average" "$Destinationdir/$Destinationfile" || Error=1
-    [ "$Error" ] && break
-    showpercent $Imagecount $Imagenumber
-  done
-  multicore_wait || return 1
-  return ${Error:-0}
 }
 ruler() {
   local $Batchlocal
@@ -2788,7 +2772,11 @@ $Permillebottom" | sort -n | head -n1)
 #### fuse helpers
 
 fuse_glob() {
-  local Name Glob= List=
+  local Name Glob= List= Printlist=
+  [ "${1:-}" = "--list" ] && {
+    Printlist="yes"
+    shift
+  }
   case "${1:-}" in
     all|'') 
       Glob="*" 
@@ -2805,7 +2793,7 @@ $Targetfusedir/$Name"
       Glob="{${Glob#,}}"
     ;;
   esac
-  [ "${2:-}" = "--list" ] && {
+  [ "$Printlist" = "yes" ] && {
     List="$(grep . <<< "$List")"
     echo "$List"
     return 0
@@ -2817,31 +2805,18 @@ fuse_getset() {
   Set="${1:-}"
   Setfile="$Fusesetdir/$Set"
   
-  [ "$Set" = "[enfuse-cws5]" ] && {
+  [ "$Set" = "enfuse-cws5" ] && {
     [ "${2:-}" = "-n" ] && echo "1"        && return 0
     echo "enfuse --contrast-window-size=5" && return 0
   }
-  
-  [ "$Set" != "${Set#[}" ] && Setfile="$Fusesetdir/single"
-  [ -e "$Setfile" ] || return 1
 
   while read Line; do
     [ "$Line" != "${Line#"#"}" ] && Line=""
-    [ "$Line" != "${Line#[}" ] && {
-      Name="$(cut -d] -f1 <<< "$Line")]"
-      Line="$(cut -d] -f2- <<< "$Line")"
-    }
-    Line="$(sed -e 's/^[ \t]*//' <<< "$Line")"
     [ -n "$Line" ] && Output="$Output
 $Line"
-    [ "$Name" = "$Set" ] && break
   done < <(cat "$Setfile")
   Output="$(grep . <<< "$Output")"
   
-  [ "$Name" = "$Set" ] && {
-    [ "${2:-}" = "-n" ] && echo "1" && return 0
-    echo "$Line" && return 0
-  }
   [ "${2:-}" = "-n" ] && grep -c . <<< "$Output" && return 0
   echo "$Output"
 }
@@ -2938,6 +2913,7 @@ in"
 magicklist() {
   fileglob "$Targetmagickdir/*"
 }
+
 #### run commands on all CPUs
 
 multicore() {
@@ -3017,6 +2993,7 @@ multicore_break() {
   local Process
   for Process in $(seq $Multicore_maxprocesses); do
     [ "${Multicore_process[$Process]}" ] && {
+      verbose "multicore_break: Sending SIGINT to $(ps -p ${Multicore_process[$Process]})"
       kill "${Multicore_process[$Process]}"
       wait "${Multicore_process[$Process]}"
       Multicore_process[$Process]=""
@@ -3162,8 +3139,10 @@ start "stackfuser '$Version'"  -> frameset;
         evaluateline1:beside                                  -> evaluate1 evaluatemagick ;
           evaluatemagick                                        -> @button="magick" ;
           evaluate1:beside            "evaluate"                -> "on" | "";
-        fuseline:beside                                       -> fuse fuseopt1combo fusemagick;
-          fuseopt1combo                                         -> @combo('$Fusesinglecombo,$Fusesetcombo') ;
+        fuseline                                              -> fuseline1 fuseopt2combo;
+          fuseline1:beside                                    -> fuse fuseopt1combo fusemagick;
+          fuseopt1combo                                         -> @combo('$Fusesetcombo')="enfuse-cws5" ;
+          fuseopt2combo                                         -> @combo("-") ;
           fusemagick                                            -> @button="magick";
           fuse:beside                    "fuse"                 -> "on" | "" ;
         evaluateline2:beside                                  -> evaluate2 evaluateopt1combo evaluatefuse;
@@ -3187,7 +3166,7 @@ start "stackfuser '$Version'"  -> frameset;
           killviewnior                                            -> @action("killall viewnior ffplay")="killall viewnior ffplay";
                 
     specialtab:framed "Special operations" -> specialframe @fill undoframe;
-      specialframe "Special operations" -> videoline animationline cuberotateline whitebalanceline lightbalanceline evalstepline rulerline ;
+      specialframe "Special operations" -> videoline animationline cuberotateline whitebalanceline fakehdrline evalstepline rulerline ;
         rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
           ruleropt1combo                                        -> @combo('$Imgrulermodecombo')="100z" ;
           ruleropt2combo:beside       "Title:"                  -> @string ;
@@ -3199,7 +3178,7 @@ start "stackfuser '$Version'"  -> frameset;
           ruler:beside                "ruler"                 -> "" ruleropt1combo ruleropt2combo ruleropt3combo ruleropt4combo;
         animationline:beside                                  -> animation animationopt1combo animationopt2combo animationopt3combo animationopt9combo animationmagick;
           animationopt1combo:beside                             -> @combo("quick","smooth")="smooth";
-          animationopt2combo:beside   "fuse:"                   -> @combow('$Fusesinglecombo,$Fusesetcombo');
+          animationopt2combo:beside   "fuse:"                   -> @combow('$Fusesetcombo');
           animationopt3combo:beside   "Distortion:"             -> @combow("15","20","25","30","40","50","75","100","150")="30";
           animationopt9combo:beside   "Format:"                 -> @combow("webm","mp4","gif")="webm";
           animationmagick                                       -> @button="magick" ;
@@ -3227,13 +3206,13 @@ start "stackfuser '$Version'"  -> frameset;
           whitebalanceevaluate                                  -> @button="evaluate" ;
           whitebalancefuse                                      -> @button="fuse" ;
           whitebalance:beside         "whitebalance"            ->  "";
-        lightbalanceline:beside                               -> lightbalance lightbalanceopt1combo lightbalanceopt2combo lightbalancemagick lightbalancefuse lightbalanceevaluate;
-          lightbalanceopt1combo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
-          lightbalanceopt2combo                                 -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
-          lightbalancemagick                                    -> @button="magick" ;
-          lightbalanceevaluate                                  -> @button="evaluate" ;
-          lightbalancefuse                                      -> @button="fuse" ;
-          lightbalance:beside         "lightbalance"            -> "" ;
+        fakehdrline:beside                               -> fakehdr fakehdropt1combo fakehdropt2combo fakehdrmagick fakehdrfuse fakehdrevaluate;
+          fakehdropt1combo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
+          fakehdropt2combo                                 -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
+          fakehdrmagick                                    -> @button="magick" ;
+          fakehdrevaluate                                  -> @button="evaluate" ;
+          fakehdrfuse                                      -> @button="fuse" ;
+          fakehdr:beside         "fakehdr"            -> "" ;
         evalstepline:beside                                   -> evalstep evalstepopt1combo evalstepopt2combo evalstepmagick;
           evalstepopt1combo                                     -> @combow("max","min","mean","median")="median" ;
           evalstepopt2combo                                     -> @combow("3","5","7","9","15","25")="5" ;
@@ -3247,7 +3226,7 @@ start "stackfuser '$Version'"  -> frameset;
           undofuse                                              -> @button="fuse" ;
           undo                        "undo last step"          -> "" ;
           
-    deletetab:framed                  "Delete"               -> deletedirframe deleterescursiveframe @fill;
+    deletetab:framed                  "Delete"               -> deletedirframe deletefuseframe deleterescursiveframe @fill;
       deletedirframe                  "Delete directories of current stack"   -> deletebuttons; 
         deletebuttons:beside                                   -> deletebackups deletemagick deleteevaluate deletecompose deletefuse deletevideo deleteall deleteallbutvideo;
           deletebackups                                          -> @button="backups + cache";
@@ -3258,7 +3237,13 @@ start "stackfuser '$Version'"  -> frameset;
           deletevideo                                            -> @button="video";
           deleteall                                              -> @button="all";
           deleteallbutvideo                                      -> @button="all but video";
-      deleterescursiveframe           "Delete recursively"     -> recursivedeletedir recursivedeletecache recursivedeletemagick;
+      deletefuseframe                 "Delete fuse results (beta)"      -> deletefuseline;
+        deletefuseline:beside                                      -> deletefusesetcombo deletefusesetbutton deletefusechoicecombo deletefusechoicebutton;
+          deletefusesetcombo:beside                                  -> @combo('$Fusesetcombo');
+          deletefusesetbutton                                        -> @button="delete all fuse results+evaluate" ;
+          deletefusechoicecombo                                      -> @combo("-");
+          deletefusechoicebutton                                     -> @button="delete fuse result" ;
+      deleterescursiveframe           "Delete recursively"     -> recursivedeletedir recursivedeletecache;
         recursivedeletedir            "Base directory for recursive deletion" -> @directory="'$Projecthome'" ;
         recursivedeletecache                                       -> @button="Recursively delete all cache and backup directories" ;
         recursivedeletemagick                                      -> @button="Recursively delete all magick directories" ;
@@ -3292,7 +3277,7 @@ The directory structure is:\n\
         allownonconformant:beside     "Allow stackshots outside of Storage base dir and without directory \"stackshot\"."       -> "yes" | '$( [ "$(storeinfo dump allow_dir_invalid)" = "no" ] && echo "!")' "no" ;
         gallerydir:beside             "Gallery directory where one result of each stackshot in the storage base dir is shown:"  -> @directory="'$(storeinfo dump gallerydir)'";
 
-    showresulttab:framed              "Show results"     -> showevaluateframe showcomposeframe showdirframe showvideoframe;
+    showresulttab:framed              "Show results"     -> showevaluateframe showsetframe showcomposeframe showdirframe showvideoframe;
       
       showevaluateframe               "Evaluate results"         ->  showevaluatefuseline showevaluatemagickline;
         showevaluatefuseline:beside                                -> showevaluatefusemax showevaluatefusemin showevaluatefusemean showevaluatefusemedian ;
@@ -3305,8 +3290,18 @@ The directory structure is:\n\
           showevaluatemagickmin                                      -> @button="magick.min" ;
           showevaluatemagickmean                                     -> @button="magick.mean" ;
           showevaluatemagickmedian                                   -> @button="magick.median" ;
+          
+      showsetframe                    "Fuse set results"         -> showsetline;
+        showsetline:beside                                         -> showfusesetcombo showfuseresults showfusesetevaluate;
+          showfusesetcombo:beside     "Fuse set"                     -> @combo("all",'$Fusesetcombo');
+          showfuseresults                                            -> @button="Fuse results";
+          showfusesetevaluate:beside  "Evaluate results:"            -> showfusesetbuttonmean showfusesetbuttonmedian showfusesetbuttonmin showfusesetbuttonmax showfusesetbuttonall;
+            showfusesetbuttonmean                                      -> @button="mean";
+            showfusesetbuttonmedian                                    -> @button="median";
+            showfusesetbuttonmin                                       -> @button="min";
+            showfusesetbuttonmax                                       -> @button="max";
+            showfusesetbuttonall                                       -> @button="all";
       '
-      
        
   echo '  showcomposeframe      "Composed max+min results" -> showcomposeline1 showcomposeline2;'
   echo '    showcomposeline1:beside                          -> '
@@ -3358,6 +3353,8 @@ askkaptain() {
   }
   :> $Kaptainanswerfile
   
+  storeinfo "askkaptain=yes"
+  
   sendkaptain "${1:-}?"
   for Wait in $(seq 15); do
     milisleep $Wait
@@ -3366,6 +3363,9 @@ askkaptain() {
   done
   
   :> $Kaptainanswerfile
+  
+  storeinfo drop askkaptain
+  
   [ -z "$Answer" ] && return 1
   return 0
 }
@@ -3387,30 +3387,48 @@ kill \$Tailpid
 
 kaptain_update() {
   local Stackdir Cmdstatus
-  local Line Shortcut Comboline Mode Set
-  Stackdir="$(storeinfo dump stackshotdir)"
+  local Line Shortcut Comboline Mode Set Count Choice
   
+  Stackdir="$(storeinfo dump stackshotdir)"
+  setup_targetdirnames "$Stackdir"
+  verbose regresh
   # update working directory
   sendkaptain "choosedir='$Stackdir'"
   
+  Set="$(askkaptain fuseopt1combo)"
+  Choice="$(askkaptain fuseopt2combo)"
+  Comboline=""
+  Count=0
+  while read Line; do
+    #Line="$(cut -d'#' -f1 <<< "$Line" | grep .)"
+    [ "$Line" ] && Comboline="$Comboline,'$Line'" && Count="$((Count+1))"
+  done < <(fuse_getset "$Set")
+  case $Count in
+    0) Comboline="'-'" ;;
+    1) Comboline="${Comboline#,}" ;;
+    *) Comboline="'all'${Comboline}" ;;
+  esac
+  sendkaptain "fuseopt2combo($Comboline)='$Choice'"
+  
+  
   # show directory buttons
-  [ -d "$Stackdir/stackshot" ]                      && sendkaptain "showdirstackshot='stackshot'"       || sendkaptain "showdirstackshot='-'"
-  [ -d "$Stackdir/magick" ]                         && sendkaptain "showdirmagick='magick'"             || sendkaptain "showdirmagick='-'"
-  [ -d "$Stackdir/evaluate" ]                       && sendkaptain "showdirevaluate='evaluate'"         || sendkaptain "showdirevaluate='-'"
-  [ -d "$Stackdir/compose" ]                        && sendkaptain "showdircompose='compose'"           || sendkaptain "showdircompose='-'"
-  [ -d "$Stackdir/fuse" ]                           && sendkaptain "showdirfuse='fuse'"                 || sendkaptain "showdirfuse='-'"
+  [ -d "$Targetstackshotdir" ]                      && sendkaptain "showdirstackshot='stackshot'"       || sendkaptain "showdirstackshot='-'"
+  [ -d "$Targetmagickdir" ]                         && sendkaptain "showdirmagick='magick'"             || sendkaptain "showdirmagick='-'"
+  [ -d "$Targetevaluatedir" ]                       && sendkaptain "showdirevaluate='evaluate'"         || sendkaptain "showdirevaluate='-'"
+  [ -d "$Targetcomposedir" ]                        && sendkaptain "showdircompose='compose'"           || sendkaptain "showdircompose='-'"
+  [ -d "$Targetfusedir" ]                           && sendkaptain "showdirfuse='fuse'"                 || sendkaptain "showdirfuse='-'"
   
   # show delete buttons
   check_dirglob "$Stackdir/*.bak $Stackdir/cache" ] && sendkaptain "deletebackups='backups + cache'"    || sendkaptain "deletebackups='-'"
-  check_dirglob "$Stackdir/magick" ]                && sendkaptain "deletemagick='magick'"              || sendkaptain "deletemagick='-'"
-  check_dirglob "$Stackdir/evaluate" ]              && sendkaptain "deleteevaluate='evaluate'"          || sendkaptain "deleteevaluate='-'"
-  check_dirglob "$Stackdir/compose" ]               && sendkaptain "deletecompose='compose'"            || sendkaptain "deletecompose='-'"
-  check_dirglob "$Stackdir/fuse" ]                  && sendkaptain "deletefuse='fuse'"                  || sendkaptain "deletefuse='-'"
-  check_dirglob "$Stackdir/video" ]                 && sendkaptain "deletevideo='video'"                || sendkaptain "deletevideo='-'"
+  [ -d "$Targetmagickdir" ]                && sendkaptain "deletemagick='magick'"              || sendkaptain "deletemagick='-'"
+  [ -d "$Targetevaluatedir" ]              && sendkaptain "deleteevaluate='evaluate'"          || sendkaptain "deleteevaluate='-'"
+  [ -d "$Targetcomposedir" ]               && sendkaptain "deletecompose='compose'"            || sendkaptain "deletecompose='-'"
+  [ -d "$Targetfusedir" ]                  && sendkaptain "deletefuse='fuse'"                  || sendkaptain "deletefuse='-'"
+  [ -d "$Targetvideodir" ]                 && sendkaptain "deletevideo='video'"                || sendkaptain "deletevideo='-'"
   
   # videos
   Comboline=""
-  for Line in $(fileglob "$Stackdir/video/*.mp4") $(fileglob "$Stackdir/video/*.gif") $(fileglob "$Stackdir/video/*.webm"); do
+  for Line in $(fileglob "$Targetvideodir/*.mp4") $(fileglob "$Targetvideodir/*.gif") $(fileglob "$Targetvideodir/*.webm"); do
     Shortcut="$(rev <<< "$Line" | cut -d. -f1-4 | rev)"
     Comboline="$Comboline,'$Shortcut'"
   done
@@ -3420,13 +3438,44 @@ kaptain_update() {
   
   # evaluate results
   for Mode in max min mean median; do
-    check_fileglob "$Stackdir/evaluate/*.fuse*.${Mode}.*"   && sendkaptain "showevaluatefuse${Mode}='fuse.${Mode}'"     || sendkaptain "showevaluatefuse${Mode}='-'" 
-    check_fileglob "$Stackdir/evaluate/*.magick.${Mode}.*" && sendkaptain "showevaluatemagick${Mode}='magick.${Mode}'" || sendkaptain "showevaluatemagick${Mode}='-'" 
+    check_fileglob "$Targetevaluatedir/*.fuse*.${Mode}.*"   && sendkaptain "showevaluatefuse${Mode}='fuse.${Mode}'"     || sendkaptain "showevaluatefuse${Mode}='-'" 
+    check_fileglob "$Targetevaluatedir/*.magick.${Mode}.*"  && sendkaptain "showevaluatemagick${Mode}='magick.${Mode}'" || sendkaptain "showevaluatemagick${Mode}='-'" 
   done
+  
+  # fuse sets
+  Comboline=""
+  for Line in $(fileglob "$Targetevaluatedir/*fuse.*.mean.tif"); do
+    Line="$(basename "$Line")"
+    Line="${Line#$Targetbasename.fuse.}"
+    Line="${Line%.mean.tif}"
+    Comboline="$Comboline,'$Line'"
+  done
+  Comboline="${Comboline#,}"
+  [ -z "$Comboline" ] && Comboline="'-'"
+  sendkaptain "showfusesetcombo($Comboline)=''"
+  # fuse set delete
+  Set="$(askkaptain deletefusesetcombo)"
+  Comboline="${Comboline#"'all',"}"
+  sendkaptain "deletefusesetcombo($Comboline)='$Set'"
+  Comboline=""
+  Count=0
+  while read Line; do
+    #[ "$Line" ] && [ -e "$Targetfusedir/$(fuse_name "$Line")" ] && {
+      Comboline="$Comboline,'$Line'"
+      Count="$((Count+1))"
+    #}
+  done < <(fuse_getset "$Set")
+  case $Count in
+    0) Comboline="'-'" ;;
+    1) Comboline="${Comboline#,}" ;;
+    *) Comboline="'all'${Comboline}" ;;
+  esac
+  sendkaptain "deletefusechoicecombo($Comboline)='$Choice'"
+  
   
   # compose results
   for Mode in $Composemodes; do
-    check_fileglob "$Stackdir/compose/*.${Mode}.*" && sendkaptain "showcompose_${Mode}='${Mode}'" || sendkaptain "showcompose_${Mode}='-'"
+    check_fileglob "$Targetcomposedir/*.${Mode}.*" && sendkaptain "showcompose_${Mode}='${Mode}'" || sendkaptain "showcompose_${Mode}='-'"
   done
   
   Cmdstatus="$(storeinfo dump status)"
@@ -3534,6 +3583,7 @@ stackshot_selector() {
   local Windowwidth Windowheight Windowxpos Windowypos
   
   Cachedir="$(storeinfo dump cache)"
+  mkdir -p "$Thumbnaildir"
 
   Projecthome="$(storeinfo dump projecthome)"
   Projecthome="${1:-$Projecthome}"
@@ -3554,7 +3604,13 @@ stackshot_selector() {
   # get list of stackshot dirs and median images
   Dirlist="$(find -name stackshot -type d | sed s%/stackshot%% | sort -V)"
   for Dir in $Dirlist; do
-    Image="$(find $Dir/*fuse.mean* $Dir/*fuse.median.set* $Dir/*fuse.median* 2>/dev/null | head -n1)"
+    Image="$(find $Dir/*fuse.*.mean* $Dir/evaluate/*fuse.*.mean* $Dir/*fuse.median* 2>/dev/null | grep -v "layered" |head -n1)"
+    [ -z "$Image" ] && {
+      find $Dir/stackshot/* | grep -i -v -E "mov|mp4|mpeg|layered" > $Cachedir/list
+      #Image="$(split -n 2/2 $Cachedir/list | head -n2 | tail -n1)"
+      #verbose "$Dir XX $Image"
+      Image="$(head -n1 < "$Cachedir/list")"
+    }
     Imagelist="$Imagelist
 $Image"
   done
@@ -3945,8 +4001,12 @@ parse_kaptainsignal() {
       storeinfo drop showimage
       storeinfo "refreshgui_main=yes"
     ;;
+    fuseopt1combo|deletefusesetcombo)
+      storeinfo "refreshgui_main=yes"    
+    ;;
     cmdbreak)
       note "Sending BREAK to current action"
+      multicore_break
       storeinfo "cmdbreak=yes"
     ;;
     choosedirgui)
@@ -3996,6 +4056,19 @@ parse_kaptainsignal() {
     showdir*)
       showimage "$Stackdir/${Kaptainsignal#showdir}/*"
     ;;
+    showfusesetbutton*)
+      Line="$(askkaptain "showfusesetcombo")"
+      Mode="${Kaptainsignal#showfusesetbutton}"
+      case $Mode in
+        all) showimage "$Stackdir/evaluate/*.$Line.*" ;;
+        *) showimage "$Stackdir/evaluate/*.$Line.$Mode.*" ;;
+      esac
+    ;;
+    showfuseresults)
+      Line="$(askkaptain "showfusesetcombo")"
+      setup_targetdirnames "$Stackdir"
+      showimage $(fuse_glob --list "$Line")
+    ;;
     
     *magick|*compose|*evaluate|*fuse|evaluatemagick|align_vidstab|align_ais|align_hugin|align_focusstack)
       Command="$Kaptainsignal"
@@ -4021,8 +4094,8 @@ parse_kaptainsignal() {
       cmd -f notify -1 "Batch 3 is ready."
     ;;
     runbatchprocessing)
-      askkaptain "runbatchone" >/dev/null && runbatchone "$Stackdir"
-      askkaptain "runbatchtwo" >/dev/null && runbatchtwo "$Stackdir"
+      askkaptain "runbatchone" >/dev/null   && runbatchone "$Stackdir"
+      askkaptain "runbatchtwo" >/dev/null   && runbatchtwo "$Stackdir"
       askkaptain "runbatchthree" >/dev/null && runbatchthree "$Stackdir"
       cmd -f notify -1 "Batch all is ready."
     ;;
@@ -4039,7 +4112,7 @@ cmd() {
   echo "$Command" >> $Commandstackfile
 }
 ifcmdbreak() {
-  ifterminating             && return 0
+  ifterminating           && return 0
   storeinfo test cmdbreak && return 0 || return 1
 }
 stack_cmd() {
@@ -4086,16 +4159,30 @@ parse_cmd() {
   verbose "parse_cmd(): $*"
   parse_batchoptions "$@" || return 1
   Commandline="$@"
+  setup_targetdirnames "$Targetdir"
   
   Function="$(tr -d "[:digit:]" <<< "$Function")" 
     
   case "$Function" in
-    deleteall)         myrmdir "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" "$Targetdir/video" ; Return=0 ;;
-    deleteallbutvideo) myrmdir "$Targetdir"/*.bak "$Targetdir/cache" "$Targetdir/magick" "$Targetdir/compose" "$Targetdir/evaluate" "$Targetdir/fuse" ; Return=0 ;;
-    deletebackups)     myrmdir "$Targetdir/cache" "$Targetdir"/*.bak ; Return=0 ;;
+    deleteall)         myrmdir "$Targetcachedir" "$Targetdir"/*.bak "$Targetmagickdir" "$Targetcomposedir" "$Targetevaluatedir" "$Targetfusedir" "$Targetvideodir" ; Return=0 ;;
+    deleteallbutvideo) myrmdir "$Targetcachedir" "$Targetdir"/*.bak "$Targetmagickdir" "$Targetcomposedir" "$Targetevaluatedir" "$Targetfusedir"                   ; Return=0 ;;
+    deletebackups)     myrmdir "$Targetcachedir" "$Targetdir"/*.bak ; Return=0 ;;
+    deletefuseset)   
+      Set="$(askkaptain "deletefusesetcombo")"
+      rm -v $(fuse_glob --list "$Set") 
+      rm -v $Stackdir/evaluate/*.$Set.*
+    ;;
+    deletefusechoice)
+      Set="$(askkaptain "deletefusesetcombo")"
+      Line="$(askkaptain "deletefusechoicecombo")"
+      case $Line in
+        all) rm -v $(fuse_glob --list "$Set") ;;
+        *)   rm -v $Targetfusedir/$(fuse_name "$Line") ;;
+      esac
+    ;;
     delete*)           myrmdir "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
-    align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|imageformat*|gamma*|level*|lightbalance*|orient*|prepare*|rotate*|sharpen*|statistic*|evalstep*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
+    align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|imageformat*|gamma*|level*|fakehdr*|orient*|prepare*|rotate*|sharpen*|statistic*|evalstep*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%magick}"
       batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -g "$Sourcefileglob" -t "$Targetdir"
       Return=$?
@@ -4104,7 +4191,7 @@ parse_cmd() {
       Function="${Function%magick}"
       batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -g "$Sourcefileglob" -t "$Targetdir"
       Return=$?
-      [ "$Return" = "0" ] && [ "${Opt1}" = "${Opt1#[}" ] && {
+      [ "$Return" = "0" ] && [ "${Opt2}" = "all" ] && {
         batch_function -f evaluatefuse -1 "$Opt1" -t "$Targetdir"
         Return=$?
       }
@@ -4156,13 +4243,8 @@ declare_variables() {
   while read Line; do
     Fusesetcombo="$Fusesetcombo,'$(basename "$Line")'"
   done < <(find $Fusesetdir/* -type f)
-  Fusesetcombo="${Fusesetcombo#,}"
-  Fusesinglecombo=""
-  while read Line; do
-    Line="$(cut -d] -f1 <<< "$Line")]"
-    Fusesinglecombo="$Fusesinglecombo,'$Line'"
-  done < <(cat $Fusesetdir/single)
-  Fusesinglecombo="'[enfuse-cws5]'${Fusesinglecombo}"
+  #Fusesetcombo="${Fusesetcombo#,}"
+  Fusesetcombo="'enfuse-cws5'$Fusesetcombo"
   
   Projecthome="$HOME/Bilder/stackshots"
   Gallerydir="$HOME/Gallery"
@@ -4238,6 +4320,7 @@ check_dependencies() {
 }
 terminate() {
   storeinfo cmdbreak=yes
+  multicore_break
   rm "$Maincachedir/run"
 }
 ifterminating() {
@@ -4282,10 +4365,18 @@ main() {
   storeinfo test allow_dir_invalid || storeinfo "allow_dir_invalid=yes"
   storeinfo "status=idle"
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
-  #storeinfo "rmcache=yes"
+  storeinfo "rmcache_after=yes"
+  storeinfo "rmcache_before=yes"
   
   storeinfo drop cmdbreak
   storeinfo drop stackshot_selector
+  
+  case $(hostname) in
+    debianlaptop|debianmikro)
+      storeinfo drop rmcache_after
+      storeinfo drop rmcache_before
+    ;;
+  esac
   
   date > $Maincachedir/run
 
@@ -4325,16 +4416,17 @@ main() {
     }
     
     read -t1 Kaptainsignal
+    
+    storeinfo test askkaptain && Kaptainsignal=""
+    
     [ "$Kaptainsignal" ] && {
       echo "Signal from kaptain: $Kaptainsignal"
-      grep -q "combo"    <<< "$Kaptainsignal" && Kaptainsignal=""
+      #grep -q "combo"    <<< "$Kaptainsignal" && Kaptainsignal=""
       grep -q ":pressed" <<< "$Kaptainsignal" && {
         Stackdir="$(askkaptain choosedir)"
         [ "$Stackdir" != "$(storeinfo dump stackshotdir)" ] && {
           check_stackdir "$Stackdir"
           storeinfo "refreshgui_main=yes"
-          storeinfo "refreshgui_fuse=yes"
-          #kaptain_update
         }
         Gallerydir="$(askkaptain gallerydir)"
         storeinfo "gallerydir=$Gallerydir"
@@ -4357,7 +4449,7 @@ exit 0
 ##### ToDo ####
 # crop option for align_ais
 # align_vidstab: select area for alignment
-# improve lightbalance
+# improve fakehdr
 # check webm quality
 # crop: Do not crop if geometry is same as image
 # configuration dialog:
