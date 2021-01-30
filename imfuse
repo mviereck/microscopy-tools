@@ -715,7 +715,7 @@ $Magickbin
     -compose Over -composite
     -write mpr:sourcemask_part
     -delete 0"
-        [ "$Testsetup" ] && Command="$Command
+        false && [ "$Testsetup" ] && Command="$Command
   mpr:sourcemask 
   $Cachedir/saturation.*.$Number.tif
     -compose screen -composite
@@ -842,8 +842,13 @@ focus_generate_masks() {
     [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
     -negate"
 
-    [ "$Argcontrast" ] && Maskgenerator="$Maskgenerator
-    -blur 0x$Argcontrast"
+    #[ "$Argcontrast" ] && Maskgenerator="$Maskgenerator
+    #-blur 0x$Argcontrast"
+    
+    [ "$Testsetup" ] && Maskgenerator="$Maskgenerator
+    -write mpr:sourcegray
+    -delete 0
+$(focus_maskmethod "$Argmethod")"
     
     [ "${Argclose1:-1}x${Argclose2:-1}" != "1x1" ] && Maskgenerator="$Maskgenerator
     -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-4}"
@@ -1312,7 +1317,15 @@ focus_merge_masks() {
   ( 
   $Methodmask
     -level ${Arglevelmin:-0}%,${Arglevelmax:-100}%"
-      
+
+    ### FIXME might affect level
+    [ "$Argcontrast" ] && {
+      Mergecode="$Mergecode
+    -blur 0x$Argcontrast"
+      Argcontrast=""
+      maskarg_store
+    }
+    
     # less
     [ "$Argdarkenmask" ] && Mergecode="$Mergecode
   $Argdarkenmask
