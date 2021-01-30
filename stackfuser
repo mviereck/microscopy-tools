@@ -828,6 +828,7 @@ runbatchthree() {
   askkaptain evaluate1 >/dev/null        && cmd -f evaluatemagick -t "$Stackdir"
   askkaptain fuse >/dev/null             && {
     Opt1="$(askkaptain fuseopt1combo)"
+    Opt2="$(askkaptain fuseopt2combo)"
                                             cmd -f fuse           -t "$Stackdir" -1 "$Opt1" -2 "$Opt2"
     [ "$Opt2" = "all" ]                  && cmd -f evaluatefuse   -t "$Stackdir" -1 "$Opt1"
   }
