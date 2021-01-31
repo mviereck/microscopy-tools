@@ -127,7 +127,7 @@ storeinfo() {
   local i Return
   [ -e "$Storeinfofile" ] || return 1
   [ -e "$Storeinfofile.lock" ] && {
-    for i in $(seq 10); do
+    for i in $(seq 20); do
       verbose "storeinfo is locked"
       sleep 0.1
       [ -e "$Storeinfofile.lock" ] || break
@@ -337,9 +337,9 @@ rmrecursive() {
       find "$Dir" -type d -name "cache"        -exec rm -r {} +
       find "$Dir" -type d -name "cache.imfuse" -exec rm -r {} +
     ;;
-    magick) 
-      find "$Dir" -type d -name "magick"       -exec rm -r {} +
-      find "$Dir" -type d -name "magick.bak"   -exec rm -r {} +
+    prepared) 
+      find "$Dir" -type d -name "prepared"       -exec rm -r {} +
+      find "$Dir" -type d -name "prepared.bak"   -exec rm -r {} +
     ;;
   esac
 }
@@ -359,10 +359,10 @@ setup_targetdirnames() {
   [ -d "$Targetdir/stackshot" ]          && Targetstackshotdir="$Targetdir/stackshot" || Targetstackshotdir="$Targetdir"
   [ -d "$Targetdir/stackshot-median" ]   && Targetstackshotdir="$Targetdir/stackshot-median"
   Targetbasename="$Projectname.$(basename "$Targetdir")" 
-  Targetmagickdir="$Targetdir/magick"
-  Targetfusedir="$Targetdir/fuse"
-  Targetcomposedir="$Targetdir/compose"
-  Targetevaluatedir="$Targetdir/evaluate"
+  Targetprepareddir="$Targetdir/prepared"
+  Targetfuseddir="$Targetdir/fused"
+  Targetcomposeddir="$Targetdir/composed"
+  Targetevaluateddir="$Targetdir/evaluated"
   Targetvideodir="$Targetdir/video"
   Targetcachedir="$Targetdir/cache"
 }
@@ -395,7 +395,7 @@ setup_workdir() {
 
   local Targetnewdir Targetprevdir 
   #local Targetstackshotdir
-  #local Targetmagickdir Targetfusedir Targetevaluatedir Targetcomposedir Targetcachedir
+  #local Targetprepareddir Targetfuseddir Targetevaluateddir Targetcomposeddir Targetcachedir
   local Projectname
   local Imageformat
 
@@ -403,7 +403,7 @@ setup_workdir() {
   Targetdir="${2:-}"
   Sourcefileglob="${3:-*}"
   
-  Function="${Function%magick}"
+  Function="${Function%prepared}"
   Destinationdir=""
   Destinationfile=""
 
@@ -414,22 +414,22 @@ setup_workdir() {
   mkdir -p "$Targetcachedir"
   Cachedir="$Targetcachedir"
   
-  grep -q -- "fuse" <<< "$Function"      && Targetnewdir="$Targetfusedir"
-  grep -q -- "compose" <<< "$Function"   && Targetnewdir="$Targetcomposedir"
-  grep -q -- "evaluate" <<< "$Function"  && Targetnewdir="$Targetevaluatedir" 
+  grep -q -- "fuse" <<< "$Function"      && Targetnewdir="$Targetfuseddir"
+  grep -q -- "compose" <<< "$Function"   && Targetnewdir="$Targetcomposeddir"
+  grep -q -- "evaluate" <<< "$Function"  && Targetnewdir="$Targetevaluateddir" 
   grep -q -- "animation" <<< "$Function" && Targetnewdir="$Targetvideodir" 
   grep -q -- "video" <<< "$Function"     && Targetnewdir="$Targetvideodir" 
-  [ "$Targetnewdir" ] || Targetnewdir="$Targetmagickdir"
+  [ "$Targetnewdir" ] || Targetnewdir="$Targetprepareddir"
   
-  [ "$Targetnewdir" = "$Targetmagickdir" ] && {
+  [ "$Targetnewdir" = "$Targetprepareddir" ] && {
     mkdir -p $Targetnewdir
-    check_fileglob "$Targetmagickdir/$Sourcefileglob" || {
+    check_fileglob "$Targetprepareddir/$Sourcefileglob" || {
       Imageformat="$(get_extension "$(fileglob "$Targetstackshotdir/$Sourcefileglob")")"
       grep -q -i -x "$Imageformat" <<< "$Imageformatlist" && {
-        mycp "$Targetstackshotdir/$Sourcefileglob" "$Targetmagickdir" || return 1
+        mycp "$Targetstackshotdir/$Sourcefileglob" "$Targetprepareddir" || return 1
         :
       } || {
-        imageformat -2 "tif" -s "$Targetstackshotdir" -g "$Sourcefileglob" -d "$Targetmagickdir" || return 1
+        imageformat -2 "tif" -s "$Targetstackshotdir" -g "$Sourcefileglob" -d "$Targetprepareddir" || return 1
       }
     }
   }
@@ -441,8 +441,8 @@ setup_workdir() {
     evaluate*)
       mkdir -p $Targetprevdir
       check_fileglob "$Targetnewdir/*" && mycp "$Targetnewdir/*" "$Targetprevdir/" 
-      mkdir -p $Targetcomposedir.bak 
-      check_fileglob "$Targetcomposedir/*" && mycp "$Targetcomposedir/*" "$Targetcomposedir.bak/" 
+      mkdir -p $Targetcomposeddir.bak 
+      check_fileglob "$Targetcomposeddir/*" && mycp "$Targetcomposeddir/*" "$Targetcomposeddir.bak/" 
     ;;
     animation*|video*|fuse*)
       mkdir -p $Targetprevdir
@@ -457,28 +457,28 @@ setup_workdir() {
 
   case $Function in
     fuse*)
-      Sourcedir="$Targetmagickdir"
+      Sourcedir="$Targetprepareddir"
       Destinationdir="$Targetnewdir"
       Destinationfile="$Projectname.$(basename "$Targetdir")"
     ;;
       
     evaluate)
-      Sourcedir="$Targetmagickdir"
+      Sourcedir="$Targetprepareddir"
       Destinationdir="$Targetnewdir"
       Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
-      mkdir -p $Targetcomposedir
+      mkdir -p $Targetcomposeddir
     ;;
-    evaluatefuse)
-      Sourcedir="$Targetfusedir"
+    evaluatefused)
+      Sourcedir="$Targetfuseddir"
       Destinationdir="$Targetnewdir"
       Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
-      mkdir -p $Targetcomposedir
+      mkdir -p $Targetcomposeddir
       Sourcefileglob="$(fuse_glob "$Opt1")"
       Sourcefilelist="$(fuse_glob --list "$Opt1")"
       check_filelist $Sourcefilelist || return 1
     ;;
     compose)
-      Sourcedir="$Targetevaluatedir"
+      Sourcedir="$Targetevaluateddir"
       Destinationdir="$Targetnewdir"
       #Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
     ;;
@@ -494,7 +494,7 @@ setup_workdir() {
     ;;
     
     animation|video)
-      Sourcedir="$Targetmagickdir"
+      Sourcedir="$Targetprepareddir"
       Destinationdir="$Targetnewdir"
       Destinationfile="$Projectname.$(basename "$Targetdir")"
     ;;
@@ -510,9 +510,9 @@ setup_workdir() {
     ;;
   esac
   
-  [ "$Sourcedir" = "$Targetmagickdir" ] && {
-    mkdir -p $Targetmagickdir
-    check_fileglob "$Targetmagickdir/$Sourcefileglob" || mycp "$Targetstackshotdir/$Sourcefileglob" "$Targetmagickdir"
+  [ "$Sourcedir" = "$Targetprepareddir" ] && {
+    mkdir -p $Targetprepareddir
+    check_fileglob "$Targetprepareddir/$Sourcefileglob" || mycp "$Targetstackshotdir/$Sourcefileglob" "$Targetprepareddir"
   }
   check_fileglob "$Sourcedir/$Sourcefileglob" || {
     failure "setup_workdir(): No source found: $Sourcedir/$Sourcefileglob"
@@ -616,10 +616,10 @@ batch_function() {
   case $Function in
     compose|fuse|evaluate) ;;
     *)
-      Function="${Function%magick}"
-      Function="${Function%compose}"
-      Function="${Function%evaluate}"
-      Function="${Function%fuse}"
+      Function="${Function%prepared}"
+      Function="${Function%composed}"
+      Function="${Function%evaluated}"
+      Function="${Function%fused}"
     ;;
   esac
   Function="${Function%_}"
@@ -678,7 +678,7 @@ batch_function() {
       animation|video) ;;
       evaluate) 
         undo -s "$Destinationdir.bak"   -d "$Destinationdir"   -c "$Cachedir" 
-        undo -s "$Targetcomposedir.bak" -d "$Targetcomposedir" -c "$Cachedir" 
+        undo -s "$Targetcomposeddir.bak" -d "$Targetcomposeddir" -c "$Cachedir" 
       ;;
       compose|fuse*) 
         undo -s "$Destinationdir.bak"   -d "$Destinationdir"   -c "$Cachedir" 
@@ -689,34 +689,36 @@ batch_function() {
     esac
   }
   
+  set -x
   storeinfo test rmcache_after && rm -R "$Cachedir"
+  set +x
   
-  [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluate" ] && {
+  [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluated" ] && {
     
     storeinfo test stackshotdir_valid && {
-      # link magick.max
-      ls $Destinationdir/*magick.max* >/dev/null 2>&1 && {
-        ln -f $(fileglob "$Destinationdir/*.magick.max.*") "$Targetdir"
+      # link prepared.max
+      ls $Destinationdir/*prepared.max* >/dev/null 2>&1 && {
+        ln -f $(fileglob "$Destinationdir/*.prepared.max.*") "$Targetdir"
       }
     
-      # link fuse.mean results
-      ls $Destinationdir/*fuse.mean* >/dev/null 2>&1 && {
-        # link fuse.median result into parent directory
+      # link fused.mean results
+      ls $Destinationdir/*fused.mean* >/dev/null 2>&1 && {
+        # link fused.median result into parent directory
         while read Line; do
           ln -f "$Line" "$Targetdir"
-        done < <(fileglob "$Targetevaluatedir/*fuse.mean.*")
+        done < <(fileglob "$Targetevaluateddir/*fused.mean.*")
         
         ## link into project dir
         #[ "$(storeinfo dump projectname)" != "np" ] && {
-        #  Image="$(find $Destinationdir/*.fuse.median.set2.* $Destinationdir/*.fuse.median.* -type f | head -n1)"
+        #  Image="$(find $Destinationdir/*.fused.median.set2.* $Destinationdir/*.fused.median.* -type f | head -n1)"
         #  [ -e "$Image" ] && ln -f "$Image" "$Destinationdir/../../"
         #}
       }
       
-      ## link fuse.median result into $Gallerydir directory
+      ## link fused.median result into $Gallerydir directory
       #Gallerydir="$(storeinfo dump gallerydir)"
       #[ -d "$Gallerydir" ] && {
-      #  Image="$(find $Destinationdir/*.fuse.median.set2.* $Destinationdir/*.fuse.median.* -type f | head -n1)"
+      #  Image="$(find $Destinationdir/*.fused.median.set2.* $Destinationdir/*.fused.median.* -type f | head -n1)"
       #  ln -f "$Image" "$Gallerydir"
       #}
     }
@@ -825,17 +827,17 @@ runbatchtwo() {
   cmd -f wizard -1 "$(getbatchtwo)" -t "$Stackdir"
 }
 runbatchthree() {
-  askkaptain evaluate1 >/dev/null        && cmd -f evaluatemagick -t "$Stackdir"
+  askkaptain evaluate1 >/dev/null        && cmd -f evaluateprepared -t "$Stackdir"
   askkaptain fuse >/dev/null             && {
     Opt1="$(askkaptain fuseopt1combo)"
     Opt2="$(askkaptain fuseopt2combo)"
                                             cmd -f fuse           -t "$Stackdir" -1 "$Opt1" -2 "$Opt2"
-    [ "$Opt2" = "all" ]                  && cmd -f evaluatefuse   -t "$Stackdir" -1 "$Opt1"
+    [ "$Opt2" = "all" ]                  && cmd -f evaluatefused   -t "$Stackdir" -1 "$Opt1"
   }
-  askkaptain evaluate2 >/dev/null        && cmd -f evaluatefuse   -t "$Stackdir" -1 "$(askkaptain evaluateopt1combo)"
+  askkaptain evaluate2 >/dev/null        && cmd -f evaluatefused   -t "$Stackdir" -1 "$(askkaptain evaluateopt1combo)"
   askkaptain deletebackups2 >/dev/null   && cmd -f deletebackups  -t "$Stackdir"
-  askkaptain deletemagick2  >/dev/null   && cmd -f deletemagick   -t "$Stackdir"
-  #cmd -f showimage -s "$Stackdir/evaluate" -g "*fuse.*.mean*"
+  askkaptain deleteprepared2  >/dev/null   && cmd -f deleteprepared   -t "$Stackdir"
+  #cmd -f showimage -s "$Stackdir/evaluated" -g "*fused.*.mean*"
 }
 setup_imagelist() {
   # Set up often needed image variables
@@ -1746,7 +1748,7 @@ $Position"
     Distortdir="$Cachedir/distort.$Position"
     Distortcachedir="$Cachedir/distort.$Position/layered"
     mkdir -p $Distortcachedir
-    Fusedir="$Distortdir/fuse"
+    Fusedir="$Distortdir/fused"
     mkdir -p "$Fusedir"
     Imagebasename="animation.$Position"
     case $Fusenumber in
@@ -1763,7 +1765,7 @@ $Position"
   for Position in $Positionlist; do
     Iteration=$((Iteration + 1))
     Distortdir="$Cachedir/distort.$Position"
-    Fusedir="$Distortdir/fuse"
+    Fusedir="$Distortdir/fused"
     Destinationfile="$Cachedir/animation.$Position.mean.gif"
     note "animation: Generating $(basename $Destinationfile)"
     #multicore "$Magickbin $Fusedir/* -evaluate-sequence mean -gravity center -stroke black -fill black -pointsize 24 -draw 'text 0,0 \"$Position\"' $Destinationfile" "$Destinationfile" || return 1
@@ -2019,11 +2021,11 @@ $Imagelist"
   Destinationfilebasename="$Destinationfile"
   for Mode in min mean max median; do
     case "$(basename $Sourcedir)" in
-      fuse)
+      fused)
         Destinationfile="$Destinationdir/$Destinationfilebasename.${Opt1}.${Mode}.${Imageformat}"
         [ "$Mode" = "mean" ] && Showimage="$Destinationfile"
       ;;
-      magick)
+      prepared)
         Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.${Imageformat}"
         [ "$Mode" = "max" ]  && Showimage="$Destinationfile"
       ;;
@@ -2037,8 +2039,8 @@ $Imagelist"
   multicore_wait || return 1
   
   case "$(basename $Sourcedir)" in
-    magick)
-      compose -1 "$Maxfile" -2 "$Minfile" -9 "$Imageformat" -d "$Targetcomposedir" -b "$Destinationfilebasename" || return 1
+    prepared)
+      compose -1 "$Maxfile" -2 "$Minfile" -9 "$Imageformat" -d "$Targetcomposeddir" -b "$Destinationfilebasename" || return 1
     ;;
   esac
   showimage "$Showimage"
@@ -2150,7 +2152,9 @@ fuse() {
           Command="enfuse --exposure-weight=0 --saturation-weight=0 --contrast-weight=1 --entropy-weight=0 --hard-mask $Fuseargs --output=$Destinationfile $Imagelist2"
           case $Fusenumber in
             1) 
-              $Command || Error=1 
+              $Command || Error=1
+              #Fusenumber=n 
+              #multicore "$Command" "$Destinationfile" || Error=1
               showimage "$Destinationfile"
             ;;
             *) multicore "$Command" "$Destinationfile" "$Imagelistmemsize" || Error=1 ;;
@@ -2164,6 +2168,8 @@ fuse() {
         note "$Destinationfile"
         [ -e "$Destinationfile" ] && note "Already exists, skipping: $(basename "$Destinationfile")" || {
           nice $Fusecmd || Error=1
+          #Fusenumber=n
+          #multicore -t1 "$Fusecmd" "$Destinationfile" || error "error while running imfuse"
         }
         showimage "$Destinationfile"
       ;;
@@ -2487,7 +2493,7 @@ wizard() {
   esac
   Options="$Opt1 $Opt2 $Opt3 +repage"
   
-  [ "$Sourcedir" = "$Targetmagickdir" ] && grep -q -E "auto-gamma|auto-level|auto-contrast-stretch|contrast-stretch max" <<< "$Options" && {
+  [ "$Sourcedir" = "$Targetprepareddir" ] && grep -q -E "auto-gamma|auto-level|auto-contrast-stretch|contrast-stretch max" <<< "$Options" && {
     imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir" || return 1
     Options="$(sed "s/-auto-gamma/-gamma $Imageautogamma/ ; 
                            s/-auto-contrast-stretch/-contrast-stretch ${Imageminlevel}x${Imagemaxlevel}/ ; 
@@ -2588,7 +2594,7 @@ compose() {
   }
   Imageformat="${Opt9:-}"
   [ -z "$Imageformat" ] && Imageformat="$(get_extension "$Maxfile")"
-  Destinationfilebasename="${Destinationfile:-compose}"
+  Destinationfilebasename="${Destinationfile:-composed}"
     
   for Mode in bumpmap colorburn linearlight modulate  overlay pegtoplight; do
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}1.$Imageformat"
@@ -2606,7 +2612,7 @@ compose() {
   done
   multicore_wait || return 1
   [ "$Error" ] && return 1
-  Destinationfile="$Destinationdir/$Destinationfilebasename.composemean.${Imageformat}"
+  Destinationfile="$Destinationdir/$Destinationfilebasename.composedmean.${Imageformat}"
   $Magickbin  $Destinationdir/$Destinationfilebasename.{*modulate*,*bumpmap*,*pegtoplight*,*overlay*,*difference*} -evaluate-sequence mean $Destinationfile || return 1
   showimage $Destinationfile
   return 0
@@ -2781,14 +2787,14 @@ fuse_glob() {
   case "${1:-}" in
     all|'') 
       Glob="*" 
-      List="$(fileglob "$Targetfusedir/$Glob")"
+      List="$(fileglob "$Targetfuseddir/$Glob")"
     ;;
     *)
       while read Line; do
         Name="$(fuse_name "$Line")"
         Glob="${Glob},$Name"
         List="$List
-$Targetfusedir/$Name"
+$Targetfuseddir/$Name"
       done < <(fuse_getset "${1:-}")
 #      done < <(cat "$Fusesetdir/${1:-}")
       Glob="{${Glob#,}}"
@@ -2843,10 +2849,10 @@ fuse_name() {
   Fuseargs="$(cut -d' ' -s -f2- <<< "$Line")"
   case $Fusecmd in
     enfuse)
-      Fusename="$Targetbasename.$(enfuse_name $Fuseargs $(magicklist) ).tif"
+      Fusename="$Targetbasename.$(enfuse_name $Fuseargs $(preparedlist) ).tif"
     ;;
     imfuse)
-      Fusename="$(imfuse --showname --basename="$Targetbasename." $Fuseargs $(magicklist) )"
+      Fusename="$(imfuse --showname --basename="$Targetbasename." $Fuseargs $(preparedlist) )"
     ;;
   esac
   basename "$Fusename"
@@ -2911,8 +2917,8 @@ in"
   echo "$Name"
   return ${Error:-0}
 }
-magicklist() {
-  fileglob "$Targetmagickdir/*"
+preparedlist() {
+  fileglob "$Targetprepareddir/*"
 }
 
 #### run commands on all CPUs
@@ -2925,6 +2931,13 @@ multicore() {
   
   local Process Command
   local Mem_needed Zram
+  
+  [ "${1:-}" = "-t1" ] && {
+    shift
+    [ "$Multicore_processcount" -gt 0 ] && {
+      multicore_wait || return 1
+    }
+  }
   
   [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
     multicore_wait || return 1
@@ -3043,115 +3056,115 @@ start "stackfuser '$Version'"  -> frameset;
         batchframeleft:framed              -> batchblock1 batchblock2 ;
         batchframeright:framed             -> batchblock3 runbatchframe stopframe;
           
-      batchblock1 "batch block 1: crop and balance directory magick" -> imageformatline cropline align_vidstabline align_huginline align_aisline align_focusstackline;
-        imageformatline:beside                                -> imageformat imageformatopt9combo imageformatmagick imageformatfuse imageformatevaluate;
+      batchblock1 "batch block 1: crop and balance directory prepared" -> imageformatline cropline align_vidstabline align_huginline align_aisline align_focusstackline;
+        imageformatline:beside                                -> imageformat imageformatopt9combo imageformatprepared imageformatfused imageformatevaluated;
           imageformatopt9combo                                  -> @combow('$Imageformatcombo')="TIF" ;
-          imageformatmagick                                     -> @button="magick" ;
-          imageformatevaluate                                   -> @button="evaluate" ;
-          imageformatfuse                                       -> @button="fuse" ;
+          imageformatprepared                                     -> @button="prepared" ;
+          imageformatevaluated                                   -> @button="evaluated" ;
+          imageformatfused                                       -> @button="fused" ;
           imageformat:beside          "change image format"     -> "on" | ! "" ;
-        orientline:beside                                     -> orient orientopt1combo orientmagick;
+        orientline:beside                                     -> orient orientopt1combo orientprepared;
           orientopt1combo                                       -> @combo("topleft","topright","bottomleft","bottomright")="topleft" ;
-          orientmagick                                          -> @button="magick" ;
+          orientprepared                                          -> @button="prepared" ;
           orient:beside               "orient (fixate image exif rotation)" -> "on" | "";
-        cropline:beside                                       -> crop cropopt1combo cropopt2combo cropmagick cropfuse cropevaluate;
+        cropline:beside                                       -> crop cropopt1combo cropopt2combo cropprepared cropfused cropevaluated;
           cropopt1combo                                         -> @combo("interactive","shrink","even","geometry")="interactive" ;
           cropopt2combo                                         -> @combow("","1","2","5","10","200x200+15+15")="" ;
-          cropmagick                                            -> @button="magick" ;
-          cropevaluate                                          -> @button="evaluate" ;
-          cropfuse                                              -> @button="fuse" ;
+          cropprepared                                            -> @button="prepared" ;
+          cropevaluated                                          -> @button="evaluated" ;
+          cropfused                                              -> @button="fused" ;
           crop:beside                 "crop"                    -> "on" | ! "";
         align_focusstackline:beside                             -> align_focusstack align_focusstackbutton ;
-          align_focusstackbutton                                  -> @button="magick" ;
+          align_focusstackbutton                                  -> @button="prepared" ;
           align_focusstack:beside     "align with focus-stack"    -> "on" | ! "";
         align_vidstabline:beside                              -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabopt3combo align_vidstabbutton ;
           align_vidstabopt1combo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
           align_vidstabopt2combo:beside   "Iterations:"         -> @combo("1","2","3")="3";
           align_vidstabopt3combo:beside   "prepare"             -> "prepare" | ! "" ;
-          align_vidstabbutton                                   -> @button="magick" ;
+          align_vidstabbutton                                   -> @button="prepared" ;
           align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | ! "";
         align_huginline:beside                                  -> align_hugin align_huginbutton ;
-          align_huginbutton                                      -> @button="magick" ;
+          align_huginbutton                                      -> @button="prepared" ;
           align_hugin:beside          "align with hugin"         -> "on" | ! "";
         align_aisline:beside                                  -> align_ais align_aisopt1combo align_aisopt2combo align_aisbutton ;
-          align_aisopt1combo          "demagnifier (-m)"        -> "m"  | "";
+          align_aisopt1combo          "demagnifier (-m)"        -> "m"  | ! "";
           align_aisopt2combo          "crop interactive"        -> "interactive" | ! "";
-          align_aisbutton                                       -> @button="magick" ;
+          align_aisbutton                                       -> @button="prepared" ;
           align_ais:beside            "align with align_image_stack" -> "on" | "";
       
-      batchblock2 "batch block 2: imagemagick operations on directory magick" -> rotateline gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline;
-        rotateline:beside                                     -> rotate rotateopt1combo rotatemagick rotatefuse rotateevaluate;
+      batchblock2 "batch block 2: imageprepared operations on directory prepared" -> rotateline gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline;
+        rotateline:beside                                     -> rotate rotateopt1combo rotateprepared rotatefused rotateevaluated;
           rotateopt1combo                                       -> @combo("90","180","270")="90" ;
-          rotatemagick                                          -> @button="magick" ;
-          rotateevaluate                                        -> @button="evaluate" ;
-          rotatefuse                                            -> @button="fuse" ;
+          rotateprepared                                          -> @button="prepared" ;
+          rotateevaluated                                        -> @button="evaluated" ;
+          rotatefused                                            -> @button="fused" ;
           rotate:beside               "rotate"                  -> "on"  | ! "";
-        gammaline:beside                                      -> gamma gammamagick gammafuse gammaevaluate;
+        gammaline:beside                                      -> gamma gammaprepared gammafused gammaevaluated;
           gammaopt1combo                                        -> @combow("auto","0.2","0.3","0.4","0.454545","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
-          gammamagick                                           -> @button="magick" ;
-          gammaevaluate                                         -> @button="evaluate" ;
-          gammafuse                                             -> @button="fuse" ;
+          gammaprepared                                           -> @button="prepared" ;
+          gammaevaluated                                         -> @button="evaluated" ;
+          gammafused                                             -> @button="fused" ;
           gamma:beside                "gamma"                   -> gammaopt1combo | "";
-        levelline:beside                                      -> level levelmagick levelfuse levelevaluate;
+        levelline:beside                                      -> level levelprepared levelfused levelevaluated;
           levelopt1combo                                        -> @combow("auto","5%","10%","15%","20%","25%","30%")="auto" ;
-          levelmagick                                           -> @button="magick" ;
-          levelevaluate                                         -> @button="evaluate" ;
-          levelfuse                                             -> @button="fuse" ;
+          levelprepared                                           -> @button="prepared" ;
+          levelevaluated                                         -> @button="evaluated" ;
+          levelfused                                             -> @button="fused" ;
           level:beside                "level"                   -> levelopt1combo | ! "";
-        contrastline:beside                                   -> contrast contrastmagick contrastfuse contrastevaluate;
+        contrastline:beside                                   -> contrast contrastprepared contrastfused contrastevaluated;
           contrastopt1combo                                     -> @combow("2x50%","3x50%","4x50%","5x50%","3x30%","3x70%")="5x50%" ;
-          contrastmagick                                        -> @button="magick" ;
-          contrastevaluate                                      -> @button="evaluate" ;
-          contrastfuse                                          -> @button="fuse" ;
+          contrastprepared                                        -> @button="prepared" ;
+          contrastevaluated                                      -> @button="evaluated" ;
+          contrastfused                                          -> @button="fused" ;
           contrast:beside             "sigmoidal-contrast"      -> contrastopt1combo | "";
-        sharpenline:beside                                    -> sharpen sharpenmagick sharpenfuse sharpenevaluate;
+        sharpenline:beside                                    -> sharpen sharpenprepared sharpenfused sharpenevaluated;
           sharpenopt1combo                                      -> @combow("3x1","6x2","8x4","12x6")="8x4" ;
-          sharpenmagick                                         -> @button="magick" ;
-          sharpenevaluate                                       -> @button="evaluate" ;
-          sharpenfuse                                           -> @button="fuse" ;
+          sharpenprepared                                         -> @button="prepared" ;
+          sharpenevaluated                                       -> @button="evaluated" ;
+          sharpenfused                                           -> @button="fused" ;
           sharpen:beside              "adaptive-sharpen"        -> sharpenopt1combo | "";
-        statisticline:beside                                  -> statistic statisticopt1combo statisticopt2combo statisticmagick statisticfuse statisticevaluate;
+        statisticline:beside                                  -> statistic statisticopt1combo statisticopt2combo statisticprepared statisticfused statisticevaluated;
           statisticopt1combo                                    -> @combow("gradient","maximum","minimum","mean","median","mode","nonpeak","rms","standarddeviation")="median" ;
           statisticopt2combo                                    -> @combow("1","2","3","4","5","6","7","8","9","10")="5" ;
-          statisticmagick                                       -> @button="magick" ;
-          statisticevaluate                                     -> @button="evaluate" ;
-          statisticfuse                                         -> @button="fuse" ;
+          statisticprepared                                       -> @button="prepared" ;
+          statisticevaluated                                     -> @button="evaluated" ;
+          statisticfused                                         -> @button="fused" ;
           statistic:beside            "statistic"               -> "on" | ! "";
-        brightnessline:beside                                 -> brightness brightnessmagick brightnessfuse brightnessevaluate;
+        brightnessline:beside                                 -> brightness brightnessprepared brightnessfused brightnessevaluated;
           brightnessopt1combo                                   -> @combow("0x5","0x10","0x15","5x0","5x5","5x10","5x15","10x0","10x5","10x10","15x15","20x20")="10x10" ;
-          brightnessmagick                                      -> @button="magick" ;
-          brightnessevaluate                                    -> @button="evaluate" ;
-          brightnessfuse                                        -> @button="fuse" ;
+          brightnessprepared                                      -> @button="prepared" ;
+          brightnessevaluated                                    -> @button="evaluated" ;
+          brightnessfused                                        -> @button="fused" ;
           brightness:beside           "brightness-contrast"     -> brightnessopt1combo | ! "";
-        stretchline:beside                                    -> stretch stretchmagick stretchfuse stretchevaluate;
+        stretchline:beside                                    -> stretch stretchprepared stretchfused stretchevaluated;
           stretchopt1combo                                      -> @combow("auto","2%x1%","1%","2%","3%","4%","5%","10%","15%","20%","max")="max" ;
-          stretchmagick                                         -> @button="magick" ;
-          stretchevaluate                                       -> @button="evaluate" ;
-          stretchfuse                                           -> @button="fuse" ;
+          stretchprepared                                         -> @button="prepared" ;
+          stretchevaluated                                       -> @button="evaluated" ;
+          stretchfused                                           -> @button="fused" ;
           stretch:beside              "stretch-contrast"        -> stretchopt1combo | ! "";
-        wizardline:beside                                     -> wizard wizardmagick wizardfuse wizardevaluate;
+        wizardline:beside                                     -> wizard wizardprepared wizardfused wizardevaluated;
           wizardopt1combo                                       -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 0","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
-          wizardmagick                                          -> @button="magick" ;
-          wizardevaluate                                        -> @button="evaluate" ;
-          wizardfuse                                            -> @button="fuse" ;
+          wizardprepared                                          -> @button="prepared" ;
+          wizardevaluated                                        -> @button="evaluated" ;
+          wizardfused                                            -> @button="fused" ;
           wizard:beside               "(free option typing)"    -> wizardopt1combo | ! "" ;
         
-      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 deletebackups2 deletemagick2;
-        evaluateline1:beside                                  -> evaluate1 evaluatemagick ;
-          evaluatemagick                                        -> @button="magick" ;
+      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 deletebackups2 deleteprepared2;
+        evaluateline1:beside                                  -> evaluate1 evaluateprepared ;
+          evaluateprepared                                        -> @button="prepared" ;
           evaluate1:beside            "evaluate"                -> "on" | "";
         fuseline                                              -> fuseline1 fuseopt2combo;
-          fuseline1:beside                                    -> fuse fuseopt1combo fusemagick;
+          fuseline1:beside                                    -> fuse fuseopt1combo fuseprepared;
           fuseopt1combo                                         -> @combo('$Fusesetcombo')="enfuse-cws5" ;
           fuseopt2combo                                         -> @combo("-") ;
-          fusemagick                                            -> @button="magick";
+          fuseprepared                                            -> @button="prepared";
           fuse:beside                    "fuse"                 -> "on" | "" ;
-        evaluateline2:beside                                  -> evaluate2 evaluateopt1combo evaluatefuse;
+        evaluateline2:beside                                  -> evaluate2 evaluateopt1combo evaluatefused;
           evaluateopt1combo                                     -> @combo("all",'$Fusesetcombo');
-          evaluatefuse                                          -> @button="fuse" ;
+          evaluatefused                                          -> @button="fused" ;
           evaluate2:beside            "evaluate"                -> "on" | ! "";
         deletebackups2:beside         "delete"                -> @button="backups + cache" "on" | "";
-        deletemagick2:beside          "delete"                -> @button="magick" "on"          | ! "";
+        deleteprepared2:beside          "delete"                -> @button="prepared" "on"          | ! "";
 
       runbatchframe "Batch processing"                      -> batchblockline batchallline;
         batchblockline                                        -> runbatchone runbatchtwo runbatchthree;
@@ -3168,86 +3181,86 @@ start "stackfuser '$Version'"  -> frameset;
                 
     specialtab:framed "Special operations" -> specialframe @fill undoframe;
       specialframe "Special operations" -> videoline animationline cuberotateline whitebalanceline fakehdrline evalstepline rulerline ;
-        rulerline:beside                                      -> ruler rulermagick rulerfuse rulerevaluate;
+        rulerline:beside                                      -> ruler rulerprepared rulerfused rulerevaluated;
           ruleropt1combo                                        -> @combo('$Imgrulermodecombo')="100z" ;
           ruleropt2combo:beside       "Title:"                  -> @string ;
           ruleropt3combo:beside       "Color:"                  -> @combo("black","white","red","green","blue")="black" ;
           ruleropt4combo:beside       "Elements:"               -> @combow("10","20","30","40","50","60","70","80","90","100","")="" ;
-          rulermagick                                           -> @button="magick" ;
-          rulerevaluate                                         -> @button="evaluate" ;
-          rulerfuse                                             -> @button="fuse" ;
+          rulerprepared                                           -> @button="prepared" ;
+          rulerevaluated                                         -> @button="evaluated" ;
+          rulerfused                                             -> @button="fused" ;
           ruler:beside                "ruler"                 -> "" ruleropt1combo ruleropt2combo ruleropt3combo ruleropt4combo;
-        animationline:beside                                  -> animation animationopt1combo animationopt2combo animationopt3combo animationopt9combo animationmagick;
+        animationline:beside                                  -> animation animationopt1combo animationopt2combo animationopt3combo animationopt9combo animationprepared;
           animationopt1combo:beside                             -> @combo("quick","smooth")="smooth";
           animationopt2combo:beside   "fuse:"                   -> @combow('$Fusesetcombo');
           animationopt3combo:beside   "Distortion:"             -> @combow("15","20","25","30","40","50","75","100","150")="30";
           animationopt9combo:beside   "Format:"                 -> @combow("webm","mp4","gif")="webm";
-          animationmagick                                       -> @button="magick" ;
+          animationprepared                                       -> @button="prepared" ;
           animation:beside            "animated video"          -> "" ;
-        videoline:beside                                      -> video videoopt1combo videoopt2combo videoopt9combo videomagick;
+        videoline:beside                                      -> video videoopt1combo videoopt2combo videoopt9combo videoprepared;
           videoopt1combo:beside                                 -> @combo("in","out","in_and_out")="in_and_out";
           videoopt2combo:beside       "Framerate:"              -> @combow("2","3","4","5","7","10","15","20","25","30")="10";
           videoopt9combo:beside       "Format:"                 -> @combow("webm","mp4","gif")="webm";
-          videomagick                                           -> @button="magick" ;
+          videoprepared                                           -> @button="prepared" ;
           video:beside                "focus video"             -> "" ;
-        cuberotateline:beside                                 -> cuberotate cuberotateopt1combo cuberotatemagick;
+        cuberotateline:beside                                 -> cuberotate cuberotateopt1combo cuberotateprepared;
           cuberotateopt1combo:beside                            -> @combo("90","180","270","reverse-order","back-left","back-top","left","right","top","bottom")="reverse-order";
-          cuberotatemagick                                      -> @button="magick" ;
+          cuberotateprepared                                      -> @button="prepared" ;
           cuberotate:beside           "cuberotate"              -> "" ;
-        meanbalanceline:beside                                -> meanbalance meanbalanceopt1combo meanbalancemagick meanbalancefuse meanbalanceevaluate;
+        meanbalanceline:beside                                -> meanbalance meanbalanceopt1combo meanbalanceprepared meanbalancefused meanbalanceevaluated;
           meanbalanceopt1combo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
-          meanbalancemagick                                     -> @button="magick" ;
-          meanbalanceevaluate                                   -> @button="evaluate" ;
-          meanbalancefuse                                       -> @button="fuse" ;
+          meanbalanceprepared                                     -> @button="prepared" ;
+          meanbalanceevaluated                                   -> @button="evaluated" ;
+          meanbalancefused                                       -> @button="fused" ;
           meanbalance:beside          "meanbalance"             -> "";
-        whitebalanceline:beside                               -> whitebalance whitebalanceopt1combo whitebalanceopt2combo whitebalancemagick whitebalancefuse whitebalanceevaluate;
+        whitebalanceline:beside                               -> whitebalance whitebalanceopt1combo whitebalanceopt2combo whitebalanceprepared whitebalancefused whitebalanceevaluated;
           whitebalanceopt1combo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
           whitebalanceopt2combo                                 -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#CCCCCC" ;
-          whitebalancemagick                                    -> @button="magick" ;
-          whitebalanceevaluate                                  -> @button="evaluate" ;
-          whitebalancefuse                                      -> @button="fuse" ;
+          whitebalanceprepared                                    -> @button="prepared" ;
+          whitebalanceevaluated                                  -> @button="evaluated" ;
+          whitebalancefused                                      -> @button="fused" ;
           whitebalance:beside         "whitebalance"            ->  "";
-        fakehdrline:beside                               -> fakehdr fakehdropt1combo fakehdropt2combo fakehdrmagick fakehdrfuse fakehdrevaluate;
+        fakehdrline:beside                               -> fakehdr fakehdropt1combo fakehdropt2combo fakehdrprepared fakehdrfused fakehdrevaluated;
           fakehdropt1combo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
           fakehdropt2combo                                 -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
-          fakehdrmagick                                    -> @button="magick" ;
-          fakehdrevaluate                                  -> @button="evaluate" ;
-          fakehdrfuse                                      -> @button="fuse" ;
+          fakehdrprepared                                    -> @button="prepared" ;
+          fakehdrevaluated                                  -> @button="evaluated" ;
+          fakehdrfused                                      -> @button="fused" ;
           fakehdr:beside         "fakehdr"            -> "" ;
-        evalstepline:beside                                   -> evalstep evalstepopt1combo evalstepopt2combo evalstepmagick;
+        evalstepline:beside                                   -> evalstep evalstepopt1combo evalstepopt2combo evalstepprepared;
           evalstepopt1combo                                     -> @combow("max","min","mean","median")="median" ;
           evalstepopt2combo                                     -> @combow("3","5","7","9","15","25")="5" ;
-          evalstepmagick                                        -> @button="magick" ;
+          evalstepprepared                                        -> @button="prepared" ;
           evalstep:beside             "Evaluate blocks of N images" -> "";
           
       undoframe                       "undo"                -> undoline;
-        undoline:beside                                       -> undo undomagick undofuse undoevaluate;
-          undomagick                                            -> @button="magick" ;
-          undoevaluate                                          -> @button="evaluate" ;
-          undofuse                                              -> @button="fuse" ;
+        undoline:beside                                       -> undo undoprepared undofused undoevaluated;
+          undoprepared                                            -> @button="prepared" ;
+          undoevaluated                                          -> @button="evaluated" ;
+          undofused                                              -> @button="fused" ;
           undo                        "undo last step"          -> "" ;
           
-    deletetab:framed                  "Delete"               -> deletedirframe deletefuseframe deleterescursiveframe @fill;
+    deletetab:framed                  "Delete"               -> deletedirframe deletefusedframe deleterescursiveframe @fill;
       deletedirframe                  "Delete directories of current stack"   -> deletebuttons; 
-        deletebuttons:beside                                   -> deletebackups deletemagick deleteevaluate deletecompose deletefuse deletevideo deleteall deleteallbutvideo;
+        deletebuttons:beside                                   -> deletebackups deleteprepared deleteevaluated deletecomposed deletefused deletevideo deleteall deleteallbutvideo;
           deletebackups                                          -> @button="backups + cache";
-          deleteevaluate                                         -> @button="evaluate";
-          deletemagick                                           -> @button="magick";
-          deletecompose                                          -> @button="compose";
-          deletefuse                                             -> @button="fuse";
+          deleteevaluated                                         -> @button="evaluated";
+          deleteprepared                                           -> @button="prepared";
+          deletecomposed                                          -> @button="composed";
+          deletefused                                             -> @button="fused";
           deletevideo                                            -> @button="video";
           deleteall                                              -> @button="all";
           deleteallbutvideo                                      -> @button="all but video";
-      deletefuseframe                 "Delete fuse results (beta)"      -> deletefuseline;
-        deletefuseline:beside                                      -> deletefusesetcombo deletefusesetbutton deletefusechoicecombo deletefusechoicebutton;
-          deletefusesetcombo:beside                                  -> @combo('$Fusesetcombo');
-          deletefusesetbutton                                        -> @button="delete all fuse results+evaluate" ;
-          deletefusechoicecombo                                      -> @combo("-");
-          deletefusechoicebutton                                     -> @button="delete fuse result" ;
+      deletefusedframe                 "Delete fused results (beta)"      -> deletefusedline;
+        deletefusedline:beside                                      -> deletefusedsetcombo deletefusedsetbutton deletefusedchoicecombo deletefusedchoicebutton;
+          deletefusedsetcombo:beside                                  -> @combo('$Fusesetcombo');
+          deletefusedsetbutton                                        -> @button="delete all fused results+evaluated" ;
+          deletefusedchoicecombo                                      -> @combo("-");
+          deletefusedchoicebutton                                     -> @button="delete fused result" ;
       deleterescursiveframe           "Delete recursively"     -> recursivedeletedir recursivedeletecache;
         recursivedeletedir            "Base directory for recursive deletion" -> @directory="'$Projecthome'" ;
         recursivedeletecache                                       -> @button="Recursively delete all cache and backup directories" ;
-        recursivedeletemagick                                      -> @button="Recursively delete all magick directories" ;
+        recursivedeleteprepared                                      -> @button="Recursively delete all prepared directories" ;
           
     configtab                         "Configuration"        -> configframe;
       configframe                                              -> storagebasedirtext storagebasedir allownonconformant gallerydir @fill;
@@ -3278,25 +3291,25 @@ The directory structure is:\n\
         allownonconformant:beside     "Allow stackshots outside of Storage base dir and without directory \"stackshot\"."       -> "yes" | '$( [ "$(storeinfo dump allow_dir_invalid)" = "no" ] && echo "!")' "no" ;
         gallerydir:beside             "Gallery directory where one result of each stackshot in the storage base dir is shown:"  -> @directory="'$(storeinfo dump gallerydir)'";
 
-    showresulttab:framed              "Show results"     -> showevaluateframe showsetframe showcomposeframe showdirframe showvideoframe;
+    showresulttab:framed              "Show results"     -> showevaluatedframe showsetframe showcomposedframe showdirframe showvideoframe;
       
-      showevaluateframe               "Evaluate results"         ->  showevaluatefuseline showevaluatemagickline;
-        showevaluatefuseline:beside                                -> showevaluatefusemax showevaluatefusemin showevaluatefusemean showevaluatefusemedian ;
-          showevaluatefusemax                                        -> @button="fuse.max" ;
-          showevaluatefusemin                                        -> @button="fuse.min" ;
-          showevaluatefusemean                                       -> @button="fuse.mean" ;
-          showevaluatefusemedian                                     -> @button="fuse.median" ;
-        showevaluatemagickline:beside                              -> showevaluatemagickmax showevaluatemagickmin showevaluatemagickmean showevaluatemagickmedian ;
-          showevaluatemagickmax                                      -> @button="magick.max" ;
-          showevaluatemagickmin                                      -> @button="magick.min" ;
-          showevaluatemagickmean                                     -> @button="magick.mean" ;
-          showevaluatemagickmedian                                   -> @button="magick.median" ;
+      showevaluatedframe               "Evaluate results"         ->  showevaluatedfusedline showevaluatedpreparedline;
+        showevaluatedfusedline:beside                                -> showevaluatedfusedmax showevaluatedfusedmin showevaluatedfusedmean showevaluatedfusedmedian ;
+          showevaluatedfusedmax                                        -> @button="fused.max" ;
+          showevaluatedfusedmin                                        -> @button="fused.min" ;
+          showevaluatedfusedmean                                       -> @button="fused.mean" ;
+          showevaluatedfusedmedian                                     -> @button="fused.median" ;
+        showevaluatedpreparedline:beside                              -> showevaluatedpreparedmax showevaluatedpreparedmin showevaluatedpreparedmean showevaluatedpreparedmedian ;
+          showevaluatedpreparedmax                                      -> @button="prepared.max" ;
+          showevaluatedpreparedmin                                      -> @button="prepared.min" ;
+          showevaluatedpreparedmean                                     -> @button="prepared.mean" ;
+          showevaluatedpreparedmedian                                   -> @button="prepared.median" ;
           
       showsetframe                    "Fuse set results"         -> showsetline;
-        showsetline:beside                                         -> showfusesetcombo showfuseresults showfusesetevaluate;
+        showsetline:beside                                         -> showfusesetcombo showfusedresults showfusesetevaluated;
           showfusesetcombo:beside     "Fuse set"                     -> @combo("all",'$Fusesetcombo');
-          showfuseresults                                            -> @button="Fuse results";
-          showfusesetevaluate:beside  "Evaluate results:"            -> showfusesetbuttonmean showfusesetbuttonmedian showfusesetbuttonmin showfusesetbuttonmax showfusesetbuttonall;
+          showfusedresults                                            -> @button="Fuse results";
+          showfusesetevaluated:beside  "Evaluate results:"            -> showfusesetbuttonmean showfusesetbuttonmedian showfusesetbuttonmin showfusesetbuttonmax showfusesetbuttonall;
             showfusesetbuttonmean                                      -> @button="mean";
             showfusesetbuttonmedian                                    -> @button="median";
             showfusesetbuttonmin                                       -> @button="min";
@@ -3304,31 +3317,31 @@ The directory structure is:\n\
             showfusesetbuttonall                                       -> @button="all";
       '
        
-  echo '  showcomposeframe      "Composed max+min results" -> showcomposeline1 showcomposeline2;'
-  echo '    showcomposeline1:beside                          -> '
+  echo '  showcomposedframe      "Composed max+min results" -> showcomposedline1 showcomposedline2;'
+  echo '    showcomposedline1:beside                          -> '
   for Mode in $Composemodes1; do
-    echo -n " showcompose_${Mode} "
+    echo -n " showcomposed_${Mode} "
   done
   echo ';'
-  echo '   showcomposeline2:beside                           -> '
+  echo '   showcomposedline2:beside                           -> '
   for Mode in $Composemodes2; do
-    echo -n " showcompose_${Mode} "
+    echo -n " showcomposed_${Mode} "
   done
   echo ';'
   for Mode in $Composemodes; do
-    echo " showcompose_${Mode}                                 -> @button='${Mode}' ;"
+    echo " showcomposed_${Mode}                                 -> @button='${Mode}' ;"
   done
         
   echo '
     showdirvideoframe:beside                              -> showdirframe showvideoframe;
       showdirframe                   "Directories"          -> showdirline ;
-        showdirline:beside                                    -> showdirfm showdirstackshot showdirmagick showdircompose showdirfuse showdirevaluate ;
+        showdirline:beside                                    -> showdirfm showdirstackshot showdirprepared showdircomposed showdirfused showdirevaluated ;
           showdirfm                                             -> @button="File Manager";
           showdirstackshot                                      -> @button="stackshot";
-          showdirmagick                                         -> @button="magick";
-          showdirfuse                                           -> @button="fuse";
-          showdircompose                                        -> @button="compose";
-          showdirevaluate                                       -> @button="evaluate";
+          showdirprepared                                         -> @button="prepared";
+          showdirfused                                           -> @button="fused";
+          showdircomposed                                        -> @button="composed";
+          showdirevaluated                                       -> @button="evaluated";
       showvideoframe                 "Videos"               -> show_video;
         show_video:beside                                     -> @combo("--------------------------------------------------");
   '
@@ -3392,7 +3405,7 @@ kaptain_update() {
   
   Stackdir="$(storeinfo dump stackshotdir)"
   setup_targetdirnames "$Stackdir"
-  verbose regresh
+
   # update working directory
   sendkaptain "choosedir='$Stackdir'"
   
@@ -3414,17 +3427,17 @@ kaptain_update() {
   
   # show directory buttons
   [ -d "$Targetstackshotdir" ]                      && sendkaptain "showdirstackshot='stackshot'"       || sendkaptain "showdirstackshot='-'"
-  [ -d "$Targetmagickdir" ]                         && sendkaptain "showdirmagick='magick'"             || sendkaptain "showdirmagick='-'"
-  [ -d "$Targetevaluatedir" ]                       && sendkaptain "showdirevaluate='evaluate'"         || sendkaptain "showdirevaluate='-'"
-  [ -d "$Targetcomposedir" ]                        && sendkaptain "showdircompose='compose'"           || sendkaptain "showdircompose='-'"
-  [ -d "$Targetfusedir" ]                           && sendkaptain "showdirfuse='fuse'"                 || sendkaptain "showdirfuse='-'"
+  [ -d "$Targetprepareddir" ]                         && sendkaptain "showdirprepared='prepared'"             || sendkaptain "showdirprepared='-'"
+  [ -d "$Targetevaluateddir" ]                       && sendkaptain "showdirevaluated='evaluated'"         || sendkaptain "showdirevaluated='-'"
+  [ -d "$Targetcomposeddir" ]                        && sendkaptain "showdircomposed='composed'"           || sendkaptain "showdircomposed='-'"
+  [ -d "$Targetfuseddir" ]                           && sendkaptain "showdirfused='fused'"                 || sendkaptain "showdirfused='-'"
   
   # show delete buttons
   check_dirglob "$Stackdir/*.bak $Stackdir/cache" ] && sendkaptain "deletebackups='backups + cache'"    || sendkaptain "deletebackups='-'"
-  [ -d "$Targetmagickdir" ]                && sendkaptain "deletemagick='magick'"              || sendkaptain "deletemagick='-'"
-  [ -d "$Targetevaluatedir" ]              && sendkaptain "deleteevaluate='evaluate'"          || sendkaptain "deleteevaluate='-'"
-  [ -d "$Targetcomposedir" ]               && sendkaptain "deletecompose='compose'"            || sendkaptain "deletecompose='-'"
-  [ -d "$Targetfusedir" ]                  && sendkaptain "deletefuse='fuse'"                  || sendkaptain "deletefuse='-'"
+  [ -d "$Targetprepareddir" ]                && sendkaptain "deleteprepared='prepared'"              || sendkaptain "deleteprepared='-'"
+  [ -d "$Targetevaluateddir" ]              && sendkaptain "deleteevaluated='evaluated'"          || sendkaptain "deleteevaluated='-'"
+  [ -d "$Targetcomposeddir" ]               && sendkaptain "deletecomposed='composed'"            || sendkaptain "deletecomposed='-'"
+  [ -d "$Targetfuseddir" ]                  && sendkaptain "deletefused='fused'"                  || sendkaptain "deletefused='-'"
   [ -d "$Targetvideodir" ]                 && sendkaptain "deletevideo='video'"                || sendkaptain "deletevideo='-'"
   
   # videos
@@ -3437,17 +3450,17 @@ kaptain_update() {
   [ -z "$Comboline" ] && Comboline="'-'"
   sendkaptain "show_video($Comboline)=''"
   
-  # evaluate results
+  # evaluated results
   for Mode in max min mean median; do
-    check_fileglob "$Targetevaluatedir/*.fuse*.${Mode}.*"   && sendkaptain "showevaluatefuse${Mode}='fuse.${Mode}'"     || sendkaptain "showevaluatefuse${Mode}='-'" 
-    check_fileglob "$Targetevaluatedir/*.magick.${Mode}.*"  && sendkaptain "showevaluatemagick${Mode}='magick.${Mode}'" || sendkaptain "showevaluatemagick${Mode}='-'" 
+    check_fileglob "$Targetevaluateddir/*.fused*.${Mode}.*"   && sendkaptain "showevaluatedfused${Mode}='fused.${Mode}'"     || sendkaptain "showevaluatedfused${Mode}='-'" 
+    check_fileglob "$Targetevaluateddir/*.prepared.${Mode}.*"  && sendkaptain "showevaluatedprepared${Mode}='prepared.${Mode}'" || sendkaptain "showevaluatedprepared${Mode}='-'" 
   done
   
   # fuse sets
   Comboline=""
-  for Line in $(fileglob "$Targetevaluatedir/*fuse.*.mean.tif"); do
+  for Line in $(fileglob "$Targetevaluateddir/*fused.*.mean.tif"); do
     Line="$(basename "$Line")"
-    Line="${Line#$Targetbasename.fuse.}"
+    Line="${Line#$Targetbasename.fused.}"
     Line="${Line%.mean.tif}"
     Comboline="$Comboline,'$Line'"
   done
@@ -3461,7 +3474,7 @@ kaptain_update() {
   Comboline=""
   Count=0
   while read Line; do
-    #[ "$Line" ] && [ -e "$Targetfusedir/$(fuse_name "$Line")" ] && {
+    #[ "$Line" ] && [ -e "$Targetfuseddir/$(fuse_name "$Line")" ] && {
       Comboline="$Comboline,'$Line'"
       Count="$((Count+1))"
     #}
@@ -3474,9 +3487,9 @@ kaptain_update() {
   sendkaptain "deletefusechoicecombo($Comboline)='$Choice'"
   
   
-  # compose results
+  # composed results
   for Mode in $Composemodes; do
-    check_fileglob "$Targetcomposedir/*.${Mode}.*" && sendkaptain "showcompose_${Mode}='${Mode}'" || sendkaptain "showcompose_${Mode}='-'"
+    check_fileglob "$Targetcomposeddir/*.${Mode}.*" && sendkaptain "showcomposed_${Mode}='${Mode}'" || sendkaptain "showcomposed_${Mode}='-'"
   done
   
   Cmdstatus="$(storeinfo dump status)"
@@ -3504,22 +3517,22 @@ kaptain_update_preview() {
   grep -q "$Stackdir" <<< "$Currentimage" && [ -e "$Currentimage" ] && showimage "$Currentimage" && return 0
   
   # check for a result to show
-  Image="$(fileglob "$Stackdir/evaluate/*fuse.median.*" | grep 'set2\.' | head -n1)"
+  Image="$(fileglob "$Stackdir/evaluated/*fused.median.*" | grep 'set2\.' | head -n1)"
   [ -e "$Image" ] && showimage "$Image" && return 0
   
-  Image="$(fileglob "$Stackdir/evaluate/*.fuse.*.mean.*" | head -n1)"
+  Image="$(fileglob "$Stackdir/evaluated/*.fused.*.mean.*" | head -n1)"
   [ -e "$Image" ] && showimage "$Image" && return 0
   
-  Image="$(fileglob "$Stackdir/*.fuse.*.mean.*" | head -n1)"
+  Image="$(fileglob "$Stackdir/*.fused.*.mean.*" | head -n1)"
   [ -e "$Image" ] && showimage "$Image" && return 0
   
-  Image="$(fileglob "$Stackdir/*.fuse.median.*" | head -n1)"
+  Image="$(fileglob "$Stackdir/*.fused.median.*" | head -n1)"
   [ -e "$Image" ] && showimage "$Image" && return 0
   
-  Image="$(fileglob "$Stackdir/evaluate/*magick.max*")"
+  Image="$(fileglob "$Stackdir/evaluated/*prepared.max*")"
   [ -e "$Image" ] && showimage "$Image" && return 0
 
-  Imagelist="$(fileglob "$Stackdir/magick/*")"
+  Imagelist="$(fileglob "$Stackdir/prepared/*")"
   [ "$Imagelist" ] && {
     Imagenumber="$(grep -c . <<< "$Imagelist")"
     Image="$(head -n$((Imagenumber/2)) <<< "$Imagelist" | tail -n1)"
@@ -3605,7 +3618,7 @@ stackshot_selector() {
   # get list of stackshot dirs and median images
   Dirlist="$(find -name stackshot -type d | sed s%/stackshot%% | sort -V)"
   for Dir in $Dirlist; do
-    Image="$(find $Dir/*fuse.*.mean* $Dir/evaluate/*fuse.*.mean* $Dir/*fuse.median* 2>/dev/null | grep -v "layered" |head -n1)"
+    Image="$(find $Dir/*fused.*.mean* $Dir/evaluated/*fused.*.mean* $Dir/*fused.median* 2>/dev/null | grep -v "layered" |head -n1)"
     [ -z "$Image" ] && {
       find $Dir/stackshot/* | grep -i -v -E "mov|mp4|mpeg|layered" > $Cachedir/list
       #Image="$(split -n 2/2 $Cachedir/list | head -n2 | tail -n1)"
@@ -4023,27 +4036,27 @@ parse_kaptainsignal() {
         rmrecursive bak "$Dir"
       } || failure "Base dir not valid: $Dir"
     ;;
-    recursivedeletemagick)
+    recursivedeleteprepared)
       Dir="$(askkaptain recursivedeletedir)"
       [ -d "$Dir" ] && {
-        rmrecursive magick "$Dir"
+        rmrecursive prepared "$Dir"
       } || failure "Base dir not valid: $Dir"
     ;;
-    showevaluatefuse*)
-      Image="${Kaptainsignal#showevaluatefuse}"
-      Image="$(fileglob "$Stackdir/evaluate/*.fuse*.$Image.*")"
+    showevaluatedfused*)
+      Image="${Kaptainsignal#showevaluatedfused}"
+      Image="$(fileglob "$Stackdir/evaluated/*.fused*.$Image.*")"
       showimage "$Image"
     ;;
-    showevaluatemagick*)
-      Image="${Kaptainsignal#showevaluatemagick}"
-      Image="$(fileglob "$Stackdir/evaluate/*.magick.$Image.*")"
+    showevaluatedprepared*)
+      Image="${Kaptainsignal#showevaluatedprepared}"
+      Image="$(fileglob "$Stackdir/evaluated/*.prepared.$Image.*")"
       showimage "$Image"
     ;;
-    showcompose_*)
-      Image="${Kaptainsignal#showcompose_}"
-      Image="$Stackdir/compose/*.$Image.*"
+    showcomposed_*)
+      Image="${Kaptainsignal#showcomposed_}"
+      Image="$Stackdir/composed/*.$Image.*"
       showimage "$Image"
-      showimage "$(fileglob "$Image" | grep 'magick' | head -n1)"
+      showimage "$(fileglob "$Image" | grep 'prepared' | head -n1)"
       #showimage "$(fileglob "$Image")"
     ;;
     show_video*)
@@ -4061,21 +4074,21 @@ parse_kaptainsignal() {
       Line="$(askkaptain "showfusesetcombo")"
       Mode="${Kaptainsignal#showfusesetbutton}"
       case $Mode in
-        all) showimage "$Stackdir/evaluate/*.$Line.*" ;;
-        *) showimage "$Stackdir/evaluate/*.$Line.$Mode.*" ;;
+        all) showimage "$Stackdir/evaluated/*.$Line.*" ;;
+        *) showimage "$Stackdir/evaluated/*.$Line.$Mode.*" ;;
       esac
     ;;
-    showfuseresults)
+    showfusedresults)
       Line="$(askkaptain "showfusesetcombo")"
       setup_targetdirnames "$Stackdir"
       showimage $(fuse_glob --list "$Line")
     ;;
     
-    *magick|*compose|*evaluate|*fuse|evaluatemagick|align_vidstab|align_ais|align_hugin|align_focusstack)
+    *prepared|*composed|*evaluated|*fused|evaluateprepared|align_vidstab|align_ais|align_hugin|align_focusstack)
       Command="$Kaptainsignal"
-      Command="${Command%evaluate}"
-      Command="${Command%fuse}"
-      Command="${Command%magick}"
+      Command="${Command%evaluated}"
+      Command="${Command%fused}"
+      Command="${Command%prepared}"
       [ -z "$Command" ] && Command="$Kaptainsignal"
       getfunctionsettings $Command
       Command="${Command%_}"
@@ -4165,35 +4178,35 @@ parse_cmd() {
   Function="$(tr -d "[:digit:]" <<< "$Function")" 
     
   case "$Function" in
-    deleteall)         myrmdir "$Targetcachedir" "$Targetdir"/*.bak "$Targetmagickdir" "$Targetcomposedir" "$Targetevaluatedir" "$Targetfusedir" "$Targetvideodir" ; Return=0 ;;
-    deleteallbutvideo) myrmdir "$Targetcachedir" "$Targetdir"/*.bak "$Targetmagickdir" "$Targetcomposedir" "$Targetevaluatedir" "$Targetfusedir"                   ; Return=0 ;;
+    deleteall)         myrmdir "$Targetcachedir" "$Targetdir"/*.bak "$Targetprepareddir" "$Targetcomposeddir" "$Targetevaluateddir" "$Targetfuseddir" "$Targetvideodir" ; Return=0 ;;
+    deleteallbutvideo) myrmdir "$Targetcachedir" "$Targetdir"/*.bak "$Targetprepareddir" "$Targetcomposeddir" "$Targetevaluateddir" "$Targetfuseddir"                   ; Return=0 ;;
     deletebackups)     myrmdir "$Targetcachedir" "$Targetdir"/*.bak ; Return=0 ;;
     deletefuseset)   
       Set="$(askkaptain "deletefusesetcombo")"
       rm -v $(fuse_glob --list "$Set") 
-      rm -v $Stackdir/evaluate/*.$Set.*
+      rm -v $Stackdir/evaluated/*.$Set.*
     ;;
     deletefusechoice)
       Set="$(askkaptain "deletefusesetcombo")"
       Line="$(askkaptain "deletefusechoicecombo")"
       case $Line in
         all) rm -v $(fuse_glob --list "$Set") ;;
-        *)   rm -v $Targetfusedir/$(fuse_name "$Line") ;;
+        *)   rm -v $Targetfuseddir/$(fuse_name "$Line") ;;
       esac
     ;;
     delete*)           myrmdir "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
     align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|imageformat*|gamma*|level*|fakehdr*|orient*|prepare*|rotate*|sharpen*|statistic*|evalstep*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
-      Function="${Function%magick}"
+      Function="${Function%prepared}"
       batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -g "$Sourcefileglob" -t "$Targetdir"
       Return=$?
     ;;
     fuse*)
-      Function="${Function%magick}"
+      Function="${Function%prepared}"
       batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -g "$Sourcefileglob" -t "$Targetdir"
       Return=$?
       [ "$Return" = "0" ] && [ "${Opt2}" = "all" ] && {
-        batch_function -f evaluatefuse -1 "$Opt1" -t "$Targetdir"
+        batch_function -f evaluatefused -1 "$Opt1" -t "$Targetdir"
         Return=$?
       }
     ;;
@@ -4256,7 +4269,7 @@ declare_variables() {
 
   #Magickbin="nice convert -quality 100%"
   command -v convert             >/dev/null && Magickbin=convert
- # command -v magick              >/dev/null && Magickbin=magick
+  command -v magick              >/dev/null && Magickbin=magick
   #command -v convert-im6.q16     >/dev/null && Magickbin=convert-im6.q16
   #command -v convert-im6.q16hdri >/dev/null && Magickbin=convert-im6.q16hdri
   Magickversion="$($Magickbin -version)"
@@ -4291,7 +4304,7 @@ TIF"
   Imageformatcombo="${Imageformatcombo#,}"
   
   Composemodes1="bumpmap1 colorburn1 linearlight1 modulate1 overlay1 pegtoplight1 difference linearburn"
-  Composemodes2="bumpmap2 colorburn2 linearlight2 modulate2 overlay2 pegtoplight2 multiply   composemean"
+  Composemodes2="bumpmap2 colorburn2 linearlight2 modulate2 overlay2 pegtoplight2 multiply   composedmean"
   Composemodes="$Composemodes1 $Composemodes2"
   
   Imfusecfg=""
@@ -4399,6 +4412,9 @@ main() {
   #storepid $Kaptainpid
 
   storeinfo "refreshgui_main=yes"
+  storeinfo "status='idle'"
+  sendkaptain "storagebasedir='$Projecthome'"
+  sendkaptain "stackshotdir='$(storeinfo dump stackshotdir)'"
   stack_cmd & storepid $!
 
   # watch signals of kaptain
@@ -4460,4 +4476,4 @@ exit 0
 # cli support
 # documentation in all functions
 # Features:
-#  - clean entire project home: cache, backup, magick (note in history)
+#  - clean entire project home: cache, backup, prepared (note in history)
