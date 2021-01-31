@@ -961,6 +961,7 @@ $(grep "\S" <<< "$Command")"
         maskfromimage $Imagename $Cachedir/$Argbasename || break  ### FIXME issue with --cache
       }
       Arglevel=""
+      Argtype="image"
       maskarg_store      
     }
     
@@ -1325,6 +1326,7 @@ focus_merge_masks() {
       Argcontrast=""
       maskarg_store
     }
+    
     
     # less
     [ "$Argdarkenmask" ] && Mergecode="$Mergecode
@@ -1915,6 +1917,7 @@ declare_variables() {
   Argsigma2=""
   Argsoft=""
   Argswap=""
+  Argtype=""
   Argthreshold=""
   Argweight=""
   Argword1=""
@@ -1939,6 +1942,7 @@ declare_variables() {
   Firstmaskmethod=""
   Forceoverwrite=""
   Freemem=""
+  Globalcontrast=""
   Globalclose=""
   Globalclose1=""
   Globalclose2=""
@@ -1991,7 +1995,7 @@ parse_options() {
   
   Shortoptions="ho:vV"
   Longoptions="basename:,cache::,force,help,verbose,version,output:,showimage,showname,test::"
-  Longoptions="$Longoptions,bg:,background:,close::,denoise::,fakehdr::,grayscale:,layers::,merge:,less::,revert,softmode::"
+  Longoptions="$Longoptions,bg:,background:,close::,contrast::,denoise::,fakehdr::,grayscale:,layers::,merge:,less::,revert,softmode::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -2005,26 +2009,27 @@ parse_options() {
   while [ $# -gt 0 ]; do
     [ "$Error" ] && break
     case "${1:-}" in
-         --bg|--background)   Background="${2:-}"        ; shift ;;
-         --basename)          Basename="${2:-auto}"      ; shift ;;
-         --cache)             Preservecache="yes"        ; Cachedir="${2:-auto}" ; shift ;;
-         --close)             Globalclose="${2:-auto}"   ; shift ;;
-         --denoise)           Globaldenoise="${2:-auto}" ; shift ;;
-         --fakehdr)           Fakehdr="${2:-auto}"       ; shift ;;
-         --force)             Forceoverwrite="yes"       ;;
-         --grayscale)         Grayscale="${2:-auto}"     ; shift ;;
-      -h|--help)              usage                      ; exit 0 ;;
-         --layers)            Layers="${2:-auto}"        ; shift ;;
-         --less)              Globalless="${2:-auto}"    ; shift ;;
-         --merge)             Mergemethod="${2:-}"       ; shift ;;
-         --showname)          Showname="yes"             ;;
-      -o|--output)            Outputimage="${2:-}"       ; shift ;;
-         --revert)            Revertimagelist="yes"      ;;
-      -V|--showimage)         Showimageprocessing="yes"  ;;
-         --softmode)          Globalsoft="${2:-auto}"    ; shift ;;
+         --bg|--background)   Background="${2:-}"         ; shift ;;
+         --basename)          Basename="${2:-auto}"       ; shift ;;
+         --cache)             Preservecache="yes"         ; Cachedir="${2:-auto}" ; shift ;;
+         --close)             Globalclose="${2:-auto}"    ; shift ;;
+         --contrast)          Globalcontrast="${2:-auto}" ; shift ;;         
+         --denoise)           Globaldenoise="${2:-auto}"  ; shift ;;
+         --fakehdr)           Fakehdr="${2:-auto}"        ; shift ;;
+         --force)             Forceoverwrite="yes"        ;;
+         --grayscale)         Grayscale="${2:-auto}"      ; shift ;;
+      -h|--help)              usage                       ; exit 0 ;;
+         --layers)            Layers="${2:-auto}"         ; shift ;;
+         --less)              Globalless="${2:-auto}"     ; shift ;;
+         --merge)             Mergemethod="${2:-}"        ; shift ;;
+         --showname)          Showname="yes"              ;;
+      -o|--output)            Outputimage="${2:-}"        ; shift ;;
+         --revert)            Revertimagelist="yes"       ;;
+      -V|--showimage)         Showimageprocessing="yes"   ;;
+         --softmode)          Globalsoft="${2:-auto}"     ; shift ;;
          --test)              Testsetup="test" Testarg="${2:-}"    ; shift ;;
-      -v|--verbose)           Verbose="yes"              ;;
-         --version)           echo "imfuse v$Version"    ; exit 0 ;;
+      -v|--verbose)           Verbose="yes"               ;;
+         --version)           echo "imfuse v$Version"     ; exit 0 ;;
       
 --blur|--channel|--chroma|--comet|--compass|--compose|--darkness|--diffstat|--dog|--enfuse|--evaluate|\
 --experimental|--free|--freediff|\
@@ -2052,6 +2057,12 @@ $(realpath "${1:-}")"
 check_options() {
   local Arg
 
+  # --contrast
+  case $Globalcontrast in
+    0)    Globalcontrast="" ;;
+    auto) Globalcontrast="1" ;;
+  esac
+  
   Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
   [ -n "$Maskmethodlist" ] && while read Line; do
     maskarg_parse "$Line"
@@ -2076,6 +2087,7 @@ check_options() {
         Arglevel="yes"
       ;;
     esac
+    Argtype="$(defaultvalue "$Argmethod" type)"
     
     [ "${Argless}" ] && [ "${Argsoft}" ] && Background="${Background:-enfuse}"
     
@@ -2131,6 +2143,11 @@ check_options() {
         esac
       ;;
     esac
+    
+    [ "$Globalcontrast" ] && [ "$Argtype" = "mask" ] && {
+      Argcontrast="$(calc "${Argcontrast:-0} + $Globalcontrast")"
+    }
+    
     maskarg_store "$Maskmethodcount"
   done <<< "$Maskmethodlist"
 
@@ -2361,7 +2378,14 @@ defaultvalue() {
       echo "2x2"
     ;;
     contrast)
-      echo "1"
+      case "${1:-}" in
+        blur|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
+          echo "1"
+        ;;
+        *)
+          echo "0"
+        ;;
+      esac
     ;;
     less)
       case "${1:-}" in
@@ -2498,6 +2522,16 @@ defaultvalue() {
         *)          echo "15" ;;
       esac
     ;;
+    type)
+      case "${1:-}" in
+        blur|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
+          echo "mask"
+        ;;
+        *)
+          echo "image"
+        ;;
+      esac
+    ;;
     word1)
       case "${1:-}" in
         channel)    echo "HSL" ;;
@@ -2544,6 +2578,7 @@ maskarg_parse() {
   Argsigma1=""
   Argsigma2=""
   Argsoft=""
+  Argtype=""
   Argswap=""
   Argthreshold=""
   Argweight=""
@@ -2592,6 +2627,7 @@ maskarg_parse() {
       "DARKENMASK")       Argdarkenmask="$Value" ;;
       "NUM")              Maskmethodcount="$Value" ;;
       "METHOD")           Argmethod="$Value" ;;
+      "TYPE")             Argtype="$Value" ;;
       "BASENAME")         Argbasename="$Value" ;;
       *|WORD1|WORD2) ### FIXME
         [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
@@ -2748,6 +2784,7 @@ maskarg_store() {
   [ "$Arglevel" ]              && Newoption="$Newoption,LEVEL"
   [ "$Arglevelmin" ]           && Newoption="$Newoption,LEVELMIN=$Arglevelmin"
   [ "$Arglevelmax" ]           && Newoption="$Newoption,LEVELMAX=$Arglevelmax"
+  [ "$Argtype" ]               && Newoption="$Newoption,TYPE=$Argtype"
   [ "$Argbasename" ]           && Newoption="$Newoption,BASENAME=$Argbasename"
 
   grep -q "NUM=$Maskmethodcount," <<< "$Maskmethodlist" \
