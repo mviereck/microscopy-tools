@@ -39,8 +39,7 @@ Arguments taken by all mask options:
   c, close  Compare option --close, here applied for single mask only.
   less      Compare option --less, here applied for single mask only.
   soft      Compare option --soft, here applied for single mask only.
-  contrast  Blurs the generated masks. Default without a sigma value: 0.5
-            Almost always improves the result with stronger contrasts.
+  contrast  Compare option --contrast, here applied for single mask only.
   denoise   Compare option --denoise, here applied for single mask only.
   negate    Negate/invert the mask. Rarely needed.
   t         Threshold of mask below percent. Default without value: t10
@@ -232,9 +231,11 @@ Mask generation and fusion adjustments:
                       Helps e.g. to strengthen thin shiny objects like hairs.
                       For big values rather use c2x8 or c4x4 instead of c16,
                       the result will be similar but faster.
- --denoise [%]        Experimental option to remove noise in low contrast areas.
+ --contrast [=SIGMA]  Contrast enhancement. Applied to contrast masks only.
+                      SIGMA is a blur sigma value. Default without SIGMA: 1
+ --denoise [=%]       Experimental option to remove noise in low contrast areas.
                       The percent value is a threshold. Rather use --soft.
- --fakehdr [%]        Balances over- and underexposed areas. Default %: 50
+ --fakehdr [=%]       Balances over- and underexposed areas. Default %: 50
                       Remaining artefacts at borders of overexposured areas
                       might be fixed with --saturation. Alternative: --halo
  --grayscale=MODE     Grayscale converting method before mask generation.
@@ -250,18 +251,16 @@ Mask generation and fusion adjustments:
                 7 Average          (R' + G' + B') / 3.0
                 8 MS               (R'^2 + G'^2 + B'^2) / 3.0
                 9 RMS              sqrt( (R'^2 + G'^2 + B'^2) / 3.0 )
- --less [=ARG]        Strenghtens less contrasted objects in front of strong
+ --less [=%]          Strenghtens less contrasted objects in front of strong
                       contrasted background. Well to combine with 'close'. 
                       ARG is a percent value as a minimum intermediate cpntrast
                       difference. Default value depends on first mask method.
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
- --merge ARG               Merge method to combine multiple masks. Choose
-                           out of 'magick -list composite'. Default: screen
- --soft ARG                Enable soft fuse mode. Gives a blurry soft result 
-                           free of noise artefacts. Compare 'soft' in mask ARG.
-                           Takes a percent ARG value. semitransparent result
-                           composed over a default --background=enfuse.
+ --soft [=%]          Enable soft fuse mode. Takes a percent argument.
+                      High % is very soft. Strenght of value depends on mask.
+                      A semitransparent result is composed over the background.
+                      Best method to reduce noise in low contrast areas.
                            
 Basics:                   
 Fusing a focus stack aims to generate an overall sharp image of several single
@@ -1343,7 +1342,7 @@ focus_merge_masks() {
     Mergecode="$Mergecode
     +level 0%,$(calc "(100 * ${Argweight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
   )
-    -compose ${Mergemethod:-screen} -composite"
+    -compose Screen -composite"
   done <<< "$Maskmethodlist"
   
   # denoise low contrast areas
@@ -1968,7 +1967,6 @@ declare_variables() {
   Maskmethodlist=""
   Maskmethodnumber=""
   Mergemaskbasename=""
-  Mergemethod=""
   Outputimage=""
   Parsedoptions=""
   Preservecache=""
@@ -1995,7 +1993,7 @@ parse_options() {
   
   Shortoptions="ho:vV"
   Longoptions="basename:,cache::,force,help,verbose,version,output:,showimage,showname,test::"
-  Longoptions="$Longoptions,bg:,background:,close::,contrast::,denoise::,fakehdr::,grayscale:,layers::,merge:,less::,revert,softmode::"
+  Longoptions="$Longoptions,bg:,background:,close::,contrast::,denoise::,fakehdr::,grayscale:,layers::,less::,revert,soft::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -2021,12 +2019,11 @@ parse_options() {
       -h|--help)              usage                       ; exit 0 ;;
          --layers)            Layers="${2:-auto}"         ; shift ;;
          --less)              Globalless="${2:-auto}"     ; shift ;;
-         --merge)             Mergemethod="${2:-}"        ; shift ;;
          --showname)          Showname="yes"              ;;
       -o|--output)            Outputimage="${2:-}"        ; shift ;;
          --revert)            Revertimagelist="yes"       ;;
       -V|--showimage)         Showimageprocessing="yes"   ;;
-         --softmode)          Globalsoft="${2:-auto}"     ; shift ;;
+         --soft)              Globalsoft="${2:-auto}"     ; shift ;;
          --test)              Testsetup="test" Testarg="${2:-}"    ; shift ;;
       -v|--verbose)           Verbose="yes"               ;;
          --version)           echo "imfuse v$Version"     ; exit 0 ;;
@@ -2336,10 +2333,6 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   case $Globaldenoise in
     "") ;;
     *) Resultimage="${Resultimage}_denoise$Globaldenoise" ;;
-  esac
-  case $Mergemethod in
-    "") ;;
-    *) Resultimage="${Resultimage}_Merge=$Mergemethod" ;;
   esac
   case $Revertimagelist in
     "yes") Resultimage="${Resultimage}_rev" ;;

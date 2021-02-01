@@ -689,10 +689,8 @@ batch_function() {
     esac
   }
   
-  set -x
   storeinfo test rmcache_after && rm -R "$Cachedir"
-  set +x
-  
+  set -x
   [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluated" ] && {
     
     storeinfo test stackshotdir_valid && {
@@ -702,27 +700,18 @@ batch_function() {
       }
     
       # link fused.mean results
-      ls $Destinationdir/*fused.mean* >/dev/null 2>&1 && {
+      ls $Destinationdir/*fused.*.mean* >/dev/null 2>&1 && {
+        Gallerydir="$(storeinfo dump gallerydir)"
         # link fused.median result into parent directory
         while read Line; do
-          ln -f "$Line" "$Targetdir"
-        done < <(fileglob "$Targetevaluateddir/*fused.mean.*")
-        
-        ## link into project dir
-        #[ "$(storeinfo dump projectname)" != "np" ] && {
-        #  Image="$(find $Destinationdir/*.fused.median.set2.* $Destinationdir/*.fused.median.* -type f | head -n1)"
-        #  [ -e "$Image" ] && ln -f "$Image" "$Destinationdir/../../"
-        #}
+                                                         ln -f "$Line" "$Targetdir"
+          [ -d "$Gallerydir" ] &&                        ln -f "$Line" "$Gallerydir"
+          [ "$(storeinfo dump projectname)" != "np" ] && ln -f "$Line" "$Targetdir/../"
+        done < <(fileglob "$Targetevaluateddir/*fused.*.mean.*")
       }
-      
-      ## link fused.median result into $Gallerydir directory
-      #Gallerydir="$(storeinfo dump gallerydir)"
-      #[ -d "$Gallerydir" ] && {
-      #  Image="$(find $Destinationdir/*.fused.median.set2.* $Destinationdir/*.fused.median.* -type f | head -n1)"
-      #  ln -f "$Image" "$Gallerydir"
-      #}
     }
   }
+  set +x
   verbose "batch_function(): $Function: return $Return"
 
   return $Return
@@ -3021,6 +3010,7 @@ multicore_init() {
   local Process
   Multicore_maxprocesses="$(nproc)"
   Multicore_maxprocesses="${Multicore_maxprocesses:-1}"
+  Multicore_maxprocesses="$((Multicore_maxprocesses * 2))"
   for Process in $(seq $Multicore_maxprocesses); do
     Multicore_process[$Process]=""
     Multicore_image[$Process]=""
@@ -3036,132 +3026,132 @@ multicore_init() {
 kaptaingrammar() {
   echo '#! /usr/bin/kaptain
 
-start "stackfuser '$Version'"  -> frameset;
-  frameset                       -> topframe bottomframe;
-    topframe                       -> tabset;
-    bottomframe                    -> dirframe statusframe ;
+start "stackfuser '$Version'"     -> frameset;
+  frameset                          -> topframe bottomframe;
+    topframe                          -> tabset;
+    bottomframe                       -> dirframe statusframe ;
     
-  dirframe:beside                    -> choosedirguibutton choosedir refreshbutton;
-    choosedirguibutton                 -> @button="Stackshot selector" ;
-    choosedir                          -> @directory="'$Projecthome'" ;
-    refreshbutton                      -> @button="refresh" ;
-  statusframe                        -> wizardstatusline ;
-    wizardstatusline:beside            -> cmdpercent wizardlog;
-      cmdpercent                         -> @icon ;
-      wizardlog                          -> @text="" ;
+  dirframe:beside                       -> choosedirguibutton choosedir refreshbutton;
+    choosedirguibutton                    -> @button="Stackshot selector" ;
+    choosedir                             -> @directory="'$Projecthome'" ;
+    refreshbutton                         -> @button="refresh" ;
+  statusframe                           -> wizardstatusline ;
+    wizardstatusline:beside               -> cmdpercent wizardlog;
+      cmdpercent                            -> @icon ;
+      wizardlog                             -> @text="" ;
 
-  tabset:tabbed                     -> batchtab specialtab deletetab configtab showresulttab;
-    batchtab "Image batch processing" -> batchoptionframe ;
-      batchoptionframe:beside            -> batchframeleft  batchframeright;
-        batchframeleft:framed              -> batchblock1 batchblock2 ;
-        batchframeright:framed             -> batchblock3 runbatchframe stopframe;
+  tabset:tabbed                         -> batchtab specialtab deletetab configtab showresulttab;
+    batchtab "Image batch processing"     -> batchoptionframe ;
+      batchoptionframe:beside                -> batchframeleft  batchframeright;
+        batchframeleft:framed                  -> batchblock1 batchblock2 ;
+        batchframeright:framed                 -> batchblock3 runbatchframe stopframe;
           
       batchblock1 "batch block 1: crop and balance directory prepared" -> imageformatline cropline align_vidstabline align_huginline align_aisline align_focusstackline;
-        imageformatline:beside                                -> imageformat imageformatopt9combo imageformatprepared imageformatfused imageformatevaluated;
-          imageformatopt9combo                                  -> @combow('$Imageformatcombo')="TIF" ;
-          imageformatprepared                                     -> @button="prepared" ;
-          imageformatevaluated                                   -> @button="evaluated" ;
-          imageformatfused                                       -> @button="fused" ;
-          imageformat:beside          "change image format"     -> "on" | ! "" ;
-        orientline:beside                                     -> orient orientopt1combo orientprepared;
-          orientopt1combo                                       -> @combo("topleft","topright","bottomleft","bottomright")="topleft" ;
-          orientprepared                                          -> @button="prepared" ;
+        imageformatline:beside                                       -> imageformat imageformatopt9combo imageformatprepared imageformatfused imageformatevaluated;
+          imageformatopt9combo                                         -> @combow('$Imageformatcombo')="TIF" ;
+          imageformatprepared                                          -> @button="prepared" ;
+          imageformatevaluated                                         -> @button="evaluated" ;
+          imageformatfused                                             -> @button="fused" ;
+          imageformat:beside          "change image format"            -> "on" | "" ;
+        orientline:beside                                            -> orient orientopt1combo orientprepared;
+          orientopt1combo                                              -> @combo("topleft","topright","bottomleft","bottomright")="topleft" ;
+          orientprepared                                               -> @button="prepared" ;
           orient:beside               "orient (fixate image exif rotation)" -> "on" | "";
-        cropline:beside                                       -> crop cropopt1combo cropopt2combo cropprepared cropfused cropevaluated;
-          cropopt1combo                                         -> @combo("interactive","shrink","even","geometry")="interactive" ;
-          cropopt2combo                                         -> @combow("","1","2","5","10","200x200+15+15")="" ;
-          cropprepared                                            -> @button="prepared" ;
-          cropevaluated                                          -> @button="evaluated" ;
-          cropfused                                              -> @button="fused" ;
-          crop:beside                 "crop"                    -> "on" | ! "";
-        align_focusstackline:beside                             -> align_focusstack align_focusstackbutton ;
-          align_focusstackbutton                                  -> @button="prepared" ;
-          align_focusstack:beside     "align with focus-stack"    -> "on" | ! "";
-        align_vidstabline:beside                              -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabopt3combo align_vidstabbutton ;
-          align_vidstabopt1combo                                -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
-          align_vidstabopt2combo:beside   "Iterations:"         -> @combo("1","2","3")="3";
-          align_vidstabopt3combo:beside   "prepare"             -> "prepare" | ! "" ;
-          align_vidstabbutton                                   -> @button="prepared" ;
-          align_vidstab:beside        "align with vidstab/ffmpeg"    -> "on" | ! "";
-        align_huginline:beside                                  -> align_hugin align_huginbutton ;
-          align_huginbutton                                      -> @button="prepared" ;
-          align_hugin:beside          "align with hugin"         -> "on" | ! "";
-        align_aisline:beside                                  -> align_ais align_aisopt1combo align_aisopt2combo align_aisbutton ;
-          align_aisopt1combo          "demagnifier (-m)"        -> "m"  | ! "";
-          align_aisopt2combo          "crop interactive"        -> "interactive" | ! "";
-          align_aisbutton                                       -> @button="prepared" ;
-          align_ais:beside            "align with align_image_stack" -> "on" | "";
+        cropline:beside                                              -> crop cropopt1combo cropopt2combo cropprepared cropfused cropevaluated;
+          cropopt1combo                                                -> @combo("interactive","shrink","even","geometry")="interactive" ;
+          cropopt2combo                                                -> @combow("","1","2","5","10","200x200+15+15")="" ;
+          cropprepared                                                 -> @button="prepared" ;
+          cropevaluated                                                -> @button="evaluated" ;
+          cropfused                                                    -> @button="fused" ;
+          crop:beside                 "crop"                           -> "on" | ! "";
+        align_focusstackline:beside                                  -> align_focusstack align_focusstackbutton ;
+          align_focusstackbutton                                       -> @button="prepared" ;
+          align_focusstack:beside     "align with focus-stack"         -> "on" | ! "";
+        align_vidstabline:beside                                     -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabopt3combo align_vidstabbutton ;
+          align_vidstabopt1combo                                       -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
+          align_vidstabopt2combo:beside   "Iterations:"                -> @combo("1","2","3")="3";
+          align_vidstabopt3combo:beside   "prepare"                    -> "prepare" | ! "" ;
+          align_vidstabbutton                                          -> @button="prepared" ;
+          align_vidstab:beside        "align with vidstab/ffmpeg"      -> "on" | ! "";
+        align_huginline:beside                                       -> align_hugin align_huginbutton ;
+          align_huginbutton                                            -> @button="prepared" ;
+          align_hugin:beside          "align with hugin"               -> "on" | ! "";
+        align_aisline:beside                                         -> align_ais align_aisopt1combo align_aisopt2combo align_aisbutton ;
+          align_aisopt1combo          "demagnifier (-m)"               -> "m"  | ! "";
+          align_aisopt2combo          "crop interactive"               -> "interactive" | ! "";
+          align_aisbutton                                              -> @button="prepared" ;
+          align_ais:beside            "align with align_image_stack"   -> "on" | "";
       
-      batchblock2 "batch block 2: imageprepared operations on directory prepared" -> rotateline gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline;
+      batchblock2 "batch block 2: ImageMagick operations on directory prepared" -> rotateline gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline;
         rotateline:beside                                     -> rotate rotateopt1combo rotateprepared rotatefused rotateevaluated;
           rotateopt1combo                                       -> @combo("90","180","270")="90" ;
-          rotateprepared                                          -> @button="prepared" ;
-          rotateevaluated                                        -> @button="evaluated" ;
-          rotatefused                                            -> @button="fused" ;
+          rotateprepared                                        -> @button="prepared" ;
+          rotateevaluated                                       -> @button="evaluated" ;
+          rotatefused                                           -> @button="fused" ;
           rotate:beside               "rotate"                  -> "on"  | ! "";
         gammaline:beside                                      -> gamma gammaprepared gammafused gammaevaluated;
           gammaopt1combo                                        -> @combow("auto","0.2","0.3","0.4","0.454545","0.5","0.6","0.7","0.8","0.9","1.2","1.5","2.0","3.0","4.0")="auto" ;
-          gammaprepared                                           -> @button="prepared" ;
-          gammaevaluated                                         -> @button="evaluated" ;
-          gammafused                                             -> @button="fused" ;
+          gammaprepared                                         -> @button="prepared" ;
+          gammaevaluated                                        -> @button="evaluated" ;
+          gammafused                                            -> @button="fused" ;
           gamma:beside                "gamma"                   -> gammaopt1combo | "";
         levelline:beside                                      -> level levelprepared levelfused levelevaluated;
           levelopt1combo                                        -> @combow("auto","5%","10%","15%","20%","25%","30%")="auto" ;
-          levelprepared                                           -> @button="prepared" ;
-          levelevaluated                                         -> @button="evaluated" ;
-          levelfused                                             -> @button="fused" ;
+          levelprepared                                         -> @button="prepared" ;
+          levelevaluated                                        -> @button="evaluated" ;
+          levelfused                                            -> @button="fused" ;
           level:beside                "level"                   -> levelopt1combo | ! "";
         contrastline:beside                                   -> contrast contrastprepared contrastfused contrastevaluated;
           contrastopt1combo                                     -> @combow("2x50%","3x50%","4x50%","5x50%","3x30%","3x70%")="5x50%" ;
-          contrastprepared                                        -> @button="prepared" ;
-          contrastevaluated                                      -> @button="evaluated" ;
-          contrastfused                                          -> @button="fused" ;
+          contrastprepared                                      -> @button="prepared" ;
+          contrastevaluated                                     -> @button="evaluated" ;
+          contrastfused                                         -> @button="fused" ;
           contrast:beside             "sigmoidal-contrast"      -> contrastopt1combo | "";
         sharpenline:beside                                    -> sharpen sharpenprepared sharpenfused sharpenevaluated;
           sharpenopt1combo                                      -> @combow("3x1","6x2","8x4","12x6")="8x4" ;
-          sharpenprepared                                         -> @button="prepared" ;
-          sharpenevaluated                                       -> @button="evaluated" ;
-          sharpenfused                                           -> @button="fused" ;
+          sharpenprepared                                       -> @button="prepared" ;
+          sharpenevaluated                                      -> @button="evaluated" ;
+          sharpenfused                                          -> @button="fused" ;
           sharpen:beside              "adaptive-sharpen"        -> sharpenopt1combo | "";
         statisticline:beside                                  -> statistic statisticopt1combo statisticopt2combo statisticprepared statisticfused statisticevaluated;
           statisticopt1combo                                    -> @combow("gradient","maximum","minimum","mean","median","mode","nonpeak","rms","standarddeviation")="median" ;
           statisticopt2combo                                    -> @combow("1","2","3","4","5","6","7","8","9","10")="5" ;
-          statisticprepared                                       -> @button="prepared" ;
-          statisticevaluated                                     -> @button="evaluated" ;
-          statisticfused                                         -> @button="fused" ;
+          statisticprepared                                     -> @button="prepared" ;
+          statisticevaluated                                    -> @button="evaluated" ;
+          statisticfused                                        -> @button="fused" ;
           statistic:beside            "statistic"               -> "on" | ! "";
         brightnessline:beside                                 -> brightness brightnessprepared brightnessfused brightnessevaluated;
           brightnessopt1combo                                   -> @combow("0x5","0x10","0x15","5x0","5x5","5x10","5x15","10x0","10x5","10x10","15x15","20x20")="10x10" ;
-          brightnessprepared                                      -> @button="prepared" ;
-          brightnessevaluated                                    -> @button="evaluated" ;
-          brightnessfused                                        -> @button="fused" ;
+          brightnessprepared                                    -> @button="prepared" ;
+          brightnessevaluated                                   -> @button="evaluated" ;
+          brightnessfused                                       -> @button="fused" ;
           brightness:beside           "brightness-contrast"     -> brightnessopt1combo | ! "";
         stretchline:beside                                    -> stretch stretchprepared stretchfused stretchevaluated;
           stretchopt1combo                                      -> @combow("auto","2%x1%","1%","2%","3%","4%","5%","10%","15%","20%","max")="max" ;
-          stretchprepared                                         -> @button="prepared" ;
-          stretchevaluated                                       -> @button="evaluated" ;
-          stretchfused                                           -> @button="fused" ;
+          stretchprepared                                       -> @button="prepared" ;
+          stretchevaluated                                      -> @button="evaluated" ;
+          stretchfused                                          -> @button="fused" ;
           stretch:beside              "stretch-contrast"        -> stretchopt1combo | ! "";
         wizardline:beside                                     -> wizard wizardprepared wizardfused wizardevaluated;
           wizardopt1combo                                       -> @combow("","-adaptive-blur 6x2","-canny 3","-charcoal 3","-colorspace Gray","-despeckle","-edge 0","-enhance","-equalize","-evaluate cos 0.5","-flip","-flop","-implode 1","-kuwahara 2.0","-magnify","-modulate 90,110","-negate","-sepia-tone 100%","-wavelet-denoise 5%x0.1")="" ;
-          wizardprepared                                          -> @button="prepared" ;
-          wizardevaluated                                        -> @button="evaluated" ;
-          wizardfused                                            -> @button="fused" ;
+          wizardprepared                                        -> @button="prepared" ;
+          wizardevaluated                                       -> @button="evaluated" ;
+          wizardfused                                           -> @button="fused" ;
           wizard:beside               "(free option typing)"    -> wizardopt1combo | ! "" ;
         
       batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 deletebackups2 deleteprepared2;
         evaluateline1:beside                                  -> evaluate1 evaluateprepared ;
-          evaluateprepared                                        -> @button="prepared" ;
+          evaluateprepared                                      -> @button="prepared" ;
           evaluate1:beside            "evaluate"                -> "on" | "";
         fuseline                                              -> fuseline1 fuseopt2combo;
           fuseline1:beside                                    -> fuse fuseopt1combo fuseprepared;
           fuseopt1combo                                         -> @combo('$Fusesetcombo')="enfuse-cws5" ;
           fuseopt2combo                                         -> @combo("-") ;
-          fuseprepared                                            -> @button="prepared";
+          fuseprepared                                          -> @button="prepared";
           fuse:beside                    "fuse"                 -> "on" | "" ;
         evaluateline2:beside                                  -> evaluate2 evaluateopt1combo evaluatefused;
           evaluateopt1combo                                     -> @combo("all",'$Fusesetcombo');
-          evaluatefused                                          -> @button="fused" ;
+          evaluatefused                                         -> @button="fused" ;
           evaluate2:beside            "evaluate"                -> "on" | ! "";
         deletebackups2:beside         "delete"                -> @button="backups + cache" "on" | "";
         deleteprepared2:beside          "delete"                -> @button="prepared" "on"          | ! "";
@@ -3186,81 +3176,81 @@ start "stackfuser '$Version'"  -> frameset;
           ruleropt2combo:beside       "Title:"                  -> @string ;
           ruleropt3combo:beside       "Color:"                  -> @combo("black","white","red","green","blue")="black" ;
           ruleropt4combo:beside       "Elements:"               -> @combow("10","20","30","40","50","60","70","80","90","100","")="" ;
-          rulerprepared                                           -> @button="prepared" ;
-          rulerevaluated                                         -> @button="evaluated" ;
-          rulerfused                                             -> @button="fused" ;
+          rulerprepared                                         -> @button="prepared" ;
+          rulerevaluated                                        -> @button="evaluated" ;
+          rulerfused                                            -> @button="fused" ;
           ruler:beside                "ruler"                 -> "" ruleropt1combo ruleropt2combo ruleropt3combo ruleropt4combo;
         animationline:beside                                  -> animation animationopt1combo animationopt2combo animationopt3combo animationopt9combo animationprepared;
           animationopt1combo:beside                             -> @combo("quick","smooth")="smooth";
           animationopt2combo:beside   "fuse:"                   -> @combow('$Fusesetcombo');
           animationopt3combo:beside   "Distortion:"             -> @combow("15","20","25","30","40","50","75","100","150")="30";
           animationopt9combo:beside   "Format:"                 -> @combow("webm","mp4","gif")="webm";
-          animationprepared                                       -> @button="prepared" ;
+          animationprepared                                     -> @button="prepared" ;
           animation:beside            "animated video"          -> "" ;
         videoline:beside                                      -> video videoopt1combo videoopt2combo videoopt9combo videoprepared;
           videoopt1combo:beside                                 -> @combo("in","out","in_and_out")="in_and_out";
           videoopt2combo:beside       "Framerate:"              -> @combow("2","3","4","5","7","10","15","20","25","30")="10";
           videoopt9combo:beside       "Format:"                 -> @combow("webm","mp4","gif")="webm";
-          videoprepared                                           -> @button="prepared" ;
+          videoprepared                                         -> @button="prepared" ;
           video:beside                "focus video"             -> "" ;
         cuberotateline:beside                                 -> cuberotate cuberotateopt1combo cuberotateprepared;
           cuberotateopt1combo:beside                            -> @combo("90","180","270","reverse-order","back-left","back-top","left","right","top","bottom")="reverse-order";
-          cuberotateprepared                                      -> @button="prepared" ;
+          cuberotateprepared                                    -> @button="prepared" ;
           cuberotate:beside           "cuberotate"              -> "" ;
         meanbalanceline:beside                                -> meanbalance meanbalanceopt1combo meanbalanceprepared meanbalancefused meanbalanceevaluated;
           meanbalanceopt1combo                                  -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="full" ;
-          meanbalanceprepared                                     -> @button="prepared" ;
+          meanbalanceprepared                                   -> @button="prepared" ;
           meanbalanceevaluated                                   -> @button="evaluated" ;
           meanbalancefused                                       -> @button="fused" ;
           meanbalance:beside          "meanbalance"             -> "";
         whitebalanceline:beside                               -> whitebalance whitebalanceopt1combo whitebalanceopt2combo whitebalanceprepared whitebalancefused whitebalanceevaluated;
           whitebalanceopt1combo                                 -> @combo("interactive","topleft","topright","bottomleft","bottomright","full")="topleft" ;
           whitebalanceopt2combo                                 -> @combow("mean","#777777","#888888","#999999","#AAAAAA","#BBBBBB","#CCCCCC","#DDDDDD","#EEEEEE","#FFFFFF")="#CCCCCC" ;
-          whitebalanceprepared                                    -> @button="prepared" ;
-          whitebalanceevaluated                                  -> @button="evaluated" ;
-          whitebalancefused                                      -> @button="fused" ;
+          whitebalanceprepared                                  -> @button="prepared" ;
+          whitebalanceevaluated                                 -> @button="evaluated" ;
+          whitebalancefused                                     -> @button="fused" ;
           whitebalance:beside         "whitebalance"            ->  "";
-        fakehdrline:beside                               -> fakehdr fakehdropt1combo fakehdropt2combo fakehdrprepared fakehdrfused fakehdrevaluated;
-          fakehdropt1combo                                 -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
-          fakehdropt2combo                                 -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
-          fakehdrprepared                                    -> @button="prepared" ;
-          fakehdrevaluated                                  -> @button="evaluated" ;
-          fakehdrfused                                      -> @button="fused" ;
-          fakehdr:beside         "fakehdr"            -> "" ;
+        fakehdrline:beside                                    -> fakehdr fakehdropt1combo fakehdropt2combo fakehdrprepared fakehdrfused fakehdrevaluated;
+          fakehdropt1combo                                      -> @combo("brightness","gamma","level","levelgamma","modulate","multiply")="levelgamma" ;
+          fakehdropt2combo                                      -> @combo("10%","20%","30%","40%","50%","60%","70%","80%")="40%" ;
+          fakehdrprepared                                       -> @button="prepared" ;
+          fakehdrevaluated                                      -> @button="evaluated" ;
+          fakehdrfused                                          -> @button="fused" ;
+          fakehdr:beside         "fakehdr"                      -> "" ;
         evalstepline:beside                                   -> evalstep evalstepopt1combo evalstepopt2combo evalstepprepared;
           evalstepopt1combo                                     -> @combow("max","min","mean","median")="median" ;
           evalstepopt2combo                                     -> @combow("3","5","7","9","15","25")="5" ;
-          evalstepprepared                                        -> @button="prepared" ;
+          evalstepprepared                                      -> @button="prepared" ;
           evalstep:beside             "Evaluate blocks of N images" -> "";
           
       undoframe                       "undo"                -> undoline;
         undoline:beside                                       -> undo undoprepared undofused undoevaluated;
-          undoprepared                                            -> @button="prepared" ;
-          undoevaluated                                          -> @button="evaluated" ;
-          undofused                                              -> @button="fused" ;
+          undoprepared                                          -> @button="prepared" ;
+          undoevaluated                                         -> @button="evaluated" ;
+          undofused                                             -> @button="fused" ;
           undo                        "undo last step"          -> "" ;
           
     deletetab:framed                  "Delete"               -> deletedirframe deletefusedframe deleterescursiveframe @fill;
       deletedirframe                  "Delete directories of current stack"   -> deletebuttons; 
         deletebuttons:beside                                   -> deletebackups deleteprepared deleteevaluated deletecomposed deletefused deletevideo deleteall deleteallbutvideo;
           deletebackups                                          -> @button="backups + cache";
-          deleteevaluated                                         -> @button="evaluated";
-          deleteprepared                                           -> @button="prepared";
-          deletecomposed                                          -> @button="composed";
-          deletefused                                             -> @button="fused";
+          deleteevaluated                                        -> @button="evaluated";
+          deleteprepared                                         -> @button="prepared";
+          deletecomposed                                         -> @button="composed";
+          deletefused                                            -> @button="fused";
           deletevideo                                            -> @button="video";
           deleteall                                              -> @button="all";
           deleteallbutvideo                                      -> @button="all but video";
-      deletefusedframe                 "Delete fused results (beta)"      -> deletefusedline;
-        deletefusedline:beside                                      -> deletefusedsetcombo deletefusedsetbutton deletefusedchoicecombo deletefusedchoicebutton;
-          deletefusedsetcombo:beside                                  -> @combo('$Fusesetcombo');
-          deletefusedsetbutton                                        -> @button="delete all fused results+evaluated" ;
-          deletefusedchoicecombo                                      -> @combo("-");
-          deletefusedchoicebutton                                     -> @button="delete fused result" ;
-      deleterescursiveframe           "Delete recursively"     -> recursivedeletedir recursivedeletecache;
+      deletefusedframe                 "Delete fused results (BETA)"  -> deletefusedline;
+        deletefusedline:beside                                    -> deletefusedsetcombo deletefusedsetbutton deletefusedchoicecombo deletefusedchoicebutton;
+          deletefusedsetcombo:beside                              -> @combo('$Fusesetcombo');
+          deletefusedsetbutton                                    -> @button="delete all fused results+evaluated" ;
+          deletefusedchoicecombo                                  -> @combo("-");
+          deletefusedchoicebutton                                 -> @button="delete fused result" ;
+      deleterescursiveframe           "Delete recursively"      -> recursivedeletedir recursivedeletecache;
         recursivedeletedir            "Base directory for recursive deletion" -> @directory="'$Projecthome'" ;
         recursivedeletecache                                       -> @button="Recursively delete all cache and backup directories" ;
-        recursivedeleteprepared                                      -> @button="Recursively delete all prepared directories" ;
+        recursivedeleteprepared                                    -> @button="Recursively delete all prepared directories" ;
           
     configtab                         "Configuration"        -> configframe;
       configframe                                              -> storagebasedirtext storagebasedir allownonconformant gallerydir @fill;
@@ -3338,10 +3328,10 @@ The directory structure is:\n\
         showdirline:beside                                    -> showdirfm showdirstackshot showdirprepared showdircomposed showdirfused showdirevaluated ;
           showdirfm                                             -> @button="File Manager";
           showdirstackshot                                      -> @button="stackshot";
-          showdirprepared                                         -> @button="prepared";
-          showdirfused                                           -> @button="fused";
-          showdircomposed                                        -> @button="composed";
-          showdirevaluated                                       -> @button="evaluated";
+          showdirprepared                                       -> @button="prepared";
+          showdirfused                                          -> @button="fused";
+          showdircomposed                                       -> @button="composed";
+          showdirevaluated                                      -> @button="evaluated";
       showvideoframe                 "Videos"               -> show_video;
         show_video:beside                                     -> @combo("--------------------------------------------------");
   '
@@ -3737,7 +3727,6 @@ $Entrylist
           storeinfo "stackshotdir=$Dir"
           check_stackdir
           storeinfo "refreshgui_main=yes"
-          storeinfo "refreshgui_fuse=yes"
         ;;
         windowpos)
           # check width of main window
@@ -4381,6 +4370,7 @@ main() {
   storeinfo "notfoundimage=$Thumbnaildir/notfound.jpg"
   storeinfo "rmcache_after=yes"
   storeinfo "rmcache_before=yes"
+  storeinfo "refreshgui_main=yes"
   
   storeinfo drop cmdbreak
   storeinfo drop stackshot_selector
@@ -4411,10 +4401,9 @@ main() {
   kaptain --pipe $Kaptainpipefile $Kaptaingrammarfile & Kaptainpid=$!
   #storepid $Kaptainpid
 
-  storeinfo "refreshgui_main=yes"
-  storeinfo "status='idle'"
   sendkaptain "storagebasedir='$Projecthome'"
-  sendkaptain "stackshotdir='$(storeinfo dump stackshotdir)'"
+  sendkaptain "choosedir='$(storeinfo dump stackshotdir)'"
+  sendkaptain "gallerydir='$Gallerydir'"
   stack_cmd & storepid $!
 
   # watch signals of kaptain
