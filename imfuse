@@ -407,7 +407,7 @@ evaluate_split() {
 
   local Sourceimagelist Resultimage Mode
   local Startzeit Dauer Restzeit
-  local Image Split Splitpercent Showsplit Part Partimage Partimagelist
+  local Image Split Splitpercent Showsplit Part Partimage Partimagelist=
   local Startzeit Dauer Restzeit Count
   
   Mode="${1:-}" ; shift
@@ -421,7 +421,7 @@ ${1:-}"
   Sourceimagelist="$(tail -n+2 <<< "$Sourceimagelist")"
   
   Split="$((Imagelistmemsize/Freemem +1))"
-  
+
   verbose "Generating $Mode image $(basename "$Resultimage") in $Split parts."
   case $Split in
     1) 
@@ -2230,12 +2230,9 @@ check_options() {
   
   # --close
   case $Globalclose in
-    ""|"1x1"|"1"|"0") ;;
-    auto) 
-      Globalclose1="3"
-      Globalclose2="3"
-    ;;
+    ""|"1x1"|"1"|"0") Globalclose="" ;;
     *)
+      [ "$Globalclose" = "auto" ] && Globalclose="$(defaultvalue "$Firstmaskmethod" close)"
       Globalclose1=$(cut -dx    -f1 <<< "$Globalclose")
       Globalclose2=$(cut -dx -s -f2 <<< "$Globalclose")
       Globalclose1="$(digitonly "$Globalclose1")"
@@ -2505,7 +2502,7 @@ defaultvalue() {
         #kirsch
         #laplacian)  echo "10" ;;
         log)        echo "25" ;;
-        morphology) echo "75" ;;
+        morphology) echo "25" ;;
         prewitt)    echo "2" ;;
         roberts)    echo "50" ;;
         sobel)      echo "2" ;;
