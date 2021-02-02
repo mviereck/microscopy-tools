@@ -4,8 +4,13 @@
 Version="0.6.0-beta"
 
 usage() {
-  echo "imfuse v$Version - combine focus stackshot images to an overall sharp image.
+  echo "imfuse v$Version
+Combines focus stackshot images to one overall sharp image.
 Aims to be similar to enfuse, but based on ImageMagick.
+
+Note that imfuse expects already aligned input images.
+It assumes that the alphanumerical order of the input images goes from
+top to bottom; for the other way around use option --revert.
 
 Dependencies:
   imagemagick         Mandatory (command 'convert' or 'magick').
@@ -43,13 +48,13 @@ Arguments taken by all mask options:
   denoise   Compare option --denoise, here applied for single mask only.
   negate    Negate/invert the mask. Rarely needed.
   t         Threshold of mask below percent. Default without value: t10
-Arguments taken by only few options:
+Arguments taken by few options only:
   r         Radius. Must be an integer value.
             Increased radius mostly causes less noise, less details and
             more contrast. Smaller radius causes more details and more noise.
             (Options taking a sigma argument have a radius of 0 by default,
             which means that a radius fitting the sigma value will be 
-            calculated automatically.)
+            calculated automatically by imagemagick.)
   s         Sigma. Takes non-integer values like 0.75.
             Increased sigma mostly causes less noise, less details and
             more contrast. Smaller sigma causes more details and more noise.
@@ -76,12 +81,12 @@ Contrast mask options:
  --dog [=ARG]         Difference of Gaussian. 
                       ARG additionally takes arguments: 
                         r       radius               Default: 0
-                        s       sigma                Default: 0.75
+                        s       sigma                Default: 0.3
                         S       sigma2               Default: 1.6*sigma1
  --diffstat [=ARG]    Compares two local statistics of source images. 
                       Uses ImageMagick option -statistic. Compare --statistic.
                       ARG additionally takes arguments: 
-                        r       radius               Default: 5
+                        r       radius               Default: 3
                         (word)  STAT1                Default: median
                         (word)  STAT2                Default: mean
                       Possible STAT1 and STAT2:
@@ -103,7 +108,7 @@ Contrast mask options:
                       The resulting mask  will be a '-compose Difference' 
                       comparision with the source image.
                       ARG is an arbitrary ImageMagick command, but must not
-                      contain a comma.               Default: '-sharpen 0x3'
+                      contain a comma.
  --freichen [=ARG]    Frei-Chen edge detection. 
                       ARG additionally takes arguments: 
                         (word)  MODENUMBER
@@ -114,27 +119,24 @@ Contrast mask options:
                       Similar to --blur, but slower and more accurate.
                       ARG additionally takes arguments: 
                         r       radius               Default: 0
-                        s       sigma                Default: 0.75
+                        s       sigma                Default: 0.3
  --kirsch [=ARG]      Kirsch edge detection. 
  --laplacian [=ARG]   Laplacian edge detection.
                       ARG additionally takes arguments: 
-                        (word)  MODENUMBER           Default: 0
+                        (word)  MODENUMBER           Default: 3
                       Possible MODENUMBERs at:
                       http://www.imagemagick.org/Usage/convolve/#laplacian
  --log [=ARG]         Laplacian of Gaussian.
                       ARG additionally takes arguments: 
                         r       radius               Default: 0
-                        s       sigma                Default: 0.75
+                        s       sigma                Default: 0.2
  --morphology [=ARG]  Morphology edge detection.
                       ARG additionally takes arguments: 
                         r       radius               Default: 2
-                        R       kernel iterations    Default: 1
                         (word)  MODE                 Default: edge
                       MODE can be one of '$(basename $Magickbin) -list morphology'
                       Some MODEs of interest:
                         edge, dilateintensity, smooth
-                      A high radius is slow. Rather use kernel iterations
-                      like e.g. r4,R4 instead of r16.
  --prewitt [=ARG]     Prewitt edge detection. 
  --roberts [=ARG]     Roberts edge detection. 
  --sobel [=ARG]       Sobel edge detection. 
@@ -2063,22 +2065,22 @@ check_options() {
   Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
   [ -n "$Maskmethodlist" ] && while read Line; do
     maskarg_parse "$Line"
-    [ -z "$Argradius1" ]  && Argradius1="$(defaultvalue          "$Argmethod" radius1)"
-    [ -z "$Argradius2" ]  && Argradius2="$(defaultvalue          "$Argmethod" radius2)"
-    [ -z "$Argsigma1" ]   && Argsigma1="$(defaultvalue           "$Argmethod" sigma1)"
-    [ -z "$Argsigma2" ]   && Argsigma2="$(defaultvalue           "$Argmethod" sigma2)"
-    [ -z "$Argpercent1" ] && Argpercent1="$(defaultvalue         "$Argmethod" percent1)"
-    [ -z "$Argpercent2" ] && Argpercent2="$(defaultvalue         "$Argmethod" percent2)"
-    [ -z "$Argword1" ]    && Argword1="$(defaultvalue            "$Argmethod" word1)"
-    [ -z "$Argword2" ]    && Argword2="$(defaultvalue            "$Argmethod" word2)"
-    [ -n "$Argradius1" ]  && Argradius1="$(maskarg_checkallowed  "$Argmethod" radius1  "$Argradius1")"
-    [ -n "$Argradius2" ]  && Argradius2="$(maskarg_checkallowed  "$Argmethod" radius2  "$Argradius2")"
-    [ -n "$Argpercent1" ] && Argpercent1="$(maskarg_checkallowed "$Argmethod" percent1 "$Argpercent1")"
-    [ -n "$Argpercent2" ] && Argpercent2="$(maskarg_checkallowed "$Argmethod" percent2 "$Argpercent2")"
-    [ -n "$Argsigma1" ]   && Argsigma1="$(maskarg_checkallowed   "$Argmethod" sigma1   "$Argsigma1")"
-    [ -n "$Argsigma2" ]   && Argsigma2="$(maskarg_checkallowed   "$Argmethod" sigma2   "$Argsigma2")"
-    [ -n "$Argword1" ]    && Argword1="$(maskarg_checkallowed    "$Argmethod" word1    "$Argword1")"
-    [ -n "$Argword2" ]    && Argword2="$(maskarg_checkallowed    "$Argmethod" word2    "$Argword2")"
+    [ -z "$Argradius1" ]  && Argradius1="$(defaultvalue            "$Argmethod" radius1)"
+    [ -z "$Argradius2" ]  && Argradius2="$(defaultvalue            "$Argmethod" radius2)"
+    [ -z "$Argsigma1" ]   && Argsigma1="$(defaultvalue             "$Argmethod" sigma1)"
+    [ -z "$Argsigma2" ]   && Argsigma2="$(defaultvalue             "$Argmethod" sigma2)"
+    [ -z "$Argpercent1" ] && Argpercent1="$(defaultvalue           "$Argmethod" percent1)"
+    [ -z "$Argpercent2" ] && Argpercent2="$(defaultvalue           "$Argmethod" percent2)"
+    [ -z "$Argword1" ]    && Argword1="$(defaultvalue              "$Argmethod" word1)"
+    [ -z "$Argword2" ]    && Argword2="$(defaultvalue              "$Argmethod" word2)"
+    [ -n "$Argradius1" ]  && { Argradius1="$(maskarg_checkallowed  "$Argmethod" radius1  "$Argradius1")"  || Error=1 ; }
+    [ -n "$Argradius2" ]  && { Argradius2="$(maskarg_checkallowed  "$Argmethod" radius2  "$Argradius2")"  || Error=1 ; }
+    [ -n "$Argpercent1" ] && { Argpercent1="$(maskarg_checkallowed "$Argmethod" percent1 "$Argpercent1")" || Error=1 ; }
+    [ -n "$Argpercent2" ] && { Argpercent2="$(maskarg_checkallowed "$Argmethod" percent2 "$Argpercent2")" || Error=1 ; }
+    [ -n "$Argsigma1" ]   && { Argsigma1="$(maskarg_checkallowed   "$Argmethod" sigma1   "$Argsigma1")"   || Error=1 ; }
+    [ -n "$Argsigma2" ]   && { Argsigma2="$(maskarg_checkallowed   "$Argmethod" sigma2   "$Argsigma2")"   || Error=1 ; }
+    [ -n "$Argword1" ]    && { Argword1="$(maskarg_checkallowed    "$Argmethod" word1    "$Argword1")"    || Error=1 ; }
+    [ -n "$Argword2" ]    && { Argword2="$(maskarg_checkallowed    "$Argmethod" word2    "$Argword2")"    || Error=1 ; }
     case $Argmethod in
       blur|comet|compass|diffstat|dog|free|freediff|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
         Arglevel="yes"
@@ -2497,7 +2499,7 @@ defaultvalue() {
         compass)    echo "35" ;;
         diffstat)   echo "25" ;;
         dog)        echo "25" ;;
-        freichen)   echo "2" ;;
+        freichen)   echo "1" ;;
         gaussian)   echo "25" ;;
         #kirsch
         #laplacian)  echo "10" ;;
