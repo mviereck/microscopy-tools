@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.0-beta"
+Version="0.6.1-beta"
 
 usage() {
   echo "imfuse v$Version
@@ -28,6 +28,8 @@ General options:
                       the layers contain different sharpness areas.
                       NUMBER is number of sharpness layers.  Default: 24
  -o, --output=FILE    Result image file name.
+ --threads            Number of parallel threads to run at once.
+                      Default: number of CPU's (nproc).
  -v, --verbose        Show verbose output.
      --version        Show imfuse version and exit.
  -V, --showimage      Show intermediate results with image viewer geeqie.
@@ -220,12 +222,12 @@ Colorspace channel mask options: (Intended for artefact removal)
 
 Mask generation and fusion adjustments:
  --background BG      Specify a background to paint on. Default: mean
-                      BG can be a color name or a compose or evaluate mode.
-                      Choose an image name or from:
-                      $Magickbin -list color
-                      $Magickbin -list evaluate
-                      $Magickbin -list compose
-                      Nice to combine with --soft. Possible use with threshold.
+                      BG can be an image name or one of:
+                        saturation enfuse min max mean median
+                        $Magickbin -list color
+                        $Magickbin -list evaluate
+                        $Magickbin -list compose
+                      Well to combine with --soft. Possible use with threshold.
  --close [=ARG]       Closes gaps between nearby contrast lines to mark the 
                       area in between as strong contrast, too. Default: 2x2
                       First value is a kernel radius, second a kernel iteration.
@@ -1873,8 +1875,7 @@ multicore_break() {
 multicore_init() {
   # declare global variables
   local Process
-  Multicore_maxprocesses="$(nproc)"
-  Multicore_maxprocesses="$((Multicore_maxprocesses * 2))"
+  [ -z "${Multicore_maxprocesses:-}" ] && Multicore_maxprocesses="$(nproc)"
   Multicore_maxprocesses="${Multicore_maxprocesses:-1}"
   for Process in $(seq $Multicore_maxprocesses); do
     Multicore_process[$Process]=""
@@ -1994,7 +1995,7 @@ parse_options() {
   #local Parsedoptions
   
   Shortoptions="ho:vV"
-  Longoptions="basename:,cache::,force,help,verbose,version,output:,showimage,showname,test::"
+  Longoptions="basename:,cache::,force,help,output:,showimage,showname,test::,threads:,verbose,version"
   Longoptions="$Longoptions,bg:,background:,close::,contrast::,denoise::,fakehdr::,grayscale:,layers::,less::,revert,soft::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
@@ -2027,6 +2028,7 @@ parse_options() {
       -V|--showimage)         Showimageprocessing="yes"   ;;
          --soft)              Globalsoft="${2:-auto}"     ; shift ;;
          --test)              Testsetup="test" Testarg="${2:-}"    ; shift ;;
+         --threads)           Multicore_maxprocesses="${2:-}" ; shift ;;
       -v|--verbose)           Verbose="yes"               ;;
          --version)           echo "imfuse v$Version"     ; exit 0 ;;
       
@@ -2794,6 +2796,7 @@ main() {
   
   command -v convert >/dev/null && Magickbin="convert"
   command -v magick  >/dev/null && Magickbin="magick"
+  Magickbin="nice $Magickbin"
   [ -z "$Magickbin" ] && error "Neither command convert nor magick found. Please install ImageMagick."
   Magickversion="$($Magickbin -version)"
   grep -q " Q8 "   <<< "$Magickversion" && Magickpixelmemory="4"
