@@ -1786,7 +1786,8 @@ fakehdr() {
     multicore_wait || Error=1
     [ "$Error" ] && break
     Output="$Cachedir/$Basename.$Number.$Imagebasename"
-    multicore "enfuse $Sourceimage $(find $Cachedir/${Imagebasename}.exp* | tr "\n" " ") -o $Output --saturation-weight=0 --gray-projector=average" "$Output" || Error=1
+    multicore "enfuse $Sourceimage $(find $Cachedir/${Imagebasename}.exp* | tr "\n" " ") -o $Output --saturation-weight=0 --gray-projector=average && \
+               exiftool -overwrite_original -tagsfromfile $Sourceimage -Orientation= -all:all $Output" "$Output" || Error=1
     [ "$Error" ] && break
     showpercent $Imagecount $Imagenumber
   done
