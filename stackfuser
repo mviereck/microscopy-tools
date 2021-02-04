@@ -128,10 +128,10 @@ storeinfo() {
   [ -e "$Storeinfofile" ] || return 1
   [ -e "$Storeinfofile.lock" ] && {
     for i in $(seq 20); do
-      verbose "storeinfo is locked"
       sleep 0.1
       [ -e "$Storeinfofile.lock" ] || break
     done
+    [ "$i" = "20" ] && verbose "storeinfo overwrite"
   }
   :> "$Storeinfofile.lock"
   case "${1:-}" in
@@ -595,6 +595,7 @@ batch_function() {
   local Return=0
   local Gallerydir Image
   local Startzeit
+  local Sourcelist Targetlist Line Count 
 
   parse_batchoptions "$@"                  || return 1
   checkvar -d batch Targetdir "$Targetdir" || return 1
@@ -677,20 +678,43 @@ batch_function() {
     case $Function in
       animation|video) ;;
       evaluate) 
-        undo -s "$Destinationdir.bak"   -d "$Destinationdir"   -c "$Cachedir" 
+        undo -s "$Destinationdir.bak"    -d "$Destinationdir"    -c "$Cachedir" 
         undo -s "$Targetcomposeddir.bak" -d "$Targetcomposeddir" -c "$Cachedir" 
       ;;
       compose|fuse*) 
-        undo -s "$Destinationdir.bak"   -d "$Destinationdir"   -c "$Cachedir" 
+        undo -s "$Destinationdir.bak"    -d "$Destinationdir"    -c "$Cachedir" 
       ;;
       *)
-        undo -s "$Sourcedir"            -d "$Destinationdir"   -c "$Cachedir"
+        undo -s "$Sourcedir"             -d "$Destinationdir"    -c "$Cachedir"
       ;;
     esac
   }
   
   storeinfo test rmcache_after && rm -R "$Cachedir"
-  set -x
+  
+  # transfer exif data
+  [ "$Return" = "0" ] && {
+    Sourcelist="$(fileglob "$Targetstackshotdir/*")"
+    Targetlist="$(fileglob "$Destinationdir/*")"
+    case "$Destinationdir" in
+      $Targetprepareddir)
+        Count=0
+        for Line in $Sourcelist; do
+          Count="$((Count+1))"
+          exiftool -overwrite_original -tagsfromfile "$(sed "${Count}q;d" <<< "$Sourcelist")" -Orientation= -all:all  "$(sed "${Count}q;d" <<< "$Targetlist")" >/dev/null || failure "Failed to transfer exif data"
+        done
+      ;;
+      $Targetfuseddir|$Targetevaluateddir|$Targetcomposeddir)
+        Image="$(head -n1 <<< "$Sourcelist")"
+        Count=0
+        for Line in $Targetlist; do
+          Count="$((Count+1))"
+          exiftool -overwrite_original -tagsfromfile "$Image" -Orientation= -all:all "$(sed "${Count}q;d" <<< "$Targetlist")" >/dev/null || failure "Failed to transfer exif data"
+        done
+      ;;
+    esac
+  }
+
   [ "$Return" = "0" ] && [ "$(basename "$Destinationdir")" = "evaluated" ] && {
     
     storeinfo test stackshotdir_valid && {
@@ -711,7 +735,7 @@ batch_function() {
       }
     }
   }
-  set +x
+
   verbose "batch_function(): $Function: return $Return"
 
   return $Return
@@ -930,7 +954,7 @@ align_ais() {
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-((Step+1)*Stepsize)) / ((Step+1)*Stepsize) ))"
     [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
-    note "align_ais: Duration: $(date -u -d @$Dauer +"%T"); Estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
+    note "align_ais: Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
   done
   
   ifcmdbreak   && return 1
@@ -982,7 +1006,7 @@ align_ais() {
     [ "$Error" ] && break
     showpercent $Imagecount $Imagenumber
     Restzeit="$(( Dauer*(Imagenumber-Imagecount) / Imagecount ))"
-    note "align_ais: Cropping to $Cropgeometry. Duration: $(date -u -d @$Dauer +"%T"); Estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
+    note "align_ais: Cropping to $Cropgeometry. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
   done
   multicore_wait || return 1
   return ${Error:-0}
@@ -2073,7 +2097,7 @@ evaluate_split() {
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
         [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
-        verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+        verbose "Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
         showpercent $Count $Imagenumber
       done
       multicore_wait || return 1
@@ -2092,7 +2116,7 @@ evaluate_split() {
         Dauer="$(( $(date +%s)-Startzeit))"
         Restzeit="$(( Dauer*(Split-Part+1) / (Part+1) ))"
         [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
-        verbose "Duration: $(date -u -d @$Dauer +"%T"); estimated time left: $(date -u -d @$Restzeit +"%T")"
+        verbose "Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
         showpercent $Count $Split
       done
       [ "$Error" ] && return 1
@@ -2501,7 +2525,7 @@ wizard() {
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Imagecount) / Imagecount ))"
     [ "$Restzeit" -lt "0" ] && Restzeit="$((Restzeit*-1))"
-    note "wizard: Duration: $(date -u -d @$Dauer +"%T"); Estimated time left: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
+    note "wizard: Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T") ($Restzeit)"
     showpercent "$Imagecount" "$Imagenumber"
   done
   multicore_wait || return 1
@@ -3031,9 +3055,9 @@ start "stackfuser '$Version'"     -> frameset;
     topframe                          -> tabset;
     bottomframe                       -> dirframe statusframe ;
     
-  dirframe:beside                       -> choosedirguibutton choosedir refreshbutton;
-    choosedirguibutton                    -> @button="Stackshot selector" ;
-    choosedir                             -> @directory="'$Projecthome'" ;
+  dirframe:beside                       -> stackshotguibutton stackshotdir refreshbutton;
+    stackshotguibutton                    -> @button="Stackshot selector" ;
+    stackshotdir                             -> @directory="'$Projecthome'" ;
     refreshbutton                         -> @button="refresh" ;
   statusframe                           -> wizardstatusline ;
     wizardstatusline:beside               -> cmdpercent wizardlog;
@@ -3397,7 +3421,7 @@ kaptain_update() {
   setup_targetdirnames "$Stackdir"
 
   # update working directory
-  sendkaptain "choosedir='$Stackdir'"
+  sendkaptain "stackshotdir='$Stackdir'"
   
   Set="$(askkaptain fuseopt1combo)"
   Choice="$(askkaptain fuseopt2combo)"
@@ -4012,7 +4036,7 @@ parse_kaptainsignal() {
       multicore_break
       storeinfo "cmdbreak=yes"
     ;;
-    choosedirgui)
+    stackshotgui)
       stackshot_selector &
     ;;
     delete*) 
@@ -4265,6 +4289,7 @@ declare_variables() {
   grep -q " Q8 "   <<< "$Magickversion" && Magickpixelmemory="4"
   grep -q " Q16 "  <<< "$Magickversion" && Magickpixelmemory="8"
   grep -q " HDRI " <<< "$Magickversion" && Magickpixelmemory="16"
+  Magickbin="$Magickbin -quiet"
 
 
   Commandstackfile=$Maincachedir/command.stack
@@ -4402,7 +4427,7 @@ main() {
   #storepid $Kaptainpid
 
   sendkaptain "storagebasedir='$Projecthome'"
-  sendkaptain "choosedir='$(storeinfo dump stackshotdir)'"
+  sendkaptain "stackshotdir='$(storeinfo dump stackshotdir)'"
   sendkaptain "gallerydir='$Gallerydir'"
   stack_cmd & storepid $!
 
@@ -4429,7 +4454,7 @@ main() {
       echo "Signal from kaptain: $Kaptainsignal"
       #grep -q "combo"    <<< "$Kaptainsignal" && Kaptainsignal=""
       grep -q ":pressed" <<< "$Kaptainsignal" && {
-        Stackdir="$(askkaptain choosedir)"
+        Stackdir="$(askkaptain stackshotdir)"
         [ "$Stackdir" != "$(storeinfo dump stackshotdir)" ] && {
           check_stackdir "$Stackdir"
           storeinfo "refreshgui_main=yes"

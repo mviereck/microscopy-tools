@@ -2953,7 +2953,7 @@ $Cachedir/fakehdr*.$(basename "$Image")"
   $Magickbin "$Resultimage" $Tifstorealpha "$Outputimage"  || error "Error storing result in $Outputimage"
   
   # Transfer EXIF metadata from first image to result
-  exiftool -overwrite_original -tagsfromfile $(head -n1 <<< "$Sourceimagelist") -all:all -exclude Orientation "$Outputimage" >/dev/null || note "Failed to transfer exif data"
+  exiftool -overwrite_original -tagsfromfile $(head -n1 <<< "$Sourceimagelist") -Orientation= -all:all  "$Outputimage" >/dev/null || note "Failed to transfer exif data"
 
   showimage "$Outputimage"
   note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
