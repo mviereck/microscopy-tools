@@ -14,7 +14,9 @@ top to bottom; for the other way around use option --revert.
 
 Dependencies:
   imagemagick         Mandatory (command 'convert' or 'magick').
+  enfuse              Recommended, needed for some options.
   geeqie              Optional, used by option -V, --showimage.
+  exiftool            Optional, to transfer metadata from first image to result.
 
 Usage:
   imfuse [OPTIONS] -- image1 image2 image3 ...
@@ -758,7 +760,7 @@ $Magickbin
     esac
     
     Command="$Command
-  null:"
+  xc:white null:"
           
     [ "$Count" = "1" ] && verbose "Focus montage with:
 $(grep "\S" <<< "$Command")"
@@ -891,7 +893,7 @@ $Maskgenerator
   
   grep -v Close <<< "$Maskgenerator_all" | grep -q morphology && {
     verbose "Mask generator kernels:
-$($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgenerator_all null: 2>&1)
+$($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgenerator_all xc:white null: 2>&1)
 "
     rm $Cachedir/*NUMBER* 2>/dev/null
   }
@@ -938,7 +940,7 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
 ${Maskgenerator_all//NUMBER/$Number}"
     
     Command="$Command
-  null:"
+  xc:white null:"
           
     [ "$Count" = "1" ] && verbose "Generating masks with:
 $(grep "\S" <<< "$Command")"
@@ -1658,7 +1660,7 @@ maskfromimage() {
     -compose multiply -composite
     -write $Maskname
   -delete 0
-    null:"
+    xc:white null:"
          
     #$Command || error "Failure in mask generation of comparision with $Imagename"
     multicore "$Command" "$Maskname" || error "Failure in mask generation of comparision with $Imagename"
@@ -1776,7 +1778,7 @@ fakehdr() {
         Convertline="$Convertline ( mpr:image -gamma ${Darkfactor}                      -write $Cachedir/$Imagebasename.exp.dark.tif   )" 
       ;;
     esac
-    Convertline="$Convertline null:"
+    Convertline="$Convertline xc:white null:"
     echo $Convertline
     multicore "$Convertline" || Error=1
     multicore_wait || Error=1
