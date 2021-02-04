@@ -317,7 +317,8 @@ error() {
   #exit 1
 }
 note() {
-  [ -z "$Error" ] && echo "imfuse note: $*" >&2
+  [ -z "$Error" ] && echo "imfuse note: $*
+" >&2
   return 0
 }
 verbose() {
@@ -358,7 +359,7 @@ freememory() {
     Zram="$((Zram/1000))"
     Freemem="$((Freemem + Zram))"
   done < <(/sbin/swapon --bytes | grep zram)
-  Freemem="$((Freemem*100/95))"
+  Freemem="$((Freemem*100/80))"
   echo $Freemem
 }
 lowercase() {
@@ -426,7 +427,7 @@ ${1:-}"
   
   Split="$((Imagelistmemsize/Freemem +1))"
 
-  verbose "Generating $Mode image $(basename "$Resultimage") in $Split parts."
+  note "Generating $Mode image $(basename "$Resultimage") in $Split parts."
   case $Split in
     1) 
       Startzeit="$(date +%s)"
@@ -510,7 +511,6 @@ focus_montage() {
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
   
-  echo "$Parsedoptions"
   while [ $# -gt 0 ]; do
     case "${1:-}" in
       --output)      Outputimage="${2:-}" ; shift ;;
@@ -567,6 +567,7 @@ focus_montage() {
     no)  [ "$Maskmaxready" = "yes" ] || evaluate_split max $Maskmax $Maskimagelist || return 1 ;;
   esac
   
+  note "Focus montage"
   Startzeit="$(date +%s)"
   Count=0    
   for Sourceimage in $Sourceimagelist; do
@@ -759,7 +760,7 @@ $Magickbin
     Command="$Command
   null:"
           
-    [ "$Count" = "1" ] && verbose "Cutting with:
+    [ "$Count" = "1" ] && verbose "Focus montage with:
 $(grep "\S" <<< "$Command")"
 
     case $Stepwise in
@@ -815,13 +816,13 @@ focus_generate_composite() {
     [ "$Error" ] && break
     Imagename="$Cachedir/compose.$Mode.$Sourcemd5.tif"
     [ -e "$Imagename" ] || {
-      verbose "--compose=$Mode: Generating compose image $Imagename"
+      note "--compose=$Mode: Generating compose image $Imagename"
       $Magickbin $Cachedir/evaluate.min.$Sourcemd5.tif $Cachedir/evaluate.max.$Sourcemd5.tif           -compose $Mode -composite $Imagename || error "Error compositing $Mode: $Image"
       showimage "$Imagename"
     }
     Imagename="$Cachedir/compose.$Mode.swap.$Sourcemd5.tif"
     [ -e "$Imagename" ] || {
-      verbose "--compose=$Mode,swap: Generating compose image $Imagename"
+      note "--compose=$Mode,swap: Generating compose image $Imagename"
       $Magickbin $Cachedir/evaluate.min.$Sourcemd5.tif $Cachedir/evaluate.max.$Sourcemd5.tif -swap 0,1 -compose $Mode -composite $Imagename || error "Error compositing $Mode -swap: $Image"
       showimage "$Imagename"
     }
@@ -888,11 +889,11 @@ $Maskgenerator
   #Maskgenerator_all="$(sed "1,/SHOWIMAGE/{s%SHOWIMAGE%$Showimage%}" <<< "$Maskgenerator_all")"
   #Maskgenerator_all="$(sed "/SHOWIMAGE/d" <<< "$Maskgenerator_all")"
   
-  grep -q morphology <<< "$Maskgenerator_all" && {
+  grep -v Close <<< "$Maskgenerator_all" | grep -q morphology && {
     verbose "Mask generator kernels:
 $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgenerator_all null: 2>&1)
 "
-    rm $Cachedir/*NUMBER*
+    rm $Cachedir/*NUMBER* 2>/dev/null
   }
 
   # --evaluate, --compose, M,m
@@ -900,7 +901,8 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
   
   # --enfuse, --bg=enfuse, soft
   [ "$Enfuse_needlist" ] && [ ! -e "$Enfusebaseimage" ] && {
-    enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask -o "$Enfusebaseimage" $Sourceimagelist || error "Failed to generate enfuse base image"
+    note "Generating enfuse base image"
+    nice enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask -o "$Enfusebaseimage" $Sourceimagelist 2>&1 | { grep -v -E 'loading next image|alpha channel' ; :; } || error "Failed to generate enfuse base image"
     showimage "$Enfusebaseimage"
   }
   
@@ -909,7 +911,8 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
   # Generate masks
   Startzeit="$(date +%s)"
   Count=0
-  grep -q "NUMBER" <<< "$Maskgenerator_all" || verbose "Skipping mask generation"
+  note "Generating masks"
+  grep -q "NUMBER" <<< "$Maskgenerator_all" || note "Skipping mask generation"
   grep -q "NUMBER" <<< "$Maskgenerator_all" && for Sourceimage in $Sourceimagelist; do
     [ "$Error" ] && break
     Count="$((Count+1))"
@@ -946,7 +949,7 @@ $(grep "\S" <<< "$Command")"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
     verbose "Contrast mask $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
   done
-  multicore_wait  || error "Failure in mask generation"
+  multicore_wait || error "Failure in mask generation"
   
   
   # less,soft
@@ -955,12 +958,14 @@ $(grep "\S" <<< "$Command")"
     maskarg_parse "$Line"
     
     [ "${Argless}" ] && [ "${Argsoft}" ] && {
+      note "Generating soft&less image for mask $Argmethod"
       Imagename="$Cachedir/$Argbasename-prepare-less${Argless}-soft${Argsoft}.tif"
       focus_montage --soft "$Argsoft" --lessthanmax "$Argless" --output "$Imagename" -- $(masklist "$Argbasename") || break
       #$Magickbin "$Enfusebaseimage" "$Imagename" -compose Over -composite "$Imagename" || error "Failed to compose soft result on enfuse background"
       Argbasename="$Argmethod-soft$Argsoft-less$Argless.$(md5cut "$Argbasename $Argsoft $Argless" )"
       maskexist "$Argbasename" || {
         rm -f $(masklist "$Argbasename")
+        note "Generating comparision masks from soft&less result of $Argmethod"
         maskfromimage $Imagename $Cachedir/$Argbasename || break  ### FIXME issue with --cache
       }
       Arglevel=""
@@ -977,6 +982,7 @@ $(grep "\S" <<< "$Command")"
       Imagename="$Cachedir/$Argbasename-prepare-less$Argless.tif"
       Maskmax="$Cachedir/$Argbasename-less${Argless}mask.tif"
       [ -e "$Maskmax" ] || {
+        note "Generating less mask for $Argmethod"
         focus_montage --lessthanmax "$Argless" --maskmax "$Maskmax" --output "$Imagename" -- $(masklist "$Argbasename") || break   
       }
       Argdarkenmask="$Maskmax"
@@ -1285,7 +1291,7 @@ focus_merge_masks() {
   Mergeneeded=yes
 
   [ -z "$Maskmethodlist" ] && {
-    verbose "Skipping mask merge, no mask options are specified."
+    note "Skipping mask merge, no mask options are specified."
     return 0
   }
   
@@ -1368,11 +1374,12 @@ focus_merge_masks() {
     
   Mergemaskbasename="$Mergemaskbasename.$(md5cut "$Sourcemd5 $Mergecode" )"
   maskexist "$Mergemaskbasename" && {
-    verbose "Skipping merge, masks already exist: $Mergemaskbasename"
+    note "Skipping merge, masks already exist: $Mergemaskbasename"
     return 0
   }
     
   # merge images
+  note "Merging masks"
   Startzeit="$(date +%s)"
   Count=0
   for Sourceimage in $Sourceimagelist; do
@@ -2789,7 +2796,7 @@ $Newoption"
 }
 main() {
   trap trap_sigint SIGINT
-  set -u
+  set -u -o pipefail
   
   declare_variables
   multicore_init
@@ -2823,8 +2830,8 @@ main() {
   
   # --force
   [ -f "$Outputimage" ] && [ -z "$Forceoverwrite" ] && { 
-    note "Output image already exists with matching md5sum:
-$Outputimage"
+    note "Skipping all, output image already exists with matching md5sum."
+    echo "$Outputimage"
     showimage "$Outputimage"
     return "${Error:-0}"
   }
@@ -2846,9 +2853,10 @@ $Maskmethodlist
   Imagelistmemsize="$((Imagenumber*Imagememsize))"
   Image=""
   
-  verbose "Image number: $Imagenumber
-  Image width:  $Imagewidth
-  Image height: $Imageheight
+  note "
+  Image number:           $Imagenumber
+  Image width:            $Imagewidth px
+  Image height:           $Imageheight px
   Image memory size:      $Imagememsize kb
   Image list memory size: $Imagelistmemsize kb
   Free Memory:            $Freemem kb"
@@ -2886,16 +2894,16 @@ $Cachedir/fakehdr*.$(basename "$Image")"
     saturation)
       Backgroundimage="$(imfuse --cache="$Cachedir" --basename="$Cachedir/" --saturation --showname $Sourceimagelist)"
       [ -e "$Backgroundimage" ] || {
+        note "Generating saturation background image"
         imfuse --cache=$Cachedir --output="$Backgroundimage" --saturation $([ "$Showimageprocessing" = "yes" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation background"
       }
-      note "BG $Backgroundimage"
     ;;
     evaluate*)    
       Background="$(lowercase $Background)"
       Background="$(cut -d, -f2 <<< "$Background")"
       Evaluate_needlist="$Evaluate_needlist $Background"
       focus_generate_composite
-      cp "$Cachedir/evaluate.$Background.$Sourcemd5.tif" "$Backgroundimage" || error "--background: Copy failure"
+      Backgroundimage="$Cachedir/evaluate.$Background.$Sourcemd5.tif"
     ;;
     compose*)
       Background="$(lowercase $Background)"
@@ -2903,7 +2911,7 @@ $Cachedir/fakehdr*.$(basename "$Image")"
       Evaluate_needlist="$Evaluate_needlist min max"
       Compose_needlist="$Compose_needlist $Background"
       focus_generate_composite
-      cp "$Cachedir/compose.$Background.$Sourcemd5.tif" "$Backgroundimage" || error "--background: Copy failure"
+      Backgroundimage="$Cachedir/compose.$Background.$Sourcemd5.tif"
     ;;
     color*)
       Background="$(cut -d, -f2 <<< "$Background")"
@@ -2916,6 +2924,7 @@ $Cachedir/fakehdr*.$(basename "$Image")"
     *)
       [ -f "$Background" ] && identify "$Background" && $Magickbin "$Background" "$Backgroundimage" || error "Option --background: Failed to load image '$Background'.
   Either specify an image or a color name or a mode out of:
+    saturation
     $Magickbin -list color
     $Magickbin -list evaluate
     $Magickbin -list compose"
@@ -2931,15 +2940,18 @@ $Cachedir/fakehdr*.$(basename "$Image")"
     focus_montage --soft "$Globalsoft" --lessthanmax "$Globalless" --output "$Resultimage"  || return 1
   }
 
-  $Magickbin "$Backgroundimage" "$Resultimage" -compose Over -composite "$Resultimage"
+  $Magickbin "$Backgroundimage" "$Resultimage" -compose Over -composite "$Resultimage" || note "Failed to compose result over background"
   [ "$Layers" ] && focus_sharpness_layer
       
   [ "$Error" ] && return 1
 
+  # Transfer EXIF metadata from first image to result
+  exiftool -overwrite_original -tagsfromfile $(head -n1 <<< "$Sourceimagelist") -all:all -exclude Orientation "$Resultimage" >/dev/null || note "Failed to transfer exif data"
+  
   $Magickbin "$Resultimage" $Tifstorealpha "$Outputimage"  || error "Error storing result in $Outputimage"
   showimage "$Outputimage"
-  note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")
-$Outputimage"
+  note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+  echo "$Outputimage"
     
   return "${Error:-0}"
 }
