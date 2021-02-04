@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.2-beta"
+Version="0.6.2.1-beta"
 
 usage() {
   echo "imfuse v$Version
@@ -1692,6 +1692,8 @@ mkimg_transparent() {
   local Size
   Size="${2:-}"
   [ -z "$Size" ] && Size="${Imagewidth:-100}x${Imageheight:-100}"
+  note "Generating transparent image with:
+$Magickbin -size \"$Size\" xc:blue -transparent blue $Tifstorealpha \"${1:-transparent.tif}\""
   $Magickbin -size "$Size" xc:blue -transparent blue $Tifstorealpha "${1:-transparent.tif}" || error "Failed to create transparent image ${1:-}."
 }
 denoisecode() {
@@ -2812,7 +2814,7 @@ main() {
   grep -q " Q16 "  <<< "$Magickversion" && Magickpixelmemory="8"
   grep -q " HDRI " <<< "$Magickversion" && Magickpixelmemory="16"
   Magicklist="$Magickbin"
-  Magickbin="nice $Magickbin -quiet"  [ "$Error" ] && return 1
+  Magickbin="nice $Magickbin -quiet"
   
   Freemem="$(freememory)"
   [ -z "$Freemem" ] && {
