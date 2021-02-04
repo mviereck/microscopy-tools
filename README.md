@@ -22,7 +22,9 @@ In active development, beta stage. (Terminal)
 
 Dependencies:
  - `imagemagick`
+ - `enfuse` (recommended, needed for some options)
  - `geeqie` (optional image viewer)
+ - `exiftool` (optional to preserve exif meta data)
 
 ## imgruler
 
@@ -70,9 +72,9 @@ Dependencies, most essentiell:
 
 Dependencies, also recommended:
  - `ffmpeg`
+ - `exiftool`
  - [`imgruler`](#imgruler)
  - `ufraw`
- - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack)
  
 ## stackshooter
 GUI for foto stacking with a stepper motor controlled by an Arduino and a camera connected on USB. 
