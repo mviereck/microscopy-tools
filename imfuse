@@ -1704,6 +1704,9 @@ mkimg_transparent() {
   note "Generating transparent image with:
   $Magickbin -size \"$Size\" xc:transparent -type TrueColorAlpha \"${1:-transparent.tif}\""
   $Magickbin -size "$Size" xc:transparent -type TrueColorAlpha "${1:-transparent.tif}"
+  
+  verbose "identify transparent image:
+$(identify "${1:-}")"
 }
 denoisecode() {
   echo "
