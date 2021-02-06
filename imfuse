@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.2.2-beta"
+Version="0.6.3.0-beta"
 
 usage() {
   echo "imfuse v$Version
@@ -25,6 +25,7 @@ General options:
  --basename           Base name [+path] for output image. 
  --cache [=DIR]       Preserve cache files, can be partially reused by imfuse.
                       Optionally specify a cache folder DIR.
+ --exif [=IMAGE]      Transfer exif meta data from IMAGE or first input image.
  -h, --help           Show this help and exit.
  --layers [=NUMBER]   Additonally store a layered TIFF image where
                       the layers contain different sharpness areas.
@@ -264,9 +265,10 @@ Mask generation and fusion adjustments:
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
  --soft [=%]          Enable soft fuse mode. Takes a percent argument.
+                      Best method to reduce noise in low contrast areas.
                       High % is very soft. Strenght of value depends on mask.
                       A semitransparent result is composed over the background.
-                      Best method to reduce noise in low contrast areas.
+                      Default background is 'enfuse'. Others are worth a test.
                            
 Basics:                   
 Fusing a focus stack aims to generate an overall sharp image of several single
@@ -479,9 +481,6 @@ flatten() {
   Resultimage="${1:-}"
   shift
   
-  verbose "Flattening on:
-$(identify "$Resultimage")"
-  
   Command="$Magickbin
   $Resultimage
     -alpha set"
@@ -491,9 +490,6 @@ $(identify "$Resultimage")"
   $Image
     -compose Over -composite"
   done
-  
-  verbose "Flattening with:
-$Command"
   
   Command="$Command
     $Tifstorealpha
@@ -712,6 +708,14 @@ $Magickbin
     
     case $Softfusion in
       "") # hard (default)
+        [ "$Testsetup" ] && Command="$Command
+  mpr:cutmask
+    -channel alpha
+    -blur 0x2
+    +channel
+    -write mpr:cutmask
+    -delete 0"
+    
         Command="$Command
   mpr:sourceimage
   mpr:cutmask
@@ -853,14 +857,6 @@ focus_generate_masks() {
     
     [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
     -negate"
-
-    #[ "$Argcontrast" ] && Maskgenerator="$Maskgenerator
-    #-blur 0x$Argcontrast"
-    
-    [ "$Testsetup" ] && Maskgenerator="$Maskgenerator
-    -write mpr:sourcegray
-    -delete 0
-$(focus_maskmethod "$Argmethod")"
     
     [ "${Argclose1:-1}x${Argclose2:-1}" != "1x1" ] && Maskgenerator="$Maskgenerator
     -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-4}"
@@ -1698,15 +1694,7 @@ mkimg_transparent() {
   local Size
   Size="${2:-}"
   [ -z "$Size" ] && Size="${Imagewidth:-100}x${Imageheight:-100}"
-#  note "Generating transparent image with:
-#$Magickbin -size \"$Size\" xc:blue -transparent blue $Tifstorealpha \"${1:-transparent.tif}\""
-#  $Magickbin -size "$Size" xc:blue -transparent blue $Tifstorealpha "${1:-transparent.tif}" || error "Failed to create transparent image ${1:-}."
-  note "Generating transparent image with:
-  $Magickbin -size \"$Size\" xc:transparent -type TrueColorAlpha \"${1:-transparent.tif}\""
   $Magickbin -size "$Size" xc:transparent -type TrueColorAlpha "${1:-transparent.tif}"
-  
-  verbose "identify transparent image:
-$(identify "${1:-}")"
 }
 denoisecode() {
   echo "
@@ -1963,6 +1951,7 @@ declare_variables() {
   Enfuse_needlist=""
   Evaluate_needlist=""
   Error=""
+  Exifsourceimage=""
   Fakehdr=""
   Firstimage=""
   Firstmaskmethod=""
@@ -2020,7 +2009,7 @@ parse_options() {
   #local Parsedoptions
   
   Shortoptions="ho:vV"
-  Longoptions="basename:,cache::,force,help,output:,showimage,showname,test::,threads:,verbose,version"
+  Longoptions="basename:,cache::,exif::,force,help,output:,showimage,showname,test::,threads:,verbose,version"
   Longoptions="$Longoptions,bg:,background:,close::,contrast::,denoise::,fakehdr::,grayscale:,layers::,less::,revert,soft::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
@@ -2041,6 +2030,7 @@ parse_options() {
          --close)             Globalclose="${2:-auto}"    ; shift ;;
          --contrast)          Globalcontrast="${2:-auto}" ; shift ;;         
          --denoise)           Globaldenoise="${2:-auto}"  ; shift ;;
+         --exif)              Exifsourceimage="${2:-auto}"        ; shift ;;
          --fakehdr)           Fakehdr="${2:-auto}"        ; shift ;;
          --force)             Forceoverwrite="yes"        ;;
          --grayscale)         Grayscale="${2:-auto}"      ; shift ;;
@@ -2966,7 +2956,10 @@ $Cachedir/fakehdr*.$(basename "$Image")"
   $Magickbin "$Resultimage" $Tifstorealpha "$Outputimage"  || error "Error storing result in $Outputimage"
   
   # Transfer EXIF metadata from first image to result
-  exiftool -overwrite_original -tagsfromfile $(head -n1 <<< "$Sourceimagelist") -Orientation= -all:all  "$Outputimage" >/dev/null || note "Failed to transfer exif data"
+  [ "$Exifsourceimage" ] && {
+    [ "$Exifsourceimage" = "auto" ] && Exifsourceimage="$(head -n1 <<< "$Sourceimagelist")"
+    exiftool -ignoreMinorErrors -overwrite_original -tagsfromfile "$Exifsourceimage" -Orientation= -all:all  "$Outputimage" >/dev/null || note "Failed to transfer exif data"
+  }
 
   showimage "$Outputimage"
   note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
