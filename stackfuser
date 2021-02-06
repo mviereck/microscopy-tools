@@ -254,7 +254,7 @@ exiftransfer() {
   Sourceimage="${1:-}"
   Destinationimage="${2:-}"
   Exifargs="$(exiftool -a -u -g1 -args "$Sourceimage")"
-  Exifargs="$(LC_ALL=C grep -v -E -- '-ExifTool|-System:|-File:|ImageWidth|ImageHeight|ImageSize|Compression|Orientation|Resolution' <<< "$Exifargs" | sed 's/"/\\"/g ; s/=/="/ ; s/$/"/' )"
+  Exifargs="$(LC_ALL=C grep -v -E -- '-ExifTool|-System:|-File:|ImageWidth|ImageHeight|ImageSize|Compression|Orientation|Resolution' <<< "$Exifargs" | sed "s/'/'\"'\"'/g ; s/=/='/ ; s/\$/'/" )"
   eval exiftool -ignoreMinorErrors $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
 }
 fileglob() {
@@ -674,7 +674,6 @@ batch_function() {
   Startzeit="$(date +%s)"
   $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -s "$Sourcedir" -g "$Sourcefileglob" -d "$Destinationdir" -b "$Destinationfile" -c "$Cachedir"
   Return=$?
-  note "Ready: $Function $Opt1 $Opt2 $Opt3 $Opt4; time: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   cd "$Targetdir"
   storeinfo drop cmd
   storeinfo drop cmd_source
@@ -702,7 +701,7 @@ batch_function() {
   
   # transfer exif data
   [ "$Return" = "0" ] && {
-    verbose "Transferring exif meta data"
+    note "Transferring exif meta data"
     Sourcelist="$(fileglob "$Targetstackshotdir/*")"
     Targetlist="$(fileglob "$Destinationdir/*")"
     case "$Destinationdir" in
@@ -747,6 +746,7 @@ batch_function() {
     }
   }
 
+  note "Ready: $Function $Opt1 $Opt2 $Opt3 $Opt4; time: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   verbose "batch_function(): $Function: return $Return"
 
   return $Return
@@ -2220,13 +2220,6 @@ imageformat() {
   Destinationformat="${Opt9:-tif}"
   Destinationformat="${Destinationformat,,}"
   
-  false && [ "$Sourceformat" = "$Destinationformat" ] && {
-    note "imageformat(): Files already have desired image format $Destinationformat"
-    cp $Imagelist $Destinationdir
-    showpercent 100 100
-    return 0
-  }
-  
   [ "$Imagenumber" = "1" ] && {
     file -i "$Imagelist" | grep -q video && {
       note "imageformat(): Splitting video into images with format $Destinationformat"
@@ -2235,19 +2228,29 @@ imageformat() {
     }
   }
     
-  note "imageformat(): Converting image format from $Sourceformat to $Destinationformat"
-  for Image in $Imagelist; do
-    Imagecount=$((Imagecount+1))
-    showpercent $Imagecount $Imagenumber
-    Destinationfile="$(rev <<< "$Image" | cut -d. -f2- | rev).$Destinationformat"
-    Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
-    multicore "$Magickbin $Image +repage -orient topleft -quality 100% $Destinationfile" "$Destinationfile" || Error=1 
-    [ "$Error" ] && break
+  case $Destinationformat in
+    $Sourceformat)
+      note "imageformat(): Files already have desired image format $Destinationformat, just copying"
+      cp $Imagelist $Destinationdir/
+      showpercent 100 100
+      return 0
+    ;;
+    *)
+      note "imageformat(): Converting image format from $Sourceformat to $Destinationformat"
+      for Image in $Imagelist; do
+        Imagecount=$((Imagecount+1))
+        showpercent $Imagecount $Imagenumber
+        Destinationfile="$(rev <<< "$Image" | cut -d. -f2- | rev).$Destinationformat"
+        Destinationfile="$Destinationdir/$(basename "$Destinationfile")"
+        multicore "$Magickbin $Image +repage -orient topleft -quality 100% $Destinationfile" "$Destinationfile" || Error=1 
+        [ "$Error" ] && break
 #    case $Imageraw in
 #      no)  multicore "$Magickbin $Image $Destinationfile" "$Destinationfile" || return 1 ;;
 #      yes) multicore "ufraw-batch --wb=camera --black-point=auto --exposure=auto --create-id=no --out-type=$Destinationformat --out-depth=16 --output=$Destinationfile $Image" "$Destinationfile" || return 1 ;;
 #    esac
-  done
+      done
+    ;;
+  esac
   multicore_wait || return 1
   return ${Error:-0}  
 }
