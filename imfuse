@@ -245,6 +245,9 @@ Mask generation and fusion adjustments:
  --fakehdr [=%]       Balances over- and underexposed areas. Default %: 50
                       Remaining artefacts at borders of overexposured areas
                       might be fixed with --saturation. Alternative: --halo
+ --finalblur [=w%,sigma]  Blur low contrast areas with a contrast strenght 
+                      up to w%. Default w% depends on first specified mask, 
+                      default sigma is 1.
  --grayscale=MODE     Grayscale converting method before mask generation.
                       Compare ImageMagick option -grayscale. Default: RMS
                       MODE is one of: (number or name)
@@ -289,6 +292,8 @@ has some weaknesses and can lead to artefacts.
   Possibilities:
    - Option --soft gives a quite satisfying result for low contrast noise areas.
      Example: '--diffstat --soft' or '--diffstat=soft'
+   - Another possibility to soften the noise is option --finalblur.
+     Example: '--diffstat --finalblur=w15,s2'
    - Combining the contrast mask with a color saturation mask.
      Example: '--diffstat --saturation=w15'
      (Weight argument 'w15' causes the saturation mask to take effect only 
@@ -708,14 +713,6 @@ $Magickbin
     
     case $Softfusion in
       "") # hard (default)
-        [ "$Testsetup" ] && Command="$Command
-  mpr:cutmask
-    -channel alpha
-    -blur 0x2
-    +channel
-    -write mpr:cutmask
-    -delete 0"
-    
         Command="$Command
   mpr:sourceimage
   mpr:cutmask
@@ -727,14 +724,6 @@ $Magickbin
         # get part of source mask
         Command="$Command
   mpr:sourcemask 
-  mpr:cutmask
-    -compose Over -composite
-    -write mpr:sourcemask_part
-    -delete 0"
-        false && [ "$Testsetup" ] && Command="$Command
-  mpr:sourcemask 
-  $Cachedir/saturation.*.$Number.tif
-    -compose screen -composite
   mpr:cutmask
     -compose Over -composite
     -write mpr:sourcemask_part
@@ -807,6 +796,50 @@ $(grep "\S" <<< "$Command")"
       }
     ;;
   esac
+
+  # --finalblur
+  [ "$Finalblur" ] && {
+    Command="$Magickbin
+  $Resultimage
+    -write mpr:resultimage
+    -delete 0
+  $Maskmax
+    -write mpr:maskmax
+    -delete 0
+  mpr:maskmax
+    -threshold ${Finalblurpercent:-10}%
+    -negate
+    -write mpr:cutmask
+    -delete 0
+  mpr:resultimage
+    -blur ${Finalblursigma:-1}
+  mpr:cutmask
+    -alpha off
+    -compose CopyOpacity -composite
+    -write mpr:partsource_blurred
+    -delete 0"
+    [ "$Softfusion" ] && {
+      Command="$Command
+  mpr:partsource_blurred
+    -channel alpha
+  mpr:maskmax
+    -compose Multiply -composite
+    +channel
+    -write mpr:partsource_blurred
+    -delete 0
+      "
+    }
+    Command="$Command
+  mpr:partsource_blurred
+  mpr:resultimage
+    -compose DstOver -composite
+  $Resultimage"
+  
+    verbose "Final blur command:
+$Command"
+
+    $Command
+  }
   
   $Magickbin "$Resultimage" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
   
@@ -1953,6 +1986,9 @@ declare_variables() {
   Error=""
   Exifsourceimage=""
   Fakehdr=""
+  Finalblur=""
+  Finalblurpercent=""
+  Finalblursigma=""
   Firstimage=""
   Firstmaskmethod=""
   Forceoverwrite=""
@@ -2010,7 +2046,7 @@ parse_options() {
   
   Shortoptions="ho:vV"
   Longoptions="basename:,cache::,exif::,force,help,output:,showimage,showname,test::,threads:,verbose,version"
-  Longoptions="$Longoptions,bg:,background:,close::,contrast::,denoise::,fakehdr::,grayscale:,layers::,less::,revert,soft::"
+  Longoptions="$Longoptions,bg:,background:,close::,contrast::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,revert,soft::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -2032,6 +2068,7 @@ parse_options() {
          --denoise)           Globaldenoise="${2:-auto}"  ; shift ;;
          --exif)              Exifsourceimage="${2:-auto}"        ; shift ;;
          --fakehdr)           Fakehdr="${2:-auto}"        ; shift ;;
+         --finalblur)         Finalblur="${2:-auto}"      ; shift ;;
          --force)             Forceoverwrite="yes"        ;;
          --grayscale)         Grayscale="${2:-auto}"      ; shift ;;
       -h|--help)              usage                       ; exit 0 ;;
@@ -2197,6 +2234,14 @@ check_options() {
   
   # --fakehdr
   [ "$Fakehdr" = "auto" ] && Fakehdr="50"
+  
+  [ "$Finalblur" ] && {
+    Argmethod="finalblur"
+    [ "$Finalblur" = "auto" ] && Finalblur="w,s1"
+    maskarg_parse "$Finalblur"
+    Finalblurpercent="${Argweight:-$(defaultvalue $Firstmaskmethod noise)}"
+    Finalblursigma="${Argsigma1:-$(defaultvalue finalblur sigma1)}"
+  }
 
   # --grayscale
   case ${Grayscale,,} in
@@ -2315,7 +2360,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     [ "$Argless" ]               && Resultimage="$Resultimage-less$Argless"
     [ "$Argclose1" ]             && Resultimage="$Resultimage-close$Argclose1"
     [ "$Argclose2" ]             && Resultimage="${Resultimage}x$Argclose2"
-    [ "$Argcontrast" ]           && Resultimage="$Resultimage-cont$Argcontrast"
+    [ "$Argcontrast" ]           && Resultimage="$Resultimage-contrast$Argcontrast"
     [ "$Argdenoise" ]            && Resultimage="$Resultimage-denoise$Argdenoise"
     [ "$Argswap" ]               && Resultimage="$Resultimage-swap"
     [ "$Argnegate" ]             && Resultimage="$Resultimage-neg"
@@ -2346,6 +2391,9 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     "") ;;
     *) Resultimage="${Resultimage}_close$Globalclose" ;;
   esac
+  [ "$Finalblur" ] && {
+    Resultimage="${Resultimage}_finalblur=w${Finalblurpercent}-s${Finalblursigma}"
+  }
   case $Globaldenoise in
     "") ;;
     *) Resultimage="${Resultimage}_denoise$Globaldenoise" ;;
@@ -2357,10 +2405,8 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     9) ;;
     *) Resultimage="${Resultimage}_gray$Grayscalenumber" ;;
   esac
-  [ "$Background" != "mean" ] && {
-    [ "$Background" ] && [ ! -f "$Background" ] && Resultimage="${Resultimage}_bg=$(cut -d, -f2 <<< "$Background")"
-    [ "$Background" ] && [   -f "$Background" ] && Resultimage="${Resultimage}_bg=image"
-  }
+  [ "$Background" ] && [ ! -f "$Background" ] && Resultimage="${Resultimage}_bg=$(cut -d, -f2 <<< "$Background")"
+  [ "$Background" ] && [   -f "$Background" ] && Resultimage="${Resultimage}_bg=image"
   case $Testsetup in
     "") ;;
     *) Resultimage="${Resultimage}_test$Testarg" ;;
@@ -2368,7 +2414,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   Resultimage="$(sed "s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
   #Resultimage="$(sed "s/=-/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
     
-  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist $Background $Fakehdr $Globalclose $Globaldenoise $Globalless $Globalsoft $Grayscale $Revertimagelist $Testsetup" )"
+  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist $Background $Fakehdr $Globalclose $Globaldenoise $Globalless $Globalsoft $Finalblur $Grayscale $Revertimagelist $Testsetup" )"
   
   Resultimage="${Resultimage}.${Fusemd5sum}.${Imageformat}"
   [ -z "$Outputdir" ] && Outputdir="$(pwd)"
@@ -2487,6 +2533,7 @@ defaultvalue() {
         compass)    echo "" ;;
         diffstat)   echo "" ;;
         dog)        echo "0.3" ;;
+        finalblur)  echo "1" ;;
         freichen)   echo "" ;;
         gaussian)   echo "0.3" ;;
         halo)       echo "5" ;;
@@ -2604,12 +2651,12 @@ maskarg_parse() {
       Value="$(sed "s/${Key:-NOKEY}//"  <<< "$Line")"
     }
     case $Key in
-      "%"|"w"|"w%")       Argweight="${Value:-$(defaultvalue    "$Firstmaskmethod" noise)}" ;;
+      "w"|"w%")       Argweight="${Value:-$(defaultvalue    "$Firstmaskmethod" noise)}" ;;
       "r")                Argradius1="$Value" ;;
       "R")                Argradius2="${Value}" ;;
       "s")                Argsigma1="$Value" ;;
       "S")                Argsigma2="${Value}" ;;
-      "p")                Argpercent1="$(percentrm "$Value")" ;;
+      "p"|"%")            Argpercent1="$(percentrm "$Value")" ;;
       "P")                Argpercent2="$(percentrm "$Value")" ;;
       "swap")             Argswap="swap" ;;
       "soft")             Argsoft="${Value:-$(defaultvalue      "$Argmethod" soft)}" ;;
@@ -2857,7 +2904,7 @@ $Maskmethodlist
   Imagewidth="$($Magickbin  -format '%w' "$Image" info:)"
   Imageheight="$($Magickbin -format '%h' "$Image" info:)"
   Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
-  Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel? Meta data?
+  Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
   Imagelistmemsize="$((Imagenumber*Imagememsize))"
   Image=""
   
@@ -2942,7 +2989,7 @@ $Cachedir/fakehdr*.$(basename "$Image")"
   
   # Generating stackshot image
   mkimg_transparent "$Resultimage"
-  focus_generate_masks                  || return 1
+  focus_generate_masks                    || return 1
   [ -n "$Maskmethodlist" ] && {
     focus_merge_masks                     || return 1
     focus_montage --soft "$Globalsoft" --lessthanmax "$Globalless" --output "$Resultimage"  || return 1
