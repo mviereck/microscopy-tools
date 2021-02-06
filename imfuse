@@ -505,12 +505,12 @@ flatten() {
 focus_montage() {
   # Finally: focus stacking
 
-  local Resultimage Outputimage Sourceimage Maskimagelist= Resultmd5
+  local Resultimage Resultfinalblur Outputimage Sourceimage Maskimagelist= Resultmd5
   local Lessthanmaxmask
   local Maskmax Maskmaxready=
   local Count Number
   local Contrastmaxlevel Softfusion= Lessthanmax=
-  local Command
+  local Command Skipmontage=
   local Startzeit Dauer Restzeit
   local Stepwise Sourcepartimage Sourcepartimagelist= Sourcemask
   local Longoptions Parsedoptions
@@ -546,40 +546,39 @@ focus_montage() {
   
   [ -e "$Resultimage" ] && {
     verbose "Skipping montage, already exists: $(basename $Resultimage)"
-    $Magickbin "$Resultimage" "$Outputimage" || error "Error converting '$Resultimage' to '$Outputimage'"
+    #$Magickbin "$Resultimage" "$Outputimage" || error "Error converting '$Resultimage' to '$Outputimage'"
     showimage "$Resultimage"
-    return 0
+    #return 0
+    Skipmontage="yes"
   }
   
-#  [ -e "$Outputimage" ] \
-#    && $Magickbin "$Outputimage" "$Resultimage" \
-#    || mkimg_transparent "$Resultimage"
-  mkimg_transparent "$Resultimage"
+  [ -z "$Skipmontage" ] && {
+    mkimg_transparent "$Resultimage"
   
+    [ "$Softfusion" ] && level_masks $Maskimagelist
   
-  [ "$Softfusion" ] && level_masks $Maskimagelist
+    [ "$Lessthanmax" ] && {
+      evaluate_split max $Maskmax $Maskimagelist || return 1
+      Maskmaxready="yes"
+      Contrastmaxlevel="$($Magickbin $Maskmax -format '%[fx:maxima*100]' info:)"
+      Lessthanmax="$(calc "$Lessthanmax*$Contrastmaxlevel/100")" 
+      Lessthanmaxmask="$Cachedir/lessthanmax.tif"
+      mkimg_black "$Lessthanmaxmask"
+    }
   
-  [ "$Lessthanmax" ] && {
-    evaluate_split max $Maskmax $Maskimagelist || return 1
-    Maskmaxready="yes"
-    Contrastmaxlevel="$($Magickbin $Maskmax -format '%[fx:maxima*100]' info:)"
-    Lessthanmax="$(calc "$Lessthanmax*$Contrastmaxlevel/100")" 
-    Lessthanmaxmask="$Cachedir/lessthanmax.tif"
-    mkimg_black "$Lessthanmaxmask"
+    Stepwise="no"
+    [ "$Lessthanmax" ] && Stepwise="yes"
+  
+    case $Stepwise in
+      yes) mkimg_black $Maskmax || return 1 ;;
+      no)  [ "$Maskmaxready" = "yes" ] || evaluate_split max $Maskmax $Maskimagelist || return 1 ;;
+    esac 
   }
-  
-  Stepwise="no"
-  [ "$Lessthanmax" ] && Stepwise="yes"
-  
-  case $Stepwise in
-    yes) mkimg_black $Maskmax || return 1 ;;
-    no)  [ "$Maskmaxready" = "yes" ] || evaluate_split max $Maskmax $Maskimagelist || return 1 ;;
-  esac
   
   note "Focus montage"
   Startzeit="$(date +%s)"
   Count=0    
-  for Sourceimage in $Sourceimagelist; do
+  [ -z "$Skipmontage" ] && for Sourceimage in $Sourceimagelist; do
     [ "$Error" ] && break
     Count="$((Count+1))"
     Number="$(printnum $Count $Imagenumberlength)"
@@ -787,7 +786,7 @@ $(grep "\S" <<< "$Command")"
   done
   multicore_wait || error "Error in result montage"
   
-  case $Stepwise in
+  [ -z "$Skipmontage" ] && case $Stepwise in
     no)
       # possible leftovers from multicore
       verbose "Montage $Resultimage"
@@ -798,7 +797,9 @@ $(grep "\S" <<< "$Command")"
   esac
 
   # --finalblur
+  Resultfinalblur="$Resultimage"
   [ "$Finalblur" ] && {
+    Resultfinalblur="$Resultimage.finalblur.tif"
     Command="$Magickbin
   $Resultimage
     -write mpr:resultimage
@@ -833,15 +834,15 @@ $(grep "\S" <<< "$Command")"
   mpr:partsource_blurred
   mpr:resultimage
     -compose DstOver -composite
-  $Resultimage"
+  $Resultfinalblur"
   
     verbose "Final blur command:
 $Command"
 
-    $Command
+    $Command || error "Error with --finalblur"
   }
   
-  $Magickbin "$Resultimage" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
+  $Magickbin "$Resultfinalblur" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
   
   return "${Error:-0}"
 }
@@ -3005,7 +3006,8 @@ $Cachedir/fakehdr*.$(basename "$Image")"
   # Transfer EXIF metadata from first image to result
   [ "$Exifsourceimage" ] && {
     [ "$Exifsourceimage" = "auto" ] && Exifsourceimage="$(head -n1 <<< "$Sourceimagelist")"
-    exiftool -ignoreMinorErrors -overwrite_original -tagsfromfile "$Exifsourceimage" -Orientation= -all:all  "$Outputimage" >/dev/null || note "Failed to transfer exif data"
+    #exiftool -overwrite_original -tagsfromfile "$Exifsourceimage" -orientation="Horizontal" -rotation="Horizontal" -exifimagewidth=$Imagewidth -exifimageheight=$Imageheight -all:all  "$Outputimage" >/dev/null || note "Failed to transfer exif data"
+    exiftransfer "$Exifsourceimage" "$Outputimage"
   }
 
   showimage "$Outputimage"
@@ -3014,7 +3016,14 @@ $Cachedir/fakehdr*.$(basename "$Image")"
     
   return "${Error:-0}"
 }
-
+exiftransfer() {
+  local Sourceimage Destinationimage Exifargs
+  Sourceimage="${1:-}"
+  Destinationimage="${2:-}"
+  Exifargs="$(exiftool -a -u -g1 -args "$Sourceimage")"
+  Exifargs="$(LC_ALL=C grep -v -E -- '-ExifTool|-System:|-File:|ImageWidth|ImageHeight|ImageSize|Compression|Orientation|Resolution' <<< "$Exifargs" | sed 's/"/\\"/g ; s/=/="/ ; s/$/"/' )"
+  eval exiftool -ignoreMinorErrors $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
+}
 main "$@"
 [ -z "$Preservecache" ] && [ -d "$Cachedir" ] && rm -R "$Cachedir"
 exit "${Error:-0}"

@@ -249,6 +249,14 @@ dirglob() {
   
   [ "$Filelist" ] && echo "$Filelist" || return 1
 }
+exiftransfer() {
+  local Sourceimage Destinationimage Exifargs
+  Sourceimage="${1:-}"
+  Destinationimage="${2:-}"
+  Exifargs="$(exiftool -a -u -g1 -args "$Sourceimage")"
+  Exifargs="$(LC_ALL=C grep -v -E -- '-ExifTool|-System:|-File:|ImageWidth|ImageHeight|ImageSize|Compression|Orientation|Resolution' <<< "$Exifargs" | sed 's/"/\\"/g ; s/=/="/ ; s/$/"/' )"
+  eval exiftool -ignoreMinorErrors $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
+}
 fileglob() {
   # echos files only for glob $1
   #local Path Glob 
@@ -694,6 +702,7 @@ batch_function() {
   
   # transfer exif data
   [ "$Return" = "0" ] && {
+    verbose "Transferring exif meta data"
     Sourcelist="$(fileglob "$Targetstackshotdir/*")"
     Targetlist="$(fileglob "$Destinationdir/*")"
     case "$Destinationdir" in
@@ -701,7 +710,8 @@ batch_function() {
         Count=0
         for Line in $Sourcelist; do
           Count="$((Count+1))"
-          exiftool -overwrite_original -tagsfromfile "$(sed "${Count}q;d" <<< "$Sourcelist")" -Orientation= -all:all  "$(sed "${Count}q;d" <<< "$Targetlist")" >/dev/null || failure "Failed to transfer exif data"
+          #exiftool -ignoreMinorErrors -overwrite_original -tagsfromfile "$(sed "${Count}q;d" <<< "$Sourcelist")" -Orientation= -all:all  "$(sed "${Count}q;d" <<< "$Targetlist")" >/dev/null || failure "Failed to transfer exif data"
+          exiftransfer "$(sed "${Count}q;d" <<< "$Sourcelist")" "$(sed "${Count}q;d" <<< "$Targetlist")"
         done
       ;;
       $Targetfuseddir|$Targetevaluateddir|$Targetcomposeddir)
@@ -709,7 +719,8 @@ batch_function() {
         Count=0
         for Line in $Targetlist; do
           Count="$((Count+1))"
-          exiftool -overwrite_original -tagsfromfile "$Image" -Orientation= -all:all "$(sed "${Count}q;d" <<< "$Targetlist")" >/dev/null || failure "Failed to transfer exif data"
+          #exiftool -ignoreMinorErrors -overwrite_original -tagsfromfile "$Image" -Orientation= -all:all "$(sed "${Count}q;d" <<< "$Targetlist")" >/dev/null || failure "Failed to transfer exif data"
+          exiftransfer "$Image" "$(sed "${Count}q;d" <<< "$Targetlist")"
         done
       ;;
     esac
