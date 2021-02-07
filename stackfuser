@@ -255,7 +255,7 @@ exiftransfer() {
   Destinationimage="${2:-}"
   Exifargs="$(exiftool -a -u -g1 -args "$Sourceimage")"
   Exifargs="$(LC_ALL=C grep -v -E -- '-ExifTool|-System:|-File:|ImageWidth|ImageHeight|ImageSize|Compression|Orientation|Resolution' <<< "$Exifargs" | sed "s/'/'\"'\"'/g ; s/=/='/ ; s/\$/'/" )"
-  eval exiftool -ignoreMinorErrors $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
+  eval exiftool -ignoreMinorErrors -overwrite_original_in_place $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
 }
 fileglob() {
   # echos files only for glob $1

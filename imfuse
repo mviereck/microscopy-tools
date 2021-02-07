@@ -512,7 +512,7 @@ exiftransfer() {
   Exifargs="$(LC_ALL=C grep -v -E -- \
     '-ExifTool|-System:|-File:|ImageWidth|ImageHeight|ImageSize|Compression|Orientation|Resolution' <<< "$Exifargs" \
     | sed "s/'/'\"'\"'/g ; s/=/='/ ; s/\$/'/" )"
-  eval exiftool -ignoreMinorErrors $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
+  eval exiftool -ignoreMinorErrors -overwrite_original_in_place $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
 }
 fakehdr() {
   # simulate a HDR image with multiple exposures combined to one image with balanced light.
@@ -726,8 +726,16 @@ $Magickbin
   return "${Error:-0}"
 }
 level_check() {
-  local Maskmax Maskmin
+  local Maskmax Maskmin Level
   local Histogramm Threshold Threshold_pixel Pixelnumber Pixelcount
+
+  Level="$(maskarg_defaultvalue $Argmethod level)"
+  [ "$Level" ] && {
+    Arglevelmin="$(cut -d, -f1 <<< "$Level" | tr -d '%')"
+    Arglevelmax="$(cut -d, -f2 <<< "$Level" | tr -d '%')"
+    note "level_check(): default: ${Arglevelmin}%,${Arglevelmax}% for $Argbasename"
+    #return 0
+  }
   
   Maskmax=$Cachedir/$Argbasename-max.tif
   Maskmin=$Cachedir/$Argbasename-min.tif
@@ -740,48 +748,8 @@ level_check() {
   Arglevelmax="$($Magickbin "$Maskmax" -format '%[fx:maxima*100]' info:)"
   Arglevelmin="$($Magickbin "$Maskmin" -format '%[fx:minima*100]' info:)"
     
-  verbose "level_check(): ${Arglevelmin}%,${Arglevelmax}% for $Argbasename"
-  return ${Error:-0}
+  note "level_check(): ${Arglevelmin}%,${Arglevelmax}% for $Argbasename"
   
-  ### experimental
-
-  # Cut $Threshold% pixels from histogram to stretch it
-  Threshold="5"
-  Threshold_pixel="$(calc "$Imagewidth*$Imageheight*$Threshold/100" | cut -d. -f1)"
-  
-  Histogramm="$($Magickbin $Maskmax -depth 16 -define histogram:unique-colors=true -format %c histogram:info:-)"
-  Pixelnumber="0"
-  Pixelcount="0"
-  while read Line; do
-    [ "$Error" ] && break
-    
-    Pixelnumber="$(awk '{print $1}' <<< "$Line")"
-    Pixelnumber="${Pixelnumber%:}"
-    Pixelcount="$((Pixelcount+Pixelnumber))"
-    
-    [ "$Pixelcount" -gt "$Threshold_pixel" ] && {
-      Arglevelmax="$(awk '{print $4}' <<< "$Line" | cut -d"(" -f2 | cut -d"%" -f1)"
-      break
-    }
-  done <<< "$(tac <<< "$Histogramm")"
-  
-  Histogramm="$($Magickbin $Maskmin -depth 16 -define histogram:unique-colors=true -format %c histogram:info:-)"
-  Pixelnumber="0"
-  Pixelcount="0"
-  while read Line; do
-    [ "$Error" ] && break
-    
-    Pixelnumber="$(awk '{print $1}' <<< "$Line")"
-    Pixelnumber="${Pixelnumber%:}"
-    Pixelcount="$((Pixelcount+Pixelnumber))"
-    
-    [ "$Pixelcount" -gt "$Threshold_pixel" ] && {
-      Arglevelmin="$(awk '{print $4}' <<< "$Line" | cut -d"(" -f2 | cut -d"%" -f1)"
-      break
-    }
-  done <<< "$Histogramm"
-  
-  verbose "level_check(): ${Arglevelmin}%,${Arglevelmax}% for $Argbasename"
   return ${Error:-0}
 }
 level_masks() {
@@ -1226,7 +1194,7 @@ focus_montage() {
 
   local Resultimage Resultfinalblur Outputimage Sourceimage Maskimagelist= Resultmd5
   local Lessthanmaxmask
-  local Maskmax Maskmaxready=
+  local Maskmax Maskmaxcopy= Maskmaxready=
   local Count Number
   local Contrastmaxlevel Softfusion= Lessthanmax=
   local Command Skipmontage=
@@ -1244,16 +1212,13 @@ focus_montage() {
       --output)      Outputimage="${2:-}" ; shift ;;
       --soft)        Softfusion="${2:-}"  ; shift ;;
       --lessthanmax) Lessthanmax="${2:-}" ; shift ;;
-      --maskmax)     Maskmax="${2:-}"     ; shift ;;
+      --maskmax)     Maskmaxcopy="${2:-}" ; shift ;;
       --) ;;
       *)             Maskimagelist="$Maskimagelist ${1:-}" ;;
     esac
     shift
   done
   [ -z "$Maskimagelist" ] && Maskimagelist="$(masklist $Mergemaskbasename | tr '\n' ' ')"
-
-  Maskmax="${Maskmax:-$Cachedir/montage.max.tif}"
-  mkimg_black       $Maskmax
   
   Resultmd5="$(md5cut "$Maskimagelist $Softfusion $Lessthanmax")"
 #  Resultimage="$Cachedir/montage-$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)-soft${Softfusion:-0}-less${Lessthanmax:-0}.$Resultmd5.tif"
@@ -1262,6 +1227,8 @@ focus_montage() {
   [ "$Softfusion" ]     && Resultimage="$Resultimage-soft${Softfusion:-0}"
   [ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
   Resultimage="$Cachedir/montage-$Resultimage.$Resultmd5.tif"
+  
+  Maskmax="${Maskmax:-$Cachedir/montage.max.$Resultmd5.tif}"
   
   [ -e "$Resultimage" ] && {
     verbose "Skipping montage, already exists: $(basename $Resultimage)"
@@ -1273,6 +1240,7 @@ focus_montage() {
   
   [ -z "$Skipmontage" ] && {
     mkimg_transparent "$Resultimage"
+    mkimg_black       $Maskmax
   
     [ "$Softfusion" ] && level_masks $Maskimagelist
   
@@ -1525,6 +1493,7 @@ $(grep "\S" <<< "$Command")"
     -delete 0
   $Maskmax
     -write mpr:maskmax
+    -write fb_maskmax.tif
     -delete 0
   mpr:maskmax
     -threshold ${Finalblurpercent:-10}%
@@ -1545,7 +1514,6 @@ $(grep "\S" <<< "$Command")"
   mpr:maskmax
     -compose Multiply -composite
     +channel
-    -write mpr:partsource_blurred
     -delete 0
       "
     }
@@ -1561,6 +1529,7 @@ $Command"
     $Command || error "Error with --finalblur"
   }
   
+  [ "$Maskmaxcopy" ] && cp "$Maskmax" "$Maskmaxcopy"
   $Magickbin "$Resultfinalblur" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
   
   return "${Error:-0}"
@@ -1845,6 +1814,446 @@ Maskgenerator="$Maskgenerator
   grep . <<< "$Maskgenerator"
 }
 
+### mask args
+
+maskarg_parse() {
+  local Key Line Value
+  
+  Argbasename=""
+  Argclose1=""
+  Argclose2=""
+  Argdarkenmask=""
+  Argdenoise=""
+  Argdiff=""
+  Argless=""
+  Arglevel=""
+  Arglevelmin=""
+  Arglevelmax=""
+  #Argmethod=""
+  Argnegate=""
+  Argpercent1=""
+  Argpercent2=""
+  Argradius1=""
+  Argradius2=""
+  Argsigma1=""
+  Argsigma2=""
+  Argsoft=""
+  Argtype=""
+  Argswap=""
+  Argthreshold=""
+  Argweight=""
+  Argword1=""
+  Argword2=""
+    
+  while read -d, Line; do
+    grep -q "=" <<< "$Line" && {
+      Key="$(cut   -d= -f1    <<< "$Line")"
+      Value="$(cut -d= -f2 -s <<< "$Line")"
+      :
+    } || {
+      Key="$(digitrm "$Line")"
+      Value="$(sed "s/${Key:-NOKEY}//"  <<< "$Line")"
+    }
+    case $Key in
+      "w"|"w%")       Argweight="${Value:-$(maskarg_defaultvalue    "$Firstmaskmethod" noise)}" ;;
+      "r")                Argradius1="$Value" ;;
+      "R")                Argradius2="${Value}" ;;
+      "s")                Argsigma1="$Value" ;;
+      "S")                Argsigma2="${Value}" ;;
+      "p"|"%")            Argpercent1="$(percentrm "$Value")" ;;
+      "P")                Argpercent2="$(percentrm "$Value")" ;;
+      "swap")             Argswap="swap" ;;
+      "soft")             Argsoft="${Value:-$(maskarg_defaultvalue      "$Argmethod" soft)}" ;;
+      "denoise")          Argdenoise="${Value:-$(maskarg_defaultvalue   "$Argmethod" noise)}" ;;
+      "d"|"diff")         Argdiff="s" ;;
+      "less")             Argless="${Value:-$(maskarg_defaultvalue      "$Argmethod" less)}" ;;
+      "cont"|"contrast")  Argcontrast="${Value:-$(maskarg_defaultvalue  "$Argmethod" contrast)}" ;;
+      "n"|"neg"|"negate") Argnegate="neg" ;;
+      "t"|"threshold")    Argthreshold="${Value:-$(maskarg_defaultvalue "$Argmethod" noise)}" ;;
+      "c"|"close"|"cx"|"closex")
+        Value="$(tr -d "close" <<< "$Line")"
+        Value="${Value:-$(maskarg_defaultvalue                          "$Argmethod" close)}"
+        Argclose1=$(cut -dx    -f1 <<< "$Value")
+        Argclose2=$(cut -dx -s -f2 <<< "$Value")
+        Argclose1="$(digitonly "$Argclose1")"
+        Argclose2="$(digitonly "$Argclose2")"
+        Argclose2="${Argclose2:-1}"
+      ;;
+      "CLOSE1")           Argclose1="$Value" ;;
+      "CLOSE2")           Argclose2="$Value" ;;
+      "LEVEL")            Arglevel="yes" ;;
+      "LEVELMIN")         Arglevelmin="$Value" ;;
+      "LEVELMAX")         Arglevelmax="$Value" ;;
+      "DARKENMASK")       Argdarkenmask="$Value" ;;
+      "NUM")              Maskmethodcount="$Value" ;;
+      "METHOD")           Argmethod="$Value" ;;
+      "TYPE")             Argtype="$Value" ;;
+      "BASENAME")         Argbasename="$Value" ;;
+      *|WORD1|WORD2) ### FIXME
+        [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
+        Argword1="${Argword1#WORD1=}"
+        Argword2="${Argword2#WORD2=}"
+      ;;
+    esac
+  done <<< "${1:-},"
+}
+maskarg_store() {
+  Maskmethodcount="${1:-$Maskmethodcount}"
+  Newoption="NUM=$Maskmethodcount"
+  Newoption="$Newoption,METHOD=$Argmethod"
+  [ "$Argweight" ]             && Newoption="$Newoption,w=$Argweight"
+  [ "$Argradius1" ]            && Newoption="$Newoption,r=$Argradius1"
+  [ "$Argradius2" ]            && Newoption="$Newoption,R=$Argradius2"
+  [ "$Argsigma1" ]             && Newoption="$Newoption,s=$Argsigma1"
+  [ "$Argsigma2" ]             && Newoption="$Newoption,S=$Argsigma2"
+  [ "$Argpercent1" ]           && Newoption="$Newoption,p=$Argpercent1"
+  [ "$Argpercent2" ]           && Newoption="$Newoption,P=$Argpercent2"
+  [ "$Argless" ]               && Newoption="$Newoption,less=$Argless"
+  [ "$Argclose1" ]             && Newoption="$Newoption,CLOSE1=$Argclose1"
+  [ "$Argclose2" ]             && Newoption="$Newoption,CLOSE2=$Argclose2"
+  [ "$Argword1" ]              && Newoption="$Newoption,WORD1=$Argword1"
+  [ "$Argword2" ]              && Newoption="$Newoption,WORD2=$Argword2"
+  [ "$Argdenoise" ]            && Newoption="$Newoption,denoise=$Argdenoise"
+  [ "$Argdiff" ]               && Newoption="$Newoption,diff"
+  [ "$Argsoft" ]               && Newoption="$Newoption,soft=$Argsoft"
+  [ "$Argcontrast" ]           && Newoption="$Newoption,contrast=$Argcontrast"
+  [ "$Argthreshold" ]          && Newoption="$Newoption,threshold=$Argthreshold"
+  [ "$Argnegate" ]             && Newoption="$Newoption,negate"
+  [ "$Argswap" ]               && Newoption="$Newoption,swap"
+  [ "$Argdarkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Argdarkenmask"
+  [ "$Arglevel" ]              && Newoption="$Newoption,LEVEL"
+  [ "$Arglevelmin" ]           && Newoption="$Newoption,LEVELMIN=$Arglevelmin"
+  [ "$Arglevelmax" ]           && Newoption="$Newoption,LEVELMAX=$Arglevelmax"
+  [ "$Argtype" ]               && Newoption="$Newoption,TYPE=$Argtype"
+  [ "$Argbasename" ]           && Newoption="$Newoption,BASENAME=$Argbasename"
+
+  grep -q "NUM=$Maskmethodcount," <<< "$Maskmethodlist" \
+    && Maskmethodlist="$(sed "s&^NUM=$Maskmethodcount,.*&$Newoption&" <<< "$Maskmethodlist")" \
+    || Maskmethodlist="$Maskmethodlist
+$Newoption"
+  Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
+}
+maskarg_defaultvalue() {
+  case "${2:-}" in
+    close)
+      echo "2x2"
+    ;;
+    contrast)
+      case "${1:-}" in
+        blur|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
+          echo "1"
+        ;;
+        *)
+          echo "0"
+        ;;
+      esac
+    ;;
+    less)
+      case "${1:-}" in
+        blur)       echo "8" ;;
+        comet)      echo "6" ;;
+        compass)    echo "4" ;;
+        dog)        echo "4" ;;
+        diffstat)   echo "5" ;;
+        freichen)   echo "15" ;;
+        gaussian)   echo "8" ;;
+        #kirsch)     echo "2" ;;
+        #laplacian
+        log)        echo "8" ;;
+        morphology) echo "10" ;;
+        prewitt)    echo "4" ;;
+        roberts)    echo "20" ;;
+        sobel)      echo "4" ;;
+        statistic)  echo "15" ;;
+        #unsharp
+        wavelet)    echo "35" ;;
+        *)          echo "10" ;;
+      esac
+    ;;
+    level)
+      case "${1:-}" in
+        blur)       echo "0%,7.68292%" ;;
+        comet)      echo "0%,35.523%" ;;
+        compass)    echo "45.0599%,80.0015%" ;;
+        dog)        echo "0%,38.941%" ;;
+        diffstat)
+          case "$Argword1,$Argword2" in
+            "median,mean") echo "0%,44.1398%" ;;
+            "min,max")     echo "0%,100%" ;;
+          esac
+        ;;
+        freichen)   echo "33.6584%,100%" ;;
+        gaussian)   echo "0%,0.764477%" ;;
+        #kirsch)     echo "" ;;
+        laplacian)
+          case $Argword1 in
+            3)      echo "0%,18.6282%" ;;
+          esac
+        ;;
+        log)        echo "0%,37.5494%" ;;
+        morphology) echo "0%,100%" ;;
+        prewitt)    echo "34.3893%,100%" ;;
+        #roberts)    echo "7.64782%,100%" ;;
+        sobel)      echo "34.3893%,100%" ;;
+        statistic)
+          case $Argword1 in
+            standarddeviation) echo "0%,50.0008%" ;;
+          esac
+        ;;
+        #unsharp
+        wavelet)    echo "0%,12.8145%" ;;
+        *)          echo "" ;;
+      esac
+    ;;
+    noise)
+      case "${1:-}" in
+        #blur)       echo "15" ;;
+        #comet
+        compass)    echo "25" ;;
+        diffstat)   echo "15" ;;
+        #dog
+        freichen)   echo "15" ;;
+        #gaussian)   echo "15" ;;
+        image|evaluate|compose|enfuse)
+                    echo "100" ;;
+        #kirsch)     echo "2" ;;
+        #laplacian
+        log)        echo "10" ;;
+        morphology) echo "10" ;;
+        prewitt)    echo "15" ;;
+        #roberts
+        sobel)      echo "7" ;;
+        statistic)  echo "10" ;;
+        #unsharp
+        wavelet)    echo "10" ;;
+        *)          echo "15" ;;
+      esac
+    ;;
+    percent1)
+      case "${1:-}" in
+        halo)       echo "25" ;;
+        wavelet)    echo "10" ;;
+        *)          echo "" ;;
+      esac
+    ;;
+    percent2)
+      case "${1:-}" in
+        *)          echo "" ;;
+      esac
+    ;;
+    radius1)
+      case "${1:-}" in
+        blur)       echo "" ;; # 0
+        comet)      echo "" ;; # 0
+        compass)    echo "" ;;
+        diffstat)   echo "3" ;;
+        dog)        echo "" ;; # 0
+        freichen)   echo "" ;;
+        gaussian)   echo "" ;; # 0
+        kirsch)     echo "" ;;
+        laplacian)  echo "" ;;
+        log)        echo "" ;; # 0
+        morphology) echo "1" ;;
+        prewitt)    echo "" ;;
+        roberts)    echo "" ;;
+        sobel)      echo "" ;;
+        statistic)  echo "2" ;;
+        unsharp)    echo "" ;; # 0
+        *)          echo "" ;;
+      esac
+    ;;
+    radius2)
+      case "${1:-}" in
+        *)          echo "" ;;
+      esac
+    ;;
+    sigma1)
+      case "${1:-}" in
+        blur)       echo "0.3" ;;
+        comet)      echo "5" ;;
+        compass)    echo "" ;;
+        diffstat)   echo "" ;;
+        dog)        echo "0.3" ;;
+        finalblur)  echo "3" ;;
+        freichen)   echo "" ;;
+        gaussian)   echo "0.3" ;;
+        halo)       echo "5" ;;
+        kirsch)     echo "" ;;
+        laplacian)  echo "" ;;
+        log)        echo "0.2" ;;
+        morphology) echo "" ;;
+        prewitt)    echo "" ;;
+        roberts)    echo "" ;;
+        sobel)      echo "" ;;
+        statistic)  echo "" ;;
+        unsharp)    echo "2" ;;
+        wavelet)    echo "" ;;
+        *)          echo "" ;;
+      esac
+    ;;
+    sigma2)
+      case "${1:-}" in
+        dog)       echo "$(calc "${Argsigma1:-0.75} * 1.6")" ;;
+        *)         echo "" ;;
+      esac
+    ;;
+    soft)
+      case "${1:-}" in
+        blur)       echo "25" ;;
+        comet)      echo "30" ;;
+        compass)    echo "35" ;;
+        diffstat)   echo "25" ;;
+        dog)        echo "25" ;;
+        freichen)   echo "1" ;;
+        gaussian)   echo "25" ;;
+        #kirsch
+        #laplacian)  echo "10" ;;
+        log)        echo "25" ;;
+        morphology) echo "25" ;;
+        prewitt)    echo "2" ;;
+        roberts)    echo "50" ;;
+        sobel)      echo "2" ;;
+        statistic)  echo "35" ;;
+        #unsharp
+        wavelet)    echo "75" ;;
+        *)          echo "15" ;;
+      esac
+    ;;
+    type)
+      case "${1:-}" in
+        blur|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
+          echo "mask"
+        ;;
+        *)
+          echo "image"
+        ;;
+      esac
+    ;;
+    word1)
+      case "${1:-}" in
+        channel)    echo "HSL" ;;
+        comet)      echo "lighten" ;;
+        compose)    echo "overlay" ;;
+        diffstat)   echo "median" ;;
+        evaluate)   echo "max" ;;
+        freichen)   echo "" ;;
+        freediff)   echo "-sharpen 0x3" ;;
+        laplacian)  echo "3" ;;
+        morphology) echo "edge" ;;
+        statistic)  echo "standarddeviation" ;;
+        *)          echo "" ;;
+      esac
+    ;;
+    word2)
+      case "${1:-}" in
+        channel)    echo "2" ;;
+        diffstat)   echo "mean" ;;
+        *)          echo "" ;;
+      esac
+    ;;
+  esac
+} 
+maskarg_checkallowed() {
+  local Method Option Arg
+  Method="${1:-}"
+  Option="${2:-}"
+  Arg="${3:-}"
+  case "$Option" in
+    radius1)
+      case "$Method" in
+        blur|comet|dog|gaussian|halo|log|morphology|unsharp|wavelet) ;;
+        diffstat|statistic)
+          [ "$Arg" -lt "2" ] && error "--$Method needs a radius of at least 2"
+        ;;
+        *) error "$Method does not take argument radius" ;;
+      esac
+    ;;
+    radius2)
+      error "$Method does not take argument radius2"
+    ;;
+    sigma1)
+      case "$Method" in
+        blur|comet|dog|gaussian|halo|log|unsharp) ;;
+        *) error "$Method does not take argument sigma" ;;
+      esac
+    ;;
+    sigma2)
+      case "$Method" in
+        dog) ;;
+        *) error "$Method does not take argument sigma2" ;;
+      esac
+    ;;
+    percent1)
+      case "$Method" in
+        wavelet|halo) ;;
+        *) error "$Method does not take argument percent1" ;;
+      esac
+    ;;
+    percent2)
+      case "$Method" in
+        *) error "$Method does not take argument percent2" ;;
+      esac
+    ;;
+    word1)
+      case "$Method" in
+        comet|channel|freichen|freediff|laplacian) ;;
+        compose|evaluate|morphology)
+          Arg="$(lowercase "${Arg}")"
+          checkmagicklist "$Method" "$Arg" || {
+            error "--$Method=$Arg: unknown argument.
+  Please choose one out of '$Magicklist -list $Method'"
+          }
+        ;;
+        diffstat)
+          Arg="$(lowercase "${Arg}")"
+          Arg="$(maskarg_checkstatistic "$Arg")"
+        ;;
+        statistic)
+          Arg="$(lowercase "${Arg}")"
+          Arg="$(maskarg_checkstatistic "$Arg")"
+          [ "$Arg" = "source" ] && error "--$Method does not take argument $Arg
+  Please choose one out of '$Magicklist -list $Method'"
+        ;;
+        *) error "$Method does not take argument word1 $Arg" ;;
+      esac
+    ;;
+    word2)
+      case "$Method" in
+        diffstat)
+          Arg="$(lowercase "${Arg}")"
+          Arg="$(maskarg_checkstatistic "$Arg")"
+        ;;
+        *) error "$Method does not take argument word1 $Arg" ;;
+      esac
+    ;;
+  esac
+  [ "$Error" ] && return 1
+  echo "$Arg"
+  return 0
+}
+maskarg_checkstatistic() {
+  local Mode
+
+  Mode="${1:-}"
+  case ${Mode,,} in
+    0|source|none)          Mode="source" ;;
+    1|gradient|grad)        Mode="gradient" ;;
+    2|maximum|max)          Mode="maximum" ;;
+    3|mean)                 Mode="mean" ;;
+    4|median)               Mode="median" ;;
+    5|minimum|min)          Mode="minimum" ;;
+    6|mode)                 Mode="mode" ;;
+    7|nonpeak)              Mode="nonpeak" ;;
+    8|9|rms|rootmeansquare) Mode="rms" ;;
+    10|standarddeviation|standard_deviation|standard-deviation|dev) 
+                            Mode="standarddeviation" ;;
+    *) error "Unknown statistic mode '$Mode'" ; return 1;;
+  esac
+  [ "$Error" ] && return 1
+  echo "$Mode"
+  return 0
+}
+
 #### run commands on all CPUs
 
 multicore() {
@@ -1951,432 +2360,6 @@ multicore_init() {
 ifcmdbreak() {
   return 1
 }
-
-### mask args
-
-defaultvalue() {
-  case "${2:-}" in
-    close)
-      echo "2x2"
-    ;;
-    contrast)
-      case "${1:-}" in
-        blur|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
-          echo "1"
-        ;;
-        *)
-          echo "0"
-        ;;
-      esac
-    ;;
-    less)
-      case "${1:-}" in
-        blur)       echo "8" ;;
-        comet)      echo "6" ;;
-        compass)    echo "4" ;;
-        dog)        echo "4" ;;
-        diffstat)   echo "5" ;;
-        freichen)   echo "15" ;;
-        gaussian)   echo "8" ;;
-        #kirsch)     echo "2" ;;
-        #laplacian
-        log)        echo "8" ;;
-        morphology) echo "10" ;;
-        prewitt)    echo "4" ;;
-        roberts)    echo "20" ;;
-        sobel)      echo "4" ;;
-        statistic)  echo "15" ;;
-        #unsharp
-        wavelet)    echo "35" ;;
-        *)          echo "10" ;;
-      esac
-    ;;
-    noise)
-      case "${1:-}" in
-        #blur)       echo "15" ;;
-        #comet
-        #compass)    echo "4" ;;
-        diffstat)   echo "15" ;;
-        #dog
-        #freichen)   echo "20" ;;
-        #gaussian)   echo "15" ;;
-        image|evaluate|compose|enfuse)
-                    echo "100" ;;
-        #kirsch)     echo "2" ;;
-        #laplacian
-        log)        echo "10" ;;
-        morphology) echo "40" ;;
-        #prewitt)    echo "5" ;;
-        #roberts
-        sobel)      echo "7" ;;
-        statistic)  echo "15" ;;
-        #unsharp
-        wavelet)    echo "40" ;;
-        *)          echo "15" ;;
-      esac
-    ;;
-    percent1)
-      case "${1:-}" in
-        halo)       echo "25" ;;
-        wavelet)    echo "10" ;;
-        *)          echo "" ;;
-      esac
-    ;;
-    percent2)
-      case "${1:-}" in
-        *)          echo "" ;;
-      esac
-    ;;
-    radius1)
-      case "${1:-}" in
-        blur)       echo "" ;; # 0
-        comet)      echo "" ;; # 0
-        compass)    echo "" ;;
-        diffstat)   echo "3" ;;
-        dog)        echo "" ;; # 0
-        freichen)   echo "" ;;
-        gaussian)   echo "" ;; # 0
-        kirsch)     echo "" ;;
-        laplacian)  echo "" ;;
-        log)        echo "" ;; # 0
-        morphology) echo "2" ;;
-        prewitt)    echo "" ;;
-        roberts)    echo "" ;;
-        sobel)      echo "" ;;
-        statistic)  echo "2" ;;
-        unsharp)    echo "" ;; # 0
-        *)          echo "" ;;
-      esac
-    ;;
-    radius2)
-      case "${1:-}" in
-        *)          echo "" ;;
-      esac
-    ;;
-    sigma1)
-      case "${1:-}" in
-        blur)       echo "0.3" ;;
-        comet)      echo "5" ;;
-        compass)    echo "" ;;
-        diffstat)   echo "" ;;
-        dog)        echo "0.3" ;;
-        finalblur)  echo "1" ;;
-        freichen)   echo "" ;;
-        gaussian)   echo "0.3" ;;
-        halo)       echo "5" ;;
-        kirsch)     echo "" ;;
-        laplacian)  echo "" ;;
-        log)        echo "0.2" ;;
-        morphology) echo "" ;;
-        prewitt)    echo "" ;;
-        roberts)    echo "" ;;
-        sobel)      echo "" ;;
-        statistic)  echo "" ;;
-        unsharp)    echo "2" ;;
-        wavelet)    echo "" ;;
-        *)          echo "" ;;
-      esac
-    ;;
-    sigma2)
-      case "${1:-}" in
-        dog)       echo "$(calc "${Argsigma1:-0.75} * 1.6")" ;;
-        *)         echo "" ;;
-      esac
-    ;;
-    soft)
-      case "${1:-}" in
-        blur)       echo "25" ;;
-        comet)      echo "30" ;;
-        compass)    echo "35" ;;
-        diffstat)   echo "25" ;;
-        dog)        echo "25" ;;
-        freichen)   echo "1" ;;
-        gaussian)   echo "25" ;;
-        #kirsch
-        #laplacian)  echo "10" ;;
-        log)        echo "25" ;;
-        morphology) echo "25" ;;
-        prewitt)    echo "2" ;;
-        roberts)    echo "50" ;;
-        sobel)      echo "2" ;;
-        statistic)  echo "35" ;;
-        #unsharp
-        wavelet)    echo "75" ;;
-        *)          echo "15" ;;
-      esac
-    ;;
-    type)
-      case "${1:-}" in
-        blur|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
-          echo "mask"
-        ;;
-        *)
-          echo "image"
-        ;;
-      esac
-    ;;
-    word1)
-      case "${1:-}" in
-        channel)    echo "HSL" ;;
-        comet)      echo "lighten" ;;
-        compose)    echo "overlay" ;;
-        diffstat)   echo "median" ;;
-        evaluate)   echo "max" ;;
-        freichen)   echo "" ;;
-        freediff)   echo "-sharpen 0x3" ;;
-        laplacian)  echo "3" ;;
-        morphology) echo "edge" ;;
-        statistic)  echo "standarddeviation" ;;
-        *)          echo "" ;;
-      esac
-    ;;
-    word2)
-      case "${1:-}" in
-        channel)    echo "2" ;;
-        diffstat)   echo "mean" ;;
-        *)          echo "" ;;
-      esac
-    ;;
-  esac
-}
-maskarg_parse() {
-  local Key Line Value
-  
-  Argbasename=""
-  Argclose1=""
-  Argclose2=""
-  Argdarkenmask=""
-  Argdenoise=""
-  Argdiff=""
-  Argless=""
-  Arglevel=""
-  Arglevelmin=""
-  Arglevelmax=""
-  #Argmethod=""
-  Argnegate=""
-  Argpercent1=""
-  Argpercent2=""
-  Argradius1=""
-  Argradius2=""
-  Argsigma1=""
-  Argsigma2=""
-  Argsoft=""
-  Argtype=""
-  Argswap=""
-  Argthreshold=""
-  Argweight=""
-  Argword1=""
-  Argword2=""
-    
-  while read -d, Line; do
-    grep -q "=" <<< "$Line" && {
-      Key="$(cut   -d= -f1    <<< "$Line")"
-      Value="$(cut -d= -f2 -s <<< "$Line")"
-      :
-    } || {
-      Key="$(digitrm "$Line")"
-      Value="$(sed "s/${Key:-NOKEY}//"  <<< "$Line")"
-    }
-    case $Key in
-      "w"|"w%")       Argweight="${Value:-$(defaultvalue    "$Firstmaskmethod" noise)}" ;;
-      "r")                Argradius1="$Value" ;;
-      "R")                Argradius2="${Value}" ;;
-      "s")                Argsigma1="$Value" ;;
-      "S")                Argsigma2="${Value}" ;;
-      "p"|"%")            Argpercent1="$(percentrm "$Value")" ;;
-      "P")                Argpercent2="$(percentrm "$Value")" ;;
-      "swap")             Argswap="swap" ;;
-      "soft")             Argsoft="${Value:-$(defaultvalue      "$Argmethod" soft)}" ;;
-      "denoise")          Argdenoise="${Value:-$(defaultvalue   "$Argmethod" noise)}" ;;
-      "d"|"diff")         Argdiff="s" ;;
-      "less")             Argless="${Value:-$(defaultvalue      "$Argmethod" less)}" ;;
-      "cont"|"contrast")  Argcontrast="${Value:-$(defaultvalue  "$Argmethod" contrast)}" ;;
-      "n"|"neg"|"negate") Argnegate="neg" ;;
-      "t"|"threshold")    Argthreshold="${Value:-$(defaultvalue "$Argmethod" noise)}" ;;
-      "c"|"close"|"cx"|"closex")
-        Value="$(tr -d "close" <<< "$Line")"
-        Value="${Value:-$(defaultvalue                          "$Argmethod" close)}"
-        Argclose1=$(cut -dx    -f1 <<< "$Value")
-        Argclose2=$(cut -dx -s -f2 <<< "$Value")
-        Argclose1="$(digitonly "$Argclose1")"
-        Argclose2="$(digitonly "$Argclose2")"
-        Argclose2="${Argclose2:-1}"
-      ;;
-      "CLOSE1")           Argclose1="$Value" ;;
-      "CLOSE2")           Argclose2="$Value" ;;
-      "LEVEL")            Arglevel="yes" ;;
-      "LEVELMIN")         Arglevelmin="$Value" ;;
-      "LEVELMAX")         Arglevelmax="$Value" ;;
-      "DARKENMASK")       Argdarkenmask="$Value" ;;
-      "NUM")              Maskmethodcount="$Value" ;;
-      "METHOD")           Argmethod="$Value" ;;
-      "TYPE")             Argtype="$Value" ;;
-      "BASENAME")         Argbasename="$Value" ;;
-      *|WORD1|WORD2) ### FIXME
-        [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
-        Argword1="${Argword1#WORD1=}"
-        Argword2="${Argword2#WORD2=}"
-      ;;
-    esac
-  done <<< "${1:-},"
-}    
-maskarg_checkallowed() {
-  local Method Option Arg
-  Method="${1:-}"
-  Option="${2:-}"
-  Arg="${3:-}"
-  case "$Option" in
-    radius1)
-      case "$Method" in
-        blur|comet|dog|gaussian|halo|log|morphology|unsharp|wavelet) ;;
-        diffstat|statistic)
-          [ "$Arg" -lt "2" ] && error "--$Method needs a radius of at least 2"
-        ;;
-        *) error "$Method does not take argument radius" ;;
-      esac
-    ;;
-    radius2)
-      error "$Method does not take argument radius2"
-    ;;
-    sigma1)
-      case "$Method" in
-        blur|comet|dog|gaussian|halo|log|unsharp) ;;
-        *) error "$Method does not take argument sigma" ;;
-      esac
-    ;;
-    sigma2)
-      case "$Method" in
-        dog) ;;
-        *) error "$Method does not take argument sigma2" ;;
-      esac
-    ;;
-    percent1)
-      case "$Method" in
-        wavelet|halo) ;;
-        *) error "$Method does not take argument percent1" ;;
-      esac
-    ;;
-    percent2)
-      case "$Method" in
-        *) error "$Method does not take argument percent2" ;;
-      esac
-    ;;
-    word1)
-      case "$Method" in
-        comet|channel|freichen|freediff|laplacian) ;;
-        compose|evaluate|morphology)
-          Arg="$(lowercase "${Arg}")"
-          checkmagicklist "$Method" "$Arg" || {
-            error "--$Method=$Arg: unknown argument.
-  Please choose one out of '$Magicklist -list $Method'"
-          }
-        ;;
-        diffstat)
-          Arg="$(lowercase "${Arg}")"
-          Arg="$(maskarg_checkstatistic "$Arg")"
-        ;;
-        statistic)
-          Arg="$(lowercase "${Arg}")"
-          Arg="$(maskarg_checkstatistic "$Arg")"
-          [ "$Arg" = "source" ] && error "--$Method does not take argument $Arg
-  Please choose one out of '$Magicklist -list $Method'"
-        ;;
-        *) error "$Method does not take argument word1 $Arg" ;;
-      esac
-    ;;
-    word2)
-      case "$Method" in
-        diffstat)
-          Arg="$(lowercase "${Arg}")"
-          Arg="$(maskarg_checkstatistic "$Arg")"
-        ;;
-        *) error "$Method does not take argument word1 $Arg" ;;
-      esac
-    ;;
-  esac
-  [ "$Error" ] && return 1
-  echo "$Arg"
-  return 0
-}
-maskarg_checkstatistic() {
-  local Mode
-
-  Mode="${1:-}"
-  case ${Mode,,} in
-    0|source|none)          Mode="source" ;;
-    1|gradient|grad)        Mode="gradient" ;;
-    2|maximum|max)          Mode="maximum" ;;
-    3|mean)                 Mode="mean" ;;
-    4|median)               Mode="median" ;;
-    5|minimum|min)          Mode="minimum" ;;
-    6|mode)                 Mode="mode" ;;
-    7|nonpeak)              Mode="nonpeak" ;;
-    8|9|rms|rootmeansquare) Mode="rms" ;;
-    10|standarddeviation|standard_deviation|standard-deviation|dev) 
-                            Mode="standarddeviation" ;;
-    *) error "Unknown statistic mode '$Mode'" ; return 1;;
-  esac
-  [ "$Error" ] && return 1
-  echo "$Mode"
-  return 0
-}
-maskarg_donttake() {
-  while [ $# -gt 0 ]; do
-    case ${1:-} in
-      weight)  [ "$Argweight" ]           && error "--$Argmethod does not take argument w (weight)"                 && Argweight="" ;;
-      radius1) [ "$Argradius1" ]          && error "--$Argmethod does not take argument r (radius1)"                && Argradius1="" ;;
-      radius2) [ "$Argradius2" ]          && error "--$Argmethod does not take argument R (radius2)"                && Argradius2="" ;;
-      sigma1)  [ "$Argsigma1" ]           && error "--$Argmethod does not take argument s (sigma1)"                 && Argsigma1="" ;;
-      sigma2)  [ "$Argsigma2" ]           && error "--$Argmethod does not take argument S (sigma2)"                 && Argsigma2="" ;;
-      soft)    [ "$Argsoft" ]             && error "--$Argmethod does not take argument soft"                       && Argsoft="" ;;
-      swap)    [ "$Argswap" ]             && error "--$Argmethod does not take argument swap"                       && Argswap="" ;;
-      close)   [ "$Argclose1$Argclose2" ] && error "--$Argmethod does not take argument c (close)"                  && Argclose1="" && Argclose2="" ;;
-      word1)   [ "$Argword1" ]            && error "--$Argmethod does not take a word argument ($Argword1)"         && Argword1="" ;;
-      word2)   [ "$Argword2" ]            && error "--$Argmethod does not take a second word argument ($Argword2)"  && Argword2="" ;;
-      threshold)  [ "$Argthreshold" ]     && error "--$Argmethod does not take argument n (negate)"                 && Argthreshold="" ;;
-      negate)  [ "$Argnegate" ]           && error "--$Argmethod does not take argument n (negate)"                 && Argnegate="" ;;
-      contrast)[ "$Argcontrast" ]         && error "--$Argmethod does not take argument contrast"                   && Argcontrast="" ;;
-    esac
-    shift
-  done
-}
-maskarg_store() {
-  Maskmethodcount="${1:-$Maskmethodcount}"
-  Newoption="NUM=$Maskmethodcount"
-  Newoption="$Newoption,METHOD=$Argmethod"
-  [ "$Argweight" ]             && Newoption="$Newoption,w=$Argweight"
-  [ "$Argradius1" ]            && Newoption="$Newoption,r=$Argradius1"
-  [ "$Argradius2" ]            && Newoption="$Newoption,R=$Argradius2"
-  [ "$Argsigma1" ]             && Newoption="$Newoption,s=$Argsigma1"
-  [ "$Argsigma2" ]             && Newoption="$Newoption,S=$Argsigma2"
-  [ "$Argpercent1" ]           && Newoption="$Newoption,p=$Argpercent1"
-  [ "$Argpercent2" ]           && Newoption="$Newoption,P=$Argpercent2"
-  [ "$Argless" ]               && Newoption="$Newoption,less=$Argless"
-  [ "$Argclose1" ]             && Newoption="$Newoption,CLOSE1=$Argclose1"
-  [ "$Argclose2" ]             && Newoption="$Newoption,CLOSE2=$Argclose2"
-  [ "$Argword1" ]              && Newoption="$Newoption,WORD1=$Argword1"
-  [ "$Argword2" ]              && Newoption="$Newoption,WORD2=$Argword2"
-  [ "$Argdenoise" ]            && Newoption="$Newoption,denoise=$Argdenoise"
-  [ "$Argdiff" ]               && Newoption="$Newoption,diff"
-  [ "$Argsoft" ]               && Newoption="$Newoption,soft=$Argsoft"
-  [ "$Argcontrast" ]           && Newoption="$Newoption,contrast=$Argcontrast"
-  [ "$Argthreshold" ]          && Newoption="$Newoption,threshold=$Argthreshold"
-  [ "$Argnegate" ]             && Newoption="$Newoption,negate"
-  [ "$Argswap" ]               && Newoption="$Newoption,swap"
-  [ "$Argdarkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Argdarkenmask"
-  [ "$Arglevel" ]              && Newoption="$Newoption,LEVEL"
-  [ "$Arglevelmin" ]           && Newoption="$Newoption,LEVELMIN=$Arglevelmin"
-  [ "$Arglevelmax" ]           && Newoption="$Newoption,LEVELMAX=$Arglevelmax"
-  [ "$Argtype" ]               && Newoption="$Newoption,TYPE=$Argtype"
-  [ "$Argbasename" ]           && Newoption="$Newoption,BASENAME=$Argbasename"
-
-  grep -q "NUM=$Maskmethodcount," <<< "$Maskmethodlist" \
-    && Maskmethodlist="$(sed "s&^NUM=$Maskmethodcount,.*&$Newoption&" <<< "$Maskmethodlist")" \
-    || Maskmethodlist="$Maskmethodlist
-$Newoption"
-  Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
-}
-
 ### main
 
 trap_sigint() {
@@ -2561,14 +2544,14 @@ check_options() {
   Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
   [ -n "$Maskmethodlist" ] && while read Line; do
     maskarg_parse "$Line"
-    [ -z "$Argradius1" ]  && Argradius1="$(defaultvalue            "$Argmethod" radius1)"
-    [ -z "$Argradius2" ]  && Argradius2="$(defaultvalue            "$Argmethod" radius2)"
-    [ -z "$Argsigma1" ]   && Argsigma1="$(defaultvalue             "$Argmethod" sigma1)"
-    [ -z "$Argsigma2" ]   && Argsigma2="$(defaultvalue             "$Argmethod" sigma2)"
-    [ -z "$Argpercent1" ] && Argpercent1="$(defaultvalue           "$Argmethod" percent1)"
-    [ -z "$Argpercent2" ] && Argpercent2="$(defaultvalue           "$Argmethod" percent2)"
-    [ -z "$Argword1" ]    && Argword1="$(defaultvalue              "$Argmethod" word1)"
-    [ -z "$Argword2" ]    && Argword2="$(defaultvalue              "$Argmethod" word2)"
+    [ -z "$Argradius1" ]  && Argradius1="$(maskarg_defaultvalue            "$Argmethod" radius1)"
+    [ -z "$Argradius2" ]  && Argradius2="$(maskarg_defaultvalue            "$Argmethod" radius2)"
+    [ -z "$Argsigma1" ]   && Argsigma1="$(maskarg_defaultvalue             "$Argmethod" sigma1)"
+    [ -z "$Argsigma2" ]   && Argsigma2="$(maskarg_defaultvalue             "$Argmethod" sigma2)"
+    [ -z "$Argpercent1" ] && Argpercent1="$(maskarg_defaultvalue           "$Argmethod" percent1)"
+    [ -z "$Argpercent2" ] && Argpercent2="$(maskarg_defaultvalue           "$Argmethod" percent2)"
+    [ -z "$Argword1" ]    && Argword1="$(maskarg_defaultvalue              "$Argmethod" word1)"
+    [ -z "$Argword2" ]    && Argword2="$(maskarg_defaultvalue              "$Argmethod" word2)"
     [ -n "$Argradius1" ]  && { Argradius1="$(maskarg_checkallowed  "$Argmethod" radius1  "$Argradius1")"  || Error=1 ; }
     [ -n "$Argradius2" ]  && { Argradius2="$(maskarg_checkallowed  "$Argmethod" radius2  "$Argradius2")"  || Error=1 ; }
     [ -n "$Argpercent1" ] && { Argpercent1="$(maskarg_checkallowed "$Argmethod" percent1 "$Argpercent1")" || Error=1 ; }
@@ -2582,7 +2565,7 @@ check_options() {
         Arglevel="yes"
       ;;
     esac
-    Argtype="$(defaultvalue "$Argmethod" type)"
+    Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
     
     [ "${Argless}" ] && [ "${Argsoft}" ] && Background="${Background:-enfuse}"
     
@@ -2679,10 +2662,10 @@ check_options() {
   
   [ "$Finalblur" ] && {
     Argmethod="finalblur"
-    [ "$Finalblur" = "auto" ] && Finalblur="w,s1"
+    [ "$Finalblur" = "auto" ] && Finalblur="w,s"
     maskarg_parse "$Finalblur"
-    Finalblurpercent="${Argweight:-$(defaultvalue $Firstmaskmethod noise)}"
-    Finalblursigma="${Argsigma1:-$(defaultvalue finalblur sigma1)}"
+    Finalblurpercent="${Argweight:-$(maskarg_defaultvalue $Firstmaskmethod noise)}"
+    Finalblursigma="${Argsigma1:-$(maskarg_defaultvalue finalblur sigma1)}"
   }
 
   # --grayscale
@@ -2718,7 +2701,7 @@ check_options() {
   case $Globalsoft in
     "") ;;
     *)
-      [ "$Globalsoft" = "auto" ] && Globalsoft="$(defaultvalue "$Firstmaskmethod" soft )"
+      [ "$Globalsoft" = "auto" ] && Globalsoft="$(maskarg_defaultvalue "$Firstmaskmethod" soft )"
       Background="${Background:-enfuse}"
     ;;
   esac
@@ -2731,14 +2714,14 @@ check_options() {
   # --less
   case $Globalless in
     0)    Globalless="" ;;
-    auto) Globalless="$(defaultvalue "$Firstmaskmethod" less )" ;;
+    auto) Globalless="$(maskarg_defaultvalue "$Firstmaskmethod" less )" ;;
   esac
   
   # --close
   case $Globalclose in
     ""|"1x1"|"1"|"0") Globalclose="" ;;
     *)
-      [ "$Globalclose" = "auto" ] && Globalclose="$(defaultvalue "$Firstmaskmethod" close)"
+      [ "$Globalclose" = "auto" ] && Globalclose="$(maskarg_defaultvalue "$Firstmaskmethod" close)"
       Globalclose1=$(cut -dx    -f1 <<< "$Globalclose")
       Globalclose2=$(cut -dx -s -f2 <<< "$Globalclose")
       Globalclose1="$(digitonly "$Globalclose1")"
