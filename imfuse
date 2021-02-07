@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.3.1-beta"
+Version="0.6.4.0-beta"
 
 usage() {
   echo "imfuse v$Version
@@ -239,7 +239,8 @@ Mask generation and fusion adjustments:
                       For big values rather use c2x8 or c4x4 instead of c16,
                       the result will be similar but faster.
  --contrast [=SIGMA]  Contrast enhancement. Applied to contrast masks only.
-                      SIGMA is a blur sigma value. Default without SIGMA: 1
+                      SIGMA is a blur sigma value. Default SIGMA: 1
+ --cutblur [=SIGMA]   Blur cut masks in final montage. Default SIGMA: 2
  --denoise [=%]       Experimental option to remove noise in low contrast areas.
                       The percent value is a threshold. Rather use --soft.
  --fakehdr [=%]       Balances over- and underexposed areas. Default %: 50
@@ -262,8 +263,9 @@ Mask generation and fusion adjustments:
                 8 MS               (R'^2 + G'^2 + B'^2) / 3.0
                 9 RMS              sqrt( (R'^2 + G'^2 + B'^2) / 3.0 )
  --less [=%]          Strenghtens less contrasted objects in front of strong
-                      contrasted background. Well to combine with 'close'. 
-                      ARG is a percent value as a minimum intermediate cpntrast
+                      contrasted background. 
+                      Well to combine with --close and / or --cutblur.
+                      ARG is a percent value as a minimum intermediate contrast
                       difference. Default value depends on first mask method.
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
@@ -505,7 +507,12 @@ ${1:-}"
   return "${Error:-0}"
 }
 exiftransfer() {
+  # Transfer exif data from image $1 to image $2
+  # Does not transfer image size information.
+  # Sets orientation tag to horizontal / no rotation.
+  # Several warnings are supressed.
   local Sourceimage Destinationimage Exifargs
+  
   Sourceimage="${1:-}"
   Destinationimage="${2:-}"
   Exifargs="$(exiftool -a -u -g1 -args "$Sourceimage")"
@@ -1220,21 +1227,20 @@ focus_montage() {
   done
   [ -z "$Maskimagelist" ] && Maskimagelist="$(masklist $Mergemaskbasename | tr '\n' ' ')"
   
-  Resultmd5="$(md5cut "$Maskimagelist $Softfusion $Lessthanmax")"
+  Resultmd5="$(md5cut "$Maskimagelist $Softfusion $Lessthanmax $Cutblur")"
 #  Resultimage="$Cachedir/montage-$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)-soft${Softfusion:-0}-less${Lessthanmax:-0}.$Resultmd5.tif"
   Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
   [ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
   [ "$Softfusion" ]     && Resultimage="$Resultimage-soft${Softfusion:-0}"
   [ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
+  [ "$Cutblur" ]        && Resultimage="$Resultimage-cutblur${Cutblur:-0}"
   Resultimage="$Cachedir/montage-$Resultimage.$Resultmd5.tif"
   
   Maskmax="${Maskmax:-$Cachedir/montage.max.$Resultmd5.tif}"
   
   [ -e "$Resultimage" ] && {
     verbose "Skipping montage, already exists: $(basename $Resultimage)"
-    #$Magickbin "$Resultimage" "$Outputimage" || error "Error converting '$Resultimage' to '$Outputimage'"
     showimage "$Resultimage"
-    #return 0
     Skipmontage="yes"
   }
   
@@ -1308,8 +1314,8 @@ $Magickbin
   mpr:maskmax
   mpr:sourcemask
     -compose MinusSrc -composite -fill white +opaque black
+    -alpha off
     -negate
-    -transparent white
     -write mpr:cutmask
     -delete 0"
     
@@ -1318,7 +1324,7 @@ $Magickbin
   mpr:cutmask
   ( mpr:sourcemask -threshold 0% )
     -compose MinusSrc -composite
-    -transparent white
+    -negate
     -write mpr:cutmask
     -delete 0"
     
@@ -1391,11 +1397,20 @@ $Magickbin
   mpr:sourcemask
   mpr:maskmax
     -compose MinusDst -composite -fill white +opaque black
+    -alpha off
     -negate
-    -transparent white
     -write mpr:cutmask
     -delete 0"
     } #/--lessthanmax
+    
+    [ "$Cutblur" ] && Command="$Command
+  mpr:cutmask
+    -alpha off
+    -blur 0x${Cutblur:-1}
+  mpr:cutmask
+    -compose Lighten -composite
+    -write mpr:cutmask
+    -delete 0"
     
     case $Softfusion in
       "") # hard (default)
@@ -1457,7 +1472,7 @@ $(grep "\S" <<< "$Command")"
       ;;
       no)
         #multicore "$Command" "$Sourcepartimage" || error "Error while fusing images"
-        multicore "$Command" || error "Error in result montage"
+        multicore "$Command" "$Testimage" || error "Error in result montage"
         [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
           multicore_wait || error "Error in result montage"
           flatten "$Resultimage" $Sourcepartimagelist  || error "Error while flattening images"
@@ -1501,7 +1516,7 @@ $(grep "\S" <<< "$Command")"
     -write mpr:cutmask
     -delete 0
   mpr:resultimage
-    -blur ${Finalblursigma:-1}
+    -blur 0x${Finalblursigma:-1}
   mpr:cutmask
     -alpha off
     -compose CopyOpacity -composite
@@ -2405,6 +2420,7 @@ declare_variables() {
   Casecompose=""
   Composefactor="" ### FIXME
   Compose_needlist=""
+  Cutblur=""
   Difference_needlist=""
   Enfuse_needlist=""
   Evaluate_needlist=""
@@ -2471,7 +2487,7 @@ parse_options() {
   
   Shortoptions="ho:vV"
   Longoptions="basename:,cache::,exif::,force,help,output:,showimage,showname,test::,threads:,verbose,version"
-  Longoptions="$Longoptions,bg:,background:,close::,contrast::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,revert,soft::"
+  Longoptions="$Longoptions,bg:,background:,close::,contrast::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,revert,soft::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -2489,7 +2505,8 @@ parse_options() {
          --basename)          Basename="${2:-auto}"       ; shift ;;
          --cache)             Preservecache="yes"         ; Cachedir="${2:-auto}" ; shift ;;
          --close)             Globalclose="${2:-auto}"    ; shift ;;
-         --contrast)          Globalcontrast="${2:-auto}" ; shift ;;         
+         --contrast)          Globalcontrast="${2:-auto}" ; shift ;;      
+         --cutblur)           Cutblur="${2:-auto}"        ; shift ;;      
          --denoise)           Globaldenoise="${2:-auto}"  ; shift ;;
          --exif)              Exifsourceimage="${2:-auto}"        ; shift ;;
          --fakehdr)           Fakehdr="${2:-auto}"        ; shift ;;
@@ -2657,6 +2674,9 @@ check_options() {
     note "Setting --factor=$Composefactor"
   }
   
+  # --cutblur
+  [ "$Cutblur" = "auto" ] && Cutblur="2"
+  
   # --fakehdr
   [ "$Fakehdr" = "auto" ] && Fakehdr="50"
   
@@ -2816,6 +2836,9 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     "") ;;
     *) Resultimage="${Resultimage}_close$Globalclose" ;;
   esac
+  [ "$Cutblur" ] && {
+    Resultimage="${Resultimage}_cutblur$Cutblur"
+  }
   [ "$Finalblur" ] && {
     Resultimage="${Resultimage}_finalblur=w${Finalblurpercent}-s${Finalblursigma}"
   }
@@ -2839,7 +2862,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   Resultimage="$(sed "s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
   #Resultimage="$(sed "s/=-/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
     
-  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist $Background $Fakehdr $Globalclose $Globaldenoise $Globalless $Globalsoft $Finalblur $Grayscale $Revertimagelist $Testsetup" )"
+  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist $Background $Fakehdr $Globalclose $Globaldenoise $Globalless $Globalsoft $Cutblur $Finalblur $Grayscale $Revertimagelist $Testsetup" )"
   
   Resultimage="${Resultimage}.${Fusemd5sum}.${Imageformat}"
   [ -z "$Outputdir" ] && Outputdir="$(pwd)"
