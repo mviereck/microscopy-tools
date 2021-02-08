@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.4.0-beta"
+Version="0.6.4.1-beta"
 
 usage() {
   echo "imfuse v$Version
@@ -887,10 +887,13 @@ mkimg_color() {
   $Magickbin -size "$Size" xc:${3:-black}            -type TrueColor      $Tifstore "${1:-color.tif}"       || error "Failed to create colored image."
 }
 mkimg_transparent() {
+  # Generate transparent image $1 with size $2
   local Size
   Size="${2:-}"
   [ -z "$Size" ] && Size="${Imagewidth:-100}x${Imageheight:-100}"
-  $Magickbin -size "$Size" xc:transparent -type TrueColorAlpha "${1:-transparent.tif}"
+  verbose "Generating transparent image:
+  $Magickbin -size $Size canvas:transparent -type TrueColorAlpha ${1:-transparent.tif}"
+  $Magickbin -size "$Size" canvas:transparent -type TrueColorAlpha "${1:-transparent.tif}"
 }
 
 # core focus stack routines
@@ -1323,8 +1326,7 @@ $Magickbin
     Command="$Command   
   mpr:cutmask
   ( mpr:sourcemask -threshold 0% )
-    -compose MinusSrc -composite
-    -negate
+    -compose Darken -composite
     -write mpr:cutmask
     -delete 0"
     
@@ -1426,7 +1428,7 @@ $Magickbin
         Command="$Command
   mpr:sourcemask 
   mpr:cutmask
-    -compose Over -composite
+    -compose Darken -composite
     -write mpr:sourcemask_part
     -delete 0"
         # get part of source image (with semi transparency)
@@ -1471,8 +1473,8 @@ $(grep "\S" <<< "$Command")"
         showimage $Resultimage
       ;;
       no)
-        #multicore "$Command" "$Sourcepartimage" || error "Error while fusing images"
-        multicore "$Command" "$Testimage" || error "Error in result montage"
+        #multicore "$Command" "$Testimage" || error "Error in result montage"
+        multicore "$Command" || error "Error in result montage"
         [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
           multicore_wait || error "Error in result montage"
           flatten "$Resultimage" $Sourcepartimagelist  || error "Error while flattening images"
