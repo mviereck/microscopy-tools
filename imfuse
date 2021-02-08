@@ -2786,9 +2786,14 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     #"")   Basename="imfuse" ;;
     auto) Basename="$(basename "$(pwd)")" ;;
   esac
-  Outputdir="$(dirname "$Basename")"
-  Basename="$(basename "$Basename")"
-  [ "$Basename" != "$(unspecialstring "$Basename")" ] && error "--basename: Name must not contain special chars or whitespace: '$Basename'"
+  [ -d "$Basename" ] && {
+    Outputdir="$Basename"
+    Basename=""
+  } || {
+    Outputdir="$(dirname "$Basename")"
+    Basename="$(basename "$Basename")"
+  }
+  #[ "$Basename" != "$(unspecialstring "$Basename")" ] && error "--basename: Name must not contain special chars or whitespace: '$Basename'"
   
   # --output
   Resultimage="imfuse."
@@ -2873,7 +2878,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="$Outputdir/$Outputimage" ;;
   esac
   Outputimage="$(realpath "$Outputimage")"
-  Resultimage="$Cachedir/${Basename:-imfuse}$Resultimage"
+  Resultimage="$Cachedir/${Basename:-}$Resultimage"
   
   return ${Error:-0}
 }
