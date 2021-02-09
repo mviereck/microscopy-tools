@@ -2182,7 +2182,7 @@ maskarg_defaultvalue() {
         morphology) echo "10" ;;
         prewitt)    echo "15" ;;
         #roberts
-        sobel)      echo "7" ;;
+        sobel)      echo "1" ;;
         statistic)  echo "10" ;;
         #unsharp
         wavelet)    echo "10" ;;
@@ -3175,7 +3175,9 @@ $Cachedir/fakehdr*.$(basename "$Image")"
     focus_montage --soft "$Globalsoft" --lessthanmax "$Globalless" --output "$Resultimage"  || return 1
   }
 
-  $Magickbin "$Backgroundimage" "$Resultimage" -compose Over -composite "$Resultimage" || note "Failed to compose result over background"
+  [ "$Background" ] && {
+    $Magickbin "$Backgroundimage" "$Resultimage" -compose Over -composite "$Resultimage" || note "Failed to compose result over background"
+  }
   [ "$Layers" ] && layered_sharpness
       
   [ "$Error" ] && return 1
