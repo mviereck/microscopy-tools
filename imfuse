@@ -420,7 +420,7 @@ masklist() {
   #find $Cachedir -regextype sed -regex "$Cachedir/${Basename}.[0-9]\{$Imagenumberlength\}.tif"
 }
 
-### Image processing
+### image processing helpers
 
 denoisecode() {
   echo "
@@ -443,10 +443,49 @@ denoisecode() {
     -compose over -composite
 "
 }
-evaluate_split() {
-
+evaluate() {
   local Sourceimagelist Resultimage Mode
   local Startzeit Dauer Restzeit
+  local Split
+  
+  Mode="${1:-}" ; shift
+  Resultimage="${1:-}" ; shift
+  Sourceimagelist=""
+  while [ $# -gt 0 ]; do
+    Sourceimagelist="$Sourceimagelist
+${1:-}"
+    shift
+  done
+  Sourceimagelist="$(grep . <<< "$Sourceimagelist")"
+  
+  Split="$((Imagelistmemsize/Freemem +1))"
+  
+  Startzeit="$(date +%s)"
+  case $Split in
+    1)
+      $Magickbin $Sourceimagelist -evaluate-sequence $Mode $Tifstore $Resultimage || error "Error in evaluate(): $Mode"
+    ;;
+    *)
+      case $Mode in
+        min|max)
+          evaluate_stepwise "$Mode" "$Resultimage" $Sourceimagelist
+        ;;
+        *)
+          evaluate_split "$Mode" "$Resultimage" $Sourceimagelist
+        ;;
+      esac
+    ;;
+  esac
+  Dauer="$(( $(date +%s)-Startzeit))"
+  verbose "evaluate() duration: $(date -u -d @$Dauer +"%T")"
+}
+evaluate_split() {
+  # -evaluate-sequence for images exceeding RAM
+  # If needed, splits source images in smaller parts and puts them together after evaluating them
+  # Slow, but reliable.
+  # Needs global $Freemem
+
+  local Sourceimagelist Resultimage Mode
   local Image Split Splitpercent Showsplit Part Partimage Partimagelist=
   local Startzeit Dauer Restzeit Count
   
@@ -458,7 +497,7 @@ evaluate_split() {
 ${1:-}"
     shift
   done
-  Sourceimagelist="$(tail -n+2 <<< "$Sourceimagelist")"
+  Sourceimagelist="$(grep . <<< "$Sourceimagelist")"
   
   Split="$((Imagelistmemsize/Freemem +1))"
 
@@ -505,6 +544,52 @@ ${1:-}"
   esac
   showimage $Resultimage
   return "${Error:-0}"
+}
+evaluate_stepwise() {
+  # same as evaluate-sequence max or min,
+  # but loads images one by one into ram instead of altogether.
+  # $1 mode. Supported: max min 
+  # $2 result image
+  # $@ source images
+  
+  local Mode Composemode Resultimage Sourceimagelist Command Line Firstimage
+  local Startzeit Dauer
+
+  Mode="${1:-}" ; shift
+  Resultimage="${1:-}" ; shift
+  Firstimage="${1:-}" ; shift
+  Sourceimagelist=""
+  while [ $# -gt 0 ]; do
+    Sourceimagelist="$Sourceimagelist
+${1:-}"
+    shift
+  done
+  Sourceimagelist="$(grep . <<< "$Sourceimagelist")"
+  
+  case $Mode in
+    max) Composemode="Lighten" ;;
+    min) Composemode="Darken" ;;
+  esac
+  
+  Command="$Magickbin
+  $Firstimage"
+  while read Line; do
+    Command="$Command
+  $Line
+    -compose $Composemode -composite"
+  done <<< "$Sourceimagelist"
+  Command="$Command 
+  $Resultimage"
+    
+  Startzeit="$(date +%s)"
+  verbose "evaluate_stepwise(): $Resultimage"
+  $Command || {
+    error "Error in evaluate_stepwise():
+$Command"
+  return 1
+  }
+  Dauer="$(( $(date +%s)-Startzeit))"
+  verbose "Duration: $(date -u -d @$Dauer +"%T")"
 }
 exiftransfer() {
   # Transfer exif data from image $1 to image $2
@@ -627,9 +712,7 @@ generate_composite() {
   for Mode in $Evaluate_needlist; do
     [ "$Error" ] && break
     Imagename="$Cachedir/evaluate.$Mode.$Sourcemd5.tif"
-    [ -e "$Imagename" ] || {
-      evaluate_split $Mode $Imagename $Sourceimagelist || break
-    }
+    [ -e "$Imagename" ] evaluate $Mode $Imagename $Sourceimagelist
   done
   # --compose
   for Mode in $Compose_needlist; do
@@ -656,7 +739,7 @@ layered_sharpness() {
   local Maskmax
   
   Maskmax="$Cachedir/mask.max.tif"
-  evaluate_split max $Maskmax $Cachedir/sourcemask*
+  evaluate max $Maskmax $Cachedir/sourcemask*
   Histogramm="$($Magickbin $Maskmax -depth 16 -define histogram:unique-colors=true -format %c histogram:info:-)"
   Graylevels="$(awk '{print $3}' <<< "$Histogramm" | wc -l)"
   Layerminpixel="$(( Imagewidth*Imageheight/(Layers-1) ))"
@@ -738,22 +821,23 @@ level_check() {
 
   Level="$(maskarg_defaultvalue $Argmethod level)"
   [ "$Level" ] && {
-    Arglevelmin="$(cut -d, -f1 <<< "$Level" | tr -d '%')"
-    Arglevelmax="$(cut -d, -f2 <<< "$Level" | tr -d '%')"
-    note "level_check(): default: ${Arglevelmin}%,${Arglevelmax}% for $Argbasename"
+    #Arglevelmin="$(cut -d, -f1 <<< "$Level" | tr -d '%')"
+    #Arglevelmax="$(cut -d, -f2 <<< "$Level" | tr -d '%')"
+    note "level_check(): default: $Level for $Argbasename"
     #return 0
   }
   
   Maskmax=$Cachedir/$Argbasename-max.tif
   Maskmin=$Cachedir/$Argbasename-min.tif
-#  [ -e "$Maskmax" ] || {
-    evaluate_split max $Maskmax $(masklist "$Argbasename") || return 1
-#  }
-#  [ -e "$Maskmin" ] || {
-    evaluate_split min $Maskmin $(masklist "$Argbasename") || return 1
-#  }
+
+  evaluate max $Maskmax $(masklist "$Argbasename") || return 1
   Arglevelmax="$($Magickbin "$Maskmax" -format '%[fx:maxima*100]' info:)"
-  Arglevelmin="$($Magickbin "$Maskmin" -format '%[fx:minima*100]' info:)"
+  
+  Arglevelmin="$(maskarg_defaultvalue $Argmethod levelmin)"
+  [ -z "$Arglevelmin" ] && {
+    evaluate min $Maskmin $(masklist "$Argbasename") || return 1
+    Arglevelmin="$($Magickbin "$Maskmin" -format '%[fx:minima*100]' info:)"
+ }
     
   note "level_check(): ${Arglevelmin}%,${Arglevelmax}% for $Argbasename"
   
@@ -776,10 +860,10 @@ level_masks() {
       Maskmax=$Cachedir/level-max.$Maskmd5.tif
       Maskmin=$Cachedir/level-min.$Maskmd5.tif
       #[ -e "$Maskmax" ] || {
-        evaluate_split max $Maskmax $Masklist || return 1
+        evaluate max $Maskmax $Masklist || return 1
       #}
       #[ -e "$Maskmin" ] || {
-        evaluate_split min $Maskmin $Masklist || return 1
+        evaluate min $Maskmin $Masklist || return 1
       #}
       Levelmax="$($Magickbin "$Maskmax" -format '%[fx:maxima*100]' info:)"
       Levelmin="$($Magickbin "$Maskmin" -format '%[fx:minima*100]' info:)"
@@ -1021,10 +1105,10 @@ $(grep "\S" <<< "$Command")"
     
     [ "${Argless}" ] && [ "${Argsoft}" ] && {
       note "Generating soft&less image for mask $Argmethod"
-      Imagename="$Cachedir/$Argbasename-prepare-less${Argless}-soft${Argsoft}.tif"
+      Imagename="$Cachedir/$Argbasename-prepare-less${Argless}-soft${Argsoft}-cb${Cutblur}.tif"
       focus_montage --soft "$Argsoft" --lessthanmax "$Argless" --output "$Imagename" -- $(masklist "$Argbasename") || break
       #$Magickbin "$Enfusebaseimage" "$Imagename" -compose Over -composite "$Imagename" || error "Failed to compose soft result on enfuse background"
-      Argbasename="$Argmethod-soft$Argsoft-less$Argless.$(md5cut "$Argbasename $Argsoft $Argless" )"
+      Argbasename="$Argmethod-soft$Argsoft-less$Argless-cb$Cutblur.$(md5cut "$Argbasename $Argsoft $Argless $Cutblur" )"
       maskexist "$Argbasename" || {
         rm -f $(masklist "$Argbasename")
         note "Generating comparision masks from soft&less result of $Argmethod"
@@ -1041,8 +1125,8 @@ $(grep "\S" <<< "$Command")"
       Arglevelmax=""
       Arglevel=""
       maskarg_store
-      Imagename="$Cachedir/$Argbasename-prepare-less$Argless.tif"
-      Maskmax="$Cachedir/$Argbasename-less${Argless}mask.tif"
+      Imagename="$Cachedir/$Argbasename-prepare-less$Argless-cb${Cutblur}.tif"
+      Maskmax="$Cachedir/$Argbasename-less${Argless}-cb$Cutblur.mask.tif"
       [ -e "$Maskmax" ] || {
         note "Generating less mask for $Argmethod"
         focus_montage --lessthanmax "$Argless" --maskmax "$Maskmax" --output "$Imagename" -- $(masklist "$Argbasename") || break   
@@ -1254,7 +1338,7 @@ focus_montage() {
     [ "$Softfusion" ] && level_masks $Maskimagelist
   
     [ "$Lessthanmax" ] && {
-      evaluate_split max $Maskmax $Maskimagelist || return 1
+      evaluate max $Maskmax $Maskimagelist || return 1
       Maskmaxready="yes"
       Contrastmaxlevel="$($Magickbin $Maskmax -format '%[fx:maxima*100]' info:)"
       Lessthanmax="$(calc "$Lessthanmax*$Contrastmaxlevel/100")" 
@@ -1267,7 +1351,7 @@ focus_montage() {
   
     case $Stepwise in
       yes) mkimg_black $Maskmax || return 1 ;;
-      no)  [ "$Maskmaxready" = "yes" ] || evaluate_split max $Maskmax $Maskimagelist || return 1 ;;
+      no)  [ "$Maskmaxready" = "yes" ] || evaluate max $Maskmax $Maskimagelist || return 1 ;;
     esac 
   }
   
@@ -1970,7 +2054,7 @@ maskarg_defaultvalue() {
         blur)       echo "8" ;;
         comet)      echo "6" ;;
         compass)    echo "4" ;;
-        dog)        echo "4" ;;
+        dog)        echo "6" ;;
         diffstat)   echo "5" ;;
         freichen)   echo "15" ;;
         gaussian)   echo "8" ;;
@@ -2019,6 +2103,41 @@ maskarg_defaultvalue() {
         ;;
         #unsharp
         wavelet)    echo "0%,12.8145%" ;;
+        *)          echo "" ;;
+      esac
+    ;;
+    levelmin)
+      case "${1:-}" in
+        blur)       echo "0" ;;
+        comet)      echo "0" ;;
+        #compass)    echo "45.0599%,80.0015%" ;;
+        dog)        echo "0" ;;
+        diffstat)
+          #case "$Argword1,$Argword2" in
+          #  "median,mean") echo "0%,44.1398%" ;;
+          #  "min,max")     echo "0%,100%" ;;
+          #esac
+        ;;
+        #freichen)   echo "33.6584%,100%" ;;
+        gaussian)   echo "0" ;;
+        #kirsch)     echo "" ;;
+        laplacian)
+          case $Argword1 in
+            3)      echo "0" ;;
+          esac
+        ;;
+        log)        echo "0" ;;
+        morphology) echo "0" ;;
+        #prewitt)    echo "34.3893%,100%" ;;
+        #roberts)    echo "7.64782%,100%" ;;
+        #sobel)      echo "34.3893%,100%" ;;
+        statistic)
+          case $Argword1 in
+            standarddeviation) echo "0" ;;
+          esac
+        ;;
+        #unsharp
+        wavelet)    echo "0" ;;
         *)          echo "" ;;
       esac
     ;;
@@ -2090,7 +2209,7 @@ maskarg_defaultvalue() {
         comet)      echo "5" ;;
         compass)    echo "" ;;
         diffstat)   echo "" ;;
-        dog)        echo "0.3" ;;
+        dog)        echo "0.1" ;;
         finalblur)  echo "3" ;;
         freichen)   echo "" ;;
         gaussian)   echo "0.3" ;;
@@ -2677,7 +2796,7 @@ check_options() {
   }
   
   # --cutblur
-  [ "$Cutblur" = "auto" ] && Cutblur="2"
+  [ "$Cutblur" = "auto" ] && Cutblur="1"
   
   # --fakehdr
   [ "$Fakehdr" = "auto" ] && Fakehdr="50"
