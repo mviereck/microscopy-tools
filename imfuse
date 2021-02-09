@@ -467,7 +467,7 @@ ${1:-}"
     ;;
     *)
       case $Mode in
-        min|max)
+        min|max|mean)
           evaluate_stepwise "$Mode" "$Resultimage" $Sourceimagelist
         ;;
         *)
@@ -552,7 +552,7 @@ evaluate_stepwise() {
   # $2 result image
   # $@ source images
   
-  local Mode Composemode Resultimage Sourceimagelist Command Line Firstimage
+  local Mode Composemode Resultimage Sourceimagelist Command Line Firstimage Count
   local Startzeit Dauer
 
   Mode="${1:-}" ; shift
@@ -569,24 +569,44 @@ ${1:-}"
   case $Mode in
     max) Composemode="Lighten" ;;
     min) Composemode="Darken" ;;
+    mean) ;;
     *) 
       error "evaluate_stepwise(): Unsupported mode: $Mode"
       return 1
     ;;
   esac
   
-  Command="$Magickbin
+  case $Mode in
+    min|max)
+      Command="$Magickbin
   $Firstimage"
-  while read Line; do
-    Command="$Command
+      while read Line; do
+        Command="$Command
   $Line
     -compose $Composemode -composite"
-  done <<< "$Sourceimagelist"
-  Command="$Command 
+      done <<< "$Sourceimagelist"
+      Command="$Command 
   $Resultimage"
-    
+    ;;
+    mean)
+      Command="$Magickbin
+  $Firstimage"
+      Count=1
+      while read Line; do
+        Count="$((Count+1))"
+        Command="$Command
+  $Line
+    -compose blend
+    -set option:compose:args $(calc 100/$Count)
+    -composite"
+      done <<< "$Sourceimagelist"
+      Command="$Command
+  $Resultimage"
+    ;;
+  esac
+
   Startzeit="$(date +%s)"
-  verbose "evaluate_stepwise(): $Resultimage"
+  verbose "evaluate_stepwise(): $Mode $Resultimage"
   $Command || {
     error "Error in evaluate_stepwise():
 $Command"
@@ -716,7 +736,7 @@ generate_composite() {
   for Mode in $Evaluate_needlist; do
     [ "$Error" ] && break
     Imagename="$Cachedir/evaluate.$Mode.$Sourcemd5.tif"
-    [ -e "$Imagename" ] evaluate $Mode $Imagename $Sourceimagelist
+    [ -e "$Imagename" ] || evaluate $Mode $Imagename $Sourceimagelist
   done
   # --compose
   for Mode in $Compose_needlist; do
@@ -1005,7 +1025,7 @@ focus_generate_masks() {
     -negate"
     
     [ "${Argclose1}" ] && Maskgenerator="$Maskgenerator
-    -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-4}"
+    -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-3}"
 
     [ "$Argmethod" = "enfuse" ] && Enfuse_needlist="$Enfuse_needlist enfuse"
     [ "$Argsoft" ]              && Enfuse_needlist="$Enfuse_needlist enfuse"
@@ -1052,7 +1072,7 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
   # --enfuse, --bg=enfuse, soft
   [ "$Enfuse_needlist" ] && [ ! -e "$Enfusebaseimage" ] && {
     note "Generating enfuse base image"
-    nice enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask -o "$Enfusebaseimage" $Sourceimagelist 2>&1 | { grep -v -E 'loading next image|alpha channel' ; :; } || error "Failed to generate enfuse base image"
+    nice enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask -o "$Enfusebaseimage" $Sourceimagelist 2>&1 | { grep -v -E 'loading next image|alpha channel|assuming all pixels' ; :; } || error "Failed to generate enfuse base image"
     showimage "$Enfusebaseimage"
   }
   
@@ -1233,7 +1253,7 @@ focus_merge_masks() {
   }   
   
   # --close
-  [ "${Globalclose1:-1}x${Globalclose2:-1}" != "1x1" ] && {
+  [ "${Globalclose}" ] && {
     Mergecode="$Mergecode
     -morphology Close:${Globalclose2:-1} Octagon:${Globalclose1:-4}"
     Mergemaskbasename="$Mergemaskbasename-close"
@@ -2213,7 +2233,7 @@ maskarg_defaultvalue() {
         comet)      echo "5" ;;
         compass)    echo "" ;;
         diffstat)   echo "" ;;
-        dog)        echo "0.1" ;;
+        dog)        echo "0.3" ;;
         finalblur)  echo "3" ;;
         freichen)   echo "" ;;
         gaussian)   echo "0.3" ;;
@@ -2865,19 +2885,18 @@ check_options() {
   
   # --close
   case $Globalclose in
-    ""|"1x1"|"1"|"0") Globalclose="" ;;
+    ""|"0") Globalclose="" ;;
     *)
       [ "$Globalclose" = "auto" ] && Globalclose="$(maskarg_defaultvalue "$Firstmaskmethod" close)"
       Globalclose1=$(cut -dx    -f1 <<< "$Globalclose")
       Globalclose2=$(cut -dx -s -f2 <<< "$Globalclose")
       Globalclose1="$(digitonly "$Globalclose1")"
       Globalclose2="$(digitonly "$Globalclose2")"
+      Globalclose1="${Globalclose1:-1}"
+      Globalclose2="${Globalclose2:-1}"
+      Globalclose="${Globalclose1}x${Globalclose2}"
     ;;
   esac
-  Globalclose1="${Globalclose1:-1}"
-  Globalclose2="${Globalclose2:-1}"
-  Globalclose="${Globalclose1}x${Globalclose2}"
-  [ "$Globalclose" = "1x1" ] && Globalclose=""
 
   # --background
   [ "$Background" ] && {
