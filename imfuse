@@ -477,7 +477,7 @@ ${1:-}"
     ;;
   esac
   Dauer="$(( $(date +%s)-Startzeit))"
-  verbose "evaluate() duration: $(date -u -d @$Dauer +"%T")"
+  verbose "evaluate() $Mode duration: $(date -u -d @$Dauer +"%T")"
 }
 evaluate_split() {
   # -evaluate-sequence for images exceeding RAM
@@ -569,6 +569,10 @@ ${1:-}"
   case $Mode in
     max) Composemode="Lighten" ;;
     min) Composemode="Darken" ;;
+    *) 
+      error "evaluate_stepwise(): Unsupported mode: $Mode"
+      return 1
+    ;;
   esac
   
   Command="$Magickbin
@@ -1000,7 +1004,7 @@ focus_generate_masks() {
     [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
     -negate"
     
-    [ "${Argclose1:-1}x${Argclose2:-1}" != "1x1" ] && Maskgenerator="$Maskgenerator
+    [ "${Argclose1}" ] && Maskgenerator="$Maskgenerator
     -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-4}"
 
     [ "$Argmethod" = "enfuse" ] && Enfuse_needlist="$Enfuse_needlist enfuse"
@@ -1407,7 +1411,7 @@ $Magickbin
     -delete 0"
     
     # drop areas with contrast=0
-    Command="$Command   
+    [ "$Background" ] && Command="$Command   
   mpr:cutmask
   ( mpr:sourcemask -threshold 0% )
     -compose Darken -composite
@@ -2705,7 +2709,8 @@ check_options() {
     esac
     Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
     
-    [ "${Argless}" ] && [ "${Argsoft}" ] && Background="${Background:-enfuse}"
+#    [ "${Argless}" ] && [ "${Argsoft}" ] && Background="${Background:-enfuse}"
+    [ "${Argsoft}" ] && Background="${Background:-enfuse}"
     
     [ "$Maskmethodcount" = "1" ] && Firstmaskmethod="$Argmethod"
   
@@ -2875,11 +2880,15 @@ check_options() {
   [ "$Globalclose" = "1x1" ] && Globalclose=""
 
   # --background
-  Background="${Background:-mean}"
-  checkmagicklist compose  "$Background" && Background="compose,$Background"
-  checkmagicklist evaluate "$Background" && Background="evaluate,$Background"
-  checkmagicklist color    "$Background" && Background="color,$Background"
-  [ -z "$Maskmethodlist" ] && note "No mask option specified, generating background only: $Background"
+  [ "$Background" ] && {
+    checkmagicklist compose  "$Background" && Background="compose,$Background"
+    checkmagicklist evaluate "$Background" && Background="evaluate,$Background"
+    checkmagicklist color    "$Background" && Background="color,$Background"
+  }
+  [ -z "$Maskmethodlist" ] && {
+    Background="${Background:-enfuse}"
+    note "No mask option specified, generating background only: $Background"
+  }
 
   #### Files ####
 
