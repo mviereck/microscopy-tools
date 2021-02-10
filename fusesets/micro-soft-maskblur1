@@ -1,0 +1,13 @@
+imfuse --comet         --soft=10 --maskblur=1
+imfuse --compass       --soft=15 --maskblur=1
+imfuse --diffstat=r3   --soft=10 --maskblur=1
+imfuse --diffstat=r5   --soft=10 --maskblur=1
+imfuse --diffstat=r7   --soft=10 --maskblur=1
+imfuse --freichen      --soft=1  --maskblur=1
+imfuse --morphology=r2 --soft=15 --maskblur=1
+imfuse --morphology=r3 --soft=15 --maskblur=1
+imfuse --prewitt       --soft=1  --maskblur=1
+imfuse --sobel         --soft=1  --maskblur=1
+imfuse --statistic=r2  --soft=15 --maskblur=1
+imfuse --statistic=r5  --soft=15 --maskblur=1
+
