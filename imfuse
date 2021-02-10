@@ -238,17 +238,18 @@ Mask generation and fusion adjustments:
                       Helps e.g. to strengthen thin shiny objects like hairs.
                       For big values rather use c2x8 or c4x4 instead of c16,
                       the result will be similar but faster.
- --maskblur [=SIGMA]  Contrast enhancement. Applied to contrast masks only.
-                      SIGMA is a blur sigma value. Default SIGMA: 1
+                      An alternative option is --cutblur.
+ --maskblur [=SIGMA]  Blur masks with SIGMA (default 1). Enhances contrast.
+                      Applied to contrast masks only.
  --cutblur [=SIGMA]   Blur cut masks in final montage. Default SIGMA: 2
  --denoise [=%]       Experimental option to remove noise in low contrast areas.
-                      The percent value is a threshold. Rather use --soft.
+                      The percent value is a threshold. 
+                      Rather use --soft or --finalblur.
  --fakehdr [=%]       Balances over- and underexposed areas. Default %: 50
                       Remaining artefacts at borders of overexposured areas
                       might be fixed with --saturation. Alternative: --halo
  --finalblur [=w%,sigma]  Blur low contrast areas with a contrast strenght 
-                      up to w%. Default w% depends on first specified mask, 
-                      default sigma is 1.
+                      up to w%. Default w%: 25. Default sigma: 1.
  --grayscale=MODE     Grayscale converting method before mask generation.
                       Compare ImageMagick option -grayscale. Default: RMS
                       MODE is one of: (number or name)
@@ -266,12 +267,12 @@ Mask generation and fusion adjustments:
                       contrasted background. 
                       Well to combine with --close and / or --cutblur.
                       ARG is a percent value as a minimum intermediate contrast
-                      difference. Default value depends on first mask method.
+                      difference. Default value: 60
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
  --soft [=%]          Enable soft fuse mode. Takes a percent argument.
                       Best method to reduce noise in low contrast areas.
-                      High % is very soft. Strenght of value depends on mask.
+                      High % is very soft. Default value: 25
                       A semitransparent result is composed over the background.
                       Default background is 'enfuse'. Others are worth a test.
                            
@@ -295,16 +296,16 @@ has some weaknesses and can lead to artefacts.
    - Option --soft gives a quite satisfying result for low contrast noise areas.
      Example: '--diffstat --soft' or '--diffstat=soft'
    - Another possibility to soften the noise is option --finalblur.
-     Example: '--diffstat --finalblur=w15,s2'
+     Example: '--diffstat --finalblur=w25,s2'
    - Combining the contrast mask with a color saturation mask.
-     Example: '--diffstat --saturation=w15'
-     (Weight argument 'w15' causes the saturation mask to take effect only 
-     in low contrast areas (<=15%) of the '--diffstat' mask.)
+     Example: '--diffstat --saturation=w25'
+     (Weight argument 'w25' causes the saturation mask to take effect only 
+     in low contrast areas (<=25%) of the '--diffstat' mask.)
   
  - Objects in foreground with background artefacts:
   Sometimes objects in background result in a stronger contrast mask than
   objects in foreground. The foreground object will be incomplete.
-  This can be fixed with option '--less' and '--close'.
+  This can be fixed with option --less, additionally --cutblur or --close.
   
 Examples:
 Have a folder 'stackshot' containing all stack source images.
@@ -883,7 +884,6 @@ $Magickbin
     -level ${Levelmin}%,${Levelmax}%
   $Clutimage
     -clut
-    $Tifstore 
   $Resultmask"
   
   [ "$Count" = "1" ] && verbose "Leveling masks with:
@@ -1274,6 +1274,13 @@ focus_merge_masks() {
     note "Skipping merge, masks already exist: $Mergemaskbasename"
     return 0
   }
+  
+  case "$Mergeneeded" in
+    no)
+      Mergemaskbasename="$Argbasename"
+      return 0
+    ;;
+  esac
     
   # merge images
   note "Merging masks"
@@ -1367,9 +1374,9 @@ focus_montage() {
   
     [ "$Lessthanmax" ] && {
       evaluate max $Maskmax $Maskimagelist || return 1
-      Maskmaxready="yes"
-      Contrastmaxlevel="$($Magickbin $Maskmax -format '%[fx:maxima*100]' info:)"
-      Lessthanmax="$(calc "$Lessthanmax*$Contrastmaxlevel/100")"
+      #Maskmaxready="yes"
+      #Contrastmaxlevel="$($Magickbin $Maskmax -format '%[fx:maxima*100]' info:)"
+      #Lessthanmax="$(calc "$Lessthanmax*$Contrastmaxlevel/100")"
       Lessthanmaxmask="$Cachedir/lessthanmax.tif"
       mkimg_black "$Lessthanmaxmask"
     }
@@ -1583,6 +1590,7 @@ $(grep "\S" <<< "$Command")"
       yes)
         $Command || error "Error while cutting images"
         showimage $Resultimage
+        #showimage $Testimage
       ;;
       no)
         #multicore "$Command" "$Testimage" || error "Error in result montage"
@@ -2071,7 +2079,7 @@ maskarg_defaultvalue() {
       esac
     ;;
     less)
-      echo "10"
+      echo "60"
       false && case "${1:-}" in
         blur)       echo "8" ;;
         comet)      echo "6" ;;
@@ -2222,7 +2230,7 @@ maskarg_defaultvalue() {
       esac
     ;;
     soft)
-      echo "25"
+      echo "100"
       false && case "${1:-}" in
         blur)       echo "25" ;;
         comet)      echo "30" ;;
@@ -3131,7 +3139,6 @@ $Cachedir/fakehdr*.$(basename "$Image")"
   [ "$Error" ] && return 1
   
   # Generating stackshot image
-  mkimg_transparent "$Resultimage"
   focus_generate_masks                    || return 1
   [ -n "$Maskmethodlist" ] && {
     focus_merge_masks                     || return 1
