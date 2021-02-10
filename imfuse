@@ -1698,7 +1698,6 @@ $(grep "\S" <<< "$Command")"
     -delete 0
   $Maskmax
     -write mpr:maskmax
-    -write fb_maskmax.tif
     -delete 0
   mpr:maskmax
     -threshold $(calc "${Finalblurpercent:-10} /${Maskstrength:-1}")%
