@@ -2190,7 +2190,12 @@ maskarg_defaultvalue() {
             "min,max")     echo "0" ;;
           esac
         ;;
-        freichen)   echo "33.6584" ;;
+        freichen)   
+          case $Argword1 in
+            "") echo "33.6584" ;;
+            15) echo "19" ;;
+          esac
+        ;;
         gaussian)   echo "0" ;;
         #kirsch)     echo "" ;;
         laplacian)
