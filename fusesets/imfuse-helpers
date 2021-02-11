@@ -1,6 +1,6 @@
 
 # denoise helper masks
-imfuse --compose
+imfuse --compose=overlay
 imfuse --enfuse
 imfuse --evaluate=max
 imfuse --evaluate=min

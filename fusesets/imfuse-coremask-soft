@@ -6,7 +6,7 @@ imfuse --diffstat --soft
 imfuse --freichen --soft
 imfuse --gaussian --soft
 #imfuse --kirsch --soft
-#imfuse --laplacian --soft
+imfuse --laplacian --soft
 imfuse --log --soft
 imfuse --morphology --soft
 imfuse --prewitt --soft

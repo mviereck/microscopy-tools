@@ -1,5 +1,6 @@
 imfuse --comet
 imfuse --compass
+imfuse --diffstat=r3
 imfuse --diffstat=r5
 imfuse --diffstat=r7
 imfuse --freichen

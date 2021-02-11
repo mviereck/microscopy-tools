@@ -6,7 +6,7 @@ imfuse --diffstat
 imfuse --freichen
 imfuse --gaussian
 #imfuse --kirsch
-#imfuse --laplacian
+imfuse --laplacian
 imfuse --log
 imfuse --morphology
 imfuse --prewitt
