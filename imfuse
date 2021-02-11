@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.6.0-beta"
+Version="0.6.6.1-beta"
 
 usage() {
   echo "imfuse v$Version
