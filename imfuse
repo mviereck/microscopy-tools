@@ -338,7 +338,7 @@ verbose() {
   return 0
 }
 showimage() {
-  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r File:"${1:-}"
+  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"${1:-}"
   #[ "$Showimageprocessing" = "yes" ] && display -remote "${1:-}" &
   return 0
 }
@@ -855,7 +855,7 @@ level_masks() {
   Argbasename="level_$Argbasename"
   maskarg_store
   maskexist "$Argbasename" && {
-    verbose "level(): Already exists, skipping: $Argbasename"
+    verbose "level_masks(): Already exists, skipping: $Argbasename"
     return 0
   }
 
@@ -869,8 +869,10 @@ level_masks() {
   verbose "level check: ${Levelmin}%,${Levelmax}% for $Argbasename"
   
   $Magickbin $Maskmax -level ${Levelmin}%,${Levelmax}% $Maskmax
-  redist $Maskmax $Clutimage
-  
+
+  #[ "$Testsetup" ] && Redistshape="${Testarg:-uniform}"
+  [ "$Redistshape" ] && redist $Maskmax $Clutimage $Redistshape
+
   Startzeit="$(date +%s)"
   Count=0
   for Mask in $Masklist ; do
@@ -881,9 +883,11 @@ level_masks() {
     Command="
 $Magickbin
   $Mask
-    -level ${Levelmin}%,${Levelmax}%
+    -level ${Levelmin}%,${Levelmax}%"
+    [ "$Redistshape" ] && Command="$Command
   $Clutimage
-    -clut
+    -clut"
+    Command="$Command
   $Resultmask"
   
   [ "$Count" = "1" ] && verbose "Leveling masks with:
@@ -979,23 +983,35 @@ mkimg_transparent() {
   $Magickbin -size "$Size" canvas:transparent -type TrueColorAlpha "${1:-transparent.tif}"
 }
 redist() {
-  local Maskmax Clutimage
-  local histArr ccountArr totpix maxval fact lutlist
+  local Referenceimage Clutimage Shape
+  local histArr ccountArr totpix Lutlist
+  local Peak Low High Expo Quantumrange
+  local Factor LowArr HighArr PointArr
+  local i x y 
+  local intFunctionList integralArr
   
-  Maskmax="${1:-}"
+  Referenceimage="${1:-}"
   Clutimage="${2:-}"
+  Shape="${3:-uniform}"
+  
+  Peak=50  # 0..100
+  Low=50   # >0
+  High=50  # >0
+
+  Histogram="$Referenceimage.histogram-$Shape.tif"
       
-  maxval=65535
+  Quantumrange="$($Magickbin $Referenceimage -format "%[fx:quantumrange]" info:)" || return 1
+  Expo="$($Magickbin xc: -format "%[fx:e]" info:)" 
 
   #Clutimage="$Cachedir/clut.$Maskmd5.miff"
 
   #cumHistogram 
-  histArr=($($Magickbin $Maskmax -colorspace gray -depth 8 -format "%c" histogram:info:- \
-             | sed -n 's/[ ]*\([0-9]*\).*gray[(]\([0-9]*\).*$/\1 \2/p' \
-             | awk '# AWK to generate a zero filled histogram
-                    { bin[int($2)] += $1; } 
-                    END { for (i=0;i<256;i++) {hist = bin[i]+0; print hist; }
-                    } ' ))
+  histArr=($($Magickbin $Referenceimage -colorspace gray -depth 8 -format "%c" histogram:info:- \
+               | sed -n 's/[ ]*\([0-9]*\).*gray[(]\([0-9]*\).*$/\1 \2/p' \
+               | awk '# AWK to generate a zero filled histogram
+                      { bin[int($2)] += $1; } 
+                      END { for (i=0;i<256;i++) {hist = bin[i]+0; print hist; }
+                      } ' ))
 
   ccountArr=($(echo ${histArr[*]} \
                | awk '# AWK to generate a cumulative histogram
@@ -1003,22 +1019,86 @@ redist() {
                       END { for (i=0;i<256;i++) { cum += count[i]; print cum } }' ))
   totpix=${ccountArr[255]}
   
-  
-  # genUniformLutArr
-  # special function to generate lut for Uniform Distribution which is just the cumulative histogram normalized to max value 
-  # the uniform distribution has an integral which is f(x)=x
-  # this means that the cumulative distribution of the image is its own lut and only needs to be scaled
-  # get raw cumulative histogram
-  fact="$($Magickbin xc: -format "%[fx:$maxval/$totpix]" info:)"
-  lutlist="$(for ((i=0; i<256; i++)); do
-    echo "${ccountArr[$i]}"
-  done | awk -v fact="$fact" '{ print int(fact*$1); }')"
+  case $Shape in
+    uniform)
+      # genUniformLutArr
+      # special function to generate lut for Uniform Distribution which is just the cumulative histogram normalized to max value 
+      # the uniform distribution has an integral which is f(x)=x
+      # this Peaks that the cumulative distribution of the image is its own lut and only needs to be scaled
+      
+      # get raw cumulative histogram
+      Factor="$($Magickbin xc: -format "%[fx:$Quantumrange/$totpix]" info:)"
+      Lutlist="$(for ((i=0; i<256; i++)); do
+        echo "${ccountArr[$i]}"
+      done | awk -v Factor="$Factor" '{ print int(Factor*$1); }')"
+    ;;
+    gaussian)
+      # function to generate gaussian array in two parts: 0 to Peak and Peak to 255
+      Peak="$((256*Peak/100))"
+
+      # create low part of gaussian distribution
+      Factor="$($Magickbin xc: -format "%[fx:1/(2*($Low)^2)]" info:)"
+      LowArr=($(awk -v Peak="$Peak" -v Factor="$Factor" -v Expo="$Expo" -v Quantumrange="$Quantumrange" '
+	                BEGIN { for (i=0;i<=Peak;i++) print Quantumrange*Expo^(-((i-Peak)^2)*Factor); }'))
+
+      # create high part of gaussian distribution
+      Factor="$($Magickbin xc: -format "%[fx:1/(2*($High)^2)]" info:)"
+      HighArr=($(awk -v Peak="$Peak" -v Factor="$Factor" -v Expo="$Expo" -v Quantumrange="$Quantumrange" '
+                    BEGIN { for (i=Peak+1;i<256;i++) print Quantumrange*Expo^(-((i-Peak)^2)*Factor); }'))
+
+      # combine low and high parts of gaussian distribution
+      gausslist="${LowArr[*]} ${HighArr[*]}"
+      functionArr=($gausslist)
+      
+      # integrate function distribution
+      intFunctionList=$(for ((i=0; i<256; i++)); do
+        echo "$i ${functionArr[$i]}"
+      done | awk -v totpix="$totpix" '
+                 # AWK to integrate a function
+                 { cum += $2; rcum[$1] = cum; } 
+                 END { for (i=0;i<256;i++) print int(totpix*rcum[i]/cum); }')
+      integralArr=($intFunctionList)
+    
+      # for each possible bin graylevel (0 to 255) of cc2 starting at 0
+      # get count from cumulate histogram cc2 at that bin, then
+      # increment along bin graylevels of integrated function cc1 until that count exceeds that of cc2
+      # find the bin graylevel in cc1 and use that as the output value of the lut transformation 
+      # where the cc2 bin graylevel is the input value of the lut transformation
+      # repeat for the next cc2 bin, but starting at graylevel where left off from previous.
+      # as cumulative histograms never decrease, you don't have to start at graylevel 0 each time
+
+      Lutlist=$(for ((i=0; i<256; i++)); do
+        echo "$i ${integralArr[$i]} ${ccountArr[$i]}"
+      done | awk -v Quantumrange="$Quantumrange" '# AWK to generate transformation lut
+                 BEGIN { i=0; } { cc1[$1]=$2; cc2[$1]=$3; } 
+                 END { for ( j=0;j<256;j++ ) 
+                 { while ( i != 255 && cc1[i] <= cc2[j] ) 
+                 { i++ } lut = Quantumrange*i/255; print lut; } }')
+    ;;
+  esac
   
   # now convert lutArr into lut image
   # Use NetPBM (PGM format implied intermediate image)
-  # note, (somewhere in IM between 6.7.5.5 and 6.7.8.2) PGM is linear
 
-  echo "P2 256 1 $maxval $lutlist" | convert - -scale 256x1\! "$Clutimage"
+  echo "P2 256 1 $Quantumrange $Lutlist" | $Magickbin - -scale 256x1\! "$Clutimage"
+  
+  # draw histogram
+  $Magickbin $Referenceimage $Clutimage -clut -define histogram:unique-colors=false histogram:- | $Magickbin - -filter point -resize 256x200! $Histogram
+  case $Shape in
+    "gaussian")
+      # now overlay graph on histogram; scale graph to 128 wide (take every other point) and 100 tall and invert the y coordinates
+      x=0
+      while [ "$x" -lt 256 ] ; do
+        y="$((200 - (200 * ${functionArr[$x]%.*} / $Quantumrange) ))"
+        PointArr[$x]="$x,$y"
+        x="$((x+1))"
+      done
+      $Magickbin $Histogram -stroke red -strokewidth 2 -fill none -draw "polyline ${PointArr[*]}" $Histogram
+    ;;
+  esac
+  verbose "histogram:
+$Histogram"
+  showimage $Histogram
 }
 
 # core focus stack routines
@@ -1213,12 +1293,9 @@ focus_merge_masks() {
       
     [ "$Argdenoise" ]                                       && Mergeneeded="yes" 
     [ "$Argdarkenmask" ]                                    && Mergeneeded="yes" 
-    #[ "$Argsoft" ]                                          && Mergeneeded="yes" 
     [ "$Argthreshold" ]                                     && Mergeneeded="yes" 
     [ "$Globalclose" ]                                      && Mergeneeded="yes"
-    #[ "$Globalsoft" ]                                       && Mergeneeded="yes"
     [ "$Globaldenoise" ]                                    && Mergeneeded="yes"
-    [ "$Testsetup" ]                                        && Mergeneeded="yes"
     [ "$Mergeneeded" = "no" ] && break
       
     Mergecode="$Mergecode
@@ -1351,7 +1428,7 @@ focus_montage() {
   done
   [ -z "$Maskimagelist" ] && Maskimagelist="$(masklist $Mergemaskbasename | tr '\n' ' ')"
   
-  Resultmd5="$(md5cut "$Maskimagelist $Softfusion $Lessthanmax $Cutblur")"
+  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Softfusion $Lessthanmax $Cutblur")"
 #  Resultimage="$Cachedir/montage-$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)-soft${Softfusion:-0}-less${Lessthanmax:-0}.$Resultmd5.tif"
   Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
   [ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
@@ -2137,7 +2214,7 @@ maskarg_defaultvalue() {
       esac
     ;;
     noise)
-      echo "25"
+      echo "50"
       false && case "${1:-}" in
         #blur)       echo "15" ;;
         #comet
@@ -2206,7 +2283,7 @@ maskarg_defaultvalue() {
         compass)    echo "" ;;
         diffstat)   echo "" ;;
         dog)        echo "0.3" ;;
-        finalblur)  echo "3" ;;
+        finalblur)  echo "1" ;;
         freichen)   echo "" ;;
         gaussian)   echo "0.3" ;;
         halo)       echo "5" ;;
@@ -2580,6 +2657,7 @@ declare_variables() {
   Outputimage=""
   Parsedoptions=""
   Preservecache=""
+  Redistshape="gaussian"
   Revertimagelist=""
   Resultimage=""
   Showimageprocessing=""
@@ -3139,6 +3217,7 @@ $Cachedir/fakehdr*.$(basename "$Image")"
   [ "$Error" ] && return 1
   
   # Generating stackshot image
+  mkimg_transparent "$Resultimage"
   focus_generate_masks                    || return 1
   [ -n "$Maskmethodlist" ] && {
     focus_merge_masks                     || return 1
