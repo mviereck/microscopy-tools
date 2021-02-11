@@ -1722,11 +1722,16 @@ $(grep "\S" <<< "$Command")"
     -delete 0"
     [ "$Softfusion" ] && {
       Command="$Command
-  mpr:partsource_blurred
-    -channel alpha
   mpr:maskmax
-    -compose Multiply -composite
-    +channel
+  mpr:cutmask
+    -compose Darken -composite
+    -write mpr:partsource_blurred_alpha
+    -delete 0
+  mpr:partsource_blurred
+  mpr:partsource_blurred_alpha
+    -alpha off
+    -compose CopyOpacity -composite
+    -write mpr:partsource_blurred
     -delete 0
       "
     }
@@ -2288,7 +2293,7 @@ maskarg_defaultvalue() {
         compass)    echo "" ;;
         diffstat)   echo "" ;;
         dog)        echo "0.3" ;;
-        finalblur)  echo "1" ;;
+        finalblur)  echo "2" ;;
         freichen)   echo "" ;;
         gaussian)   echo "0.3" ;;
         halo)       echo "5" ;;
