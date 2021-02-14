@@ -58,7 +58,6 @@ Arguments taken by all mask options:
   maskblur  Compare option --maskblur, here applied for single mask only.
   denoise   Compare option --denoise, here applied for single mask only.
   negate    Negate/invert the mask. Rarely needed.
-  t         Threshold of mask below percent. Default without value: t10
 Arguments taken by few options only:
   r         Radius. Must be an integer value.
             Increased radius mostly causes less noise, less details and
@@ -1325,22 +1324,12 @@ focus_merge_masks() {
 #    [ "$Argmaskblur" ]                                      && Skipmerge="no" 
     [ "$Argdenoise" ]                                       && Skipmerge="no" 
     [ "$Argdarkenmask" ]                                    && Skipmerge="no" 
-    [ "$Argthreshold" ]                                     && Skipmerge="no" 
     [ "$Globalclose" ]                                      && Skipmerge="no"
     [ "$Globaldenoise" ]                                    && Skipmerge="no"
       
     Mergecode="$Mergecode
   ( 
   $Methodmask"
-
-    ### FIXME might affect level
-#    [ "$Argmaskblur" ] && {
-#      Mergecode="$Mergecode
-#    -blur 0x$Argmaskblur"
-#      Argmaskblur=""
-#      maskarg_store
-#    }
-    
     
     # less
     [ "$Argdarkenmask" ] && Mergecode="$Mergecode
@@ -1349,10 +1338,6 @@ focus_merge_masks() {
     
     # denoise
     [ "$Argdenoise" ] && Mergecode="$Mergecode $(denoisecode "$Argdenoise")"
-    
-    # threshold
-    [ "$Argthreshold" ] && Mergecode="$Mergecode
-    -black-threshold $Argthreshold%"
     
     Mergecode="$Mergecode
     +level 0%,$(calc "(100 * ${Argweight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
@@ -2104,7 +2089,6 @@ maskarg_parse() {
   Argsoft=""
   Argtype=""
   Argswap=""
-  Argthreshold=""
   Argweight=""
   Argword1=""
   Argword2=""
@@ -2133,7 +2117,6 @@ maskarg_parse() {
       "less")             Argless="${Value:-$(maskarg_defaultvalue      "$Argmethod" less)}" ;;
       "blur"|"maskblur")  Argmaskblur="${Value:-$(maskarg_defaultvalue  "$Argmethod" maskblur)}" ;;
       "n"|"neg"|"negate") Argnegate="neg" ;;
-      "t"|"threshold")    Argthreshold="${Value:-$(maskarg_defaultvalue "$Argmethod" noise)}" ;;
       "c"|"close"|"cx"|"closex")
         Value="$(tr -d "close" <<< "$Line")"
         Value="${Value:-$(maskarg_defaultvalue                          "$Argmethod" close)}"
@@ -2179,7 +2162,6 @@ maskarg_store() {
   [ "$Argdiff" ]               && Newoption="$Newoption,diff"
   [ "$Argsoft" ]               && Newoption="$Newoption,soft=$Argsoft"
   [ "$Argmaskblur" ]           && Newoption="$Newoption,maskblur=$Argmaskblur"
-  [ "$Argthreshold" ]          && Newoption="$Newoption,threshold=$Argthreshold"
   [ "$Argnegate" ]             && Newoption="$Newoption,negate"
   [ "$Argswap" ]               && Newoption="$Newoption,swap"
   [ "$Argdarkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Argdarkenmask"
@@ -2659,7 +2641,6 @@ declare_variables() {
   Argsoft=""
   Argswap=""
   Argtype=""
-  Argthreshold=""
   Argweight=""
   Argword1=""
   Argword2=""
@@ -3100,7 +3081,6 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     [ "$Argdenoise" ]            && Resultimage="$Resultimage-denoise$Argdenoise"
     [ "$Argswap" ]               && Resultimage="$Resultimage-swap"
     [ "$Argnegate" ]             && Resultimage="$Resultimage-neg"
-    [ "$Argthreshold" ]          && Resultimage="$Resultimage-t$Argthreshold"
     case $Argmethod in
       image) ;;
       saturation|chroma|darkness|lightness) ;;
