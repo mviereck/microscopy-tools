@@ -10,6 +10,8 @@ Tools for microscopy and image focus stacking.
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
  - Tools considered to be ready:
    - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image (Terminal)
+   - [`imgview`](#imgview): Simple image viewer (GUI)
+
    
 `stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
 However, if you are already interested to try them out, please give me some feedback in the [issue tracker](https://github.com/mviereck/microscopy-tools/issues) and I'll help to set them up.
@@ -23,7 +25,7 @@ In active development, beta stage. (Terminal)
 Dependencies:
  - `imagemagick`
  - `enfuse` (recommended, needed for some options)
- - `geeqie` (optional image viewer)
+ - [`imgview`](#imgview) (optional image viewer)
  - `exiftool` (optional to preserve exif meta data)
 
 ## imgruler
@@ -37,6 +39,15 @@ Considered to be ready for general use.
 
 Dependencies:
  - `imagemagick`
+ 
+## imgview
+
+Simple image viewer that allows remote content refresh
+without window flickering and without blocking the terminal.
+
+Dependencies:
+ - [`kaptain`](https://github.com/mviereck/kaptain)
+ - `imagemagick` (optional to show some meta data)
 
 ## stackfuser
 
@@ -64,8 +75,8 @@ Folder structure:
 Dependencies, most essentiell:
  - `align_image_stack` (hugin tools)
  - `enfuse`
- - `geeqie`
  - `imagemagick`
+ - [`imgview`](#imgview) (optional image viewer)
  - [`imfuse`](#imfuse)
  - [`kaptain`](https://github.com/mviereck/kaptain)
  - `viewnior`
