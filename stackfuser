@@ -250,11 +250,18 @@ dirglob() {
   [ "$Filelist" ] && echo "$Filelist" || return 1
 }
 exiftransfer() {
+  # Transfer exif data from image $1 to image $2
+  # Does not transfer image size information.
+  # Sets orientation tag to horizontal / no rotation.
+  # Several warnings are supressed.
   local Sourceimage Destinationimage Exifargs
+  
   Sourceimage="${1:-}"
   Destinationimage="${2:-}"
   Exifargs="$(exiftool -a -u -g1 -args "$Sourceimage")"
-  Exifargs="$(LC_ALL=C grep -v -E -- '-ExifTool|-System:|-File:|ImageWidth|ImageHeight|ImageSize|Compression|Orientation|Resolution' <<< "$Exifargs" | sed "s/'/'\"'\"'/g ; s/=/='/ ; s/\$/'/" )"
+  Exifargs="$(LC_ALL=C grep -v -E -- \
+    '-ExifTool|-System:|-File:|ImageWidth|ImageHeight|ImageSize|Compression|Orientation|Resolution' <<< "$Exifargs" \
+    | sed "s/'/'\"'\"'/g ; s/=/='/ ; s/\$/'/" )"
   eval exiftool -ignoreMinorErrors -overwrite_original_in_place $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
 }
 fileglob() {
@@ -560,7 +567,7 @@ ${1:-}"
       failure "showimage: Not found: ${1:-}"
       Image="$(storeinfo dump notfoundimage)"
       [ -e "$Image" ] || $Magickbin -size 300x200 xc:red -fill black -pointsize 20 -gravity center -draw "text 0,0 'image not found'" "$Image"
-      geeqie -t -r File:"$Image" 1>&2
+      #geeqie -t -r File:"$Image" 1>&2
       storeinfo drop showimage
       return 1
     ;;
@@ -570,7 +577,8 @@ ${1:-}"
         gif)
           case $(identify "$Image" | grep -c GIF) in
             1) 
-              geeqie -t -r File:"$Image" 1>&2
+              #geeqie -t -r File:"$Image" 1>&2
+              imgview "$Image"
               storeinfo   "showimage=$Image"
             ;;
             *) showvideo "$Image" ;;
@@ -580,13 +588,15 @@ ${1:-}"
           showvideo "$Image" 
         ;;
         *)       
-          geeqie -t -r File:"$Image" 1>&2
+          #geeqie -t -r File:"$Image" 1>&2
+          imgview "$Image"
           storeinfo   "showimage=$Image"
         ;;
       esac
     ;;
-#    1) geeqie -t -r File:"$Imagelist" ;;
-    *) viewnior           $Imagelist 1>&2 & ;;
+    *) 
+      viewnior $Imagelist 1>&2 & 
+    ;;
   esac
   return 0
 }
@@ -700,7 +710,7 @@ batch_function() {
   storeinfo test rmcache_after && rm -R "$Cachedir"
   
   # transfer exif data
-  [ "$Return" = "0" ] && {
+  false && [ "$Return" = "0" ] && {
     note "Transferring exif meta data"
     Sourcelist="$(fileglob "$Targetstackshotdir/*")"
     Targetlist="$(fileglob "$Destinationdir/*")"
@@ -2606,10 +2616,9 @@ calc_evengeometry() {
 compose() {
   local $Batchlocal
   local $Imagelocal
-  local Minfile Maxfile Mode
+  local Minfile Maxfile Mode Composelist Compose2list
   local Destinationfilebasename
-  local Count
-  local Error
+  local Count Error
   
   parse_batchoptions "$@" || return 1
   
@@ -2623,25 +2632,58 @@ compose() {
   [ -z "$Imageformat" ] && Imageformat="$(get_extension "$Maxfile")"
   Destinationfilebasename="${Destinationfile:-composed}"
     
-  for Mode in bumpmap colorburn linearlight modulate  overlay pegtoplight; do
-    Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}1.$Imageformat"
-    multicore "$Magickbin $Maxfile $Minfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || Error=1
-    [ "$Error" ] && break
-    Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}2.$Imageformat"
-    multicore "$Magickbin $Minfile $Maxfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || Error=1
-    [ "$Error" ] && break
-  done
-  [ "$Error" ] && return 1
-  for Mode in linearburn difference multiply; do
+#  for Mode in bumpmap colorburn linearlight modulate  overlay pegtoplight; do
+Composelist="
+Blend
+Difference
+Exclusion
+HardMix
+Interpolate
+LinearBurn
+LinearDodge
+Plus
+Screen
+"
+  Compose2list="
+Bumpmap
+ColorBurn
+ColorDodge
+Colorize
+Displace
+Distort
+Freeze
+HardLight
+LinearLight
+Modulate
+Overlay
+PegtopLight
+PinLight
+Reflect
+SoftBurn
+SoftDodge
+SoftLight
+Stamp
+VividLight
+"
+  for Mode in $Composelist $Compose2list; do
+    Mode="${Mode,,}"
     Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}.$Imageformat"
-    multicore "$Magickbin $Maxfile $Minfile -compose $Mode -composite $Destinationfile" "$Destinationfile" || Error=1
+    multicore "$Magickbin $Maxfile $Minfile           -compose $Mode -composite $Destinationfile" "$Destinationfile" || Error=1
+    [ "$Error" ] && break
+  done  
+  [ "$Error" ] && return 1
+  multicore_wait || return 1
+  for Mode in $Compose2list; do
+    Mode="${Mode,,}"
+    Destinationfile="$Destinationdir/$Destinationfilebasename.${Mode}2.$Imageformat"
+    multicore "$Magickbin $Maxfile $Minfile -swap 0,1 -compose $Mode -composite $Destinationfile" "$Destinationfile" || Error=1
     [ "$Error" ] && break
   done
-  multicore_wait || return 1
   [ "$Error" ] && return 1
-  Destinationfile="$Destinationdir/$Destinationfilebasename.composedmean.${Imageformat}"
-  $Magickbin  $Destinationdir/$Destinationfilebasename.{*modulate*,*bumpmap*,*pegtoplight*,*overlay*,*difference*} -evaluate-sequence mean $Destinationfile || return 1
-  showimage $Destinationfile
+  multicore_wait || return 1
+  #Destinationfile="$Destinationdir/$Destinationfilebasename.composedmean.${Imageformat}"
+  #$Magickbin  $Destinationdir/$Destinationfilebasename.{*modulate*,*bumpmap*,*pegtoplight*,*overlay*,*difference*} -evaluate-sequence mean $Destinationfile || return 1
+  #showimage $Destinationfile
   return 0
 }
 trim_hard() {
@@ -3319,7 +3361,7 @@ The directory structure is:\n\
         allownonconformant:beside     "Allow stackshots outside of Storage base dir and without directory \"stackshot\"."       -> "yes" | '$( [ "$(storeinfo dump allow_dir_invalid)" = "no" ] && echo "!")' "no" ;
         gallerydir:beside             "Gallery directory where one result of each stackshot in the storage base dir is shown:"  -> @directory="'$(storeinfo dump gallerydir)'";
 
-    showresulttab:framed              "Show results"     -> showevaluatedframe showsetframe showcomposedframe showdirframe showvideoframe;
+    showresulttab:framed              "Show results"     -> showevaluatedframe showsetframe showdirframe showvideoframe;
       
       showevaluatedframe               "Evaluate results"         ->  showevaluatedfusedline showevaluatedpreparedline;
         showevaluatedfusedline:beside                                -> showevaluatedfusedmax showevaluatedfusedmin showevaluatedfusedmean showevaluatedfusedmedian ;
@@ -3738,7 +3780,7 @@ $Entrylist
     close       -> @button='Close' ;
 
 " > $Kaptaingrammarfile
-
+cat $Kaptaingrammarfile
   pipekaptain
   :>     "$Kaptainstdinfile"
   :>     "$Kaptainstdoutfile"
