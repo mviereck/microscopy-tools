@@ -1,10 +1,9 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.6.2-beta"
+Version="0.6.6.3-beta"
 
 # ToDo:
-# showimage(): alternative to geeqie, maybe imview
 # --blur altogether?
 # --threshold
 # fix arg threshold
@@ -282,6 +281,7 @@ Mask generation and fusion adjustments:
                       Range for % from 0 (opaque) to above 100. Default: 100
                       A semitransparent result is composed over the background.
                       Default background is 'enfuse'. Others are worth a test.
+ --threshold [=%]     Make lower contrast area transparent. Default %: 50
                            
 Basics:                   
 Fusing a focus stack aims to generate an overall sharp image of several single
@@ -345,8 +345,8 @@ verbose() {
   return 0
 }
 showimage() {
-  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"${1:-}"
-  #[ "$Showimageprocessing" = "yes" ] && display -remote "${1:-}" &
+  #[ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"${1:-}"
+  [ "$Showimageprocessing" ] && bash imgview "${1:-}"
   return 0
 }
 
@@ -1461,7 +1461,7 @@ focus_montage() {
   [ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
   [ "$Cutblur" ]        && Resultimage="$Resultimage-cutblur${Cutblur:-0}"
   Resultimage="$Cachedir/montage-$Resultimage.$Resultmd5.tif"
-  Resultimageready="$Cachedir/montage-$Resultimage.$Resultmd5.ready"
+  Resultimageready="$Resultimage-.ready"
   
   Maskmax="${Maskmax:-$Cachedir/montage.max.$Resultmd5.tif}"  
   
@@ -1784,8 +1784,19 @@ $Command"
     $Command || error "Error with --finalblur"
   }
   
+  Resultthreshold="$Resultfinalblur"
+  [ "$Globalthreshold" ] && {
+    Command="$Magickbin
+  $Resultthreshold
+  ( $Maskmax -threshold ${Globalthreshold:-}% )
+    -alpha off
+    -compose CopyOpacity -composite
+  $Resultthreshold"
+    $Command || error "focus_montage: Error in final --threshold"
+  }
+  
   [ "$Maskmaxcopy" ] && cp "$Maskmax" "$Maskmaxcopy"
-  $Magickbin "$Resultfinalblur" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
+  $Magickbin "$Resultthreshold" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
   
   return "${Error:-0}"
 }
@@ -2685,6 +2696,7 @@ declare_variables() {
   Globalmaskblur=""
   Globalless=""
   Globalsoft=""
+  Globalthreshold=""
   Grayscale=""
   Grayscaleconverter=""
   Grayscalenumber=""
@@ -2733,7 +2745,7 @@ parse_options() {
   
   Shortoptions="ho:vV"
   Longoptions="basename:,cache::,exif::,force,help,output:,showimage,showname,test::,threads:,verbose,version"
-  Longoptions="$Longoptions,bg:,background:,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,redist::,revert,soft::"
+  Longoptions="$Longoptions,bg:,background:,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,redist::,revert,soft::,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -2770,6 +2782,7 @@ parse_options() {
          --soft)              Globalsoft="${2:-auto}"     ; shift ;;
          --test)              Testsetup="test" Testarg="${2:-}"    ; shift ;;
          --threads)           Multicore_maxprocesses="${2:-}" ; shift ;;
+         --threshold)         Globalthreshold="${2:-auto}" ; shift ;;
       -v|--verbose)           Verbose="yes"               ;;
          --version)           echo "imfuse v$Version"     ; exit 0 ;;
       
@@ -2966,6 +2979,15 @@ check_options() {
     auto) Globaldenoise="10" ;;
   esac
   
+  # --showimage
+  [ "$Showimageprocessing" ] && {
+    command -v imgview >/dev/null || {
+      note "-V, --showimage: imgview not found.
+  Please install imgview."
+      Showimageprocessing=""
+    }
+  }
+  
   # --softmode
   case $Globalsoft in
     "") ;;
@@ -2973,6 +2995,12 @@ check_options() {
       [ "$Globalsoft" = "auto" ] && Globalsoft="$(maskarg_defaultvalue "$Firstmaskmethod" soft )"
       Background="${Background:-enfuse}"
     ;;
+  esac
+  
+  # --threshold
+  case $Globalthreshold in
+    "") ;;
+    auto) Globalthreshold="50" ;;
   esac
   
   # --layers
@@ -3105,6 +3133,9 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   [ "$Finalblur" ] && {
     Resultimage="${Resultimage}_finalblur=w${Finalblurpercent}-s${Finalblursigma}"
   }
+  [ "$Globalthreshold" ] && {
+    Resultimage="${Resultimage}_threshold$Globalthreshold"
+  }
   case $Globaldenoise in
     "") ;;
     *) Resultimage="${Resultimage}_denoise$Globaldenoise" ;;
@@ -3148,10 +3179,9 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
 main() {
   trap trap_sigint SIGINT
   set -u
-  
   declare_variables
   multicore_init
-  
+
   command -v convert >/dev/null && Magickbin="convert"
   command -v magick  >/dev/null && Magickbin="magick"
   [ -z "$Magickbin" ] && error "Neither command convert nor magick found. Please install ImageMagick."
@@ -3211,7 +3241,7 @@ $Maskmethodlist
   Image memory size:      $Imagememsize kb
   Image list memory size: $Imagelistmemsize kb
   Free Memory:            $Freemem kb"
-   
+
   mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
   [ "$Preservecache" ] || rm -f $Cachedir/*
   
@@ -3264,7 +3294,7 @@ $Cachedir/fakehdr*.$(basename "$Image")"
       Backgroundimage="$(imfuse --cache="$Cachedir" --basename="$Cachedir/" --saturation --showname $Sourceimagelist)"
       [ -e "$Backgroundimage" ] || {
         note "Generating saturation background image"
-        imfuse --cache=$Cachedir --output="$Backgroundimage" --saturation $([ "$Showimageprocessing" = "yes" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation background"
+        imfuse --cache=$Cachedir --output="$Backgroundimage" --saturation $([ "$Showimageprocessing" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation background"
       }
     ;;
     enfuse)
