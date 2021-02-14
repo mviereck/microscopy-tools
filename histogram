@@ -1,0 +1,20 @@
+#! /bin/bash
+# show a histogram of image $1
+# optionally store in $2
+
+Input="${1:-}"
+Output="${2:-"x:"}"
+
+case $Input in
+  ""|-h|--help)
+    echo 'histogram
+Show histogram of image $1 or store it in $2
+Usage:
+  histogram INPUTIMAGE
+or
+  histogram INPUTIMAGE OUTPUTIMAGE' >&2
+    exit 1
+  ;;
+esac
+
+magick $Input -define histogram:unique-colors=false histogram:- | magick - -filter point -resize 256x200! $Output
