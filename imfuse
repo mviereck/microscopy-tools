@@ -7,7 +7,6 @@ Version="0.6.6.3-beta"
 # stackfuser: fakehdr is missing
 # --blur altogether?
 # check --layered
-# check --threshold with/without --soft
 
 usage() {
   echo "imfuse v$Version
@@ -275,18 +274,19 @@ Mask generation and fusion adjustments:
                       difference. Default value: 60
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
- --soft [=A%xB%]      Enable soft fuse mode. 
+ --soft [=LEVEL]      Enable soft fuse mode. 
                       Best method to reduce noise in low contrast areas.
                       A semitransparent result is composed over the background.
                       Default background is 'enfuse'. Others are worth a test.
-                      Can take an argument of two percent values A%xB%.
-                      It is applied as '+level A%xB%' on the transparency
-                      alpha channel. This allows to adjust transparency
-                      of low contrast areas with A% and high contrast areas
-                      with B%. Negative values and higher than 100% possible.
+                      Can take an argument as one or two percent values.
+                      Simplified: If only one value is given, positive values 
+                      make the image softer and negative values make it harder.
+                      Advanced usage: Two percent values A%xB% are applied
+                      as '+level A%xB%' on the transparency alpha channel.
+                      This allows to adjust transparency of low contrast areas 
+                      with A% and high contrast areas with B%. 
+                      Negative values and higher than 100% are possible.
                       Try script 'demo-softlevel' to understand the effects.
-                      If only one value is given, positive values will make
-                      the image softer and negative values harder.
  --threshold [=%]     Make lower contrast area transparent. Default %: 50
                            
 Basics:                   
@@ -751,6 +751,8 @@ finalblur() {
   Percent="${3:-}"
   Sigma="${4:-}"
   
+  verbose "Applying --finalblur=w${Percent}s${Sigma}"
+  
   Command="$Magickbin
   $Image
     -write mpr:resultimage
@@ -842,89 +844,62 @@ generate_composite() {
     }
   done
 }
-layered_sharpness() {
-  # --layers: Layered TIF with sharpness layers
-  local Graylevel Graylevel1 Graylevel2 Pixelnumber Pixelcount Image Layerimage Layerimagelist Layerminpixel Graylevels Histogramm
-  local Layercount Count
-  local Startzeit Dauer Restzeit
-  local Maskmax
+layered_tif() {
+  local Image Mask Layers Background 
+  local Layer Layerlist= Factor Command
+  Image="${1:-}"
+  Mask="${2:-}"
+  Layers="${3:-}"
+  Background="${4:-}"
+  Factor="$(calc "255 / $Layers")"
   
-  Maskmax="$Cachedir/mask.max.tif"
-  evaluate max $Maskmax $Cachedir/sourcemask*
-  Histogramm="$($Magickbin $Maskmax -depth 16 -define histogram:unique-colors=true -format %c histogram:info:-)"
-  Graylevels="$(awk '{print $3}' <<< "$Histogramm" | wc -l)"
-  Layerminpixel="$(( Imagewidth*Imageheight/(Layers-1) ))"
+  note "Generating $Layers layers"
   
-  verbose "Creating $Layers layers of sharpness areas"
-  
-  Count=0
-  Layercount=0
-  Startzeit="$(date +%s)"
-  Pixelcount=0
-  Pixelnumber=0
-  while read Line; do
-    [ "$Error" ] && break
-    Count=$((Count+1))
-    
-    Graylevel="$(awk '{print $3}' <<< "$Line")"
-    Pixelnumber="$(awk '{print $1}' <<< "$Line")"
-    Pixelnumber="${Pixelnumber%:}"
-    Pixelcount="$((Pixelcount+Pixelnumber))"
-    
-    [ "$Pixelcount" -lt "$Layerminpixel" ] && {
-      Graylevel1="${Graylevel1:-$Graylevel}"
-    }
-    
-    { [ "$Pixelcount" -gt "$Layerminpixel" ] || [ "$Count" = "$Graylevels" ] ; } && {
-      Layercount="$((Layercount+1))"
-      Layerimage="$Cachedir/layer_sharpness.$(printnum $Layercount).tif"
-      Graylevel2="${Graylevel2:-$Graylevel}"
-      Command="
-$Magickbin
-  $Maskmax
-    -depth 16
-    -color-threshold ${Graylevel1:-$Graylevel2}-$Graylevel
+  Command="$Magickbin
+  $Image
+    -write mpr:image
+    -delete 0
+  $Mask
+    -write mpr:mask
+    -delete 0"
+  for Layer in $(seq $Layers); do
+    Command="$Command
+  mpr:mask
+    -color-threshold gray($(calc "($Layer-1)*$Factor"))-gray($(calc "$Layer*$Factor"))
+    -write mpr:cutmask
+    -delete 0
+  mpr:image
+  mpr:cutmask
+    -alpha off
+    -compose CopyOpacity -composite
+    -background white
+    -alpha Background
+    -write mpr:layer$Layer
+    -delete 0"
+    [ "$Globalsoft" ] && {
+      Command="$Command
+  mpr:mask
+  mpr:cutmask
+    -compose Darken -composite
     -write mpr:layermask
     -delete 0
-  $Resultimage
+  mpr:layer$Layer
   mpr:layermask
-    -colorspace sRGB
-    -alpha Off -compose CopyOpacity -composite
-    -background blue -alpha background
-    $Tifstore
-  $Layerimage"
-  
-      $Command || {
-        note "Error in generating sharpness layers"
-        break
-      }
-      
-      Layerimagelist="$Layerimagelist $Layerimage"
-      
-      [ "$Graylevel2" = "$Graylevel" ] && {
-        Graylevel1=""
-        Pixelcount="0"
-      } || {
-        Graylevel1="$Graylevel"
-        Pixelcount="$Pixelnumber"
-      }
-      
-      showimage $Layerimage
-      Dauer="$(( $(date +%s)-Startzeit))"
-      Restzeit="$(( Dauer*(Graylevels-Count) / Count ))"
-      verbose "Layer $Layercount/$Layers. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
+    -alpha off
+    -compose CopyOpacity -composite
+    -write mpr:layer$Layer
+    -delete 0"
     }
-    Graylevel2="$Graylevel"
-  done <<< "$Histogramm"
-    
-  [ "$Error" ] && return $Error
+    Layerlist="$Layerlist mpr:layer$Layer"
+  done
   
-  verbose "Creating layered result of sharpness areas"
-  Image="$(rev <<< "$Outputimage" | cut -d. -f2- | rev).layered_sharpness.tif"
-  #$Magickbin -type TrueColorAlpha $Maskmax $Layerimagelist $Tifstore "$Image" || note "Failed to create layered sharpness result image."
-  $Magickbin $Maskmax $Layerimagelist $Tifstorealpha "$Image" || note "Failed to create layered sharpness result image."
-  
-  return "${Error:-0}"
+  Command="$Command
+  $Background
+  $Layerlist
+    $Tifstorealpha
+  $Image"
+
+  $Command
 }
 level_masks() {
   local Maskbasename Maskmax Maskmin Maskmd5 Clutimage Resultmask
@@ -1198,6 +1173,8 @@ threshold() {
   Mask="${2:-}"
   Threshold="${3:-}"
   
+  verbose "Applying --threshold=$Threshold"
+  
   Command="$Magickbin
   $Image
     -write mpr:image
@@ -1209,7 +1186,7 @@ threshold() {
     "")
       Command="$Command
   mpr:image
-  ( mpr:mask -threshold ${Threshold}% -write testmask.tif )
+  ( mpr:mask -threshold ${Threshold}% )
     -alpha off
     -compose CopyOpacity -composite
   $Image"
@@ -1226,7 +1203,6 @@ threshold() {
   
   $Command || error "Error in --threshold"
   showimage "$Image"
-  viewnior testmask.tif
 }
     
 # core focus stack routines
@@ -3041,7 +3017,7 @@ check_options() {
   
   # --layers
   case $Layers in
-    auto) Layers="24" ;;
+    auto) Layers="5" ;;
   esac
   
   # --less
@@ -3077,6 +3053,7 @@ check_options() {
     [ -f "$Background" ]                   && Backgroundtype="image"
     case $Background in
       enfuse|saturation)                      Backgroundtype="$Background" ;;
+      none)                   Background="" ; Backgroundtype="none" ;;
     esac
     note "$Backgroundtype $Background"
     [ "$Backgroundtype" ] || error "--background: Unknown background: '$Background'"
@@ -3191,6 +3168,9 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     image) Resultimage="${Resultimage}_bg=image" ;;
     *)     Resultimage="${Resultimage}_bg=$Background" ;;
   esac
+  [ "$Layers" ] && {
+    Resultimage="${Resultimage}_layers$Layers"
+  }
   case $Testsetup in
     "") ;;
     *) Resultimage="${Resultimage}_test$Testarg" ;;
@@ -3302,8 +3282,11 @@ $Cachedir/fakehdr*.$(basename "$Image")"
   }
   
   # --background
-  Backgroundimage="$Cachedir/background.tif"
+  [ "$Background" ] && Backgroundimage="$Cachedir/background.tif"
   case $Backgroundtype in
+    none)
+      Backgroundimage=""
+    ;;
     compose)
       Background="$(lowercase $Background)"
       Evaluate_needlist="$Evaluate_needlist min max"
@@ -3346,7 +3329,9 @@ $Cachedir/fakehdr*.$(basename "$Image")"
   [ -n "$Maskmethodlist" ] && {
     focus_merge_masks                     || return 1
     focus_montage --soft "$Globalsoft" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || return 1
+    # --soft=ARG
     [ "$Globalsoft" ] && {
+      verbose "Applying --soft=$Globalsoft"
       Command="$Magickbin
   $Resultimage
     -channel alpha
@@ -3354,22 +3339,25 @@ $Cachedir/fakehdr*.$(basename "$Image")"
     +channel
   $Resultimage"
       $Command || error "Error applying --soft=$Softfusion"
-      showimage "$Resultsoft"
+      showimage "$Resultimage"
     }
+    # --finalblur
     [ "$Finalblur" ] && {
-      finalblur "$Resultimage" "$Resultmask" "$Finalblurpercent" "$Finalblursigma" || return 1
+      finalblur "$Resultimage" "$Resultmask" "$Finalblurpercent" "$Finalblursigma" || error "Error in --finalblur"
     }
+    # --threshold
     [ "$Globalthreshold" ] && {
-      threshold "$Resultimage" "$Resultmask" "$Globalthreshold" || return 1
+      threshold "$Resultimage" "$Resultmask" "$Globalthreshold" || error "Error -in --threshold"
     }
   }
-  
-  
-
-  [ "$Background" ] && {
+  # --background
+  [ "$Background" ] && [ -z "$Layers" ] && {
     $Magickbin "$Backgroundimage" "$Resultimage" -compose Over -composite "$Resultimage" || note "Failed to compose result over background"
   }
-  [ "$Layers" ] && layered_sharpness
+  # --layered
+  [ "$Layers" ] && {
+    layered_tif "$Resultimage" "$Resultmask" "$Layers" "$Backgroundimage" || error "Error in --layers"
+  }
       
   [ "$Error" ] && return 1
 
