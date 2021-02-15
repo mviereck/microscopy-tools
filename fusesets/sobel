@@ -5,6 +5,6 @@ imfuse --sobel --cutblur=2
 imfuse --sobel --cutblur=1 --finalblur=w75
 imfuse --sobel --cutblur=1 --finalblur=w75 --less
 imfuse --sobel --cutblur=2 --finalblur=w75 --less
-imfuse --sobel --soft=75
-imfuse --sobel --soft=75 --cutblur=1 --less
-imfuse --sobel --soft=75 --cutblur=2 --less
+imfuse --sobel --soft=0x150
+imfuse --sobel --soft=0x150 --cutblur=1 --less
+imfuse --sobel --soft=0x150 --cutblur=2 --less
