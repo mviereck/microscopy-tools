@@ -285,7 +285,7 @@ Mask generation and fusion adjustments:
                       with B%. Negative values and higher than 100% possible.
                       Try script 'demo-softlevel' to understand the effects.
                       If only one value is given, positive values will make
-                      the image less soft and negative values more soft.
+                      the image softer and negative values harder.
  --threshold [=%]     Make lower contrast area transparent. Default %: 50
                            
 Basics:                   
@@ -392,8 +392,8 @@ levelparse() {
     Part2="$(cut -dx -s -f2 <<< "$String")"
     :
   } || {
-    Part1="$String"
-    Part2="$((100+String))"
+    Part1="$((0-String))"
+    Part2="$((100-String))"
   }
   echo "${Part1}x${Part2}"
 }
