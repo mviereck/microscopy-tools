@@ -35,11 +35,12 @@ runkaptain() {
   echo "$Kaptainpid" > "$Kaptainpidfile"
 }
 main() {
-  local Showimage Cachedir
+  local Inputimage Showimage Cachedir
   local Kaptaingrammarfile Kaptainstdinfile Kaptainstdoutfile Kaptainanswerfile Kaptainpipefile 
   local Kaptainpidfile Kaptainpid
+  local Imagewidth Imageheight Percent
   
-  Showimage="${1:-}"
+  Inputimage="${1:-}"
   Cachedir="/tmp/imgview"
   
   Kaptaingrammarfile="$Cachedir/gui_main.kaptain.grammar"
@@ -54,8 +55,18 @@ main() {
 
   ps -p "$Kaptainpid" >/dev/null || runkaptain
   
-  sendkaptain "imgname='$(basename "$Showimage")'"
-  sendkaptain "identify='$(identify -format '%m %wx%h %qbit %r %b' "$Showimage")'"
+  Imagewidth="$(identify  -format '%w' "$Inputimage")"
+  Imageheight="$(identify -format '%h' "$Inputimage")"
+  
+  Showimage="$Inputimage"
+  [ "$Imageheight" -gt 1000 ] && {
+    Showimage="$Cachedir/showimage.jpg"
+    Percent="$((100*800/Imageheight))"
+    magick "$Inputimage" -scale $Percent%,$Percent% "$Showimage"
+  }
+  
+  sendkaptain "imgname='$(basename "$Inputimage")'"
+  sendkaptain "identify='$(identify -format '%m %wx%h %qbit %r %b' "$Inputimage")'"
   sendkaptain "imgview('$Showimage')=''"
 }
 
