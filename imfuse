@@ -744,6 +744,56 @@ fakehdr() {
   multicore_wait || return 1
   return ${Error:-0}
 }
+finalblur() {
+  local Image Mask Percent Sigma Command
+  Image="${1:-}"
+  Mask="${2:-}"
+  Percent="${3:-}"
+  Sigma="${4:-}"
+  
+  Command="$Magickbin
+  $Image
+    -write mpr:resultimage
+    -delete 0
+  $Mask
+    -write mpr:maskmax
+    -delete 0
+  mpr:maskmax
+    -threshold ${Percent:-10}%
+    -negate
+    -write mpr:cutmask
+    -delete 0
+  mpr:resultimage
+    -blur 0x${Sigma:-1}
+  mpr:cutmask
+    -alpha off
+    -compose CopyOpacity -composite
+    -write mpr:partsource_blurred
+    -delete 0"
+  [ "$Globalsoft" ] && {
+    Command="$Command
+  mpr:maskmax
+  mpr:cutmask
+    -compose Darken -composite
+    -write mpr:partsource_blurred_alpha
+    -delete 0
+  mpr:partsource_blurred
+  mpr:partsource_blurred_alpha
+    -alpha off
+    -compose CopyOpacity -composite
+    -write mpr:partsource_blurred
+    -delete 0
+      "
+  }
+  Command="$Command
+  mpr:partsource_blurred
+  mpr:resultimage
+    -compose DstOver -composite
+  $Image"
+  
+  $Command || error "Error with --finalblur"
+  showimage "$Image"
+}
 flatten() {
   local Resultimage Image Command
   
@@ -1143,7 +1193,7 @@ $Histogram"
   showimage $Histogram
 }
 threshold() {
-  local Image Mask Threshold
+  local Image Mask Threshold Command
   Image="${1:-}"
   Mask="${2:-}"
   Threshold="${3:-}"
@@ -1711,12 +1761,7 @@ $Magickbin
         Command="$Command
   mpr:sourceimage 
   mpr:sourcemask_part
-    -alpha off -compose CopyOpacity -composite"
-    #    [ "$Softfusion" -ge 0 ] && Command="$Command
-    #-channel alpha -level 0%,${Softfusion}% +channel"
-    #    [ "$Softfusion" -lt 100 ] && Command="$Command
-    #-channel alpha +level $((-Softfusion))%,100% +channel"
-        Command="$Command
+    -alpha off -compose CopyOpacity -composite
     -write mpr:sourcepart
     -delete 0"
       ;;
@@ -1784,77 +1829,8 @@ $(grep "\S" <<< "$Command")"
   
   :> "$Resultimageready"
   
-  # --soft
-  Resultsoft="$Resultimage"
-  [ "$Softfusion" ] && {
-    verbose "--soft=$Softfusion"
-    Resultsoft="$Resultimage.soft$Softfusion.tif"
-    
-    Command="$Magickbin
-  $Resultimage
-    -channel alpha
-    +level $(levelpercent "$Softfusion")
-    +channel
-  $Resultsoft"
-  
-    $Command || error "focus_montage: Error applying --soft=$Softfusion"
-    showimage "$Resultsoft"
-  }
-  [ "$Error" ] && return 1
-
-  # --finalblur
-  Resultfinalblur="$Resultsoft"
-  [ "$Finalblur" ] && {
-    verbose "--finalblur=$Finalblur"
-    Resultfinalblur="$Resultimage.finalblur$Finalblur.tif"
-    
-    Command="$Magickbin
-  $Resultimage
-    -write mpr:resultimage
-    -delete 0
-  $Maskmax
-    -write mpr:maskmax
-    -delete 0
-  mpr:maskmax
-    -threshold ${Finalblurpercent:-10}%
-    -negate
-    -write mpr:cutmask
-    -delete 0
-  mpr:resultimage
-    -blur 0x${Finalblursigma:-1}
-  mpr:cutmask
-    -alpha off
-    -compose CopyOpacity -composite
-    -write mpr:partsource_blurred
-    -delete 0"
-    [ "$Softfusion" ] && {
-      Command="$Command
-  mpr:maskmax
-  mpr:cutmask
-    -compose Darken -composite
-    -write mpr:partsource_blurred_alpha
-    -delete 0
-  mpr:partsource_blurred
-  mpr:partsource_blurred_alpha
-    -alpha off
-    -compose CopyOpacity -composite
-    -write mpr:partsource_blurred
-    -delete 0
-      "
-    }
-    Command="$Command
-  mpr:partsource_blurred
-  mpr:resultimage
-    -compose DstOver -composite
-  $Resultfinalblur"
-
-    $Command || error "Error with --finalblur"
-    showimage "$Resultfinalblur"
-  }
-  
-  
   [ "$Maskmaxcopy" ] && cp "$Maskmax" "$Maskmaxcopy"
-  $Magickbin "$Resultfinalblur" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
+  $Magickbin "$Resultimage" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
   
   return "${Error:-0}"
 }
@@ -3370,9 +3346,20 @@ $Cachedir/fakehdr*.$(basename "$Image")"
   [ -n "$Maskmethodlist" ] && {
     focus_merge_masks                     || return 1
     focus_montage --soft "$Globalsoft" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || return 1
-    
+    [ "$Globalsoft" ] && {
+      Command="$Magickbin
+  $Resultimage
+    -channel alpha
+    +level $(levelpercent "$Globalsoft")
+    +channel
+  $Resultimage"
+      $Command || error "Error applying --soft=$Softfusion"
+      showimage "$Resultsoft"
+    }
+    [ "$Finalblur" ] && {
+      finalblur "$Resultimage" "$Resultmask" "$Finalblurpercent" "$Finalblursigma" || return 1
+    }
     [ "$Globalthreshold" ] && {
-      verbose "--threshold=$Globalthreshold"
       threshold "$Resultimage" "$Resultmask" "$Globalthreshold" || return 1
     }
   }
