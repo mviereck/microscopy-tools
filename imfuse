@@ -7,6 +7,7 @@ Version="0.6.6.3-beta"
 # stackfuser: fakehdr is missing
 # --blur altogether?
 # check --layered
+# check --threshold with/without --soft
 
 usage() {
   echo "imfuse v$Version
@@ -1141,7 +1142,43 @@ redist() {
 $Histogram"
   showimage $Histogram
 }
-
+threshold() {
+  local Image Mask Threshold
+  Image="${1:-}"
+  Mask="${2:-}"
+  Threshold="${3:-}"
+  
+  Command="$Magickbin
+  $Image
+    -write mpr:image
+    -delete 0
+  $Mask
+    -write mpr:mask
+    -delete 0"
+  case $Globalsoft in
+    "")
+      Command="$Command
+  mpr:image
+  ( mpr:mask -threshold ${Threshold}% -write testmask.tif )
+    -alpha off
+    -compose CopyOpacity -composite
+  $Image"
+    ;;
+    *)
+      Command="$Command
+  mpr:image
+  ( mpr:mask -black-threshold ${Threshold}% )
+    -alpha off
+    -compose CopyOpacity -composite
+  $Image"
+    ;;
+  esac
+  
+  $Command || error "Error in --threshold"
+  showimage "$Image"
+  viewnior testmask.tif
+}
+    
 # core focus stack routines
 
 focus_generate_masks() {
@@ -1815,24 +1852,9 @@ $(grep "\S" <<< "$Command")"
     showimage "$Resultfinalblur"
   }
   
-  Resultthreshold="$Resultfinalblur"
-  [ "$Globalthreshold" ] && {
-    Resultthreshold="$Resultfinalblur.threshold$Globalthreshold.tif"
-    verbose "--threshold=$Globalthreshold"
-    
-    Command="$Magickbin
-  $Resultthreshold
-  ( $Maskmax -threshold ${Globalthreshold:-}% )
-    -alpha off
-    -compose CopyOpacity -composite
-  $Resultthreshold"
-  
-    $Command || error "focus_montage: Error in final --threshold"
-    showimage "$Resultthreshold"
-  }
   
   [ "$Maskmaxcopy" ] && cp "$Maskmax" "$Maskmaxcopy"
-  $Magickbin "$Resultthreshold" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
+  $Magickbin "$Resultfinalblur" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
   
   return "${Error:-0}"
 }
@@ -3289,6 +3311,7 @@ $Maskmethodlist
   
   Enfusebaseimage="$Cachedir/enfuse.$Sourcemd5.tif"
   Testimage="$Cachedir/test.png"
+  Resultmask="$Cachedir/result.max.tif"
 
   # --fakehdr
   [ "$Fakehdr" ] && {
@@ -3346,8 +3369,15 @@ $Cachedir/fakehdr*.$(basename "$Image")"
   focus_generate_masks                    || return 1
   [ -n "$Maskmethodlist" ] && {
     focus_merge_masks                     || return 1
-    focus_montage --soft "$Globalsoft" --lessthanmax "$Globalless" --output "$Resultimage"  || return 1
+    focus_montage --soft "$Globalsoft" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || return 1
+    
+    [ "$Globalthreshold" ] && {
+      verbose "--threshold=$Globalthreshold"
+      threshold "$Resultimage" "$Resultmask" "$Globalthreshold" || return 1
+    }
   }
+  
+  
 
   [ "$Background" ] && {
     $Magickbin "$Backgroundimage" "$Resultimage" -compose Over -composite "$Resultimage" || note "Failed to compose result over background"
@@ -3371,6 +3401,6 @@ $Cachedir/fakehdr*.$(basename "$Image")"
     
   return "${Error:-0}"
 }
-main "$@"
+main "$@" || Error=1
 [ -z "$Preservecache" ] && [ -d "$Cachedir" ] && rm -R "$Cachedir"
 exit "${Error:-0}"
