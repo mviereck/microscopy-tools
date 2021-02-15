@@ -4,9 +4,8 @@
 Version="0.6.6.3-beta"
 
 # ToDo:
+# stackfuser: fakehdr is missing
 # --blur altogether?
-# --threshold
-# fix arg threshold
 # check --layered
 
 usage() {
@@ -275,11 +274,18 @@ Mask generation and fusion adjustments:
                       difference. Default value: 60
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
- --soft [=%]          Enable soft fuse mode. Takes a percent argument.
+ --soft [=A%xB%]      Enable soft fuse mode. 
                       Best method to reduce noise in low contrast areas.
-                      Range for % from 0 (opaque) to above 100. Default: 100
                       A semitransparent result is composed over the background.
                       Default background is 'enfuse'. Others are worth a test.
+                      Can take an argument of two percent values A%xB%.
+                      It is applied as '+level A%xB%' on the transparency
+                      alpha channel. This allows to adjust transparency
+                      of low contrast areas with A% and high contrast areas
+                      with B%. Negative values and higher than 100% possible.
+                      Try script 'demo-softlevel' to understand the effects.
+                      If only one value is given, positive values will make
+                      the image less soft and negative values more soft.
  --threshold [=%]     Make lower contrast area transparent. Default %: 50
                            
 Basics:                   
@@ -319,7 +325,7 @@ Go to the folder above 'stackshot'.
   Run imfuse with:
     imfuse -V --cache --diffstat stackshot/*
   You might be unsatisfied with low contrast areas. Try:
-    imfuse -V --cache --diffstat --saturation=w25      stackshot/*
+    imfuse -V --cache --diffstat --saturation=w50      stackshot/*
     imfuse -V --cache --diffstat --soft                stackshot/*
   You might have incomplete foreground objects. Try:
     imfuse -V --cache --diffstat --soft --less --close stackshot/*
@@ -376,6 +382,28 @@ freememory() {
   done < <(/sbin/swapon --bytes | grep zram)
   Freemem="$((Freemem*100/80))"
   echo $Freemem
+}
+levelparse() {
+  local String Part1 Part2
+  String="${1:-}"
+  String="$(tr -d '%' <<< "$String")"
+  grep -q "x" <<< "$String" && {
+    Part1="$(cut -dx    -f1 <<< "$String")"
+    Part2="$(cut -dx -s -f2 <<< "$String")"
+    :
+  } || {
+    Part1="$String"
+    Part2="$((100+String))"
+  }
+  echo "${Part1}x${Part2}"
+}
+levelpercent() {
+  local String Part1 Part2
+  String="${1:-}"
+  String="$(tr -d '%' <<< "$String")"
+  Part1="$(cut -dx    -f1 <<< "$String")"
+  Part2="$(cut -dx -s -f2 <<< "$String")"
+  echo "${Part1}%x${Part2}%"
 }
 lowercase() {
     # Usage: lowercase "string"
@@ -1438,17 +1466,17 @@ focus_montage() {
   done
   [ -z "$Maskimagelist" ] && Maskimagelist="$(masklist $Mergemaskbasename | tr '\n' ' ')"
   
-  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Softfusion $Lessthanmax $Cutblur")"
+  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $( [ "$Softfusion" ] && echo soft) $Lessthanmax $Cutblur")"
 #  Resultimage="$Cachedir/montage-$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)-soft${Softfusion:-0}-less${Lessthanmax:-0}.$Resultmd5.tif"
   Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
   [ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
-  [ "$Softfusion" ]     && Resultimage="$Resultimage-soft${Softfusion:-0}"
+  [ "$Softfusion" ]     && Resultimage="$Resultimage-soft"
   [ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
   [ "$Cutblur" ]        && Resultimage="$Resultimage-cutblur${Cutblur:-0}"
   Resultimage="$Cachedir/montage-$Resultimage.$Resultmd5.tif"
-  Resultimageready="$Resultimage-.ready"
+  Resultimageready="$Resultimage.ready"
   
-  Maskmax="${Maskmax:-$Cachedir/montage.max.$Resultmd5.tif}"  
+  Maskmax="${Maskmax:-$Cachedir/montage.max.$Resultmd5.tif}" 
   
   [ -e "$Resultimageready" ] && {
     verbose "Skipping montage, already exists: $(basename $Resultimage)"
@@ -1647,10 +1675,10 @@ $Magickbin
   mpr:sourceimage 
   mpr:sourcemask_part
     -alpha off -compose CopyOpacity -composite"
-        [ "$Softfusion" -ge 0 ] && Command="$Command
-    -channel alpha -level 0%,${Softfusion}% +channel"
-        [ "$Softfusion" -lt 100 ] && Command="$Command
-    -channel alpha +level $((-Softfusion))%,100% +channel"
+    #    [ "$Softfusion" -ge 0 ] && Command="$Command
+    #-channel alpha -level 0%,${Softfusion}% +channel"
+    #    [ "$Softfusion" -lt 100 ] && Command="$Command
+    #-channel alpha +level $((-Softfusion))%,100% +channel"
         Command="$Command
     -write mpr:sourcepart
     -delete 0"
@@ -1718,11 +1746,31 @@ $(grep "\S" <<< "$Command")"
   [ "$Error" ] && return 1
   
   :> "$Resultimageready"
+  
+  # --soft
+  Resultsoft="$Resultimage"
+  [ "$Softfusion" ] && {
+    verbose "--soft=$Softfusion"
+    Resultsoft="$Resultimage.soft$Softfusion.tif"
+    
+    Command="$Magickbin
+  $Resultimage
+    -channel alpha
+    +level $(levelpercent "$Softfusion")
+    +channel
+  $Resultsoft"
+  
+    $Command || error "focus_montage: Error applying --soft=$Softfusion"
+    showimage "$Resultsoft"
+  }
+  [ "$Error" ] && return 1
 
   # --finalblur
-  Resultfinalblur="$Resultimage"
+  Resultfinalblur="$Resultsoft"
   [ "$Finalblur" ] && {
-    Resultfinalblur="$Resultimage.finalblur.tif"
+    verbose "--finalblur=$Finalblur"
+    Resultfinalblur="$Resultimage.finalblur$Finalblur.tif"
+    
     Command="$Magickbin
   $Resultimage
     -write mpr:resultimage
@@ -1762,22 +1810,25 @@ $(grep "\S" <<< "$Command")"
   mpr:resultimage
     -compose DstOver -composite
   $Resultfinalblur"
-  
-    verbose "Final blur command:
-$Command"
 
     $Command || error "Error with --finalblur"
+    showimage "$Resultfinalblur"
   }
   
   Resultthreshold="$Resultfinalblur"
   [ "$Globalthreshold" ] && {
+    Resultthreshold="$Resultfinalblur.threshold$Globalthreshold.tif"
+    verbose "--threshold=$Globalthreshold"
+    
     Command="$Magickbin
   $Resultthreshold
   ( $Maskmax -threshold ${Globalthreshold:-}% )
     -alpha off
     -compose CopyOpacity -composite
   $Resultthreshold"
+  
     $Command || error "focus_montage: Error in final --threshold"
+    showimage "$Resultthreshold"
   }
   
   [ "$Maskmaxcopy" ] && cp "$Maskmax" "$Maskmaxcopy"
@@ -2111,7 +2162,11 @@ maskarg_parse() {
       "p"|"%")            Argpercent1="$(percentrm "$Value")" ;;
       "P")                Argpercent2="$(percentrm "$Value")" ;;
       "swap")             Argswap="swap" ;;
-      "soft")             Argsoft="${Value:-$(maskarg_defaultvalue      "$Argmethod" soft)}" ;;
+      "soft"|"softx")     
+        Argsoft="$(tr -d "soft=" <<< "$Line")"
+        Argsoft="${Argsoft:-$(maskarg_defaultvalue      "$Argmethod" soft)}"
+        Argsoft="$(levelparse "$Argsoft")"
+      ;;
       "denoise")          Argdenoise="${Value:-$(maskarg_defaultvalue   "$Argmethod" noise)}" ;;
       "d"|"diff")         Argdiff="s" ;;
       "less")             Argless="${Value:-$(maskarg_defaultvalue      "$Argmethod" less)}" ;;
@@ -2973,7 +3028,9 @@ check_options() {
   case $Globalsoft in
     "") ;;
     *)
-      [ "$Globalsoft" = "auto" ] && Globalsoft="$(maskarg_defaultvalue "$Firstmaskmethod" soft )"
+      #[ "$Globalsoft" = "auto" ] && Globalsoft="$(maskarg_defaultvalue "$Firstmaskmethod" soft )"
+      [ "$Globalsoft" = "auto" ] && Globalsoft="0x100"
+      Globalsoft="$(levelparse "$Globalsoft")"
       Background="${Background:-enfuse}"
     ;;
   esac
