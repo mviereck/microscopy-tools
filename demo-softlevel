@@ -1,0 +1,88 @@
+#! /bin/bash
+# gradient table to show effect of +level a%,b% / arguments of option --soft.
+# A semi-transparent image $1 can be given as option and will be added as table example.
+# Get a test image with 'imfuse --statistic --soft --background=transparent IMAGES'.
+
+Image="${1:-}"
+Size="256"
+Levels="
+0%x100%
+0%x50%
+0%x150%
+50%x100%
+50%x150%
+-50%x100%
+-50%x150%
+-100%x200%
+25%x75%
+50%x50%
+0%x0%
+100%x100%"
+
+Command="magick
+    -size ${Size}x${Size} 
+  gradient:
+  radial-gradient:
+    +append
+   -write mpr:gradient
+   -delete 0"
+    
+[ "$Image" ] && Command="$Command
+  $Image
+    -resize x$Size
+    -write mpr:image
+    -channel alpha
+    -separate
+    -write mpr:imagemask
+    -delete 0"
+    
+for Level in $Levels; do
+  Command="$Command
+  \( mpr:gradient
+      +level $Level
+      -write mpr:gradientlevel
+      -delete 0
+    mpr:gradientlevel
+      -gravity west
+      -stroke green
+      -pointsize 24
+      -draw \"text 0,0 '$Level'\" 
+      -write mpr:gradientlevel
+      -delete 0
+  \)"
+
+  case "$Image" in
+    "")
+      Command="$Command
+  mpr:gradientlevel"
+    ;;
+    *)
+      Command="$Command
+  \( mpr:imagemask 
+      +level $Level
+      -write mpr:imagemasklevel
+      -delete 0
+    mpr:image
+    mpr:imagemasklevel
+      -compose CopyOpacity -composite
+      -write mpr:imagelevel
+      -delete 0
+  \)"
+      Command="$Command
+  \(
+    mpr:gradientlevel
+    mpr:imagemasklevel
+    mpr:imagelevel
+      +append
+  \)"
+    ;;
+  esac
+done
+
+Command="$Command
+    -append
+  gradient+level.tif"
+  
+eval $Command 
+
+viewnior gradient+level.tif
