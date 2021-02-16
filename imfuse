@@ -1,12 +1,29 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.6.3-beta"
+Version="0.6.6.4-beta"
 
 # ToDo:
-# stackfuser: fakehdr is missing
-# --blur altogether?
-# check --layered
+#
+# geeqie bugreport
+#
+# imfuse:
+# --maskblur altogether?
+# --gamma?
+# imgview: layered tifs
+# check --kirsch
+# check --unsharp
+# drop --denoise?
+# find halo solution
+# check exiftransfer / damaged one Beerenwanze or Spinne image
+# arg swap / composite
+# drop --halo?
+#
+# stackfuser: 
+# fakehdr is missing
+# -resize in batch 1
+# new batch "align" after batch 2?
+# exiftransfer wrong after reverse-order or block-evaluate
 
 usage() {
   echo "imfuse v$Version
@@ -69,7 +86,6 @@ Arguments taken by few options only:
             more contrast. Smaller sigma causes more details and more noise.
   S         Second Sigma. Taken only optionally by --dog.
   p         Percent value.
-  swap      Taken only by --composite.
   (words)   Some options take one or two word arguments.
 
 
@@ -174,13 +190,11 @@ Contrast mask options:
 
 Image comparision mask options: (Intended for artefact removal)
  --compose [=ARG]     Composes min and max of source images with MODE.
-                      Compare ImageMagick option -compose. 
-                      For 'min' and 'max' compare option --evaluate.
                       ARG additionally takes arguments:
                         (word)   MODE                Default: overlay
-                        swap     Compose max,min instead of min,max
-                                 Makes a difference for some, but not
-                                 all compose MODEs.
+                      Compose images are generated from evaluated min,max
+                      images. Adding a '2', e.g. '--compose=overlay2' swaps
+                      min,max to max,min and can give a different result.
                       MODE can be one of '$(basename $Magicklist) -list compose'
                       Some MODEs of interest:
                         bumpmap colorburn difference linearburn 
@@ -234,7 +248,10 @@ Mask generation and fusion adjustments:
                         $Magicklist -list color
                         $Magicklist -list evaluate
                         $Magicklist -list compose
-                      Well to combine with --soft. Possible use with threshold.
+                      Well to combine with --soft. Useable with --threshold.
+                      Compose backgrounds are generated from evaluated min,max
+                      images. Adding a '2', e.g. '--compose=overlay2' swaps
+                      min,max to max,min and can give a different result.
  --close [=ARG]       Closes gaps between nearby contrast lines to mark the 
                       area in between as strong contrast, too. Default: 2x2
                       First value is a kernel radius, second a kernel iteration.
@@ -819,7 +836,7 @@ flatten() {
   $Command
 }
 generate_composite() {
-  local Mode Imagename
+  local Mode Imagename Swap
   
   # --evaluate
   for Mode in $Evaluate_needlist; do
@@ -831,15 +848,11 @@ generate_composite() {
   for Mode in $Compose_needlist; do
     [ "$Error" ] && break
     Imagename="$Cachedir/compose.$Mode.$Sourcemd5.tif"
+    grep -q "2" <<< "$Mode" && Swap="-swap 0,1" || Swap=""
+    Mode="$(tr -d "2" <<< "$Mode")"
     [ -e "$Imagename" ] || {
       note "--compose=$Mode: Generating compose image $Imagename"
-      $Magickbin $Cachedir/evaluate.min.$Sourcemd5.tif $Cachedir/evaluate.max.$Sourcemd5.tif           -compose $Mode -composite $Imagename || error "Error compositing $Mode: $Image"
-      showimage "$Imagename"
-    }
-    Imagename="$Cachedir/compose.$Mode.swap.$Sourcemd5.tif"
-    [ -e "$Imagename" ] || {
-      note "--compose=$Mode,swap: Generating compose image $Imagename"
-      $Magickbin $Cachedir/evaluate.min.$Sourcemd5.tif $Cachedir/evaluate.max.$Sourcemd5.tif -swap 0,1 -compose $Mode -composite $Imagename || error "Error compositing $Mode -swap: $Image"
+      $Magickbin $Cachedir/evaluate.min.$Sourcemd5.tif $Cachedir/evaluate.max.$Sourcemd5.tif $Swap -compose $Mode -composite $Imagename || error "Error compositing $Mode: $Image"
       showimage "$Imagename"
     }
   done
@@ -872,8 +885,6 @@ layered_tif() {
   mpr:cutmask
     -alpha off
     -compose CopyOpacity -composite
-    -background white
-    -alpha Background
     -write mpr:layer$Layer
     -delete 0"
     [ "$Globalsoft" ] && {
@@ -1853,22 +1864,11 @@ focus_maskmethod() {
 #-compose Difference -composite" # sort of interesting.
     ;;
     compose)
-      case $Argswap in
-        "")
-          Maskgenerator="
+      Maskgenerator="
   ( mpr:sourcegray -alpha off )
   ( $Cachedir/compose.$Argword1.$Sourcemd5.tif $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
-        ;;
-        *)
-          Maskgenerator="
-  ( mpr:sourcegray -alpha off )
-  ( $Cachedir/compose.$Argword1.swap.$Sourcemd5.tif $Grayscaleconverter -alpha off )
-    -compose Difference -composite
-    -negate"
-        ;;
-      esac
     ;;
     diffstat)
       Maskgenerator=""
@@ -2113,7 +2113,6 @@ maskarg_parse() {
   Argsigma2=""
   Argsoft=""
   Argtype=""
-  Argswap=""
   Argweight=""
   Argword1=""
   Argword2=""
@@ -2135,7 +2134,6 @@ maskarg_parse() {
       "S")                Argsigma2="${Value}" ;;
       "p"|"%")            Argpercent1="$(percentrm "$Value")" ;;
       "P")                Argpercent2="$(percentrm "$Value")" ;;
-      "swap")             Argswap="swap" ;;
       "soft"|"softx")     
         Argsoft="$(tr -d "soft=" <<< "$Line")"
         Argsoft="${Argsoft:-$(maskarg_defaultvalue      "$Argmethod" soft)}"
@@ -2192,7 +2190,6 @@ maskarg_store() {
   [ "$Argsoft" ]               && Newoption="$Newoption,soft=$Argsoft"
   [ "$Argmaskblur" ]           && Newoption="$Newoption,maskblur=$Argmaskblur"
   [ "$Argnegate" ]             && Newoption="$Newoption,negate"
-  [ "$Argswap" ]               && Newoption="$Newoption,swap"
   [ "$Argdarkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Argdarkenmask"
   [ "$Arglevel" ]              && Newoption="$Newoption,LEVEL"
   [ "$Argtype" ]               && Newoption="$Newoption,TYPE=$Argtype"
@@ -2481,7 +2478,7 @@ maskarg_checkallowed() {
         comet|channel|freichen|freediff|laplacian) ;;
         compose|evaluate|morphology)
           Arg="$(lowercase "${Arg}")"
-          checkmagicklist "$Method" "$Arg" || {
+          checkmagicklist "$Method" "$(tr -d '2' <<< "$Arg")" || {
             error "--$Method=$Arg: unknown argument.
   Please choose one out of '$Magicklist -list $Method'"
           }
@@ -2668,7 +2665,6 @@ declare_variables() {
   Argsigma1=""
   Argsigma2=""
   Argsoft=""
-  Argswap=""
   Argtype=""
   Argweight=""
   Argword1=""
@@ -3047,15 +3043,14 @@ check_options() {
     note "No mask option specified, generating background only: $Background"
   }
   [ "$Background" ] && {
-    checkmagicklist compose  "$Background" && Backgroundtype="compose"
-    checkmagicklist evaluate "$Background" && Backgroundtype="evaluate"
-    checkmagicklist color    "$Background" && Backgroundtype="color"
-    [ -f "$Background" ]                   && Backgroundtype="image"
+    checkmagicklist compose  "$(tr -d "2" <<< "$Background")" && Backgroundtype="compose"
+    checkmagicklist evaluate                  "$Background"   && Backgroundtype="evaluate"
+    checkmagicklist color                     "$Background"   && Backgroundtype="color"
+    [ -f "$Background" ]                                      && Backgroundtype="image"
     case $Background in
-      enfuse|saturation)                      Backgroundtype="$Background" ;;
-      none)                   Background="" ; Backgroundtype="none" ;;
+      enfuse|saturation)                                         Backgroundtype="$Background" ;;
+      none)                   Background="" ;                    Backgroundtype="none" ;;
     esac
-    note "$Backgroundtype $Background"
     [ "$Backgroundtype" ] || error "--background: Unknown background: '$Background'"
   }
 
@@ -3111,7 +3106,6 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     [ "$Argclose2" ]             && Resultimage="${Resultimage}x$Argclose2"
     [ "$Argmaskblur" ]           && Resultimage="$Resultimage-maskblur$Argmaskblur"
     [ "$Argdenoise" ]            && Resultimage="$Resultimage-denoise$Argdenoise"
-    [ "$Argswap" ]               && Resultimage="$Resultimage-swap"
     [ "$Argnegate" ]             && Resultimage="$Resultimage-neg"
     case $Argmethod in
       image) ;;
