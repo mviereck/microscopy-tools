@@ -498,7 +498,7 @@ setup_workdir() {
       #Destinationfile="$Projectname.$(basename "$Targetdir").$(basename "$Sourcedir")"
     ;;
     
-    align*|brightness*|contrast*|crop*|cuberotate*|imageformat*|fakehdr*|gamma*|level*|orient*|rotate*|ruler*|sharpen*|statistic*|evalstep*|stretch*|wizard*)
+    align*|brightness*|contrast*|crop*|cuberotate*|imageformat*|fakehdr*|gamma*|level*|orient*|resize*|rotate*|ruler*|sharpen*|statistic*|evalstep*|stretch*|wizard*)
       Sourcedir="$Targetprevdir"
       Destinationdir="$Targetnewdir"
     ;;
@@ -643,7 +643,7 @@ batch_function() {
   esac
   Function="${Function%_}"
   case "$Function" in
-    brightness|contrast|gamma|level|orient|prepare|rotate|sharpen|statistic|stretch|wizard)
+    brightness|contrast|gamma|level|orient|prepare|resize|rotate|sharpen|statistic|stretch|wizard)
       Opt2="$Opt1 $Opt2 $Opt3"
       Opt3=""
       Opt2="${Opt2# }"
@@ -847,7 +847,7 @@ getfunctionsettings() {
 runbatchone() {
   local $Batchlocal
   local Iterate
-  for Function in imageformat orient crop align_vidstab align_hugin align_ais align_focusstack; do
+  for Function in imageformat orient resize crop align_vidstab align_hugin align_ais align_focusstack; do
     askkaptain -c $Function > /dev/null && {
       getfunctionsettings $Function
       cmd -f "$Function" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Stackdir"
@@ -2504,6 +2504,7 @@ wizard() {
     gamma)      Opt2="auto" ;;
     level)      Opt2="auto" ;;
     orient)     Opt2="topleft" ;;
+    resize)     Opt2="50%" ;;
     rotate)     Opt2="90" ;;
     sharpen)    Opt2="6x2" ;;
     statistic)  Opt2="median 5" ;;
@@ -2525,7 +2526,7 @@ wizard() {
     brightness)  Opt1="-brightness-contrast" ;;
     contrast)    Opt1="-sigmoidal-contrast" ;;
     sharpen)     Opt1="-adaptive-sharpen" ;;
-    orient|rotate|statistic) Opt1="-$Opt1" ;;
+    orient|resize|rotate|statistic) Opt1="-$Opt1" ;;
     wizard)      Opt1="" ;;
   esac
   Options="$Opt1 $Opt2 $Opt3 +repage"
@@ -3126,7 +3127,7 @@ start "stackfuser '$Version'"     -> frameset;
         batchframeleft:framed                  -> batchblock1 batchblock2 ;
         batchframeright:framed                 -> batchblock3 runbatchframe stopframe;
           
-      batchblock1 "batch block 1: crop and balance directory prepared" -> imageformatline cropline align_vidstabline align_huginline align_aisline align_focusstackline;
+      batchblock1 "batch block 1: crop and balance directory prepared" -> imageformatline resizeline cropline align_vidstabline align_huginline align_aisline align_focusstackline;
         imageformatline:beside                                       -> imageformat imageformatopt9combo imageformatprepared imageformatfused imageformatevaluated;
           imageformatopt9combo                                         -> @combow('$Imageformatcombo')="TIF" ;
           imageformatprepared                                          -> @button="prepared" ;
@@ -3137,6 +3138,12 @@ start "stackfuser '$Version'"     -> frameset;
           orientopt1combo                                              -> @combo("topleft","topright","bottomleft","bottomright")="topleft" ;
           orientprepared                                               -> @button="prepared" ;
           orient:beside               "orient (fixate image exif rotation)" -> "on" | "";
+        resizeline:beside                                            -> resize resizeprepared resizefused resizeevaluated;
+          resizeopt1combo                                              -> @combow("10%","20%","25%","50%","75%")="20%" ;
+          resizeprepared                                               -> @button="prepared" ;
+          resizeevaluated                                              -> @button="evaluated" ;
+          resizefused                                                  -> @button="fused" ;
+          resize:beside               "resize"                         -> resizeopt1combo | ! "";
         cropline:beside                                              -> crop cropopt1combo cropopt2combo cropprepared cropfused cropevaluated;
           cropopt1combo                                                -> @combo("interactive","shrink","even","geometry")="interactive" ;
           cropopt2combo                                                -> @combow("","1","2","5","10","200x200+15+15")="" ;
@@ -4265,7 +4272,7 @@ parse_cmd() {
     ;;
     delete*)           myrmdir "$Targetdir/${Function#delete}" "$Targetdir/${Function#delete}.bak" ; Return=0 ;;
    
-    align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|imageformat*|gamma*|level*|fakehdr*|orient*|prepare*|rotate*|sharpen*|statistic*|evalstep*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
+    align*|animation*|brightness*|compose*|contrast*|crop*|cuberotate*|evaluate*|imageformat*|gamma*|level*|fakehdr*|orient*|prepare*|resize*|rotate*|sharpen*|statistic*|evalstep*|stretch*|undo*|whitebalance*|ruler*|video*|wizard*)
       Function="${Function%prepared}"
       batch_function -f $Function -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -g "$Sourcefileglob" -t "$Targetdir"
       Return=$?
