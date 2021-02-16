@@ -846,8 +846,7 @@ getfunctionsettings() {
 }
 runbatchone() {
   local $Batchlocal
-  local Iterate
-  for Function in imageformat orient resize crop align_vidstab align_hugin align_ais align_focusstack; do
+  for Function in imageformat orient resize crop; do
     askkaptain -c $Function > /dev/null && {
       getfunctionsettings $Function
       cmd -f "$Function" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Stackdir"
@@ -861,6 +860,16 @@ runbatchtwo() {
   cmd -f wizard -1 "$(getbatchtwo)" -t "$Stackdir"
 }
 runbatchthree() {
+  local $Batchlocal
+  for Function in align_vidstab align_hugin align_ais align_focusstack; do
+    askkaptain -c $Function > /dev/null && {
+      getfunctionsettings $Function
+      cmd -f "$Function" -1 "$Opt1" -2 "$Opt2" -3 "$Opt3" -4 "$Opt4" -5 "$Opt5" -6 "$Opt6" -7 "$Opt7" -8 "$Opt8" -9 "$Opt9" -t "$Stackdir"
+    }
+  done
+  return 0
+}
+runbatchfour() {
   askkaptain evaluate1 >/dev/null        && cmd -f evaluateprepared -t "$Stackdir"
   askkaptain fuse >/dev/null             && {
     Opt1="$(askkaptain fuseopt1combo)"
@@ -3124,10 +3133,10 @@ start "stackfuser '$Version'"     -> frameset;
   tabset:tabbed                         -> batchtab specialtab deletetab configtab showresulttab;
     batchtab "Image batch processing"     -> batchoptionframe ;
       batchoptionframe:beside                -> batchframeleft  batchframeright;
-        batchframeleft:framed                  -> batchblock1 batchblock2 ;
-        batchframeright:framed                 -> batchblock3 runbatchframe stopframe;
+        batchframeleft:framed                  -> batchblock1 batchblock2 batchblock3;
+        batchframeright:framed                 -> batchblock4 runbatchframe stopframe;
           
-      batchblock1 "batch block 1: crop and balance directory prepared" -> imageformatline resizeline cropline align_vidstabline align_huginline align_aisline align_focusstackline;
+      batchblock1 "batch block 1: image format and size" -> imageformatline resizeline cropline;
         imageformatline:beside                                       -> imageformat imageformatopt9combo imageformatprepared imageformatfused imageformatevaluated;
           imageformatopt9combo                                         -> @combow('$Imageformatcombo')="TIF" ;
           imageformatprepared                                          -> @button="prepared" ;
@@ -3151,23 +3160,6 @@ start "stackfuser '$Version'"     -> frameset;
           cropevaluated                                                -> @button="evaluated" ;
           cropfused                                                    -> @button="fused" ;
           crop:beside                 "crop"                           -> "on" | ! "";
-        align_focusstackline:beside                                  -> align_focusstack align_focusstackbutton ;
-          align_focusstackbutton                                       -> @button="prepared" ;
-          align_focusstack:beside     "align with focus-stack"         -> "on" | ! "";
-        align_vidstabline:beside                                     -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabopt3combo align_vidstabbutton ;
-          align_vidstabopt1combo                                       -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
-          align_vidstabopt2combo:beside   "Iterations:"                -> @combo("1","2","3")="3";
-          align_vidstabopt3combo:beside   "prepare"                    -> "prepare" | ! "" ;
-          align_vidstabbutton                                          -> @button="prepared" ;
-          align_vidstab:beside        "align with vidstab/ffmpeg"      -> "on" | ! "";
-        align_huginline:beside                                       -> align_hugin align_huginbutton ;
-          align_huginbutton                                            -> @button="prepared" ;
-          align_hugin:beside          "align with hugin"               -> "on" | ! "";
-        align_aisline:beside                                         -> align_ais align_aisopt1combo align_aisopt2combo align_aisbutton ;
-          align_aisopt1combo          "demagnifier (-m)"               -> "m"  | ! "";
-          align_aisopt2combo          "crop interactive"               -> "interactive" | ! "";
-          align_aisbutton                                              -> @button="prepared" ;
-          align_ais:beside            "align with align_image_stack"   -> "on" | "";
       
       batchblock2 "batch block 2: ImageMagick operations on directory prepared" -> rotateline gammaline levelline contrastline sharpenline brightnessline stretchline statisticline wizardline;
         rotateline:beside                                     -> rotate rotateopt1combo rotateprepared rotatefused rotateevaluated;
@@ -3226,7 +3218,26 @@ start "stackfuser '$Version'"     -> frameset;
           wizardfused                                           -> @button="fused" ;
           wizard:beside               "(free option typing)"    -> wizardopt1combo | ! "" ;
         
-      batchblock3 "batch block 3: combine stackshot images" -> evaluateline1 fuseline evaluateline2 deletebackups2 deleteprepared2;
+      batchblock3 "batch block 3: align directory prepared" -> align_vidstabline align_huginline align_aisline align_focusstackline;
+        align_focusstackline:beside                                  -> align_focusstack align_focusstackbutton ;
+          align_focusstackbutton                                       -> @button="prepared" ;
+          align_focusstack:beside     "align with focus-stack"         -> "on" | ! "";
+        align_vidstabline:beside                                     -> align_vidstab align_vidstabopt1combo align_vidstabopt2combo align_vidstabopt3combo align_vidstabbutton ;
+          align_vidstabopt1combo                                       -> @combo("distort_only","common_area","crop","crop_interactive")="crop";
+          align_vidstabopt2combo:beside   "Iterations:"                -> @combo("1","2","3")="3";
+          align_vidstabopt3combo:beside   "prepare"                    -> "prepare" | ! "" ;
+          align_vidstabbutton                                          -> @button="prepared" ;
+          align_vidstab:beside        "align with vidstab/ffmpeg"      -> "on" | ! "";
+        align_huginline:beside                                       -> align_hugin align_huginbutton ;
+          align_huginbutton                                            -> @button="prepared" ;
+          align_hugin:beside          "align with hugin"               -> "on" | ! "";
+        align_aisline:beside                                         -> align_ais align_aisopt1combo align_aisopt2combo align_aisbutton ;
+          align_aisopt1combo          "demagnifier (-m)"               -> "m"  | ! "";
+          align_aisopt2combo          "crop interactive"               -> "interactive" | ! "";
+          align_aisbutton                                              -> @button="prepared" ;
+          align_ais:beside            "align with align_image_stack"   -> "on" | "";
+      
+      batchblock4 "batch block 4: combine stackshot images" -> evaluateline1 fuseline evaluateline2 deletebackups2 deleteprepared2;
         evaluateline1:beside                                  -> evaluate1 evaluateprepared ;
           evaluateprepared                                      -> @button="prepared" ;
           evaluate1:beside            "evaluate"                -> "on" | "";
@@ -3244,10 +3255,11 @@ start "stackfuser '$Version'"     -> frameset;
         deleteprepared2:beside          "delete"                -> @button="prepared" "on"          | ! "";
 
       runbatchframe "Batch processing"                      -> batchblockline batchallline;
-        batchblockline                                        -> runbatchone runbatchtwo runbatchthree;
+        batchblockline                                        -> runbatchone runbatchtwo runbatchthree runbatchfour;
           runbatchone:beside          "batch block 1"           -> "batchblock1" | "" @button="run";
           runbatchtwo:beside          "batch block 2"           -> "batchblock2" | "" @button="run";
           runbatchthree:beside        "batch block 3"           -> "batchblock3" | "" @button="run";
+          runbatchfour:beside         "batch block 4"           -> "batchblock4" | "" @button="run";
         batchallline:beside -> runbatchprocessing ;
           runbatchprocessing                                    -> @button="Run selected batch blocks";
       
@@ -4183,10 +4195,15 @@ parse_kaptainsignal() {
       runbatchthree "$Stackdir"
       cmd -f notify -1 "Batch 3 is ready."
     ;;
+    runbatchfour) 
+      runbatchfour "$Stackdir"
+      cmd -f notify -1 "Batch 4 is ready."
+    ;;
     runbatchprocessing)
-      askkaptain "runbatchone" >/dev/null   && runbatchone "$Stackdir"
-      askkaptain "runbatchtwo" >/dev/null   && runbatchtwo "$Stackdir"
+      askkaptain "runbatchone" >/dev/null   && runbatchone   "$Stackdir"
+      askkaptain "runbatchtwo" >/dev/null   && runbatchtwo   "$Stackdir"
       askkaptain "runbatchthree" >/dev/null && runbatchthree "$Stackdir"
+      askkaptain "runbatchfour" >/dev/null  && runbatchfour  "$Stackdir"
       cmd -f notify -1 "Batch all is ready."
     ;;
     *)
