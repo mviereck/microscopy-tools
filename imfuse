@@ -1,29 +1,29 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.6.4-beta"
+Version="0.6.6.5-beta"
 
 # ToDo:
 #
-# geeqie bugreport
-#
 # imfuse:
+# check soft ARG
+# whitespace in file names
 # --maskblur altogether?
 # --gamma?
-# imgview: layered tifs
+# --close in focus_generate_masks() if only one mask is given?
 # check --kirsch
 # check --unsharp
 # drop --denoise?
+# drop --halo?
 # find halo solution
 # check exiftransfer / damaged one Beerenwanze or Spinne image
-# arg swap / composite
-# drop --halo?
 #
 # stackfuser: 
 # fakehdr is missing
-# -resize in batch 1
-# new batch "align" after batch 2?
 # exiftransfer wrong after reverse-order or block-evaluate
+#
+# imgview:
+# layered tifs
 
 usage() {
   echo "imfuse v$Version
@@ -189,16 +189,15 @@ Contrast mask options:
                         p       percent               Default: 10
 
 Image comparision mask options: (Intended for artefact removal)
- --compose [=ARG]     Composes min and max of source images with MODE.
+ --compose [=ARG]     Composes evaluated min,max of source images with MODE.
                       ARG additionally takes arguments:
                         (word)   MODE                Default: overlay
-                      Compose images are generated from evaluated min,max
-                      images. Adding a '2', e.g. '--compose=overlay2' swaps
-                      min,max to max,min and can give a different result.
+                      Adding a '2', e.g. '--compose=overlay2' swaps min,max
+                      to max,min and can give a different result.
                       MODE can be one of '$(basename $Magicklist) -list compose'
                       Some MODEs of interest:
-                        bumpmap colorburn difference linearburn 
-                        linearlight modulate multiply overlay pegtoplight
+                        overlay interpolate colordodge hardlight reflect 
+                        softburn softlight linearlight pegtoplight
  --enfuse [=ARG]      Image comparision with a basic enfuse result.
  --evaluate [=ARG]    Evaluates all source images with mode MODE.
                       Compare ImageMagick option -evaluate-sequence.
@@ -762,7 +761,7 @@ fakehdr() {
   return ${Error:-0}
 }
 finalblur() {
-  local Image Mask Percent Sigma Command
+  local Image Mask Percent Sigma Command Error
   Image="${1:-}"
   Mask="${2:-}"
   Percent="${3:-}"
@@ -812,6 +811,7 @@ finalblur() {
   
   $Command || error "Error with --finalblur"
   showimage "$Image"
+  return ${Error:-0}
 }
 flatten() {
   local Resultimage Image Command
@@ -859,7 +859,7 @@ generate_composite() {
 }
 layered_tif() {
   local Image Mask Layers Background 
-  local Layer Layerlist= Factor Command
+  local Layer Layerlist= Factor Command Error
   Image="${1:-}"
   Mask="${2:-}"
   Layers="${3:-}"
@@ -910,7 +910,8 @@ layered_tif() {
     $Tifstorealpha
   $Image"
 
-  $Command
+  $Command || "Error in --layers"
+  return ${Error:-0}
 }
 level_masks() {
   local Maskbasename Maskmax Maskmin Maskmd5 Clutimage Resultmask
@@ -1178,8 +1179,27 @@ redist() {
 $Histogram"
   showimage $Histogram
 }
+softlevel() {
+  local Image Mask Level Command Error
+  Image="${1:-}"
+  Mask="${2:-}"
+  Level="${3:-}"
+
+  verbose "Applying --soft=$Globalsoft"
+  
+  Command="$Magickbin
+  $Image
+    -channel alpha
+    +level $(levelpercent "$Level")
+    +channel
+  $Image"
+  
+  $Command || error "Error applying --soft=$Softfusion to $Image"
+  showimage "$Image"
+  return ${Error:-0}
+}
 threshold() {
-  local Image Mask Threshold Command
+  local Image Mask Threshold Command Error
   Image="${1:-}"
   Mask="${2:-}"
   Threshold="${3:-}"
@@ -1212,8 +1232,9 @@ threshold() {
     ;;
   esac
   
-  $Command || error "Error in --threshold"
+  $Command || error "Error in --threshold=$Threshold"
   showimage "$Image"
+  return ${Error:-0}
 }
     
 # core focus stack routines
@@ -1359,7 +1380,9 @@ $(grep "\S" <<< "$Command")"
     [ "${Argless}" ] && [ "${Argsoft}" ] && {
       note "Generating soft&less image for mask $Argmethod"
       Imagename="$Cachedir/$Argbasename-prepare-less${Argless}-soft${Argsoft}-cb${Cutblur}.tif"
-      focus_montage --soft "$Argsoft" --lessthanmax "$Argless" --output "$Imagename" -- $(masklist "$Argbasename") || error "Error in focus_montage for less+soft"
+      Maskmax="$Cachedir/$Argbasename-prepare-less${Argless}-soft${Argsoft}-cb${Cutblur}.mask.tif"
+      focus_montage --soft "$Argsoft" --lessthanmax "$Argless" --maskmax="$Maskmax" --output "$Imagename" -- $(masklist "$Argbasename") || error "Error in focus_generate_masks->focus_montage for less+soft"
+      softlevel "$Imagename" "$Maskmax" "$Argsoft" || error "Error in focus_generate_masks->softlevel"
       [ "$Error" ] && break
       #$Magickbin "$Enfusebaseimage" "$Imagename" -compose Over -composite "$Imagename" || error "Failed to compose soft result on enfuse background"
       Argbasename="$Argmethod-soft$Argsoft-less$Argless-cb$Cutblur.$(md5cut "$Argbasename $Argsoft $Argless $Cutblur" )"
@@ -3034,6 +3057,15 @@ check_options() {
       Globalclose1="${Globalclose1:-1}"
       Globalclose2="${Globalclose2:-1}"
       Globalclose="${Globalclose1}x${Globalclose2}"
+      [ "$Maskmethodnumber" = "1" ] && {
+        maskarg_parse "$Maskmethodlist"
+        Argclose1="$Globalclose1"
+        Argclose2="$Globalclose2"
+        maskarg_store
+        Globalclose=""
+        Globalclose1=""
+        Globalclose2=""
+      }
     ;;
   esac
 
@@ -3325,15 +3357,7 @@ $Cachedir/fakehdr*.$(basename "$Image")"
     focus_montage --soft "$Globalsoft" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || return 1
     # --soft=ARG
     [ "$Globalsoft" ] && {
-      verbose "Applying --soft=$Globalsoft"
-      Command="$Magickbin
-  $Resultimage
-    -channel alpha
-    +level $(levelpercent "$Globalsoft")
-    +channel
-  $Resultimage"
-      $Command || error "Error applying --soft=$Softfusion"
-      showimage "$Resultimage"
+      softlevel "$Resultimage" "$Resultmask" "$Globalsoft" || error "Error in leveling --soft='$Globalsoft'"
     }
     # --finalblur
     [ "$Finalblur" ] && {
