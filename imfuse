@@ -1476,7 +1476,7 @@ focus_merge_masks() {
     [ "$Argdenoise" ] && Mergecode="$Mergecode $(denoisecode "$Argdenoise")"
     
     Mergecode="$Mergecode
-    +level 0%,$(calc "(100 * ${Argweight:-100}) / $Weightmax)" )% 
+    +level 0%,$(calc "(100 * ${Argweight:-100}) / $Weightmax" )% 
   )
     -compose Interpolate -composite"
   done <<< "$Maskmethodlist"
