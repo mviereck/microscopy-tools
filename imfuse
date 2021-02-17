@@ -516,7 +516,7 @@ ${1:-}"
   Startzeit="$(date +%s)"
   case $Split in
     1)
-      $Magickbin $Sourceimagelist -evaluate-sequence $Mode $Tifstore $Resultimage || error "Error in evaluate(): $Mode"
+      $Magickbin $Sourceimagelist -alpha off -evaluate-sequence $Mode $Tifstore $Resultimage || error "Error in evaluate(): $Mode"
     ;;
     *)
       case $Mode in
@@ -583,7 +583,7 @@ ${1:-}"
         [ "$Error" ] && break
         verbose "Evaluating part $((Part+1)) / $Split"
         Partimage=$Cachedir/$Mode.part$Part.tif
-        $Magickbin $Cachedir/split$(printnum $Part 3).*.tif -evaluate-sequence $Mode $Tifstore $Partimage || error "Error in evaluate_split / evaluating parts"
+        $Magickbin $Cachedir/split$(printnum $Part 3).*.tif -alpha off -evaluate-sequence $Mode $Tifstore $Partimage || error "Error in evaluate_split / evaluating parts"
         Partimagelist="$Partimagelist $Partimage"
         showimage $Partimage
         Dauer="$(( $(date +%s)-Startzeit))"
@@ -636,6 +636,7 @@ ${1:-}"
       while read Line; do
         Command="$Command
   $Line
+    -alpha off
     -compose $Composemode -composite"
       done <<< "$Sourceimagelist"
       Command="$Command 
@@ -649,6 +650,7 @@ ${1:-}"
         Count="$((Count+1))"
         Command="$Command
   $Line
+    -alpha off
     -compose blend
     -set option:compose:args $(calc 100/$Count)
     -composite"
@@ -705,10 +707,9 @@ fakehdr() {
     shift
   done
   
-  Percent="${Percent:-50}"
+  Percent="${Percent:-40}"
   Percent="${Percent%"%"}"
   Method="${Method:-level}"
-  #Method=gamma
   Basename="${Basename:-fakehdr${Percent}.$Method.$Sourcemd5}"
   maskexist "$Basename" && {
     verbose "Skipping fakehdr, already exists: $Basename"
@@ -728,6 +729,7 @@ fakehdr() {
     Imagebasename="$(basename $Sourceimage)"
     Brightimage="$Cachedir/$Imagebasename.exp.bright.tif"
     Darkimage="$Cachedir/$Imagebasename.exp.dark.tif"
+    
     Command="$Magickbin '$Sourceimage' -write mpr:image -delete 0"  
     case $Method in
       brightness)    
@@ -861,7 +863,7 @@ generate_composite() {
     Mode="$(tr -d "2" <<< "$Mode")"
     [ -e "$Imagename" ] || {
       note "--compose=$Mode: Generating compose image $Imagename"
-      $Magickbin $Cachedir/evaluate.min.$Sourcemd5.tif $Cachedir/evaluate.max.$Sourcemd5.tif $Swap -compose $Mode -composite $Imagename || error "Error compositing $Mode: $Image"
+      $Magickbin $Cachedir/evaluate.min.$Sourcemd5.tif $Cachedir/evaluate.max.$Sourcemd5.tif -alpha off $Swap -compose $Mode -composite $Imagename || error "Error compositing $Mode: $Image"
       showimage "$Imagename"
     }
   done
@@ -2994,7 +2996,7 @@ check_options() {
   [ "$Cutblur" = "auto" ] && Cutblur="1"
   
   # --fakehdr
-  [ "$Fakehdr" = "auto" ] && Fakehdr="50"
+  [ "$Fakehdr" = "auto" ] && Fakehdr="40"
   
   [ "$Finalblur" ] && {
     Argmethod="finalblur"
