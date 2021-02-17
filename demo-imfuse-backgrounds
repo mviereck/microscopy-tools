@@ -4,11 +4,22 @@
 
 imfuse -V --background=enfuse "$@"
 imfuse -V --background=saturation "$@"
-imfuse -V --background=max "$@"
-imfuse -V --background=min "$@"
 imfuse -V --background=mean "$@"
-for Composemode in $(magick -list compose); do
-  Composemode="${Composemode,,}"
+imfuse -V --cache --background=max "$@"
+imfuse -V --cache --background=min "$@"
+Compose1list="
+blend difference dividesrc exclusion hardmix interpolate
+linearburn lineardodge minusdst modulusadd multiply 
+negate plus screen"
+Compose2list="
+bumpmap colorburn colordodge colorize displace distort  
+freeze hardlight linearlight modulate modulussubstract 
+overlay pegtoplight pinlight reflect saturate 
+softburn softdodge softlight stamp vividlight
+"
+for Composemode in $Compose1list $Compose2list; do
   imfuse -V --cache --background=${Composemode} "$@"
+done
+for Composemode in $Compose2list; do
   imfuse -V --cache --background=${Composemode}2 "$@"
 done
