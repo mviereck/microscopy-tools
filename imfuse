@@ -3102,9 +3102,9 @@ check_options() {
     note "No mask option specified, generating background only: $Background"
   }
   [ "$Background" ] && {
-    checkmagicklist compose  "$(tr -d "2" <<< "$Background")" && Backgroundtype="compose"
-    checkmagicklist evaluate                  "$Background"   && Backgroundtype="evaluate"
     checkmagicklist color                     "$Background"   && Backgroundtype="color"
+    checkmagicklist evaluate                  "$Background"   && Backgroundtype="evaluate"
+    checkmagicklist compose  "$(tr -d "2" <<< "$Background")" && Backgroundtype="compose"
     [ -f "$Background" ]                                      && Backgroundtype="image"
     case $Background in
       enfuse|saturation)                                         Backgroundtype="$Background" ;;
@@ -3112,6 +3112,7 @@ check_options() {
     esac
     [ "$Backgroundtype" ] || error "--background: Unknown background: '$Background'"
   }
+  verbose "--bg: $Backgroundtype $Background"
 
   #### Files ####
 
