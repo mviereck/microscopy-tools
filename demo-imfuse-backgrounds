@@ -23,3 +23,22 @@ done
 for Composemode in $Compose2list; do
   imfuse -V --cache --background=${Composemode}2 "$@"
 done
+
+# out of curiosity: mean image of all interesting background results
+imfuse -V --output=background-mean-allmodes.tif --background=mean imfuse.bg*
+
+# mean image of all background images that preserve the background color
+Truecolormodes="enfuse
+saturation
+max
+mean
+min
+colorize
+colorize2
+pinlight
+pinlight2
+"
+for Mode in $Truecolormodes; do
+  List="$List imfuse.bg=$Mode.*"
+done
+eval imfuse -V --background=mean --output=background-mean-truecolormodes.tif $List
