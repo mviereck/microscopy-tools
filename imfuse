@@ -1476,10 +1476,11 @@ focus_merge_masks() {
     [ "$Argdenoise" ] && Mergecode="$Mergecode $(denoisecode "$Argdenoise")"
     
     Mergecode="$Mergecode
-    +level 0%,$(calc "(100 * ${Argweight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
+    +level 0%,$(calc "(100 * ${Argweight:-100}) / $Weightmax)" )% 
   )
-    -compose Screen -composite"
+    -compose Interpolate -composite"
   done <<< "$Maskmethodlist"
+#    +level 0%,$(calc "(100 * ${Argweight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
   
   # denoise low contrast areas
   [ "$Globaldenoise" ] && {
