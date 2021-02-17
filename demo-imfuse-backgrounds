@@ -1,0 +1,14 @@
+#! /bin/bash
+# Show a list of many possible imfuse backgrounds.
+# Provide stack images as arguments
+
+imfuse -V --background=enfuse "$@"
+imfuse -V --background=saturation "$@"
+imfuse -V --background=max "$@"
+imfuse -V --background=min "$@"
+imfuse -V --background=mean "$@"
+for Composemode in $(magick -list compose); do
+  Composemode="${Composemode,,}"
+  imfuse -V --cache --background=${Composemode} "$@"
+  imfuse -V --cache --background=${Composemode}2 "$@"
+done
