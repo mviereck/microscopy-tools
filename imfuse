@@ -10,7 +10,6 @@ Version="0.6.6.5-beta"
 # whitespace in file names
 # --maskblur altogether?
 # --gamma?
-# --close in focus_generate_masks() if only one mask is given?
 # check --kirsch
 # check --unsharp
 # drop --denoise?
@@ -242,15 +241,16 @@ Colorspace channel mask options: (Intended for artefact removal)
 
 Mask generation and fusion adjustments:
  --background BG      Specify a background to paint on. Default: mean
-                      BG can be an image name or one of:
-                        saturation enfuse min max mean median
+                      BG can be an image name or one out of:
+                        enfuse
+                        saturation
                         $Magicklist -list color
-                        $Magicklist -list evaluate
-                        $Magicklist -list compose
+                        $Magicklist -list evaluate (compare --evaluate)
+                        $Magicklist -list compose  (compare --compose)
                       Well to combine with --soft. Useable with --threshold.
-                      Compose backgrounds are generated from evaluated min,max
-                      images. Adding a '2', e.g. '--compose=overlay2' swaps
-                      min,max to max,min and can give a different result.
+                      Some recommendations: enfuse saturation mean max
+                      colorize colorize2 pinlight pinlight2
+                      Interesting: interpolate overlay pegtoplight reflect2
  --close [=ARG]       Closes gaps between nearby contrast lines to mark the 
                       area in between as strong contrast, too. Default: 2x2
                       First value is a kernel radius, second a kernel iteration.
@@ -686,22 +686,30 @@ exiftransfer() {
 fakehdr() {
   # simulate a HDR image with multiple exposures combined to one image with balanced light.
   # To achieve this some brightened and darkened images are generated with IM and combined with enfuse.
-
-  #local $Batchlocal
-  #local $Imagelocal
+  
   local Darkfactor Brightfactor Darkpercent Brightpercent
   local Error=
   local Method Percent
-  local Imagecount Imagebasename Convertline Output Basename
+  local Imagecount Imagebasename Command Output Basename Brightimage Darkimage
+  local Longoptions Parsedoptions
   
-  #parse_batchoptions "$@" || return 1
-  #setup_imagelist         || return 1
+  Longoptions="percent:,method:,basename:"
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"  
+  while [ "$#" -gt 0 ]; do
+    case "${1:-}" in
+      --percent)  Percent="${2:-}" ; shift ;;
+      --method)   Method="${2:-}" ; shift ;;
+      --basename) Basename="${2:-}" ; shift ;;
+    esac
+    shift
+  done
   
-  Percent="${1:-50}" && shift
+  Percent="${Percent:-50}"
   Percent="${Percent%"%"}"
   Method="${Method:-level}"
   #Method=gamma
-  Basename="fakehdr${Percent}.$Method.$Sourcemd5"
+  Basename="${Basename:-fakehdr${Percent}.$Method.$Sourcemd5}"
   maskexist "$Basename" && {
     verbose "Skipping fakehdr, already exists: $Basename"
     return 0
@@ -718,44 +726,45 @@ fakehdr() {
     Imagecount=$((Imagecount+1))
     Number="$(printnum $Imagecount $Imagenumberlength)"
     Imagebasename="$(basename $Sourceimage)"
-    Convertline="$Magickbin $Sourceimage -write mpr:image +delete"  
-    #Convertline="$Convertline     ( mpr:image                                           -write $Cachedir/$Imagebasename.exp.source.tif )" 
+    Brightimage="$Cachedir/$Imagebasename.exp.bright.tif"
+    Darkimage="$Cachedir/$Imagebasename.exp.dark.tif"
+    Command="$Magickbin '$Sourceimage' -write mpr:image -delete 0"  
     case $Method in
       brightness)    
-        Convertline="$Convertline ( mpr:image -brightness-contrast  ${Percent}%  -write $Cachedir/$Imagebasename.exp.bright.tif  )" 
-        Convertline="$Convertline ( mpr:image -brightness-contrast -${Percent}%  -write $Cachedir/$Imagebasename.exp.dark.tif   )" 
+        Command="$Command ( mpr:image -brightness-contrast  ${Percent}%         -write '$Brightimage'  )" 
+        Command="$Command ( mpr:image -brightness-contrast -${Percent}%         -write '$Darkimage'   )" 
       ;;
       modulate)    
-        Convertline="$Convertline ( mpr:image -modulate ${Brightpercent}%               -write $Cachedir/$Imagebasename.exp.bright.tif  )" 
-        Convertline="$Convertline ( mpr:image -modulate ${Darkpercent}%                 -write $Cachedir/$Imagebasename.exp.dark.tif   )" 
+        Command="$Command ( mpr:image -modulate ${Brightpercent}%               -write '$Brightimage'  )" 
+        Command="$Command ( mpr:image -modulate ${Darkpercent}%                 -write '$Darkimage'   )" 
       ;;
       multiply)    
-        Convertline="$Convertline ( mpr:image -evaluate multiply ${Brightfactor}        -write $Cachedir/$Imagebasename.exp.bright.tif  )" 
-        Convertline="$Convertline ( mpr:image -evaluate multiply ${Darkfactor}          -write $Cachedir/$Imagebasename.exp.dark.tif   )" 
+        Command="$Command ( mpr:image -evaluate multiply ${Brightfactor}        -write '$Brightimage'  )" 
+        Command="$Command ( mpr:image -evaluate multiply ${Darkfactor}          -write '$Darkimage'   )" 
       ;;
       levelgamma)    
-        Convertline="$Convertline ( mpr:image -level 0%x${Darkpercent}%,${Brightfactor} -write $Cachedir/$Imagebasename.exp.bright.tif  )" 
-        Convertline="$Convertline ( mpr:image +level 0%x${Darkpercent}%,${Brightfactor} -write $Cachedir/$Imagebasename.exp.dark.tif   )" 
+        Command="$Command ( mpr:image -level 0%x${Darkpercent}%,${Brightfactor} -write '$Brightimage'  )" 
+        Command="$Command ( mpr:image +level 0%x${Darkpercent}%,${Brightfactor} -write '$Darkimage'   )" 
       ;;
       level)    
-        Convertline="$Convertline ( mpr:image -level 0%x${Darkpercent}%                 -write $Cachedir/$Imagebasename.exp.bright.tif  )" 
-        Convertline="$Convertline ( mpr:image +level 0%x${Darkpercent}%                 -write $Cachedir/$Imagebasename.exp.dark.tif   )" 
+        Command="$Command ( mpr:image -level 0%x${Darkpercent}%                 -write '$Brightimage'  )" 
+        Command="$Command ( mpr:image +level 0%x${Darkpercent}%                 -write '$Darkimage'   )" 
       ;;
       gamma)
-        Convertline="$Convertline ( mpr:image -gamma ${Brightfactor}                    -write $Cachedir/$Imagebasename.exp.bright.tif  )" 
-        Convertline="$Convertline ( mpr:image -gamma ${Darkfactor}                      -write $Cachedir/$Imagebasename.exp.dark.tif   )" 
+        Command="$Command ( mpr:image -gamma ${Brightfactor}                    -write '$Brightimage'  )" 
+        Command="$Command ( mpr:image -gamma ${Darkfactor}                      -write '$Darkimage'   )" 
       ;;
     esac
-    Convertline="$Convertline xc:white null:"
-    echo $Convertline
-    multicore "$Convertline" || Error=1
+    Command="$Command xc:white null:"
+
+    multicore -- $Command || Error=1
     multicore_wait || Error=1
     [ "$Error" ] && break
-    Output="$Cachedir/$Basename.$Number.$Imagebasename"
-    multicore "enfuse $Sourceimage $(find $Cachedir/${Imagebasename}.exp* | tr "\n" " ") -o $Output --saturation-weight=0 --gray-projector=average && \
-               exiftool -overwrite_original -tagsfromfile $Sourceimage -Orientation= -all:all $Output" "$Output" || Error=1
+    Output="$Cachedir/$Basename.$Number.tif"
+    multicore --showimage "$Output" -- enfuse "$Sourceimage" "$Brightimage" "$Darkimage" -o "$Output" --saturation-weight=0 --gray-projector=average
+#    multicore --showimage "$Output" "enfuse $Sourceimage $(find $Cachedir/${Imagebasename}.exp* | tr "\n" " ") -o $Output --saturation-weight=0 --gray-projector=average && \
+#                                     exiftool -overwrite_original -tagsfromfile $Sourceimage -Orientation= -all:all $Output" || Error=1
     [ "$Error" ] && break
-    showpercent $Imagecount $Imagenumber
   done
   multicore_wait || return 1
   return ${Error:-0}
@@ -960,19 +969,19 @@ level_masks() {
     Resultmask="$(sed "s%.*/%&${Prefix}%" <<< "$Mask")"
     Command="
 $Magickbin
-  $Mask
+  '$Mask'
     -level ${Levelmin}%,${Levelmax}%"
     [ "$Redistshape" ] && Command="$Command
-  $Clutimage
+  '$Clutimage'
     -clut"
     Command="$Command
-  $Resultmask"
+  '$Resultmask'"
   
   [ "$Count" = "1" ] && verbose "Leveling masks with:
 $(grep "\S" <<< "$Command")"
   
     #$Command || error "Failure in leveling $Argmethod masks"
-    multicore "$Command" "$Resultmask" || error "Failure in leveling masks"
+    multicore --showimage "$Resultmask" -- $Command || error "Failure in leveling masks"
   
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
@@ -1003,7 +1012,7 @@ maskfromimage() {
   #( $Sourceimage $Grayscaleconverter -alpha off )
   #( $Imagename   $Grayscaleconverter -alpha off )
     Command="$Magickbin
-  $Imagename 
+  '$Imagename' 
     -write mpr:image
     -delete 0
   mpr:image
@@ -1013,7 +1022,7 @@ maskfromimage() {
     -delete 0
   mpr:image
     $Grayscaleconverter
-  ( $Sourceimage $Grayscaleconverter )
+  ( '$Sourceimage' $Grayscaleconverter )
     -compose Difference -composite
     -alpha off 
     -negate
@@ -1022,12 +1031,12 @@ maskfromimage() {
   mpr:diffmask
   mpr:alpha
     -compose multiply -composite
-    -write $Maskname
+    -write '$Maskname'
   -delete 0
     xc:white null:"
          
     #$Command || error "Failure in mask generation of comparision with $Imagename"
-    multicore "$Command" "$Maskname" || error "Failure in mask generation of comparision with $Imagename"
+    multicore --showimage "$Maskname" -- $Command || error "Failure in mask generation of comparision with $Imagename"
   
     [ "$Count" = "1" ] && verbose "Generating masks with:
 $(grep "\S" <<< "$Command")"
@@ -1287,7 +1296,7 @@ $Argbasename"
     [ -z "$Maskready" ] && {
       Maskgenerator_all="$Maskgenerator_all
 $Maskgenerator
-    -write $Cachedir/$Argbasename.NUMBER.tif"
+    -write '$Cachedir/$Argbasename.NUMBER.tif'"
       [ -z "$Showimage" ] && {
         Showimage="$Cachedir/$Argbasename.NUMBER.tif"
 #        [ "$Showimageprocessing" ] && Maskgenerator_all="$Maskgenerator_all
@@ -1333,7 +1342,7 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
     
     # Generate command to generate masks            
     Command="$Magickbin
-  $Sourceimage
+  '$Sourceimage'
     -alpha off
     -depth 16
     -write mpr:sourceimage
@@ -1356,7 +1365,7 @@ ${Maskgenerator_all//NUMBER/$Number}"
     [ "$Count" = "1" ] && verbose "Generating masks with:
 $(grep "\S" <<< "$Command")"
 
-    multicore "$Command" "${Showimage//NUMBER/$Number}" || error "Failure in mask generation"
+    multicore --showimage "${Showimage//NUMBER/$Number}" -- $Command || error "Failure in mask generation"
     
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
@@ -1454,11 +1463,11 @@ focus_merge_masks() {
       
     Mergecode="$Mergecode
   ( 
-  $Methodmask"
+  '$Methodmask'"
     
     # less
     [ "$Argdarkenmask" ] && Mergecode="$Mergecode
-  $Argdarkenmask
+  '$Argdarkenmask'
     -compose Darken -composite"
     
     # denoise
@@ -1501,7 +1510,7 @@ focus_merge_masks() {
   note "Merging masks"
   Startzeit="$(date +%s)"
   Count=0
-  [ "$Skipmerge" = "no" ] && for Sourceimage in $Sourceimagelist; do
+  [ "$Skipmerge" = "no" ] && while read Sourceimage; do
     [ "$Error" ] && break
     Count="$((Count+1))"
     Number="$(printnum $Count $Imagenumberlength)"
@@ -1513,17 +1522,17 @@ $Magickbin
 $(sed "s/NUMBER/$Number/g" <<< "$Mergecode" )
   mpr:mergemask
     $Tifstore 
-  $Mergemask"
+  '$Mergemask'"
   
     [ "$Count" = "1" ] && verbose "Merging masks with:
 $(grep "\S" <<< "$Command")"
 
-    multicore "$Command" "$Mergemask" || error "Error while merging masks"
+    multicore --showimage "$Mergemask" -- $Command || error "Error while merging masks"
     
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
     verbose "Merging $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
-  done
+  done <<< $Sourceimagelist
   multicore_wait || error "Error while merging masks"
   
   #[ "$Maskmethodnumber" -gt 1 ] && {
@@ -1889,7 +1898,7 @@ focus_maskmethod() {
     compose)
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( $Cachedir/compose.$Argword1.$Sourcemd5.tif $Grayscaleconverter -alpha off )
+  ( '$Cachedir/compose.$Argword1.$Sourcemd5.tif' $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
     ;;
@@ -1913,14 +1922,14 @@ Maskgenerator="$Maskgenerator
     enfuse)
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( $Cachedir/enfuse.$Sourcemd5.tif $Grayscaleconverter -alpha off )
+  ( '$Cachedir/enfuse.$Sourcemd5.tif' $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
     ;;
     evaluate)
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( $Cachedir/evaluate.$Argword1.$Sourcemd5.tif $Grayscaleconverter -alpha off )
+  ( '$Cachedir/evaluate.$Argword1.$Sourcemd5.tif' $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
     ;;
@@ -2031,7 +2040,7 @@ Maskgenerator="$Maskgenerator
     image)
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( $Argword1 $Grayscaleconverter -alpha off )
+  ( '$Argword1' $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
     ;;
@@ -2564,9 +2573,26 @@ multicore() {
   # $2 Image to show if $1 is finished
   # Run multicore_wait afterwards to wait for the last processes to finish.
   
-  local Process Command
+  local Process Command= Commandargs=
   local Mem_needed Zram
+  local Longoptions Parsedoptions
+  local Showimage Memory
   
+  Longoptions="showimage:,memory"
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"  
+  while [ "$#" -gt 0 ]; do
+    case "${1:-}" in
+      --showimage) Showimage="${2:-}" ; shift ;;
+      --memory)    Memory="${2:-}" ; shift ;;
+      --) ;;
+      *)
+        [ -z "$Command" ] && Command="${1:-}" || Commandargs="$Commandargs '${1:-}'"
+      ;;
+    esac
+    shift
+  done
+
   [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
     multicore_wait || return 1
   }
@@ -2586,20 +2612,19 @@ multicore() {
 
   Multicore_processcount=$((Multicore_processcount +1))
 
-  Command="$(cut -d ' ' -f1 <<< "${1:-}")"
-  case $(type -t "$Command") in
-    file) Command="nice ${1:-}" ;;
-    *)    Command="${1:-}" ;;
+  case $(type -t "$(cut -d ' ' -f1 <<< "$Command")") in
+    file) Command="nice $Command" ;;
+    *)    ;;
   esac
   
   #verbose "multicore: ${1:-}"
   Command="${Command//[$'\t\r\n']}"
   Command="$(sed 's/(/\\(/g ; s/)/\\)/g ; s/>/\\>/g' <<< "$Command")"
-  eval "$Command &"
+  eval "$Command $Commandargs &"
   
   Multicore_process[Multicore_processcount]=$!
-  Multicore_image[Multicore_processcount]="${2:-}"
-  Multicore_memory[Multicore_processcount]="${3:-0}"
+  Multicore_image[Multicore_processcount]="${Showimage:-}"
+  Multicore_memory[Multicore_processcount]="${Memory:-0}"
   
   return 0
 }
@@ -3220,6 +3245,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
 main() {
   trap trap_sigint SIGINT
   set -u
+  
   declare_variables
   multicore_init
 
@@ -3287,25 +3313,21 @@ $Maskmethodlist
   [ "$Preservecache" ] || rm -f $Cachedir/*
   
   #Firstimage="$(head -n1 <<< "$Sourceimagelist")" 
-  [ "$(cat "$Cachedir/md5" 2>/dev/null)" != "$Sourcemd5" ] && rm -r $Cachedir/* 2>/dev/null
   echo "$Sourcemd5" > "$Cachedir/md5"
   [ "$Error" ] && return 1
   
-  Enfusebaseimage="$Cachedir/enfuse.$Sourcemd5.tif"
   Testimage="$Cachedir/test.png"
   Resultmask="$Cachedir/result.max.tif"
 
   # --fakehdr
   [ "$Fakehdr" ] && {
-    fakehdr "$Fakehdr"
-    Imagelist=""
-    for Image in $Sourceimagelist; do
-      Imagelist="$Imagelist 
-$Cachedir/fakehdr*.$(basename "$Image")"
-    done
-    Sourceimagelist="$(grep . <<< "$Imagelist")"
+    fakehdr --percent "$Fakehdr" --method level --basename "fakehdr$Fakehdr.$Sourcemd5"
+    Sourceimagelist="$(masklist "fakehdr$Fakehdr.$Sourcemd5")"
     Sourcemd5="$(md5cut "$(ls --full-time $Sourceimagelist)" )"
   }
+  
+  # --enfuse, --bg=enfuse
+  Enfusebaseimage="$Cachedir/enfuse.$Sourcemd5.tif"
   
   # --background
   [ "$Background" ] && Backgroundimage="$Cachedir/background.tif"
@@ -3339,7 +3361,7 @@ $Cachedir/fakehdr*.$(basename "$Image")"
       Backgroundimage="$(imfuse --cache="$Cachedir" --basename="$Cachedir/" --saturation --showname $Sourceimagelist)"
       [ -e "$Backgroundimage" ] || {
         note "Generating saturation background image"
-        imfuse --cache=$Cachedir --output="$Backgroundimage" --saturation $([ "$Showimageprocessing" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation background"
+        imfuse --cache="$Cachedir" --output="$Backgroundimage" --saturation $([ "$Showimageprocessing" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation background"
       }
     ;;
     enfuse)
