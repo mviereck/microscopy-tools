@@ -1,6 +1,6 @@
-imfuse --diffstat=r2,less,close,soft   --saturation=w
-imfuse --log=s0.2,less,close,soft      --saturation=w
-imfuse --dog=s0.3,less,close,soft      --saturation=w
-imfuse --freichen=15,less,close,soft   --saturation=w
-imfuse --gaussian=s0.3,less,close,soft --saturation=w
-imfuse --wavelet=p10,less,close,soft   --saturation=w
+imfuse --diffstat=r2,less,close,alpha   --saturation=w
+imfuse --log=s0.2,less,close,alpha      --saturation=w
+imfuse --dog=s0.3,less,close,alpha      --saturation=w
+imfuse --freichen=15,less,close,alpha   --saturation=w
+imfuse --gaussian=s0.3,less,close,alpha --saturation=w
+imfuse --wavelet=p10,less,close,alpha   --saturation=w

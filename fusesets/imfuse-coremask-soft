@@ -1,17 +1,17 @@
-# basic mask generators + soft
-imfuse --blur --soft
-imfuse --comet --soft
-imfuse --compass --soft
-imfuse --diffstat --soft
-imfuse --freichen --soft
-imfuse --gaussian --soft
-#imfuse --kirsch --soft
-imfuse --laplacian --soft
-imfuse --log --soft
-imfuse --morphology --soft
-imfuse --prewitt --soft
-imfuse --roberts --soft
-imfuse --sobel --soft
-imfuse --statistic --soft
-#imfuse --unsharp --soft
-imfuse --wavelet --soft
+# basic mask generators + alpha
+imfuse --blur --alpha
+imfuse --comet --alpha
+imfuse --compass --alpha
+imfuse --diffstat --alpha
+imfuse --freichen --alpha
+imfuse --gaussian --alpha
+#imfuse --kirsch --alpha
+imfuse --laplacian --alpha
+imfuse --log --alpha
+imfuse --morphology --alpha
+imfuse --prewitt --alpha
+imfuse --roberts --alpha
+imfuse --sobel --alpha
+imfuse --statistic --alpha
+#imfuse --unsharp --alpha
+imfuse --wavelet --alpha
