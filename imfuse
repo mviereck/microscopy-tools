@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.7.0-beta"
+Version="0.6.7.1-beta"
 
 # ToDo:
 #
@@ -240,17 +240,33 @@ Colorspace channel mask options: (Intended for artefact removal)
  --saturation         Saturation channel from HSB colorspace.
 
 Mask generation and fusion adjustments:
- --background BG      Specify a background to paint on. Default: mean
+ --alpha [=LEVEL]     Generate transparent image using the contrast mask as 
+                      alpha channel (=transparency channel).
+                      Good method to reduce noise in low contrast areas.
+                      The semitransparent result is composed over a background.
+                      Default background is 'enfuse'. Others are worth a test.
+                      Can take an argument as one or two percent values.
+                      Simplified usage: If only one value is given, 
+                      positive values make the image more transparent and 
+                      negative values make it less transparent.
+                      Advanced usage: Two percent values A%xB% are applied
+                      as '+level A%xB%' on the transparency alpha channel.
+                      This allows to adjust transparency of low contrast areas 
+                      with A% and of high contrast areas with B%. 
+                      Negative values and higher than 100% are possible.
+                      Try script 'demo-alphalevel' to understand the effects.
+ --bg, --background BG    Specify a background to paint on.
                       BG can be an image name or one out of:
                         enfuse
                         saturation
+                        transparent
                         $Magicklist -list color
                         $Magicklist -list evaluate (compare --evaluate)
                         $Magicklist -list compose  (compare --compose)
-                      Well to combine with --alpha. Useable with --threshold.
-                      Some recommendations: enfuse saturation mean max
+                      Useful with options --alpha and --threshold.
+                      Some recommendations: enfuse saturation mean max min
                       colorize colorize2 pinlight pinlight2
-                      Interesting: interpolate overlay pegtoplight reflect2
+                      Interesting: interpolate overlay pegtoplight reflect
  --close [=ARG]       Closes gaps between nearby contrast lines to mark the 
                       area in between as strong contrast, too. Default: 2x2
                       First value is a kernel radius, second a kernel iteration.
@@ -290,22 +306,7 @@ Mask generation and fusion adjustments:
                       difference. Default value: 60
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
- --alpha [=LEVEL]     Generate transparent image using the contrast mask as 
-                      alpha channel (=transparency channel).
-                      The semitransparent result is composed over a background.
-                      Good method to reduce noise in low contrast areas.
-                      Default background is 'enfuse'. Others are worth a test.
-                      Can take an argument as one or two percent values.
-                      Simplified: If only one value is given, positive values 
-                      make the image more transparent and negative values make
-                      it less transparent.
-                      Advanced usage: Two percent values A%xB% are applied
-                      as '+level A%xB%' on the transparency alpha channel.
-                      This allows to adjust transparency of low contrast areas 
-                      with A% and high contrast areas with B%. 
-                      Negative values and higher than 100% are possible.
-                      Try script 'demo-alphalevel' to understand the effects.
- --threshold [=%]     Make lower contrast area transparent. Default %: 50
+ --threshold [=%]     Make low contrast area transparent. Default %: 50
                            
 Basics:                   
 Fusing a focus stack aims to generate an overall sharp image of several single
@@ -2270,26 +2271,34 @@ maskarg_defaultvalue() {
       esac
     ;;
     less)
-      echo "60"
-      false && case "${1:-}" in
-        blur)       echo "8" ;;
-        comet)      echo "6" ;;
-        compass)    echo "4" ;;
-        dog)        echo "6" ;;
-        diffstat)   echo "5" ;;
-        freichen)   echo "15" ;;
-        gaussian)   echo "8" ;;
-        #kirsch)     echo "2" ;;
-        #laplacian
-        log)        echo "8" ;;
-        morphology) echo "10" ;;
-        prewitt)    echo "4" ;;
-        roberts)    echo "20" ;;
-        sobel)      echo "4" ;;
-        statistic)  echo "15" ;;
+      case "${1:-}" in
+        blur)       echo "60" ;;
+        comet)      echo "45" ;;
+        compass)    echo "45" ;;
+        dog)        echo "60" ;;
+        diffstat)
+          case "$Argword1,$Argword2" in
+            "median,mean") echo "45" ;;
+            "min,max")     echo "45" ;;
+          esac
+        ;;
+        freichen)   echo "45" ;;
+        gaussian)   echo "60" ;;
+        kirsch)     echo "60" ;;
+        laplacian)
+          case $Argword1 in
+            3)      echo "60" ;;
+          esac
+        ;;
+        log)        echo "60" ;;
+        morphology) echo "45" ;;
+        prewitt)    echo "45" ;;
+        roberts)    echo "60" ;;
+        sobel)      echo "45" ;;
+        statistic)  echo "45" ;;
         #unsharp
-        wavelet)    echo "35" ;;
-        *)          echo "10" ;;
+        wavelet)    echo "45" ;;
+        *)          echo "60" ;;
       esac
     ;;
     levelmin)
