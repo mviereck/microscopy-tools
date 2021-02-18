@@ -1,12 +1,12 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.6.5-beta"
+Version="0.6.7.0-beta"
 
 # ToDo:
 #
 # imfuse:
-# check soft ARG
+# check alpha ARG
 # whitespace in file names
 # --maskblur altogether?
 # --gamma?
@@ -69,7 +69,7 @@ Arguments taken by all mask options:
             noteable effect where the morphology mask strength is below 25%.
   c, close  Compare option --close, here applied for single mask only.
   less      Compare option --less, here applied for single mask only.
-  soft      Compare option --soft, here applied for single mask only.
+  alpha     Compare option --alpha, here applied for single mask only.
   maskblur  Compare option --maskblur, here applied for single mask only.
   denoise   Compare option --denoise, here applied for single mask only.
   negate    Negate/invert the mask. Rarely needed.
@@ -247,7 +247,7 @@ Mask generation and fusion adjustments:
                         $Magicklist -list color
                         $Magicklist -list evaluate (compare --evaluate)
                         $Magicklist -list compose  (compare --compose)
-                      Well to combine with --soft. Useable with --threshold.
+                      Well to combine with --alpha. Useable with --threshold.
                       Some recommendations: enfuse saturation mean max
                       colorize colorize2 pinlight pinlight2
                       Interesting: interpolate overlay pegtoplight reflect2
@@ -264,7 +264,7 @@ Mask generation and fusion adjustments:
  --cutblur [=SIGMA]   Blur cut masks in final montage. Default SIGMA: 2
  --denoise [=%]       Experimental option to remove noise in low contrast areas.
                       The percent value is a threshold. 
-                      Rather use --soft or --finalblur.
+                      Rather use --alpha or --finalblur.
  --fakehdr [=%]       Balances over- and underexposed areas. Default %: 50
                       Remaining artefacts at borders of overexposured areas
                       might be fixed with --saturation. Alternative: --halo
@@ -290,19 +290,21 @@ Mask generation and fusion adjustments:
                       difference. Default value: 60
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
- --soft [=LEVEL]      Enable soft fuse mode. 
-                      Best method to reduce noise in low contrast areas.
-                      A semitransparent result is composed over the background.
+ --alpha [=LEVEL]     Generate transparent image using the contrast mask as 
+                      alpha channel (=transparency channel).
+                      The semitransparent result is composed over a background.
+                      Good method to reduce noise in low contrast areas.
                       Default background is 'enfuse'. Others are worth a test.
                       Can take an argument as one or two percent values.
                       Simplified: If only one value is given, positive values 
-                      make the image softer and negative values make it harder.
+                      make the image more transparent and negative values make
+                      it less transparent.
                       Advanced usage: Two percent values A%xB% are applied
                       as '+level A%xB%' on the transparency alpha channel.
                       This allows to adjust transparency of low contrast areas 
                       with A% and high contrast areas with B%. 
                       Negative values and higher than 100% are possible.
-                      Try script 'demo-softlevel' to understand the effects.
+                      Try script 'demo-alphalevel' to understand the effects.
  --threshold [=%]     Make lower contrast area transparent. Default %: 50
                            
 Basics:                   
@@ -322,8 +324,8 @@ has some weaknesses and can lead to artefacts.
   All contrast mask methods give unsatisfying results in areas that have low 
   contrast on all source images of the stack.
   Possibilities:
-   - Option --soft gives a quite satisfying result for low contrast noise areas.
-     Example: '--diffstat --soft' or '--diffstat=soft'
+   - Option --alpha gives a quite satisfying result for low contrast noise areas.
+     Example: '--diffstat --alpha' or '--diffstat=alpha'
    - Another possibility to soften the noise is option --finalblur.
      Example: '--diffstat --finalblur=w25,s2'
    - Combining the contrast mask with a color saturation mask.
@@ -342,10 +344,10 @@ Go to the folder above 'stackshot'.
   Run imfuse with:
     imfuse -V --cache --diffstat stackshot/*
   You might be unsatisfied with low contrast areas. Try:
-    imfuse -V --cache --diffstat --saturation=w50      stackshot/*
-    imfuse -V --cache --diffstat --soft                stackshot/*
+    imfuse -V --cache --diffstat --saturation=w50       stackshot/*
+    imfuse -V --cache --diffstat --alpha                stackshot/*
   You might have incomplete foreground objects. Try:
-    imfuse -V --cache --diffstat --soft --less --close stackshot/*
+    imfuse -V --cache --diffstat --alpha --less --close stackshot/*
 "
 }
 
@@ -474,6 +476,60 @@ masklist() {
 
 ### image processing helpers
 
+alphalevel() {
+  local Command Image Mask Level
+  local Longoptions Parsedoptions
+  
+  Longoptions="image:,mask:,level:"
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"
+  
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --image)        Image="${2:-}" ; shift ;;
+      --mask)         Mask="${2:-}"  ; shift ;;
+      --level)        Level="${2:-}" ; shift ;;
+    esac
+    shift
+  done
+  
+  [ -z "$Image" ] && return 1
+  Level="${Level:-0x100}"
+  Level="$(levelparse "$Level")"
+  Level="$(levelpercent "$Level")"
+  
+  Command="$Magickbin
+  '$Image'
+    -write mpr:image
+    -delete 0"
+  case "$Mask" in
+    "")
+      Command="$Command
+  mpr:image
+    -channel alpha
+    -separate
+    -write mpr:mask
+    -delete 0"
+    ;;
+    *)
+      Command="$Command
+  $Mask
+    -write mpr:mask
+    -delete 0"
+    ;;
+  esac
+  Command="$Command
+  mpr:image
+  ( mpr:mask +level $Level )
+    -alpha off
+    -compose CopyOpacity -composite
+    $Tifstorealpha
+  $Image"
+  
+  multicore --showimage "$Image" -- $Command || error "Error in alphalevel(): $Parsedoptions"
+  multicore_wait                             || error "Error in alphalevel(): $Parsedoptions"
+  return ${Error:-0}
+}
 denoisecode() {
   echo "
     -write mpr:denoisemask
@@ -799,7 +855,7 @@ finalblur() {
     -compose CopyOpacity -composite
     -write mpr:partsource_blurred
     -delete 0"
-  [ "$Globalsoft" ] && {
+  [ "$Globalalpha" ] && {
     Command="$Command
   mpr:maskmax
   mpr:cutmask
@@ -898,7 +954,7 @@ layered_tif() {
     -compose CopyOpacity -composite
     -write mpr:layer$Layer
     -delete 0"
-    [ "$Globalsoft" ] && {
+    [ "$Globalalpha" ] && {
       Command="$Command
   mpr:mask
   mpr:cutmask
@@ -1190,25 +1246,6 @@ redist() {
 $Histogram"
   showimage $Histogram
 }
-softlevel() {
-  local Image Mask Level Command Error
-  Image="${1:-}"
-  Mask="${2:-}"
-  Level="${3:-}"
-
-  verbose "Applying --soft=$Globalsoft"
-  
-  Command="$Magickbin
-  $Image
-    -channel alpha
-    +level $(levelpercent "$Level")
-    +channel
-  $Image"
-  
-  $Command || error "Error applying --soft=$Softfusion to $Image"
-  showimage "$Image"
-  return ${Error:-0}
-}
 threshold() {
   local Image Mask Threshold Command Error
   Image="${1:-}"
@@ -1224,7 +1261,7 @@ threshold() {
   $Mask
     -write mpr:mask
     -delete 0"
-  case $Globalsoft in
+  case $Globalalpha in
     "")
       Command="$Command
   mpr:image
@@ -1282,7 +1319,7 @@ focus_generate_masks() {
     }
 
     [ "$Argmethod" = "enfuse" ] && Enfuse_needlist="$Enfuse_needlist enfuse"
-    [ "$Argsoft" ]              && Enfuse_needlist="$Enfuse_needlist enfuse"
+    [ "$Argalpha" ]              && Enfuse_needlist="$Enfuse_needlist enfuse"
       
     Maskmd5="$(md5cut "$Sourcemd5 $Maskgenerator")"
     Argbasename="$Argmethod.$Maskmd5"
@@ -1323,7 +1360,7 @@ $($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgen
   # --evaluate, --compose, M,m
   generate_composite
   
-  # --enfuse, --bg=enfuse, soft
+  # --enfuse, --bg=enfuse, --alpha
   [ "$Enfuse_needlist" ] && [ ! -e "$Enfusebaseimage" ] && {
     note "Generating enfuse base image"
     nice enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask -o "$Enfusebaseimage" $Sourceimagelist 2>&1 | { grep -v -E 'loading next image|alpha channel|assuming all pixels' ; :; } || error "Failed to generate enfuse base image"
@@ -1376,7 +1413,7 @@ $(grep "\S" <<< "$Command")"
   multicore_wait || error "Failure in mask generation"
   
   
-  # less,soft
+  # less,alpha
   while read Line; do
     [ "$Error" ] && break
     maskarg_parse "$Line"
@@ -1388,19 +1425,19 @@ $(grep "\S" <<< "$Command")"
     }
     [ "$Error" ] && break
     
-    [ "${Argless}" ] && [ "${Argsoft}" ] && {
-      note "Generating soft&less image for mask $Argmethod"
-      Imagename="$Cachedir/$Argbasename-prepare-less${Argless}-soft${Argsoft}-cb${Cutblur}.tif"
-      Maskmax="$Cachedir/$Argbasename-prepare-less${Argless}-soft${Argsoft}-cb${Cutblur}.mask.tif"
-      focus_montage --soft "$Argsoft" --lessthanmax "$Argless" --maskmax="$Maskmax" --output "$Imagename" -- $(masklist "$Argbasename") || error "Error in focus_generate_masks->focus_montage for less+soft"
-      softlevel "$Imagename" "$Maskmax" "$Argsoft" || error "Error in focus_generate_masks->softlevel"
+    [ "${Argless}" ] && [ "${Argalpha}" ] && {
+      note "Generating alpha&less image for mask $Argmethod"
+      Imagename="$Cachedir/$Argbasename-prepare-less${Argless}-alpha${Argalpha}-cb${Cutblur}.tif"
+      Maskmax="$Cachedir/$Argbasename-prepare-less${Argless}-alpha${Argalpha}-cb${Cutblur}.mask.tif"
+      focus_montage --alpha "$Argalpha" --lessthanmax "$Argless" --maskmax="$Maskmax" --output "$Imagename" -- $(masklist "$Argbasename") || error "Error in focus_generate_masks->focus_montage for less+alpha"
+      alphalevel --image "$Imagename" --mask "$Maskmax" --level "$Argalpha" || error "Error in focus_generate_masks->alphalevel"
       [ "$Error" ] && break
-      #$Magickbin "$Enfusebaseimage" "$Imagename" -compose Over -composite "$Imagename" || error "Failed to compose soft result on enfuse background"
-      Argbasename="$Argmethod-soft$Argsoft-less$Argless-cb$Cutblur.$(md5cut "$Argbasename $Argsoft $Argless $Cutblur" )"
+      #$Magickbin "$Enfusebaseimage" "$Imagename" -compose Over -composite "$Imagename" || error "Failed to compose alpha result on enfuse background"
+      Argbasename="$Argmethod-alpha$Argalpha-less$Argless-cb$Cutblur.$(md5cut "$Argbasename $Argalpha $Argless $Cutblur" )"
       maskexist "$Argbasename" || {
         rm -f $(masklist "$Argbasename")
-        note "Generating comparision masks from soft&less result of $Argmethod"
-        maskfromimage $Imagename $Cachedir/$Argbasename || error "Error in maskfromimage() for less+soft"
+        note "Generating comparision masks from alpha&less result of $Argmethod"
+        maskfromimage $Imagename $Cachedir/$Argbasename || error "Error in maskfromimage() for less+alpha"
         [ "$Error" ] && break
       }
       Arglevel=""
@@ -1408,7 +1445,7 @@ $(grep "\S" <<< "$Command")"
       maskarg_store      
     }
     
-    [ "${Argless}" ] && [ -z "${Argsoft}" ] && {
+    [ "${Argless}" ] && [ -z "${Argalpha}" ] && {
       Imagename="$Cachedir/$Argbasename-prepare-less$Argless-cb${Cutblur}.tif"
       Maskmax="$Cachedir/$Argbasename-less${Argless}-cb$Cutblur.mask.tif"
       [ -e "$Maskmax" ] || {
@@ -1551,13 +1588,13 @@ focus_montage() {
   local Lessthanmaxmask
   local Maskmax Maskmaxcopy= Maskmaxready= Levelmax
   local Count Number
-  local Contrastmaxlevel Softfusion= Lessthanmax=
+  local Contrastmaxlevel Alphalevel= Lessthanmax=
   local Command Skipmontage=
   local Startzeit Dauer Restzeit
   local Stepwise Sourcepartimage Sourcepartimagelist= Sourcemask
   local Longoptions Parsedoptions
   
-  Longoptions="soft:,lessthanmax:,maskmax:,maskstrength:,output:"
+  Longoptions="alpha:,lessthanmax:,maskmax:,maskstrength:,output:"
   
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
@@ -1565,7 +1602,7 @@ focus_montage() {
   while [ $# -gt 0 ]; do
     case "${1:-}" in
       --output)       Outputimage="${2:-}" ; shift ;;
-      --soft)         Softfusion="${2:-}"  ; shift ;;
+      --alpha)         Alphalevel="${2:-}"  ; shift ;;
       --lessthanmax)  Lessthanmax="${2:-}" ; shift ;;
       --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
       --) ;;
@@ -1575,11 +1612,9 @@ focus_montage() {
   done
   [ -z "$Maskimagelist" ] && Maskimagelist="$(masklist $Mergemaskbasename | tr '\n' ' ')"
   
-  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $( [ "$Softfusion" ] && echo soft) $Lessthanmax $Cutblur")"
-#  Resultimage="$Cachedir/montage-$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)-soft${Softfusion:-0}-less${Lessthanmax:-0}.$Resultmd5.tif"
+  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Lessthanmax $Cutblur")"
   Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
   [ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
-  [ "$Softfusion" ]     && Resultimage="$Resultimage-soft"
   [ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
   [ "$Cutblur" ]        && Resultimage="$Resultimage-cutblur${Cutblur:-0}"
   Resultimage="$Cachedir/montage-$Resultimage.$Resultmd5.tif"
@@ -1587,7 +1622,7 @@ focus_montage() {
   
   Maskmax="${Maskmax:-$Cachedir/montage.max.$Resultmd5.tif}" 
   
-  [ -e "$Resultimageready" ] && {
+  [ -e "$Resultimage" ] && [ -e "$Resultimageready" ] && {
     verbose "Skipping montage, already exists: $(basename $Resultimage)"
     showimage "$Resultimage"
     Skipmontage="yes"
@@ -1601,10 +1636,6 @@ focus_montage() {
     Levelmax="$($Magickbin "$Maskmax" -format '%[fx:maxima*100]' info:)"
   
     [ "$Lessthanmax" ] && {
-      #evaluate max $Maskmax $Maskimagelist || return 1
-      #Maskmaxready="yes"
-      #Contrastmaxlevel="$($Magickbin $Maskmax -format '%[fx:maxima*100]' info:)"
-      #Lessthanmax="$(calc "$Lessthanmax*$Contrastmaxlevel/100")"
       Lessthanmaxmask="$Cachedir/lessthanmax.tif"
       mkimg_black "$Lessthanmaxmask"
     }
@@ -1648,6 +1679,7 @@ $Magickbin
     -delete 0"
     [ "$Stepwise" = "yes" ] && Command="$Command
   $Resultimage
+    -alpha off
     -write mpr:resultimage
     -delete 0"
     
@@ -1753,6 +1785,7 @@ $Magickbin
     -delete 0"
     } #/--lessthanmax
     
+    # --cutblur: blur cut mask
     [ "$Cutblur" ] && Command="$Command
   mpr:cutmask
     -alpha off
@@ -1762,32 +1795,13 @@ $Magickbin
     -write mpr:cutmask
     -delete 0"
     
-    case $Softfusion in
-      "") # hard (default)
-        Command="$Command
+    # get part of source image
+    Command="$Command
   mpr:sourceimage
   mpr:cutmask
     -alpha off -compose CopyOpacity -composite
     -write mpr:sourcepart
     -delete 0"
-      ;;
-      *) # --soft
-        # get part of source mask
-        Command="$Command
-  mpr:sourcemask 
-  mpr:cutmask
-    -compose Darken -composite
-    -write mpr:sourcemask_part
-    -delete 0"
-        # get part of source image (with semi transparency)
-        Command="$Command
-  mpr:sourceimage 
-  mpr:sourcemask_part
-    -alpha off -compose CopyOpacity -composite
-    -write mpr:sourcepart
-    -delete 0"
-      ;;
-    esac
     
     case $Stepwise in
       yes)
@@ -1795,7 +1809,8 @@ $Magickbin
   mpr:resultimage
   mpr:sourcepart
     -compose Over -composite
-    $Tifstorealpha
+    -alpha off
+    $Tifstore
     -write $Resultimage
     -delete 0"
       ;;
@@ -1817,6 +1832,7 @@ $(grep "\S" <<< "$Command")"
     case $Stepwise in
       yes)
         $Command || error "Error while cutting images"
+        [ "$Alphalevel" ] && alphalevel --image "$Resultimage" --mask "$Maskmax" --level "$Alphalevel"
         showimage $Resultimage
         #showimage $Testimage
       ;;
@@ -1826,6 +1842,7 @@ $(grep "\S" <<< "$Command")"
         [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
           multicore_wait || error "Error in result montage"
           flatten "$Resultimage" $Sourcepartimagelist  || error "Error while flattening images"
+          [ "$Alphalevel" ] && alphalevel --image "$Resultimage" --mask "$Maskmax" --level "$Alphalevel"
           showimage "$Resultimage"
           Sourcepartimagelist=""
         }
@@ -1844,6 +1861,7 @@ $(grep "\S" <<< "$Command")"
       verbose "Montage $Resultimage"
       [ "$Sourcepartimagelist" ] && {
         flatten "$Resultimage" $Sourcepartimagelist || error "Error while flattening images"
+        [ "$Alphalevel" ] && alphalevel --image "$Resultimage" --mask "$Maskmax" --level "$Alphalevel"
       }
     ;;
   esac
@@ -1852,7 +1870,7 @@ $(grep "\S" <<< "$Command")"
   :> "$Resultimageready"
   
   [ "$Maskmaxcopy" ] && cp "$Maskmax" "$Maskmaxcopy"
-  $Magickbin "$Resultimage" "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
+  $Magickbin "$Resultimage" -alpha off $Tifstore "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
   
   return "${Error:-0}"
 }
@@ -2146,7 +2164,7 @@ maskarg_parse() {
   Argradius2=""
   Argsigma1=""
   Argsigma2=""
-  Argsoft=""
+  Argalpha=""
   Argtype=""
   Argweight=""
   Argword1=""
@@ -2169,10 +2187,10 @@ maskarg_parse() {
       "S")                Argsigma2="${Value}" ;;
       "p"|"%")            Argpercent1="$(percentrm "$Value")" ;;
       "P")                Argpercent2="$(percentrm "$Value")" ;;
-      "soft"|"softx")     
-        Argsoft="$(tr -d "soft=" <<< "$Line")"
-        Argsoft="${Argsoft:-$(maskarg_defaultvalue      "$Argmethod" soft)}"
-        Argsoft="$(levelparse "$Argsoft")"
+      "alpha"|"alphax")     
+        Argalpha="$(tr -d "alpha=" <<< "$Line")"
+        Argalpha="${Argalpha:-$(maskarg_defaultvalue      "$Argmethod" alpha)}"
+        Argalpha="$(levelparse "$Argalpha")"
       ;;
       "denoise")          Argdenoise="${Value:-$(maskarg_defaultvalue   "$Argmethod" noise)}" ;;
       "d"|"diff")         Argdiff="s" ;;
@@ -2222,7 +2240,7 @@ maskarg_store() {
   [ "$Argword2" ]              && Newoption="$Newoption,WORD2=$Argword2"
   [ "$Argdenoise" ]            && Newoption="$Newoption,denoise=$Argdenoise"
   [ "$Argdiff" ]               && Newoption="$Newoption,diff"
-  [ "$Argsoft" ]               && Newoption="$Newoption,soft=$Argsoft"
+  [ "$Argalpha" ]               && Newoption="$Newoption,alpha=$Argalpha"
   [ "$Argmaskblur" ]           && Newoption="$Newoption,maskblur=$Argmaskblur"
   [ "$Argnegate" ]             && Newoption="$Newoption,negate"
   [ "$Argdarkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Argdarkenmask"
@@ -2407,7 +2425,7 @@ maskarg_defaultvalue() {
         *)         echo "" ;;
       esac
     ;;
-    soft)
+    alpha)
       echo "100"
       false && case "${1:-}" in
         blur)       echo "25" ;;
@@ -2715,7 +2733,7 @@ declare_variables() {
   Argradius2=""
   Argsigma1=""
   Argsigma2=""
-  Argsoft=""
+  Argalpha=""
   Argtype=""
   Argweight=""
   Argword1=""
@@ -2752,7 +2770,7 @@ declare_variables() {
   Globaldenoise=""
   Globalmaskblur=""
   Globalless=""
-  Globalsoft=""
+  Globalalpha=""
   Globalthreshold=""
   Grayscale=""
   Grayscaleconverter=""
@@ -2802,7 +2820,7 @@ parse_options() {
   
   Shortoptions="ho:vV"
   Longoptions="basename:,cache::,exif::,force,help,output:,showimage,showname,test::,threads:,verbose,version"
-  Longoptions="$Longoptions,bg:,background:,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,redist::,revert,soft::,threshold::"
+  Longoptions="$Longoptions,alpha::,bg:,background:,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,redist::,revert,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -2816,6 +2834,7 @@ parse_options() {
   while [ $# -gt 0 ]; do
     [ "$Error" ] && break
     case "${1:-}" in
+         --alpha)             Globalalpha="${2:-auto}"     ; shift ;;
          --bg|--background)   Background="${2:-}"         ; shift ;;
          --basename)          Basename="${2:-auto}"       ; shift ;;
          --cache)             Preservecache="yes"         ; Cachedir="${2:-auto}" ; shift ;;
@@ -2836,7 +2855,6 @@ parse_options() {
          --revert)            Revertimagelist="yes"       ;;
       -V|--showimage)         Showimageprocessing="yes"   ;;
          --showname)          Showname="yes"              ;;
-         --soft)              Globalsoft="${2:-auto}"     ; shift ;;
          --test)              Testsetup="test" Testarg="${2:-}"    ; shift ;;
          --threads)           Multicore_maxprocesses="${2:-}" ; shift ;;
          --threshold)         Globalthreshold="${2:-auto}" ; shift ;;
@@ -2902,8 +2920,8 @@ check_options() {
     esac
     Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
     
-#    [ "${Argless}" ] && [ "${Argsoft}" ] && Background="${Background:-enfuse}"
-    [ "${Argsoft}" ] && Background="${Background:-enfuse}"
+#    [ "${Argless}" ] && [ "${Argalpha}" ] && Background="${Background:-enfuse}"
+    [ "${Argalpha}" ] && Background="${Background:-enfuse}"
     
     [ "$Maskmethodcount" = "1" ] && Firstmaskmethod="$Argmethod"
   
@@ -3045,13 +3063,13 @@ check_options() {
     }
   }
   
-  # --softmode
-  case $Globalsoft in
+  # --alphamode
+  case $Globalalpha in
     "") ;;
     *)
-      #[ "$Globalsoft" = "auto" ] && Globalsoft="$(maskarg_defaultvalue "$Firstmaskmethod" soft )"
-      [ "$Globalsoft" = "auto" ] && Globalsoft="0x100"
-      Globalsoft="$(levelparse "$Globalsoft")"
+      #[ "$Globalalpha" = "auto" ] && Globalalpha="$(maskarg_defaultvalue "$Firstmaskmethod" alpha )"
+      [ "$Globalalpha" = "auto" ] && Globalalpha="0x100"
+      Globalalpha="$(levelparse "$Globalalpha")"
       Background="${Background:-enfuse}"
     ;;
   esac
@@ -3161,7 +3179,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     [ "$Argsigma2" ]             && Resultimage="$Resultimage-s$Argsigma2"
     [ "$Argpercent1" ]           && Resultimage="$Resultimage-p$Argpercent1"
     [ "$Argpercent2" ]           && Resultimage="$Resultimage-P$Argpercent2"
-    [ "$Argsoft" ]               && Resultimage="$Resultimage-soft$Argsoft"
+    [ "$Argalpha" ]               && Resultimage="$Resultimage-alpha$Argalpha"
     [ "$Argless" ]               && Resultimage="$Resultimage-less$Argless"
     [ "$Argclose1" ]             && Resultimage="$Resultimage-close$Argclose1"
     [ "$Argclose2" ]             && Resultimage="${Resultimage}x$Argclose2"
@@ -3182,9 +3200,9 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     "") ;;
     *) Resultimage="${Resultimage}_hdr$Fakehdr" ;;
   esac
-  case $Globalsoft in
+  case $Globalalpha in
     "") ;;
-    *) Resultimage="${Resultimage}_soft$Globalsoft" ;;
+    *) Resultimage="${Resultimage}_alpha$Globalalpha" ;;
   esac
   case $Globalless in
     ""|0) ;;
@@ -3233,7 +3251,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   Resultimage="$(sed "s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
   #Resultimage="$(sed "s/=-/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
     
-  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist $Background $Fakehdr $Globalclose $Globaldenoise $Globalless $Globalsoft $Cutblur $Finalblur $Grayscale $Revertimagelist $Testsetup" )"
+  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist $Background $Fakehdr $Globalclose $Globaldenoise $Globalless $Globalalpha $Cutblur $Finalblur $Grayscale $Revertimagelist $Testsetup" )"
   
   Resultimage="${Resultimage}.${Fusemd5sum}.${Imageformat}"
   [ -z "$Outputdir" ] && Outputdir="$(pwd)"
@@ -3380,10 +3398,10 @@ $Maskmethodlist
   focus_generate_masks                    || return 1
   [ -n "$Maskmethodlist" ] && {
     focus_merge_masks                     || return 1
-    focus_montage --soft "$Globalsoft" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || return 1
-    # --soft=ARG
-    [ "$Globalsoft" ] && {
-      softlevel "$Resultimage" "$Resultmask" "$Globalsoft" || error "Error in leveling --soft='$Globalsoft'"
+    focus_montage --alpha "$Globalalpha" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || return 1
+    # --alpha=ARG
+    [ "$Globalalpha" ] && {
+      alphalevel --image "$Resultimage" --mask "$Resultmask" --level "$Globalalpha" || error "Error in leveling --alpha='$Globalalpha'"
     }
     # --finalblur
     [ "$Finalblur" ] && {
