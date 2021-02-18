@@ -850,6 +850,9 @@ finalblur() {
     -write mpr:cutmask
     -delete 0
   mpr:resultimage
+  mpr:cutmask
+    -alpha off
+    -compose CopyOpacity -composite
     -blur 0x${Sigma:-1}
   mpr:cutmask
     -alpha off
@@ -2282,7 +2285,12 @@ maskarg_defaultvalue() {
             "min,max")     echo "45" ;;
           esac
         ;;
-        freichen)   echo "45" ;;
+        freichen)   
+          case $Argword1 in
+            "")     echo "45" ;;
+            15)     echo "10" ;;
+          esac
+        ;;
         gaussian)   echo "60" ;;
         kirsch)     echo "60" ;;
         laplacian)
