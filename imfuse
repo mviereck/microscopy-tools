@@ -244,7 +244,7 @@ Mask generation and fusion adjustments:
                       alpha channel (=transparency channel).
                       Good method to reduce noise in low contrast areas.
                       The semitransparent result is composed over a background.
-                      Default background is 'enfuse'. Others are worth a test.
+                      Default background is 'transparent'.
                       Can take an argument as one or two percent values.
                       Simplified usage: If only one value is given, 
                       positive values make the image more transparent and 
@@ -255,7 +255,7 @@ Mask generation and fusion adjustments:
                       with A% and of high contrast areas with B%. 
                       Negative values and higher than 100% are possible.
                       Try script 'demo-alphalevel' to understand the effects.
- --bg, --background BG    Specify a background to paint on.
+ --bg, --background BG    Specify a background to paint on. Default: enfuse
                       BG can be an image name or one out of:
                         enfuse
                         saturation
@@ -264,8 +264,8 @@ Mask generation and fusion adjustments:
                         $Magicklist -list evaluate (compare --evaluate)
                         $Magicklist -list compose  (compare --compose)
                       Useful with options --alpha and --threshold.
-                      Some recommendations: enfuse saturation mean max min
-                      colorize colorize2 pinlight pinlight2
+                      Recommendations: enfuse saturation mean max min
+                                       colorize colorize2 pinlight pinlight2
                       Interesting: interpolate overlay pegtoplight reflect
  --close [=ARG]       Closes gaps between nearby contrast lines to mark the 
                       area in between as strong contrast, too. Default: 2x2
@@ -833,7 +833,8 @@ finalblur() {
   Image="${1:-}"
   Mask="${2:-}"
   Percent="${3:-}"
-  Sigma="${4:-}"
+  Sigma="${4:-1}"
+#  Sigma2="${5:-$(calc "$Sigma1/2")}"
   
   verbose "Applying --finalblur=w${Percent}s${Sigma}"
   
@@ -853,7 +854,10 @@ finalblur() {
   mpr:cutmask
     -alpha off
     -compose CopyOpacity -composite
-    -blur 0x${Sigma:-1}
+    -blur 0x$Sigma
+    -write mpr:bokeh
+    -delete 0
+  mpr:bokeh
   mpr:cutmask
     -alpha off
     -compose CopyOpacity -composite
@@ -2837,7 +2841,7 @@ parse_options() {
   
   Shortoptions="ho:vV"
   Longoptions="basename:,cache::,exif::,force,help,output:,showimage,showname,test::,threads:,verbose,version"
-  Longoptions="$Longoptions,alpha::,bg:,background:,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,redist::,revert,threshold::"
+  Longoptions="$Longoptions,alpha::,bg:,background::,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,redist::,revert,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -2851,8 +2855,8 @@ parse_options() {
   while [ $# -gt 0 ]; do
     [ "$Error" ] && break
     case "${1:-}" in
-         --alpha)             Globalalpha="${2:-auto}"     ; shift ;;
-         --bg|--background)   Background="${2:-}"         ; shift ;;
+         --alpha)             Globalalpha="${2:-auto}"    ; shift ;;
+         --bg|--background)   Background="${2:-auto}"     ; shift ;;
          --basename)          Basename="${2:-auto}"       ; shift ;;
          --cache)             Preservecache="yes"         ; Cachedir="${2:-auto}" ; shift ;;
          --close)             Globalclose="${2:-auto}"    ; shift ;;
@@ -2903,6 +2907,15 @@ $(realpath "${1:-}")"
 }  
 check_options() {
   local Arg
+  
+  # source images
+  [ -z "$Sourceimagelist" ] && error "No images specified"
+  Sourceimagelist="$(grep .     <<< "$Sourceimagelist")"
+  Sourceimagelist="$(sort -V -r <<< "$Sourceimagelist")"
+  grep -q ' ' <<< "$Sourceimagelist" && error "imfuse does not accept whitespace in pathes or file names:
+$(grep -m1 ' ' <<< "$Sourceimagelist")"
+  Sourcemd5="$(md5cut "$(ls --full-time $Sourceimagelist)" )"
+  [ "$Error" ] && return 1
 
   # --maskblur
   case $Globalmaskblur in
@@ -2999,37 +3012,87 @@ check_options() {
     
     maskarg_store "$Maskmethodcount"
   done <<< "$Maskmethodlist"
-
   [ "$Error" ] && return 1
+  
+  # --alphamode
+  case $Globalalpha in
+    "") ;;
+    *)
+      #[ "$Globalalpha" = "auto" ] && Globalalpha="$(maskarg_defaultvalue "$Firstmaskmethod" alpha )"
+      [ "$Globalalpha" = "auto" ] && Globalalpha="0x100"
+      Globalalpha="$(levelparse "$Globalalpha")"
+      Background="${Background:-alpha}"
+    ;;
+  esac
 
-  # --factor ### FIXME
-  [ "$Composefactor" = "auto" ] && {
-    case $Argmethod in
-      compose)
-        case $Maskgeneratorargument in
-          blend|colordodge|lighten*|lineardodge|plus|screen) 
-            Composefactor="0.5" ;;
-          bumpmap|colorburn|colordodge|darken*|linearburn|multiply) 
-            Composefactor="2" ;;
-          overlay|pegtoplight|pinlight|softburn|softlight)
-            Composefactor="1" ;;
-          difference|hardlight|linearlight|freeze|reflect|stamp|vividlight)
-            Composefactor="1" ;;
-          colorize|displace|distort|divide*|exclusion|hardmix|interpolate|minus*|modul*|negate|saturate|softdodge) 
-            Composefactor="1" ;;
-          atop|blur|changemask|clear|copy*|darken|darkenintensity|dissolve|dst*|hue|in|intensity|mathematics|none|out|over|replace|src*|stereo|xor)
-            Composefactor="1" ;;
-          *) 
-            Composefactor="1" ;;
-        esac
-      ;;
-      *) Composefactor=1 ;;
-    esac
-    note "Setting --factor=$Composefactor"
+  # --background
+  [ "$Background" = "auto" ] && Background="enfuse"
+  [ -z "$Maskmethodlist" ] && {
+    Background="${Background:-enfuse}"
+    note "No mask option specified, generating background only: $Background"
   }
+  [ "$Background" ] && {
+    checkmagicklist color                     "$Background"   && Backgroundtype="color"
+    checkmagicklist evaluate                  "$Background"   && Backgroundtype="evaluate"
+    checkmagicklist compose  "$(tr -d "2" <<< "$Background")" && Backgroundtype="compose"
+    [ -f "$Background" ]                                      && Backgroundtype="image"
+    case $Background in
+      enfuse|saturation)                                         Backgroundtype="$Background" ;;
+      none)                   Background="" ;                    Backgroundtype="none" ;;
+    esac
+    [ "$Backgroundtype" ] || error "--background: Unknown background: '$Background'"
+  }
+  
+  # --basename
+  case $Basename in
+    #"")   Basename="imfuse" ;;
+    auto) Basename="$(basename "$(pwd)")" ;;
+  esac
+  [ -d "$Basename" ] && {
+    Outputdir="$Basename"
+    Basename=""
+  } || {
+    Outputdir="$(dirname "$Basename")"
+    Basename="$(basename "$Basename")"
+  }
+
+  # --cachedir
+  [ -z "$Cachedir" ]       && Cachedir="$(pwd)/cache.imfuse"
+  [ "$Cachedir" = "auto" ] && Cachedir="$(pwd)/cache.imfuse"
+  Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
+  Cachedir="$(realpath -m "$Cachedir")"
+  
+  # --close
+  case $Globalclose in
+    ""|"0") Globalclose="" ;;
+    *)
+      [ "$Globalclose" = "auto" ] && Globalclose="$(maskarg_defaultvalue "$Firstmaskmethod" close)"
+      Globalclose1=$(cut -dx    -f1 <<< "$Globalclose")
+      Globalclose2=$(cut -dx -s -f2 <<< "$Globalclose")
+      Globalclose1="$(digitonly "$Globalclose1")"
+      Globalclose2="$(digitonly "$Globalclose2")"
+      Globalclose1="${Globalclose1:-1}"
+      Globalclose2="${Globalclose2:-1}"
+      Globalclose="${Globalclose1}x${Globalclose2}"
+      [ "$Maskmethodnumber" = "1" ] && {
+        maskarg_parse "$Maskmethodlist"
+        Argclose1="$Globalclose1"
+        Argclose2="$Globalclose2"
+        maskarg_store
+        Globalclose=""
+        Globalclose1=""
+        Globalclose2=""
+      }
+    ;;
+  esac
   
   # --cutblur
   [ "$Cutblur" = "auto" ] && Cutblur="1"
+  
+  # --denoise
+  case $Globaldenoise in
+    auto) Globaldenoise="10" ;;
+  esac
   
   # --fakehdr
   [ "$Fakehdr" = "auto" ] && Fakehdr="40"
@@ -3066,37 +3129,6 @@ check_options() {
     *)       Grayscaleconverter="-grayscale $Grayscale" ;;
   esac
   
-  # --denoise
-  case $Globaldenoise in
-    auto) Globaldenoise="10" ;;
-  esac
-  
-  # --showimage
-  [ "$Showimageprocessing" ] && {
-    command -v imgview >/dev/null || {
-      note "-V, --showimage: imgview not found.
-  Please install imgview."
-      Showimageprocessing=""
-    }
-  }
-  
-  # --alphamode
-  case $Globalalpha in
-    "") ;;
-    *)
-      #[ "$Globalalpha" = "auto" ] && Globalalpha="$(maskarg_defaultvalue "$Firstmaskmethod" alpha )"
-      [ "$Globalalpha" = "auto" ] && Globalalpha="0x100"
-      Globalalpha="$(levelparse "$Globalalpha")"
-      Background="${Background:-enfuse}"
-    ;;
-  esac
-  
-  # --threshold
-  case $Globalthreshold in
-    "") ;;
-    auto) Globalthreshold="50" ;;
-  esac
-  
   # --layers
   case $Layers in
     auto) Layers="5" ;;
@@ -3108,81 +3140,27 @@ check_options() {
     auto) Globalless="$(maskarg_defaultvalue "$Firstmaskmethod" less )" ;;
   esac
   
-  # --close
-  case $Globalclose in
-    ""|"0") Globalclose="" ;;
-    *)
-      [ "$Globalclose" = "auto" ] && Globalclose="$(maskarg_defaultvalue "$Firstmaskmethod" close)"
-      Globalclose1=$(cut -dx    -f1 <<< "$Globalclose")
-      Globalclose2=$(cut -dx -s -f2 <<< "$Globalclose")
-      Globalclose1="$(digitonly "$Globalclose1")"
-      Globalclose2="$(digitonly "$Globalclose2")"
-      Globalclose1="${Globalclose1:-1}"
-      Globalclose2="${Globalclose2:-1}"
-      Globalclose="${Globalclose1}x${Globalclose2}"
-      [ "$Maskmethodnumber" = "1" ] && {
-        maskarg_parse "$Maskmethodlist"
-        Argclose1="$Globalclose1"
-        Argclose2="$Globalclose2"
-        maskarg_store
-        Globalclose=""
-        Globalclose1=""
-        Globalclose2=""
-      }
-    ;;
-  esac
-
-  # --background
-  [ -z "$Maskmethodlist" ] && {
-    Background="${Background:-enfuse}"
-    note "No mask option specified, generating background only: $Background"
-  }
-  [ "$Background" ] && {
-    checkmagicklist color                     "$Background"   && Backgroundtype="color"
-    checkmagicklist evaluate                  "$Background"   && Backgroundtype="evaluate"
-    checkmagicklist compose  "$(tr -d "2" <<< "$Background")" && Backgroundtype="compose"
-    [ -f "$Background" ]                                      && Backgroundtype="image"
-    case $Background in
-      enfuse|saturation)                                         Backgroundtype="$Background" ;;
-      none)                   Background="" ;                    Backgroundtype="none" ;;
-    esac
-    [ "$Backgroundtype" ] || error "--background: Unknown background: '$Background'"
-  }
-  verbose "--bg: $Backgroundtype $Background"
-
-  #### Files ####
-
-  # --cachedir
-  [ -z "$Cachedir" ]       && Cachedir="$(pwd)/cache.imfuse"
-  [ "$Cachedir" = "auto" ] && Cachedir="$(pwd)/cache.imfuse"
-  Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
-  Cachedir="$(realpath -m "$Cachedir")"
-  
-  [ -z "$Sourceimagelist" ] && error "No images specified"
-  Sourceimagelist="$(grep .     <<< "$Sourceimagelist")"
-  Sourceimagelist="$(sort -V -r <<< "$Sourceimagelist")"
-  grep -q ' ' <<< "$Sourceimagelist" && error "imfuse does not accept whitespace in pathes or file names:
-$(grep -m1 ' ' <<< "$Sourceimagelist")"
-  
-  Sourcemd5="$(md5cut "$(ls --full-time $Sourceimagelist)" )"
-  
   # --revert
   [ "$Revertimagelist" = "yes" ] && Sourceimagelist="$(tac <<< "$Sourceimagelist")"
   
-  # --basename
-  case $Basename in
-    #"")   Basename="imfuse" ;;
-    auto) Basename="$(basename "$(pwd)")" ;;
-  esac
-  [ -d "$Basename" ] && {
-    Outputdir="$Basename"
-    Basename=""
-  } || {
-    Outputdir="$(dirname "$Basename")"
-    Basename="$(basename "$Basename")"
+  # --showimage
+  [ "$Showimageprocessing" ] && {
+    command -v imgview >/dev/null || {
+      note "-V, --showimage: imgview not found.
+  Please install imgview."
+      Showimageprocessing=""
+    }
   }
-  #[ "$Basename" != "$(unspecialstring "$Basename")" ] && error "--basename: Name must not contain special chars or whitespace: '$Basename'"
   
+  # --threshold
+  case $Globalthreshold in
+    "") ;;
+    auto) Globalthreshold="50" ;;
+  esac
+  
+  return ${Error:-0}
+}
+generate_outputname() {
   # --output
   Resultimage="imfuse."
         
@@ -3196,7 +3174,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     [ "$Argsigma2" ]             && Resultimage="$Resultimage-s$Argsigma2"
     [ "$Argpercent1" ]           && Resultimage="$Resultimage-p$Argpercent1"
     [ "$Argpercent2" ]           && Resultimage="$Resultimage-P$Argpercent2"
-    [ "$Argalpha" ]               && Resultimage="$Resultimage-alpha$Argalpha"
+    [ "$Argalpha" ]              && Resultimage="$Resultimage-alpha$Argalpha"
     [ "$Argless" ]               && Resultimage="$Resultimage-less$Argless"
     [ "$Argclose1" ]             && Resultimage="$Resultimage-close$Argclose1"
     [ "$Argclose2" ]             && Resultimage="${Resultimage}x$Argclose2"
@@ -3307,6 +3285,7 @@ main() {
   
   parse_options "$@"
   check_options
+  generate_outputname
   
   # --showname
   [ "$Showname" = "yes" ] && {
