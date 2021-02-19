@@ -1,11 +1,11 @@
-imfuse --comet         --alpha=0x150 --less --cutblur --finalblur
-imfuse --compass       --alpha=0x150 --less --cutblur --finalblur
-imfuse --diffstat=r3   --alpha=0x150 --less --cutblur --finalblur
-imfuse --diffstat=r5   --alpha=0x150 --less --cutblur --finalblur
-imfuse --diffstat=r7   --alpha=0x150 --less --cutblur --finalblur
-imfuse --freichen      --alpha=0x150 --less --cutblur --finalblur
-imfuse --morphology=r2 --alpha=0x150 --less --cutblur --finalblur
-imfuse --prewitt       --alpha=0x150 --less --cutblur --finalblur
-imfuse --sobel         --alpha=0x150 --less --cutblur --finalblur
-imfuse --statistic=r2  --alpha=0x150 --less --cutblur --finalblur
-imfuse --statistic=r5  --alpha=0x150 --less --cutblur --finalblur
+imfuse --comet         --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
+imfuse --compass       --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
+imfuse --diffstat=r3   --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
+imfuse --diffstat=r5   --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
+imfuse --diffstat=r7   --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
+imfuse --freichen      --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
+imfuse --morphology=r2 --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
+imfuse --prewitt       --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
+imfuse --sobel         --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
+imfuse --statistic=r2  --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
+imfuse --statistic=r5  --bg=enfuse --alpha=0x150 --less --cutblur --finalblur
