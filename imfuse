@@ -284,11 +284,12 @@ Mask generation and fusion adjustments:
  --fakehdr [=%]       Balances over- and underexposed areas. Default %: 50
                       Remaining artefacts at borders of overexposured areas
                       might be fixed with --saturation. Alternative: --halo
- --finalblur [=p%,sigma1,sigma2]   Soft blur of bokeh.
+ --finalblur [=p%,sSIGMA1,Ssigma2]   Soft blur of bokeh.
                       Blurs low contrast areas with a contrast strenght 
-                      up to p% with sigma1. Default p%: 50. Default sigma1: 2.
-                      If sigma2 is given, the bokeh is blurred back into
-                      sharp areas for a soft transition. Default sigma2: 0
+                      up to % with SIGMA1 and/or sigma2. 
+                      Default %: 50, default SIGMA1: 2, default sigma2: 0
+                      If sigma2 is given, the bokeh blurs out into sharp
+                      areas for a soft transition.
  --grayscale=MODE     Grayscale converting method before mask generation.
                       Compare ImageMagick option -grayscale. Default: RMS
                       MODE is one of: (number or name)
@@ -854,7 +855,7 @@ finalblur() {
   Sigma1="${Sigma1:-1}"
   Sigma2="${Sigma2:-0}"
   
-  verbose "Applying --finalblur=w${Percent},s${Sigma1},S${Sigma2}"
+  verbose "Applying --finalblur=p${Percent},s${Sigma1},S${Sigma2}"
   
   Command="$Magickbin
   $Image
@@ -2442,7 +2443,6 @@ maskarg_defaultvalue() {
         compass)    echo "" ;;
         diffstat)   echo "" ;;
         dog)        echo "0.3" ;;
-        finalblur)  echo "2" ;;
         freichen)   echo "" ;;
         gaussian)   echo "0.3" ;;
         halo)       echo "5" ;;
@@ -2462,7 +2462,6 @@ maskarg_defaultvalue() {
     sigma2)
       case "${1:-}" in
         dog)       echo "$(calc "${Argsigma1:-0.75} * 1.6")" ;;
-        finalblur) echo "0" ;;
         *)         echo "" ;;
       esac
     ;;
@@ -3120,8 +3119,9 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     [ "$Finalblur" = "auto" ] && Finalblur="p,s,S"
     maskarg_parse "$Finalblur"
     Finalblurpercent="${Argpercent1:-$(maskarg_defaultvalue $Firstmaskmethod noise)}"
-    Finalblursigma1="${Argsigma1:-$(maskarg_defaultvalue finalblur sigma1)}"
-    Finalblursigma2="${Argsigma2:-$(maskarg_defaultvalue finalblur sigma2)}"
+    [ -z "${Argsigma1}${Argsigma2}" ] && Argsigma1=2
+    Finalblursigma1="${Argsigma1:-0}"
+    Finalblursigma2="${Argsigma2:-0}"
   }
 
   # --grayscale
