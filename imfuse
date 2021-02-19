@@ -287,7 +287,7 @@ Mask generation and fusion adjustments:
  --finalblur [=p%,sSIGMA1,Ssigma2]   Soft blur of bokeh.
                       Blurs low contrast areas with a contrast strenght 
                       up to % with SIGMA1 and/or sigma2. 
-                      Default %: 50, default SIGMA1: 2, default sigma2: 0
+                      Default %: 50, default SIGMA1: 2, default sigma2: 1
                       If sigma2 is given, the bokeh blurs out into sharp
                       areas for a soft transition.
  --grayscale=MODE     Grayscale converting method before mask generation.
@@ -3112,16 +3112,14 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   
   # --fakehdr
   [ "$Fakehdr" = "auto" ] && Fakehdr="40"
-  
+
   # --finalblur
   [ "$Finalblur" ] && {
     Argmethod="finalblur"
-    [ "$Finalblur" = "auto" ] && Finalblur="p,s,S"
     maskarg_parse "$Finalblur"
     Finalblurpercent="${Argpercent1:-$(maskarg_defaultvalue $Firstmaskmethod noise)}"
-    [ -z "${Argsigma1}${Argsigma2}" ] && Argsigma1=2
-    Finalblursigma1="${Argsigma1:-0}"
-    Finalblursigma2="${Argsigma2:-0}"
+    Finalblursigma1="${Argsigma1:-2}"
+    Finalblursigma2="${Argsigma2:-1}"
   }
 
   # --grayscale
