@@ -284,8 +284,11 @@ Mask generation and fusion adjustments:
  --fakehdr [=%]       Balances over- and underexposed areas. Default %: 50
                       Remaining artefacts at borders of overexposured areas
                       might be fixed with --saturation. Alternative: --halo
- --finalblur [=w%,sigma]  Blur low contrast areas with a contrast strenght 
-                      up to w%. Default w%: 25. Default sigma: 1.
+ --finalblur [=p%,sigma1,sigma2]   Soft blur of bokeh.
+                      Blurs low contrast areas with a contrast strenght 
+                      up to p% with sigma1. Default p%: 50. Default sigma1: 2.
+                      If sigma2 is given, the bokeh is blurred back into
+                      sharp areas for a soft transition. Default sigma2: 0
  --grayscale=MODE     Grayscale converting method before mask generation.
                       Compare ImageMagick option -grayscale. Default: RMS
                       MODE is one of: (number or name)
@@ -300,10 +303,11 @@ Mask generation and fusion adjustments:
                 8 MS               (R'^2 + G'^2 + B'^2) / 3.0
                 9 RMS              sqrt( (R'^2 + G'^2 + B'^2) / 3.0 )
  --less [=%]          Strenghtens less contrasted objects in front of strong
-                      contrasted background. 
+                      contrasted background objects. 
                       Well to combine with --close and / or --cutblur.
-                      ARG is a percent value as a minimum intermediate contrast
-                      difference. Default value: 60
+                      Percent value % is the minimum intermediate contrast
+                      difference between background and foreground object.
+                      Default % depends on first mask, mostly 45% or 60%.
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
  --threshold [=%]     Make low contrast area transparent. Default %: 50
@@ -829,14 +833,28 @@ fakehdr() {
   return ${Error:-0}
 }
 finalblur() {
-  local Image Mask Percent Sigma Command Error
-  Image="${1:-}"
-  Mask="${2:-}"
-  Percent="${3:-}"
-  Sigma="${4:-1}"
-#  Sigma2="${5:-$(calc "$Sigma1/2")}"
+  local Image Mask Percent Sigma1 Sigma2 Command Error
+  local Longoptions Parsedoptions
   
-  verbose "Applying --finalblur=w${Percent}s${Sigma}"
+  Longoptions="image:,mask:,percent:,sigma1:,sigma2:"
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"
+  
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --image)   Image="${2:-}" ;;
+      --mask)    Mask="${2:-}" ;;
+      --percent) Percent="${2:-}" ;;
+      --sigma1)  Sigma1="${2:-}" ;;
+      --sigma2)  Sigma2="${2:-}" ;;
+    esac
+    shift
+    shift
+  done
+  Sigma1="${Sigma1:-1}"
+  Sigma2="${Sigma2:-0}"
+  
+  verbose "Applying --finalblur=w${Percent},s${Sigma1},S${Sigma2}"
   
   Command="$Magickbin
   $Image
@@ -854,11 +872,12 @@ finalblur() {
   mpr:cutmask
     -alpha off
     -compose CopyOpacity -composite
-    -blur 0x$Sigma
+    -blur 0x$Sigma1
     -write mpr:bokeh
     -delete 0
   mpr:bokeh
   mpr:cutmask
+    -blur 0x$Sigma2
     -alpha off
     -compose CopyOpacity -composite
     -write mpr:partsource_blurred
@@ -2443,6 +2462,7 @@ maskarg_defaultvalue() {
     sigma2)
       case "${1:-}" in
         dog)       echo "$(calc "${Argsigma1:-0.75} * 1.6")" ;;
+        finalblur) echo "0" ;;
         *)         echo "" ;;
       esac
     ;;
@@ -2780,7 +2800,8 @@ declare_variables() {
   Fakehdr=""
   Finalblur=""
   Finalblurpercent=""
-  Finalblursigma=""
+  Finalblursigma1=""
+  Finalblursigma2=""
   Firstimage=""
   Firstmaskmethod=""
   Forceoverwrite=""
@@ -2946,13 +2967,10 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
       blur|comet|compass|diffstat|dog|free|freediff|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
         Arglevel="yes"
       ;;
-      #saturation) Arglevel="yes" ;;
     esac
+    
     Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
-    
-#    [ "${Argless}" ] && [ "${Argalpha}" ] && Background="${Background:-enfuse}"
     [ "${Argalpha}" ] && Background="${Background:-enfuse}"
-    
     [ "$Maskmethodcount" = "1" ] && Firstmaskmethod="$Argmethod"
   
     case $Argmethod in
@@ -3014,14 +3032,13 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   done <<< "$Maskmethodlist"
   [ "$Error" ] && return 1
   
-  # --alphamode
+  # --alpha
   case $Globalalpha in
     "") ;;
     *)
-      #[ "$Globalalpha" = "auto" ] && Globalalpha="$(maskarg_defaultvalue "$Firstmaskmethod" alpha )"
       [ "$Globalalpha" = "auto" ] && Globalalpha="0x100"
       Globalalpha="$(levelparse "$Globalalpha")"
-      Background="${Background:-alpha}"
+      Background="${Background:-transparent}"
     ;;
   esac
 
@@ -3097,12 +3114,14 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   # --fakehdr
   [ "$Fakehdr" = "auto" ] && Fakehdr="40"
   
+  # --finalblur
   [ "$Finalblur" ] && {
     Argmethod="finalblur"
-    [ "$Finalblur" = "auto" ] && Finalblur="w,s"
+    [ "$Finalblur" = "auto" ] && Finalblur="p,s,S"
     maskarg_parse "$Finalblur"
-    Finalblurpercent="${Argweight:-$(maskarg_defaultvalue $Firstmaskmethod noise)}"
-    Finalblursigma="${Argsigma1:-$(maskarg_defaultvalue finalblur sigma1)}"
+    Finalblurpercent="${Argpercent1:-$(maskarg_defaultvalue $Firstmaskmethod noise)}"
+    Finalblursigma1="${Argsigma1:-$(maskarg_defaultvalue finalblur sigma1)}"
+    Finalblursigma2="${Argsigma2:-$(maskarg_defaultvalue finalblur sigma2)}"
   }
 
   # --grayscale
@@ -3211,7 +3230,7 @@ generate_outputname() {
     Resultimage="${Resultimage}_cutblur$Cutblur"
   }
   [ "$Finalblur" ] && {
-    Resultimage="${Resultimage}_finalblur=w${Finalblurpercent}-s${Finalblursigma}"
+    Resultimage="${Resultimage}_finalblur=p${Finalblurpercent}-s${Finalblursigma1}-S${Finalblursigma2}"
   }
   [ "$Globalthreshold" ] && {
     Resultimage="${Resultimage}_threshold$Globalthreshold"
@@ -3401,7 +3420,7 @@ $Maskmethodlist
     }
     # --finalblur
     [ "$Finalblur" ] && {
-      finalblur "$Resultimage" "$Resultmask" "$Finalblurpercent" "$Finalblursigma" || error "Error in --finalblur"
+      finalblur --image "$Resultimage" --mask "$Resultmask" --percent "$Finalblurpercent" --sigma1 "$Finalblursigma1" --sigma2 "$Finalblursigma2" || error "Error in --finalblur"
     }
     # --threshold
     [ "$Globalthreshold" ] && {
