@@ -6,8 +6,9 @@ Version="0.6.7.1-beta"
 # ToDo:
 #
 # imfuse:
+# threshold bg transparent
 # check alpha ARG
-# whitespace in file names
+# whitespace in file names -> file names into array
 # --maskblur altogether?
 # --gamma?
 # check --kirsch
@@ -43,20 +44,21 @@ Usage:
   imfuse [OPTIONS] -- image1 image2 image3 ...
 
 General options:
- --basename           Base name [+path] for output image. 
- --cache [=DIR]       Preserve cache files, can be partially reused by imfuse.
-                      Optionally specify a cache folder DIR.
- --exif [=IMAGE]      Transfer exif meta data from IMAGE or first input image.
- -h, --help           Show this help and exit.
- --layers [=NUMBER]   Additonally store a layered TIFF image where
-                      the layers contain different sharpness areas.
-                      NUMBER is number of sharpness layers.  Default: 24
- -o, --output=FILE    Result image file name.
- --threads            Number of parallel threads to run at once.
-                      Default: number of CPU's (nproc).
- -v, --verbose        Show verbose output.
-     --version        Show imfuse version and exit.
- -V, --showimage      Show intermediate results with image viewer geeqie.
+     --basename [=NAME]   Base name [+path] for output image. 
+     --cache [=DIR]       Preserve cache files, can be partially reused.
+                          Optionally specify a cache folder DIR.
+     --exif [=IMAGE]      Transfer exif meta data from IMAGE or first image.
+ -h, --help               Show this help and exit.
+     --layers [=NUMBER]   Additonally store a layered TIFF image where
+                          the layers contain different sharpness areas.
+                          NUMBER is number of sharpness layers.  Default: 24
+ -o, --output=FILE        Result image file name.
+     --threads            Number of parallel threads to run at once.
+                          Default: number of CPU's (nproc).
+ -v, --verbose            Show verbose output.
+     --version            Show imfuse version and exit.
+ -V, --showimage          Show intermediate results with image viewer geeqie.
+     --video              Generate a video of shown intermediate images.
 
 The mask generating options below can take additionally arguments [=ARG].
 Multiple arguments are comma-separated. 
@@ -275,8 +277,6 @@ Mask generation and fusion adjustments:
                       For big values rather use c2x8 or c4x4 instead of c16,
                       the result will be similar but faster.
                       An alternative option is --cutblur.
- --maskblur [=SIGMA]  Blur masks with SIGMA (default 1). Enhances contrast.
-                      Applied to contrast masks only.
  --cutblur [=SIGMA]   Blur cut masks in final montage. Default SIGMA: 2
  --denoise [=%]       Experimental option to remove noise in low contrast areas.
                       The percent value is a threshold. 
@@ -311,6 +311,10 @@ Mask generation and fusion adjustments:
                       Default % depends on first mask, mostly 45% or 60%.
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
+ --maskblur [=SIGMA]  Blur masks with SIGMA (default 1). Enhances contrast.
+                      Applied to contrast masks only.
+ --prefertop [=%]     Prefer top layer images up to %. Default %: 40
+                      Similar to --less, but a rather brute-force attempt.
  --threshold [=%]     Make low contrast area transparent. Default %: 50
                            
 Basics:                   
@@ -375,8 +379,20 @@ verbose() {
   return 0
 }
 showimage() {
+  local Frame
   #[ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"${1:-}"
   [ "$Showimageprocessing" ] && bash imgview "${1:-}"
+  [ "$Video" ] && {
+#    Videoframecount="$((Videoframecount+1))"
+    Videoframecount="$(ls $Cachedir/videoframe????.* | sort -V | tail -n1)"
+    Videoframecount="$(basename "$Videoframecount")"
+    Videoframecount="${Videoframecount//[^0-9]/}"
+    Videoframecount="$(sed "s/^0*//" <<< "$Videoframecount")"
+    Videoframecount="$(calc "$Videoframecount+1")"
+    Frame="$Cachedir/videoframe$(printnum "$Videoframecount" 4).tif"
+    #ln -s "${1:-}" "$Frame"
+    cp "${1:-}" "$Frame" ### FIXME ln -s where possible
+  }
   return 0
 }
 
@@ -1378,12 +1394,14 @@ $Maskgenerator
   #Maskgenerator_all="$(sed "1,/SHOWIMAGE/{s%SHOWIMAGE%$Showimage%}" <<< "$Maskgenerator_all")"
   #Maskgenerator_all="$(sed "/SHOWIMAGE/d" <<< "$Maskgenerator_all")"
   
-  grep -v Close <<< "$Maskgenerator_all" | grep -q morphology && {
-    verbose "Mask generator kernels:
-$($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgenerator_all xc:white null: 2>&1)
-"
-    rm $Cachedir/*NUMBER* 2>/dev/null
-  }
+#  # show kernels
+#  # FIXME: avoid error message
+#  grep -v Close <<< "$Maskgenerator_all" | grep -q morphology && {
+#    verbose "Mask generator kernels:
+#$($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgenerator_all xc:white null: 2>&1)
+#"
+#    rm $Cachedir/*NUMBER* 2>/dev/null
+#  }
 
   # --evaluate, --compose, M,m
   generate_composite
@@ -1492,13 +1510,15 @@ focus_merge_masks() {
   # Merge different masks.
   
   local Mergemask
-  local Count Number Weightmax
+  local Count Number Weightmax Prefertopoption
   local Command
   local Skipmerge Methodmask Mergecode=
   local Startzeit Dauer Restzeit
   
   Skipmerge="yes"
+  #Skipmerge=no
   [ "$Maskmethodnumber" -gt "1" ] && Skipmerge="no"
+  [ "$Prefertop" ]                && Skipmerge="no"
 
   [ -z "$Maskmethodlist" ] && {
     note "Skipping merge, no mask options are specified."
@@ -1585,10 +1605,17 @@ focus_merge_masks() {
     Mergemask="$Cachedir/$Mergemaskbasename.${Number}.tif"
     Methodmask="$Cachedir/$Argbasename.${Number}.tif"
     
+    # -downweight
+    [ "${Prefertop:-0}" -lt "0" ] && Prefertopoption="+level 0,$(calc "100 - -1*$Prefertop * $Count / $Imagenumber")%"
+    [ "${Prefertop:-0}" -gt "0" ] && Prefertopoption="+level 0,$(calc "100 -    $Prefertop *($Imagenumber - $Count) / $Imagenumber")%"
+    verbose "$Prefertopoption"
+    
+    
     Command="
 $Magickbin
 $(sed "s/NUMBER/$Number/g" <<< "$Mergecode" )
   mpr:mergemask
+    $Prefertopoption
     $Tifstore 
   '$Mergemask'"
   
@@ -2329,7 +2356,7 @@ maskarg_defaultvalue() {
         sobel)      echo "45" ;;
         statistic)  echo "45" ;;
         #unsharp
-        wavelet)    echo "45" ;;
+        wavelet)    echo "60" ;;
         *)          echo "60" ;;
       esac
     ;;
@@ -2836,6 +2863,7 @@ declare_variables() {
   Outputimage=""
   Parsedoptions=""
   Preservecache=""
+  Prefertop=""
   Redistshapedefault="uniform"
   Redistshape="$Redistshapedefault"
   Revertimagelist=""
@@ -2852,6 +2880,8 @@ declare_variables() {
   Tifstore="+repage -quality 100% -compress lzw"
   Tifstorealpha="$Tifstore -type TrueColorAlpha"
   Verbose=""
+  Video=""
+  Videoframecount=""
   
   return 0
 }
@@ -2860,8 +2890,8 @@ parse_options() {
   #local Parsedoptions
   
   Shortoptions="ho:vV"
-  Longoptions="basename:,cache::,exif::,force,help,output:,showimage,showname,test::,threads:,verbose,version"
-  Longoptions="$Longoptions,alpha::,bg:,background::,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,redist::,revert,threshold::"
+  Longoptions="basename:,cache::,exif::,force,help,output:,showimage,showname,test::,threads:,verbose,version,video"
+  Longoptions="$Longoptions,alpha::,bg:,background::,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,prefertop::,redist::,revert,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -2891,6 +2921,7 @@ parse_options() {
          --layers)            Layers="${2:-auto}"         ; shift ;;
          --less)              Globalless="${2:-auto}"     ; shift ;;
          --maskblur)          Globalmaskblur="${2:-auto}" ; shift ;;      
+         --prefertop)         Prefertop="${2:-auto}"      ; shift ;;      
          --redist)            Redistshape="${2:-$Redistshapedefault}" ; shift ;;
       -o|--output)            Outputimage="${2:-}"        ; shift ;;
          --revert)            Revertimagelist="yes"       ;;
@@ -2901,6 +2932,7 @@ parse_options() {
          --threshold)         Globalthreshold="${2:-auto}" ; shift ;;
       -v|--verbose)           Verbose="yes"               ;;
          --version)           echo "imfuse v$Version"     ; exit 0 ;;
+         --video)             Video="auto"                ;;
       
 --blur|--channel|--chroma|--comet|--compass|--compose|--darkness|--diffstat|--dog|--enfuse|--evaluate|\
 --experimental|--free|--freediff|\
@@ -3040,24 +3072,6 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
       Background="${Background:-transparent}"
     ;;
   esac
-
-  # --background
-  [ "$Background" = "auto" ] && Background="enfuse"
-  [ -z "$Maskmethodlist" ] && {
-    Background="${Background:-enfuse}"
-    note "No mask option specified, generating background only: $Background"
-  }
-  [ "$Background" ] && {
-    checkmagicklist color                     "$Background"   && Backgroundtype="color"
-    checkmagicklist evaluate                  "$Background"   && Backgroundtype="evaluate"
-    checkmagicklist compose  "$(tr -d "2" <<< "$Background")" && Backgroundtype="compose"
-    [ -f "$Background" ]                                      && Backgroundtype="image"
-    case $Background in
-      enfuse|saturation)                                         Backgroundtype="$Background" ;;
-      none)                   Background="" ;                    Backgroundtype="none" ;;
-    esac
-    [ "$Backgroundtype" ] || error "--background: Unknown background: '$Background'"
-  }
   
   # --basename
   case $Basename in
@@ -3157,6 +3171,11 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     auto) Globalless="$(maskarg_defaultvalue "$Firstmaskmethod" less )" ;;
   esac
   
+  # --prefertop
+  case $Prefertop in
+    auto) Prefertop="40" ;;
+  esac
+  
   # --revert
   [ "$Revertimagelist" = "yes" ] && Sourceimagelist="$(tac <<< "$Sourceimagelist")"
   
@@ -3174,6 +3193,25 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     "") ;;
     auto) Globalthreshold="50" ;;
   esac
+  [ "$Globalthreshold" ] && Background="${Background:-transparent}"
+
+  # --background
+  [ "$Background" = "auto" ] && Background="enfuse"
+  [ -z "$Maskmethodlist" ] && {
+    Background="${Background:-enfuse}"
+    note "No mask option specified, generating background only: $Background"
+  }
+  [ "$Background" ] && {
+    checkmagicklist color                     "$Background"   && Backgroundtype="color"
+    checkmagicklist evaluate                  "$Background"   && Backgroundtype="evaluate"
+    checkmagicklist compose  "$(tr -d "2" <<< "$Background")" && Backgroundtype="compose"
+    [ -f "$Background" ]                                      && Backgroundtype="image"
+    case $Background in
+      enfuse|saturation)                                         Backgroundtype="$Background" ;;
+      none)                   Background="" ;                    Backgroundtype="none" ;;
+    esac
+    [ "$Backgroundtype" ] || error "--background: Unknown background: '$Background'"
+  }
   
   return ${Error:-0}
 }
@@ -3230,6 +3268,9 @@ generate_outputname() {
   [ "$Finalblur" ] && {
     Resultimage="${Resultimage}_finalblur=p${Finalblurpercent}-s${Finalblursigma1}-S${Finalblursigma2}"
   }
+  [ "$Prefertop" ] && {
+    Resultimage="${Resultimage}_prefertop$Prefertop"
+  }
   [ "$Globalthreshold" ] && {
     Resultimage="${Resultimage}_threshold$Globalthreshold"
   }
@@ -3263,16 +3304,18 @@ generate_outputname() {
   Resultimage="$(sed "s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
   #Resultimage="$(sed "s/=-/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
     
-  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist $Background $Fakehdr $Globalclose $Globaldenoise $Globalless $Globalalpha $Cutblur $Finalblur $Grayscale $Revertimagelist $Testsetup" )"
+  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist $Background $Fakehdr $Globalclose $Globaldenoise $Globalless $Globalmaskblur $Prefertop $Globalalpha $Cutblur $Finalblur $Grayscale $Revertimagelist $Testsetup" )"
   
-  Resultimage="${Resultimage}.${Fusemd5sum}.${Imageformat}"
+  Resultimage="${Resultimage}.${Fusemd5sum}"
   [ -z "$Outputdir" ] && Outputdir="$(pwd)"
   case $Outputimage in
     "") Outputimage="$Outputdir/$Basename$Resultimage" ;;
     *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="$Outputdir/$Outputimage" ;;
   esac
   Outputimage="$(realpath "$Outputimage")"
-  Resultimage="$Cachedir/${Basename:-}$Resultimage"
+  [ "$Video" ] && Video="$Outputimage.webm"
+  Outputimage="$Outputimage.${Imageformat}"
+  Resultimage="$Cachedir/${Basename:-}$Resultimage.${Imageformat}"
   
   return ${Error:-0}
 }
@@ -3346,6 +3389,7 @@ $Maskmethodlist
 
   mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
   [ "$Preservecache" ] || rm -f $Cachedir/*
+  rm -f $Cachedir/videoframe????.*
   
   #Firstimage="$(head -n1 <<< "$Sourceimagelist")" 
   echo "$Sourcemd5" > "$Cachedir/md5"
@@ -3448,6 +3492,16 @@ $Maskmethodlist
   showimage "$Outputimage"
   note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   echo "$Outputimage"
+  
+  [ "$Video" ] && {
+    note "Generating video $Video"
+    Videoframerate=5
+    #nice ffmpeg -y -hide_banner -nostdin  -r $Videoframerate -f image2 -start_number 1 -i $Framedir/frame%04d.$Imageformat $Destinationfile || note "ERROR in video generation"
+    [ -f "$Video" ] && rm "$Video"
+    nice ffmpeg -y -hide_banner -nostdin  -r $Videoframerate -f image2 -start_number 1 -i "$Cachedir/videoframe%04d.$Imageformat" "$Video" || note "ERROR in video generation"
+    rm $Cachedir/videoframe*
+    ffplay "$Video"
+  }
     
   return "${Error:-0}"
 }
