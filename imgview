@@ -59,8 +59,8 @@ main() {
   Imageheight="$(identify -format '%h' "$Inputimage")"
   
   Showimage="$Inputimage"
-  [ "$Imageheight" -gt 1000 ] && {
-    Showimage="$Cachedir/showimage.jpg"
+  [ "$Imageheight" -gt 1200 ] && {
+    Showimage="$Cachedir/showimage.png"
     Percent="$((100*800/Imageheight))"
     magick "$Inputimage" -scale $Percent%,$Percent% "$Showimage"
   }
