@@ -946,27 +946,69 @@ flatten() {
     
   $Command
 }
-generate_composite() {
-  local Mode Imagename Swap
+generate_image() {
+  local Mode Imagename Swap Imagetype Showname=
   
-  # --evaluate
-  for Mode in $Evaluate_needlist; do
-    [ "$Error" ] && break
-    Imagename="$Cachedir/evaluate.$Mode.$Sourcemd5.tif"
-    [ -e "$Imagename" ] || evaluate $Mode $Imagename $Sourceimagelist
-  done
-  # --compose
-  for Mode in $Compose_needlist; do
-    [ "$Error" ] && break
-    Imagename="$Cachedir/compose.$Mode.$Sourcemd5.tif"
-    grep -q "2" <<< "$Mode" && Swap="-swap 0,1" || Swap=""
-    Mode="$(tr -d "2" <<< "$Mode")"
-    [ -e "$Imagename" ] || {
-      note "--compose=$Mode: Generating compose image $Imagename"
-      $Magickbin $Cachedir/evaluate.min.$Sourcemd5.tif $Cachedir/evaluate.max.$Sourcemd5.tif -alpha off $Swap -compose $Mode -composite $Imagename || error "Error compositing $Mode: $Image"
-      showimage "$Imagename"
-    }
-  done
+  [ "${1:-}" = "--showname" ] && Showname="yes" && shift
+  
+  Mode="${1:-}"
+  
+  checkmagicklist color                     "$Mode"   && Imagetype="color"
+  checkmagicklist evaluate                  "$Mode"   && Imagetype="evaluate"
+  checkmagicklist compose  "$(tr -d "2" <<< "$Mode")" && Imagetype="compose"
+  case "$Mode" in
+    enfuse)                                              Imagetype="enfuse" ;;
+    saturation)                                          Imagetype="saturation" ;;
+  esac
+  
+  case "$Imagetype" in
+    enfuse)     Imagename="$Cachedir/enfuse.$Sourcemd5.tif" ;;
+    saturation) Imagename="$Cachedir/saturation.$Sourcemd5.tif" ;;
+    evaluate)   Imagename="$Cachedir/evaluate.$Mode.$Sourcemd5.tif" ;;
+    compose)    Imagename="$Cachedir/compose.$Mode.$Sourcemd5.tif" ;;
+    color)      Imagename="$Cachedir/color.$Mode.tif" ;;
+  esac
+  [ "$Showname" ] && {
+    echo "$Imagename"
+    return 0
+  }
+  
+  note "Generating image $Imagetype: $Mode"
+  case "$Imagetype" in
+    enfuse)
+      [ -e "$Imagename" ] || {
+        nice enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask -o "$Imagename" $Sourceimagelist 2>&1 || error "Failed to generate enfuse base image"
+      }
+    ;;
+    saturation)
+      [ -e "$Imagename" ] || {
+        imfuse --cache="$Cachedir" --output="$Imagename" --saturation $([ "$Showimageprocessing" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation image"
+      }
+    ;;
+    evaluate)
+      [ -e "$Imagename" ] || {
+        evaluate $Mode $Imagename $Sourceimagelist || Error=1
+      }
+    ;;
+    compose)
+      grep -q "2" <<< "$Mode" && Swap="-swap 0,1" || Swap=""
+      Mode="$(tr -d "2" <<< "$Mode")"
+      [ -e "$Imagename" ] || {
+        generate_image min || Error=1
+        generate_image max || Error=1
+        $Magickbin $(generate_image --showname min) $(generate_image --showname max) -alpha off $Swap -compose $Mode -composite "$Imagename" || error "Failed compositing $Mode: $Image"
+      }
+    ;;
+    color)
+      case $Mode in
+        transparent) mkimg_transparent      "$Imagename" || Error=1 ;;
+        *)           mkimg_color "$Mode" "" "$Imagename" || Error=1 ;;
+      esac
+    ;;
+  esac
+  showimage "$Imagename"
+  
+  return "${Error:-0}"
 }
 layered_tif() {
   local Image Mask Layers Background 
@@ -1346,11 +1388,6 @@ focus_generate_masks() {
   mpr:sourcegray
     -compose Difference -composite"
     
-    #case $Argmethod in
-    #  saturation) Maskgenerator="$Maskgenerator
-    #+level 50%,100%" ;;
-    #esac
-    
     [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
     -negate"
     
@@ -1363,7 +1400,7 @@ focus_generate_masks() {
     }
 
     [ "$Argmethod" = "enfuse" ] && Enfuse_needlist="$Enfuse_needlist enfuse"
-    [ "$Argalpha" ]              && Enfuse_needlist="$Enfuse_needlist enfuse"
+    #[ "$Argalpha" ]             && Enfuse_needlist="$Enfuse_needlist enfuse"
       
     Maskmd5="$(md5cut "$Sourcemd5 $Maskgenerator")"
     Argbasename="$Argmethod.$Maskmd5"
@@ -1380,38 +1417,16 @@ $Argbasename"
       Maskgenerator_all="$Maskgenerator_all
 $Maskgenerator
     -write '$Cachedir/$Argbasename.NUMBER.tif'"
-      [ -z "$Showimage" ] && {
-        Showimage="$Cachedir/$Argbasename.NUMBER.tif"
-#        [ "$Showimageprocessing" ] && Maskgenerator_all="$Maskgenerator_all
-#    -auto-level -write $Showimage"
-      }
+      [ -z "$Showimage" ] && Showimage="$Cachedir/$Argbasename.NUMBER.tif"
       Maskgenerator_all="$Maskgenerator_all
     -delete 0"
     }
   done <<< "$Maskmethodlist"
-  #done < <(tac <<< "$Maskmethodlist")
-  
-  #Maskgenerator_all="$(sed "1,/SHOWIMAGE/{s%SHOWIMAGE%$Showimage%}" <<< "$Maskgenerator_all")"
-  #Maskgenerator_all="$(sed "/SHOWIMAGE/d" <<< "$Maskgenerator_all")"
-  
-#  # show kernels
-#  # FIXME: avoid error message
-#  grep -v Close <<< "$Maskgenerator_all" | grep -q morphology && {
-#    verbose "Mask generator kernels:
-#$($Magickbin xc: -write mpr:sourceimage -define morphology:showkernel=1 $Maskgenerator_all xc:white null: 2>&1)
-#"
-#    rm $Cachedir/*NUMBER* 2>/dev/null
-#  }
 
-  # --evaluate, --compose, M,m
-  generate_composite
-  
-  # --enfuse, --bg=enfuse, --alpha
-  [ "$Enfuse_needlist" ] && [ ! -e "$Enfusebaseimage" ] && {
-    note "Generating enfuse base image"
-    nice enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask -o "$Enfusebaseimage" $Sourceimagelist 2>&1 | { grep -v -E 'loading next image|alpha channel|assuming all pixels' ; :; } || error "Failed to generate enfuse base image"
-    showimage "$Enfusebaseimage"
-  }
+  # --evaluate, --compose, --enfuse
+  for Mode in $Image_needlist; do
+    generate_image "$Mode"
+  done 
   
   [ -z "$Maskmethodlist" ] && return 0
   
@@ -1974,7 +1989,7 @@ focus_maskmethod() {
     compose)
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( '$Cachedir/compose.$Argword1.$Sourcemd5.tif' $Grayscaleconverter -alpha off )
+  ( '$(generate_image --showname "$Argword1")' $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
     ;;
@@ -1998,14 +2013,14 @@ Maskgenerator="$Maskgenerator
     enfuse)
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( '$Cachedir/enfuse.$Sourcemd5.tif' $Grayscaleconverter -alpha off )
+  ( '$(generate_image --showname enfuse)' $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
     ;;
     evaluate)
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( '$Cachedir/evaluate.$Argword1.$Sourcemd5.tif' $Grayscaleconverter -alpha off )
+  ( '$(generate_image --showname "$Argword1")' $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
     ;;
@@ -2816,11 +2831,9 @@ declare_variables() {
   Caseeval=""
   Casecompose=""
   Composefactor="" ### FIXME
-  Compose_needlist=""
   Cutblur=""
   Difference_needlist=""
   Enfuse_needlist=""
-  Evaluate_needlist=""
   Error=""
   Exifsourceimage=""
   Fakehdr=""
@@ -2850,6 +2863,7 @@ declare_variables() {
   Imagememsize=""
   Imagenumber=""
   Imagewidth=""
+  Image_needlist=""
   Layers=""
   Line=""
   Magickbin=""
@@ -2966,7 +2980,7 @@ check_options() {
   Sourceimagelist="$(sort -V -r <<< "$Sourceimagelist")"
   grep -q ' ' <<< "$Sourceimagelist" && error "imfuse does not accept whitespace in pathes or file names:
 $(grep -m1 ' ' <<< "$Sourceimagelist")"
-  Sourcemd5="$(md5cut "$(ls --full-time $Sourceimagelist)" )"
+  Sourceimagelist="$(grep -v -x "" <<< "$Sourceimagelist")"
   [ "$Error" ] && return 1
 
   # --maskblur
@@ -3011,8 +3025,8 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
         Argword2="1"
       ;;
       compose)
-        Evaluate_needlist="$Evaluate_needlist max min"
-        Compose_needlist="$Compose_needlist $Argword1"
+        Image_needlist="$Image_needlist max min"
+        Image_needlist="$Image_needlist $Argword1"
       ;;
       darkness)
         #Argmethod="channel"
@@ -3021,7 +3035,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
         Argnegate="yes"
       ;;
       evaluate)
-        Evaluate_needlist="$Evaluate_needlist $Argword1"
+        Image_needlist="$Image_needlist $Argword1"
       ;;
       freichen)
         case $Argword1 in
@@ -3194,7 +3208,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     auto) Globalthreshold="50" ;;
   esac
   [ "$Globalthreshold" ] && Background="${Background:-transparent}"
-
+  
   # --background
   [ "$Background" = "auto" ] && Background="enfuse"
   [ -z "$Maskmethodlist" ] && {
@@ -3215,7 +3229,41 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   
   return ${Error:-0}
 }
-generate_outputname() {
+check_background() {
+  # --background
+  
+  case $Backgroundtype in
+    none)
+      Backgroundimage=""
+    ;;
+    compose)
+      Background="$(lowercase $Background)"
+      Image_needlist="$Image_needlist min max $Background"
+      Backgroundimage="$(generate_image --showname "$Background")"
+    ;;
+    evaluate)    
+      Background="$(lowercase $Background)"
+      Image_needlist="$Image_needlist $Background"
+      Backgroundimage="$(generate_image --showname "$Background")"
+    ;;
+    color)
+      Image_needlist="$Image_needlist $Background"
+      Backgroundimage="$(generate_image --showname "$Background")"
+    ;;
+    image)
+      Backgroundimage="$Background"
+    ;;
+    saturation)
+      Image_needlist="$Image_needlist saturation"
+      Backgroundimage="$(generate_image --showname "$Background")"
+    ;;
+    enfuse)
+      Image_needlist="$Image_needlist enfuse"
+      Backgroundimage="$(generate_image --showname "$Background")"
+    ;;
+  esac
+}
+check_outputname() {
   # --output
   Resultimage="imfuse."
         
@@ -3309,12 +3357,11 @@ generate_outputname() {
   Resultimage="${Resultimage}.${Fusemd5sum}"
   [ -z "$Outputdir" ] && Outputdir="$(pwd)"
   case $Outputimage in
-    "") Outputimage="$Outputdir/$Basename$Resultimage" ;;
+    "") Outputimage="$Outputdir/$Basename$Resultimage.${Imageformat}" ;;
     *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="$Outputdir/$Outputimage" ;;
   esac
   Outputimage="$(realpath "$Outputimage")"
   [ "$Video" ] && Video="$Outputimage.webm"
-  Outputimage="$Outputimage.${Imageformat}"
   Resultimage="$Cachedir/${Basename:-}$Resultimage.${Imageformat}"
   
   return ${Error:-0}
@@ -3325,7 +3372,8 @@ main() {
   
   declare_variables
   multicore_init
-
+  
+  # check magick version
   command -v convert >/dev/null && Magickbin="convert"
   command -v magick  >/dev/null && Magickbin="magick"
   [ -z "$Magickbin" ] && error "Neither command convert nor magick found. Please install ImageMagick."
@@ -3336,6 +3384,7 @@ main() {
   Magicklist="$Magickbin"
   Magickbin="nice $Magickbin -quiet"
   
+  # check RAM
   Freemem="$(freememory)"
   [ -z "$Freemem" ] && {
     note "WARNING: failed to estimate free memory.
@@ -3345,29 +3394,16 @@ main() {
   
   parse_options "$@"
   check_options
-  generate_outputname
-  
-  # --showname
-  [ "$Showname" = "yes" ] && {
-    echo $Outputimage
-    return "${Error:-0}"
-  }
-  note "Setting --output=$Outputimage"
-  
-  # --force
-  [ -f "$Outputimage" ] && [ -z "$Forceoverwrite" ] && { 
-    note "Skipping all, output image already exists with matching md5sum."
-    echo "$Outputimage"
-    showimage "$Outputimage"
-    return "${Error:-0}"
-  }
-  
-  verbose "Mask options:
-$Maskmethodlist
-"
   [ "$Error" ] && return 1
   
-  Sourceimagelist="$(grep -v -x "" <<< "$Sourceimagelist")"
+  # --cache
+  mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
+  [ "$Preservecache" ] || rm -f $Cachedir/*
+  rm -f $Cachedir/videoframe????.*
+  Testimage="$Cachedir/test.png"
+  Resultmask="$Cachedir/result.max.tif"
+
+  # check source images
   Imagenumber="$(grep -c "." <<< "$Sourceimagelist")"
   Imagenumberlength="${#Imagenumber}"
   
@@ -3386,17 +3422,26 @@ $Maskmethodlist
   Image memory size:      $Imagememsize kb
   Image list memory size: $Imagelistmemsize kb
   Free Memory:            $Freemem kb"
-
-  mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
-  [ "$Preservecache" ] || rm -f $Cachedir/*
-  rm -f $Cachedir/videoframe????.*
   
-  #Firstimage="$(head -n1 <<< "$Sourceimagelist")" 
+  Sourcemd5="$(md5cut "$(ls --full-time $Sourceimagelist)" )"
   echo "$Sourcemd5" > "$Cachedir/md5"
-  [ "$Error" ] && return 1
   
-  Testimage="$Cachedir/test.png"
-  Resultmask="$Cachedir/result.max.tif"
+  # --output, --basename
+  check_outputname
+  # --showname
+  [ "$Showname" = "yes" ] && {
+    echo $Outputimage
+    return "${Error:-0}"
+  }
+  note "Setting --output=$Outputimage"
+  
+  # --force
+  [ -f "$Outputimage" ] && [ -z "$Forceoverwrite" ] && { 
+    note "Skipping all, output image already exists with matching md5sum."
+    echo "$Outputimage"
+    showimage "$Outputimage"
+    return "${Error:-0}"
+  }
 
   # --fakehdr
   [ "$Fakehdr" ] && {
@@ -3405,55 +3450,17 @@ $Maskmethodlist
     Sourcemd5="$(md5cut "$(ls --full-time $Sourceimagelist)" )"
   }
   
-  # --enfuse, --bg=enfuse
-  Enfusebaseimage="$Cachedir/enfuse.$Sourcemd5.tif"
-  
   # --background
-  [ "$Background" ] && Backgroundimage="$Cachedir/background.tif"
-  case $Backgroundtype in
-    none)
-      Backgroundimage=""
-    ;;
-    compose)
-      Background="$(lowercase $Background)"
-      Evaluate_needlist="$Evaluate_needlist min max"
-      Compose_needlist="$Compose_needlist $Background"
-      generate_composite
-      Backgroundimage="$Cachedir/compose.$Background.$Sourcemd5.tif"
-    ;;
-    evaluate)    
-      Background="$(lowercase $Background)"
-      Evaluate_needlist="$Evaluate_needlist $Background"
-      generate_composite
-      Backgroundimage="$Cachedir/evaluate.$Background.$Sourcemd5.tif"
-    ;;
-    color)
-      case $Background in
-        transparent) mkimg_transparent "$Backgroundimage" ;;
-        *)           mkimg_color "$Backgroundimage" "" "$Background" ;;
-      esac
-    ;;
-    image)
-      Backgroundimage="$Background"
-    ;;
-    saturation)
-      Backgroundimage="$(imfuse --cache="$Cachedir" --basename="$Cachedir/" --saturation --showname $Sourceimagelist)"
-      [ -e "$Backgroundimage" ] || {
-        note "Generating saturation background image"
-        imfuse --cache="$Cachedir" --output="$Backgroundimage" --saturation $([ "$Showimageprocessing" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation background"
-      }
-    ;;
-    enfuse)
-      Enfuse_needlist="$Enfuse_needlist enfuse"
-      Backgroundimage="$Enfusebaseimage"
-    ;;
-  esac
+  check_background
+  for Mode in $Image_needlist; do
+    generate_image "$Mode"
+  done 
   [ "$Error" ] && return 1
   
   # Generating stackshot image
   mkimg_transparent "$Resultimage"
-  focus_generate_masks                    || return 1
   [ -n "$Maskmethodlist" ] && {
+    focus_generate_masks                  || return 1
     focus_merge_masks                     || return 1
     focus_montage --alpha "$Globalalpha" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || return 1
     # --alpha=ARG
