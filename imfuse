@@ -1,12 +1,11 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.7.1-beta"
+Version="0.6.7.3-beta"
 
 # ToDo:
 #
 # imfuse:
-# threshold bg transparent
 # check alpha ARG
 # whitespace in file names -> file names into array
 # --maskblur altogether?
@@ -870,9 +869,7 @@ finalblur() {
   done
   Sigma1="${Sigma1:-1}"
   Sigma2="${Sigma2:-0}"
-  
-  verbose "Applying --finalblur=p${Percent},s${Sigma1},S${Sigma2}"
-  
+    
   Command="$Magickbin
   $Image
     -write mpr:resultimage
@@ -966,43 +963,37 @@ generate_image() {
     saturation) Imagename="$Cachedir/saturation.$Sourcemd5.tif" ;;
     evaluate)   Imagename="$Cachedir/evaluate.$Mode.$Sourcemd5.tif" ;;
     compose)    Imagename="$Cachedir/compose.$Mode.$Sourcemd5.tif" ;;
-    color)      Imagename="$Cachedir/color.$Mode.tif" ;;
+    color)      Imagename="$Cachedir/color.$Mode.${Imagewidth}x${Imageheight}.tif" ;;
   esac
   [ "$Showname" ] && {
     echo "$Imagename"
     return 0
   }
   
+  [ -e "$Imagename" ] && return 0
   note "Generating image $Imagetype: $Mode"
+  
   case "$Imagetype" in
     enfuse)
-      [ -e "$Imagename" ] || {
-        nice enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask -o "$Imagename" $Sourceimagelist 2>&1 || error "Failed to generate enfuse base image"
-      }
+      nice enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask -o "$Imagename" $Sourceimagelist 2>&1 || error "Failed to generate enfuse base image"
     ;;
     saturation)
-      [ -e "$Imagename" ] || {
-        imfuse --cache="$Cachedir" --output="$Imagename" --saturation $([ "$Showimageprocessing" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation image"
-      }
+      imfuse --cache="$Cachedir" --output="$Imagename" --saturation $([ "$Showimageprocessing" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation image"
     ;;
     evaluate)
-      [ -e "$Imagename" ] || {
-        evaluate $Mode $Imagename $Sourceimagelist || Error=1
-      }
+      evaluate "$Mode" "$Imagename" $Sourceimagelist || Error=1
     ;;
     compose)
       grep -q "2" <<< "$Mode" && Swap="-swap 0,1" || Swap=""
       Mode="$(tr -d "2" <<< "$Mode")"
-      [ -e "$Imagename" ] || {
-        generate_image min || Error=1
-        generate_image max || Error=1
-        $Magickbin $(generate_image --showname min) $(generate_image --showname max) -alpha off $Swap -compose $Mode -composite "$Imagename" || error "Failed compositing $Mode: $Image"
-      }
+      generate_image min || Error=1
+      generate_image max || Error=1
+      $Magickbin $(generate_image --showname min) $(generate_image --showname max) -alpha off $Swap -compose $Mode -composite "$Imagename" || error "Failed compositing $Mode: $Image"
     ;;
     color)
       case $Mode in
-        transparent) mkimg_transparent      "$Imagename" || Error=1 ;;
-        *)           mkimg_color "$Mode" "" "$Imagename" || Error=1 ;;
+        transparent) mkimg_transparent      "$Imagename" || error "Failed to generate color image $Mode" ;;
+        *)           mkimg_color "$Mode" "" "$Imagename" || error "Failed to generate color image $Mode" ;;
       esac
     ;;
   esac
@@ -1334,12 +1325,21 @@ $Histogram"
 }
 threshold() {
   local Image Mask Threshold Command Error
-  Image="${1:-}"
-  Mask="${2:-}"
-  Threshold="${3:-}"
+  local Longoptions Parsedoptions
   
-  verbose "Applying --threshold=$Threshold"
-  
+  Longoptions="image:,mask:,percent:"
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --image)   Image="${2:-}" ;;
+      --mask)    Mask="${2:-}" ;;
+      --percent) Threshold="${2:-}" ;;
+    esac
+    shift
+    shift
+  done
+    
   Command="$Magickbin
   $Image
     -write mpr:image
@@ -1381,7 +1381,7 @@ focus_generate_masks() {
   [ -n "$Maskmethodlist" ] && while read Line; do
     [ "$Error" ] && break
     
-    maskarg_parse "$Line"    
+    maskarg_parse "$Line"
     Maskgenerator="$(focus_maskmethod "$Argmethod")"
         
     [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
@@ -1422,6 +1422,9 @@ $Maskgenerator
     -delete 0"
     }
   done <<< "$Maskmethodlist"
+  
+  verbose "mask generator kernels:
+$(magick xc:white -define morphology:showkernel=1 $(grep -E -- '-define|-morphology' <<< "$Maskgenerator_all" | grep -v "Close") null: 2>&1)"
 
   # --evaluate, --compose, --enfuse
   for Mode in $Image_needlist; do
@@ -1429,11 +1432,11 @@ $Maskgenerator
   done 
   
   [ -z "$Maskmethodlist" ] && return 0
+  note "Generating masks"
   
   # Generate masks
   Startzeit="$(date +%s)"
   Count=0
-  note "Generating masks"
   grep -q "NUMBER" <<< "$Maskgenerator_all" || note "Skipping mask generation"
   grep -q "NUMBER" <<< "$Maskgenerator_all" && for Sourceimage in $Sourceimagelist; do
     [ "$Error" ] && break
@@ -1525,10 +1528,12 @@ focus_merge_masks() {
   # Merge different masks.
   
   local Mergemask
-  local Count Number Weightmax Prefertopoption
+  local Count Number Weightmax Prefertopcode=
   local Command
   local Skipmerge Methodmask Mergecode=
   local Startzeit Dauer Restzeit
+  
+  note "Merging masks"
   
   Skipmerge="yes"
   #Skipmerge=no
@@ -1606,11 +1611,14 @@ focus_merge_masks() {
   }
   
   case "$Skipmerge" in
-    yes) [ "$Maskmethodnumber" = "1" ] && Mergemaskbasename="$Argbasename" ;;
+    yes) 
+      [ "$Maskmethodnumber" = "1" ] && Mergemaskbasename="$Argbasename" 
+      note "Skipping merge, not needed"
+      return 0
+    ;;
   esac
     
   # merge images
-  note "Merging masks"
   Startzeit="$(date +%s)"
   Count=0
   [ "$Skipmerge" = "no" ] && while read Sourceimage; do
@@ -1621,16 +1629,14 @@ focus_merge_masks() {
     Methodmask="$Cachedir/$Argbasename.${Number}.tif"
     
     # -downweight
-    [ "${Prefertop:-0}" -lt "0" ] && Prefertopoption="+level 0,$(calc "100 - -1*$Prefertop * $Count / $Imagenumber")%"
-    [ "${Prefertop:-0}" -gt "0" ] && Prefertopoption="+level 0,$(calc "100 -    $Prefertop *($Imagenumber - $Count) / $Imagenumber")%"
-    verbose "$Prefertopoption"
-    
-    
+    [ "${Prefertop:-0}" -lt "0" ] && Prefertopcode="+level 0,$(calc "100 - -1*$Prefertop * $Count / $Imagenumber")%"
+    [ "${Prefertop:-0}" -gt "0" ] && Prefertopcode="+level 0,$(calc "100 -    $Prefertop *($Imagenumber - $Count) / $Imagenumber")%"
+        
     Command="
 $Magickbin
 $(sed "s/NUMBER/$Number/g" <<< "$Mergecode" )
   mpr:mergemask
-    $Prefertopoption
+    $Prefertopcode
     $Tifstore 
   '$Mergemask'"
   
@@ -1682,12 +1688,16 @@ focus_montage() {
   done
   [ -z "$Maskimagelist" ] && Maskimagelist="$(masklist $Mergemaskbasename | tr '\n' ' ')"
   
-  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Lessthanmax $Cutblur")"
-  Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
-  [ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
-  [ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
-  [ "$Cutblur" ]        && Resultimage="$Resultimage-cutblur${Cutblur:-0}"
-  Resultimage="$Cachedir/montage-$Resultimage.$Resultmd5.tif"
+  note "Focus montage"
+  
+  #Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Lessthanmax $Cutblur")"
+  Resultmd5="$(md5cut "$(find $Maskimagelist -ls) $Lessthanmax $Cutblur")"
+  #Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
+  #[ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
+  #[ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
+  #[ "$Cutblur" ]        && Resultimage="$Resultimage-cutblur${Cutblur:-0}"
+  #Resultimage="$Cachedir/montage-$Resultimage.$Resultmd5.tif"
+  Resultimage="$Cachedir/montage.${Resultmd5}.tif"
   Resultimageready="$Resultimage.ready"
   
   Maskmax="${Maskmax:-$Cachedir/montage.max.$Resultmd5.tif}" 
@@ -1719,7 +1729,6 @@ focus_montage() {
     esac 
   }
   
-  note "Focus montage"
   Startzeit="$(date +%s)"
   Count=0    
   [ -z "$Skipmontage" ] && for Sourceimage in $Sourceimagelist; do
@@ -2723,7 +2732,7 @@ multicore() {
   #verbose "multicore: ${1:-}"
   Command="${Command//[$'\t\r\n']}"
   Command="$(sed 's/(/\\(/g ; s/)/\\)/g ; s/>/\\>/g' <<< "$Command")"
-  eval "$Command $Commandargs &"
+  eval "$Command $Commandargs" &
   
   Multicore_process[Multicore_processcount]=$!
   Multicore_image[Multicore_processcount]="${Showimage:-}"
@@ -3234,6 +3243,7 @@ check_background() {
   
   case $Backgroundtype in
     none)
+      Background=""
       Backgroundimage=""
     ;;
     compose)
@@ -3445,9 +3455,10 @@ main() {
 
   # --fakehdr
   [ "$Fakehdr" ] && {
-    fakehdr --percent "$Fakehdr" --method level --basename "fakehdr$Fakehdr.$Sourcemd5"
+    fakehdr --percent "$Fakehdr" --method level --basename "fakehdr$Fakehdr.$Sourcemd5" || error "Error in --fakehdr"
     Sourceimagelist="$(masklist "fakehdr$Fakehdr.$Sourcemd5")"
     Sourcemd5="$(md5cut "$(ls --full-time $Sourceimagelist)" )"
+    [ "$Error" ] && return 1
   }
   
   # --background
@@ -3460,28 +3471,33 @@ main() {
   # Generating stackshot image
   mkimg_transparent "$Resultimage"
   [ -n "$Maskmethodlist" ] && {
-    focus_generate_masks                  || return 1
-    focus_merge_masks                     || return 1
-    focus_montage --alpha "$Globalalpha" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || return 1
+    focus_generate_masks                  || error "Error in mask generation"
+    focus_merge_masks                     || error "Error in mask merge"
+    focus_montage --alpha "$Globalalpha" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || error "Error in montage"
     # --alpha=ARG
     [ "$Globalalpha" ] && {
+      note "Applying --alpha=$Globalalpha"
       alphalevel --image "$Resultimage" --mask "$Resultmask" --level "$Globalalpha" || error "Error in leveling --alpha='$Globalalpha'"
     }
     # --finalblur
     [ "$Finalblur" ] && {
+      note "Applying --finalblur=p${Finalblurpercent},s${Finalblursigma1},S${Finalblursigma2}"
       finalblur --image "$Resultimage" --mask "$Resultmask" --percent "$Finalblurpercent" --sigma1 "$Finalblursigma1" --sigma2 "$Finalblursigma2" || error "Error in --finalblur"
     }
     # --threshold
     [ "$Globalthreshold" ] && {
-      threshold "$Resultimage" "$Resultmask" "$Globalthreshold" || error "Error -in --threshold"
+      note "Applying --threshold=$Threshold"
+      threshold --image "$Resultimage" --mask "$Resultmask" --percent "$Globalthreshold" || error "Error -in --threshold"
     }
   }
   # --background
   [ "$Background" ] && [ -z "$Layers" ] && {
+    note "Applying --background=$Background"
     $Magickbin "$Backgroundimage" "$Resultimage" -compose Over -composite "$Resultimage" || note "Failed to compose result over background"
   }
   # --layered
   [ "$Layers" ] && {
+    note "Applying --layers=$Layers"
     layered_tif "$Resultimage" "$Resultmask" "$Layers" "$Backgroundimage" || error "Error in --layers"
   }
       
