@@ -384,8 +384,8 @@ verbose() {
 }
 showimage() {
   local Frame
-  #[ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"${1:-}"
-  [ "$Showimageprocessing" ] && bash imgview "${1:-}"
+  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"${1:-}"
+  #[ "$Showimageprocessing" ] && bash imgview "${1:-}"
   [ "$Video" ] && {
 #    Videoframecount="$((Videoframecount+1))"
     Videoframecount="$(ls $Cachedir/videoframe????.* | sort -V | tail -n1)"
@@ -3362,6 +3362,9 @@ check_outputname() {
     "") ;;
     *) Resultimage="${Resultimage}_close=$Globalclose" ;;
   esac
+  [ "$Globalmaskblur" ] && {
+    Resultimage="${Resultimage}_maskblur$Globalmaskblur"
+  }
   [ "$Cutblur" ] && {
     Resultimage="${Resultimage}_cutblur$Cutblur"
   }
