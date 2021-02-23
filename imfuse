@@ -1,18 +1,19 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.7.3-beta"
+Version="0.6.7.4-beta"
 
 # ToDo:
 #
 # imfuse:
-# check alpha ARG
+# ARG close: how to match --close ARG?
 # whitespace in file names -> file names into array
 # --maskblur altogether?
 # --gamma?
 # check --kirsch
-# check --unsharp
+# drop --unsharp?
 # drop --denoise?
+# --denoise after merge?
 # drop --halo?
 # find halo solution
 # check exiftransfer / damaged one Beerenwanze or Spinne image
@@ -68,7 +69,6 @@ Arguments taken by all mask options:
             Example: --morphology --saturation=w25
             This will generate two masks. The saturation mask will only have
             noteable effect where the morphology mask strength is below 25%.
-  c, close  Compare option --close, here applied for single mask only.
   less      Compare option --less, here applied for single mask only.
   alpha     Compare option --alpha, here applied for single mask only.
   maskblur  Compare option --maskblur, here applied for single mask only.
@@ -269,13 +269,18 @@ Mask generation and fusion adjustments:
                                        colorize colorize2 pinlight pinlight2
                       Interesting: interpolate overlay pegtoplight reflect
  --close [=ARG]       Closes gaps between nearby contrast lines to mark the 
-                      area in between as strong contrast, too. Default: 2x2
-                      First value is a kernel radius, second a kernel iteration.
+                      area in between as strong contrast, too.
                       Can reduce artefacts in partial transparent objects.
                       Helps e.g. to strengthen thin shiny objects like hairs.
-                      For big values rather use c2x8 or c4x4 instead of c16,
-                      the result will be similar but faster.
-                      An alternative option is --cutblur.
+                      Takes arguments similar to contrast mask ARG:
+                        r        kernel iteration    Default: 2
+                        R        radius              Default: 2
+                        p        threshold           Default: 25
+                      Multiplying r and R results in the real radius applied.
+                      A multiplied value like 3x4 (r3,R4) is faster than 
+                      setting one of r oder R to 12.
+                      Percent p is a threshold value; --close is only applied
+                      to contrast areas stronger than percent p.
  --cutblur [=SIGMA]   Blur cut masks in final montage. Default SIGMA: 2
  --denoise [=%]       Experimental option to remove noise in low contrast areas.
                       The percent value is a threshold. 
@@ -1583,45 +1588,56 @@ focus_merge_masks() {
     Mergecode="$Mergecode
     +level 0%,$(calc "(100 * ${Argweight:-100}) / $Weightmax" )% 
   )
-    -compose Interpolate -composite"
+    -compose Lighten -composite"
   done <<< "$Maskmethodlist"
 #    +level 0%,$(calc "(100 * ${Argweight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
-  
+
   # denoise low contrast areas
   [ "$Globaldenoise" ] && {
     Mergecode="$Mergecode $(denoisecode "$Globaldenoise")"
     Mergemaskbasename="$Mergemaskbasename-denoise"
   }
-  
-  # --close
-  [ "${Globalclose}" ] && {
-    Mergecode="$Mergecode
-    -morphology Close:${Globalclose2:-1} Octagon:${Globalclose1:-4}"
-    Mergemaskbasename="$Mergemaskbasename-close"
-  }
-  
+    
   Mergecode="$Mergecode
     -write mpr:mergemask
     -delete 0"
     
-  Mergemaskbasename="$Mergemaskbasename.$(md5cut "$Sourcemd5 $Mergecode" )"
-  maskexist "$Mergemaskbasename" && {
-    note "Skipping merge, masks already exist: $Mergemaskbasename"
-    Skipmerge="yes"
+  # --close    
+  [ "$Globalclose" ] && {
+    Mergecode="$Mergecode
+  mpr:mergemask
+    -threshold ${Globalclosethreshold:-50}%
+    -write mpr:cutmask
+    -delete 0
+  mpr:mergemask
+  mpr:cutmask
+    -compose Darken -composite
+    -morphology Close:${Globalclose1:-2} Octagon:${Globalclose2:-2}
+  mpr:mergemask
+    -compose Lighten -composite
+    -write mpr:mergemask
+    -delete 0"
+    Mergemaskbasename="$Mergemaskbasename-close"
   }
-  
+    
   case "$Skipmerge" in
     yes) 
       [ "$Maskmethodnumber" = "1" ] && Mergemaskbasename="$Argbasename" 
-      note "Skipping merge, not needed"
+      note "Skipping merge, not needed."
       return 0
     ;;
   esac
+  
+  Mergemaskbasename="$Mergemaskbasename.$(md5cut "$Sourcemd5 $Mergecode" )"
+  maskexist "$Mergemaskbasename" && {
+    note "Skipping merge, masks already exist: $Mergemaskbasename"
+    return 0
+  }
     
   # merge images
   Startzeit="$(date +%s)"
   Count=0
-  [ "$Skipmerge" = "no" ] && while read Sourceimage; do
+  while read Sourceimage; do
     [ "$Error" ] && break
     Count="$((Count+1))"
     Number="$(printnum $Count $Imagenumberlength)"
@@ -1644,6 +1660,7 @@ $(sed "s/NUMBER/$Number/g" <<< "$Mergecode" )
 $(grep "\S" <<< "$Command")"
 
     multicore --showimage "$Mergemask" -- $Command || error "Error while merging masks"
+#    multicore --showimage "$Testimage" -- $Command || error "Error while merging masks"
     
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
@@ -1691,7 +1708,8 @@ focus_montage() {
   note "Focus montage"
   
   #Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Lessthanmax $Cutblur")"
-  Resultmd5="$(md5cut "$(find $Maskimagelist -ls) $Lessthanmax $Cutblur")"
+  #Resultmd5="$(md5cut "$(find $Maskimagelist -ls) $Lessthanmax $Cutblur")"
+  Resultmd5="$(md5cut "$Maskimagelist $Lessthanmax $Cutblur")"
   #Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
   #[ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
   #[ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
@@ -2857,6 +2875,7 @@ declare_variables() {
   Globalclose=""
   Globalclose1=""
   Globalclose2=""
+  Globalclosethreshold=""
   Globaldenoise=""
   Globalmaskblur=""
   Globalless=""
@@ -3116,7 +3135,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   Cachedir="$(realpath -m "$Cachedir")"
   
   # --close
-  case $Globalclose in
+  false && case $Globalclose in
     ""|"0") Globalclose="" ;;
     *)
       [ "$Globalclose" = "auto" ] && Globalclose="$(maskarg_defaultvalue "$Firstmaskmethod" close)"
@@ -3127,7 +3146,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
       Globalclose1="${Globalclose1:-1}"
       Globalclose2="${Globalclose2:-1}"
       Globalclose="${Globalclose1}x${Globalclose2}"
-      [ "$Maskmethodnumber" = "1" ] && {
+      false && [ "$Maskmethodnumber" = "1" ] && {
         maskarg_parse "$Maskmethodlist"
         Argclose1="$Globalclose1"
         Argclose2="$Globalclose2"
@@ -3136,6 +3155,17 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
         Globalclose1=""
         Globalclose2=""
       }
+    ;;
+  esac
+  case $Globalclose in
+    ""|"0") Globalclose="" ;;
+    *)
+      [ "$Globalclose" = "auto" ] && Globalclose="r,R,p"
+      maskarg_parse "$Globalclose"
+      Globalclose1="${Argradius1:-2}"
+      Globalclose2="${Argradius2:-2}"
+      Globalclosethreshold="${Argpercent1:-25}"
+      Globalclose="r${Globalclose1},R${Globalclose2},p${Globalclosethreshold}"
     ;;
   esac
   
@@ -3214,7 +3244,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   # --threshold
   case $Globalthreshold in
     "") ;;
-    auto) Globalthreshold="50" ;;
+    auto) Globalthreshold="25" ;;
   esac
   [ "$Globalthreshold" ] && Background="${Background:-transparent}"
   
@@ -3318,7 +3348,7 @@ check_outputname() {
   esac
   case $Globalclose in
     "") ;;
-    *) Resultimage="${Resultimage}_close$Globalclose" ;;
+    *) Resultimage="${Resultimage}_close=$Globalclose" ;;
   esac
   [ "$Cutblur" ] && {
     Resultimage="${Resultimage}_cutblur$Cutblur"
@@ -3486,7 +3516,7 @@ main() {
     }
     # --threshold
     [ "$Globalthreshold" ] && {
-      note "Applying --threshold=$Threshold"
+      note "Applying --threshold=$Globalthreshold"
       threshold --image "$Resultimage" --mask "$Resultmask" --percent "$Globalthreshold" || error "Error -in --threshold"
     }
   }
