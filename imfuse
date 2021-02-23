@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.7.4-beta"
+Version="0.6.7.5-beta"
 
 # ToDo:
 #
@@ -478,6 +478,129 @@ unspecialstring() {
   printf %s "${1:-}" | LC_ALL=C tr -cs "a-zA-Z0-9._" "-" | sed -e 's/^-// ; s/-$//'
 }
 
+#### run commands on all CPUs
+
+multicore() {
+  # Run multiple processes in parallel, but not more than $Multicore_maxprocesses
+  # $1 Command
+  # $2 Image to show if $1 is finished
+  # Run multicore_wait afterwards to wait for the last processes to finish.
+  
+  local Process Command= Commandargs=
+  local Mem_needed Zram
+  local Longoptions Parsedoptions
+  local Showimage Memory
+  
+  Longoptions="showimage:,memory"
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"  
+  while [ "$#" -gt 0 ]; do
+    case "${1:-}" in
+      --showimage) Showimage="${2:-}" ; shift ;;
+      --memory)    Memory="${2:-}" ; shift ;;
+      --) ;;
+      *)
+        [ -z "$Command" ] && Command="${1:-}" || Commandargs="$Commandargs '${1:-}'"
+      ;;
+    esac
+    shift
+  done
+
+  [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
+    multicore_wait || return 1
+  }
+  [ "$Multicore_processcount" = "0" ] && Multicore_memorymax="$(freememory)"  
+  Mem_needed=0
+  for Process in $(seq $Multicore_maxprocesses); do
+    Mem_needed="$(awk "BEGIN {print $Mem_needed + ${Multicore_memory[$Process]:-0} }" )"
+  done
+  Mem_needed="$((Mem_needed+${3:-0}))"
+  [ "$Mem_needed" -gt "$Multicore_memorymax" ] && {
+    note "multicore: Low memory. Waiting for $Multicore_processcount running processes to finish. Need: $((Mem_needed/1000)) MB, Available: $((Multicore_memorymax/1000)) MB"
+    [ "$Mem_needed" -gt "$Multicore_memorymax" ] && [ "$Multicore_processcount" = "0" ] && note "multicore: Likely hard disk cache will be used and slow down the calculation."
+    multicore_wait || return 1
+  }
+  
+  ifcmdbreak && return 1
+
+  Multicore_processcount=$((Multicore_processcount +1))
+
+  case $(type -t "$(cut -d ' ' -f1 <<< "$Command")") in
+    file) Command="nice $Command" ;;
+    *)    ;;
+  esac
+  
+  #verbose "multicore: ${1:-}"
+  Command="${Command//[$'\t\r\n']}"
+  Command="$(sed 's/(/\\(/g ; s/)/\\)/g ; s/>/\\>/g' <<< "$Command")"
+  eval "$Command $Commandargs" &
+  
+  Multicore_process[Multicore_processcount]=$!
+  Multicore_image[Multicore_processcount]="${Showimage:-}"
+  Multicore_memory[Multicore_processcount]="${Memory:-0}"
+  
+  return 0
+}
+multicore_wait() {
+  local Process= Error=
+  for Process in $(seq $Multicore_maxprocesses); do
+    [ "${Multicore_process[$Process]}" ] && {
+      multicore_waitprocess "${Multicore_process[$Process]}" || {
+        multicore_break
+        Error=1
+      }
+      [ "$Error" ] && break
+      [ "${Multicore_image[$Process]}" ] && showimage "${Multicore_image[$Process]}"
+    }
+    Multicore_process[$Process]=""
+    Multicore_image[$Process]=""
+    Multicore_memory[$Process]="0"
+  done
+  [ "$Error" ] && return 1
+  Multicore_processcount=0
+  return 0
+}
+multicore_waitprocess() {
+  local Error=
+  while sleep 0.2 ; do
+    ps -p "${1:-}" >/dev/null || break
+    ifcmdbreak && Error=1
+    [ "$Error" ] && break
+  done
+  [ "$Error" ] && return 1
+  wait "${1:-}"
+  return $?
+}
+multicore_break() {
+  local Process  
+  for Process in $(seq $Multicore_maxprocesses); do
+    [ "${Multicore_process[$Process]}" ] && {
+      kill "${Multicore_process[$Process]}"
+      wait "${Multicore_process[$Process]}"
+      Multicore_process[$Process]=""
+      Multicore_image[$Process]=""
+      Multicore_memory[$Process]="0"
+    }
+  done
+}
+multicore_init() {
+  # declare global variables
+  local Process
+  [ -z "${Multicore_maxprocesses:-}" ] && Multicore_maxprocesses="$(nproc)"
+  Multicore_maxprocesses="${Multicore_maxprocesses:-1}"
+  for Process in $(seq $Multicore_maxprocesses); do
+    Multicore_process[$Process]=""
+    Multicore_image[$Process]=""
+    Multicore_memory[$Process]="0"
+  done
+  Multicore_processcount=0
+  Multicore_minram=250000
+  Multicore_maxprocesses=$Multicore_maxprocesses
+}
+ifcmdbreak() {
+  return 1
+}
+
 ### Files
 
 checkmagicklist() {
@@ -598,7 +721,7 @@ ${1:-}"
   Startzeit="$(date +%s)"
   case $Split in
     1)
-      $Magickbin $Sourceimagelist -alpha off -evaluate-sequence $Mode $Tifstore $Resultimage || error "Error in evaluate(): $Mode"
+      $Magickbin $Sourceimagelist -alpha off -evaluate-sequence "$Mode" $Tifstore "$Resultimage" || error "Error in evaluate(): $Mode"
     ;;
     *)
       case $Mode in
@@ -613,6 +736,7 @@ ${1:-}"
   esac
   Dauer="$(( $(date +%s)-Startzeit))"
   verbose "evaluate() $Mode duration: $(date -u -d @$Dauer +"%T")"
+  showimage "$Resultimage"
 }
 evaluate_split() {
   # -evaluate-sequence for images exceeding RAM
@@ -751,6 +875,7 @@ $Command"
   }
   Dauer="$(( $(date +%s)-Startzeit))"
   verbose "Duration: $(date -u -d @$Dauer +"%T")"
+  showimage "$Resultimage"
 }
 exiftransfer() {
   # Transfer exif data from image $1 to image $2
@@ -1567,11 +1692,11 @@ focus_merge_masks() {
       
     Methodmask="$Cachedir/$Argbasename.NUMBER.tif"
       
-#    [ "$Argmaskblur" ]                                      && Skipmerge="no" 
     [ "$Argdenoise" ]                                       && Skipmerge="no" 
     [ "$Argdarkenmask" ]                                    && Skipmerge="no" 
     [ "$Globalclose" ]                                      && Skipmerge="no"
     [ "$Globaldenoise" ]                                    && Skipmerge="no"
+    [ "$Globalmaskblur" ]                                   && Skipmerge="no"
       
     Mergecode="$Mergecode
   ( 
@@ -1618,6 +1743,15 @@ focus_merge_masks() {
     -write mpr:mergemask
     -delete 0"
     Mergemaskbasename="$Mergemaskbasename-close"
+  }
+  
+  [ "$Globalmaskblur" ] && {
+    Mergecode="$Mergecode
+  mpr:mergemask
+    -blur 0x$Globalmaskblur
+    -write mpr:mergemask
+    -delete 0"
+    Mergemaskbasename="$Mergemaskbasename-blur"
   }
     
   case "$Skipmerge" in
@@ -1707,15 +1841,15 @@ focus_montage() {
   
   note "Focus montage"
   
-  #Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Lessthanmax $Cutblur")"
+  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Lessthanmax $Cutblur")"
   #Resultmd5="$(md5cut "$(find $Maskimagelist -ls) $Lessthanmax $Cutblur")"
-  Resultmd5="$(md5cut "$Maskimagelist $Lessthanmax $Cutblur")"
-  #Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
-  #[ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
-  #[ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
-  #[ "$Cutblur" ]        && Resultimage="$Resultimage-cutblur${Cutblur:-0}"
-  #Resultimage="$Cachedir/montage-$Resultimage.$Resultmd5.tif"
-  Resultimage="$Cachedir/montage.${Resultmd5}.tif"
+  #Resultmd5="$(md5cut "$Maskimagelist $Lessthanmax $Cutblur")"
+  Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
+  [ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
+  [ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
+  [ "$Cutblur" ]        && Resultimage="$Resultimage-cutblur${Cutblur:-0}"
+  Resultimage="$Cachedir/montage-$Resultimage.$Resultmd5.tif"
+  #Resultimage="$Cachedir/montage.${Resultmd5}.tif"
   Resultimageready="$Resultimage.ready"
   
   Maskmax="${Maskmax:-$Cachedir/montage.max.$Resultmd5.tif}" 
@@ -2695,128 +2829,6 @@ maskarg_checkstatistic() {
   return 0
 }
 
-#### run commands on all CPUs
-
-multicore() {
-  # Run multiple processes in parallel, but not more than $Multicore_maxprocesses
-  # $1 Command
-  # $2 Image to show if $1 is finished
-  # Run multicore_wait afterwards to wait for the last processes to finish.
-  
-  local Process Command= Commandargs=
-  local Mem_needed Zram
-  local Longoptions Parsedoptions
-  local Showimage Memory
-  
-  Longoptions="showimage:,memory"
-  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
-  eval set -- "$Parsedoptions"  
-  while [ "$#" -gt 0 ]; do
-    case "${1:-}" in
-      --showimage) Showimage="${2:-}" ; shift ;;
-      --memory)    Memory="${2:-}" ; shift ;;
-      --) ;;
-      *)
-        [ -z "$Command" ] && Command="${1:-}" || Commandargs="$Commandargs '${1:-}'"
-      ;;
-    esac
-    shift
-  done
-
-  [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
-    multicore_wait || return 1
-  }
-  [ "$Multicore_processcount" = "0" ] && Multicore_memorymax="$(freememory)"  
-  Mem_needed=0
-  for Process in $(seq $Multicore_maxprocesses); do
-    Mem_needed="$(awk "BEGIN {print $Mem_needed + ${Multicore_memory[$Process]:-0} }" )"
-  done
-  Mem_needed="$((Mem_needed+${3:-0}))"
-  [ "$Mem_needed" -gt "$Multicore_memorymax" ] && {
-    note "multicore: Low memory. Waiting for $Multicore_processcount running processes to finish. Need: $((Mem_needed/1000)) MB, Available: $((Multicore_memorymax/1000)) MB"
-    [ "$Mem_needed" -gt "$Multicore_memorymax" ] && [ "$Multicore_processcount" = "0" ] && note "multicore: Likely hard disk cache will be used and slow down the calculation."
-    multicore_wait || return 1
-  }
-  
-  ifcmdbreak && return 1
-
-  Multicore_processcount=$((Multicore_processcount +1))
-
-  case $(type -t "$(cut -d ' ' -f1 <<< "$Command")") in
-    file) Command="nice $Command" ;;
-    *)    ;;
-  esac
-  
-  #verbose "multicore: ${1:-}"
-  Command="${Command//[$'\t\r\n']}"
-  Command="$(sed 's/(/\\(/g ; s/)/\\)/g ; s/>/\\>/g' <<< "$Command")"
-  eval "$Command $Commandargs" &
-  
-  Multicore_process[Multicore_processcount]=$!
-  Multicore_image[Multicore_processcount]="${Showimage:-}"
-  Multicore_memory[Multicore_processcount]="${Memory:-0}"
-  
-  return 0
-}
-multicore_wait() {
-  local Process= Error=
-  for Process in $(seq $Multicore_maxprocesses); do
-    [ "${Multicore_process[$Process]}" ] && {
-      multicore_waitprocess "${Multicore_process[$Process]}" || {
-        multicore_break
-        Error=1
-      }
-      [ "$Error" ] && break
-      [ "${Multicore_image[$Process]}" ] && showimage "${Multicore_image[$Process]}"
-    }
-    Multicore_process[$Process]=""
-    Multicore_image[$Process]=""
-    Multicore_memory[$Process]="0"
-  done
-  [ "$Error" ] && return 1
-  Multicore_processcount=0
-  return 0
-}
-multicore_waitprocess() {
-  local Error=
-  while sleep 0.2 ; do
-    ps -p "${1:-}" >/dev/null || break
-    ifcmdbreak && Error=1
-    [ "$Error" ] && break
-  done
-  [ "$Error" ] && return 1
-  wait "${1:-}"
-  return $?
-}
-multicore_break() {
-  local Process  
-  for Process in $(seq $Multicore_maxprocesses); do
-    [ "${Multicore_process[$Process]}" ] && {
-      kill "${Multicore_process[$Process]}"
-      wait "${Multicore_process[$Process]}"
-      Multicore_process[$Process]=""
-      Multicore_image[$Process]=""
-      Multicore_memory[$Process]="0"
-    }
-  done
-}
-multicore_init() {
-  # declare global variables
-  local Process
-  [ -z "${Multicore_maxprocesses:-}" ] && Multicore_maxprocesses="$(nproc)"
-  Multicore_maxprocesses="${Multicore_maxprocesses:-1}"
-  for Process in $(seq $Multicore_maxprocesses); do
-    Multicore_process[$Process]=""
-    Multicore_image[$Process]=""
-    Multicore_memory[$Process]="0"
-  done
-  Multicore_processcount=0
-  Multicore_minram=250000
-  Multicore_maxprocesses=$Multicore_maxprocesses
-}
-ifcmdbreak() {
-  return 1
-}
 ### main
 
 trap_sigint() {
@@ -3097,9 +3109,9 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
       ;;
     esac
     
-    [ "$Globalmaskblur" ] && [ "$Argtype" = "mask" ] && {
-      Argmaskblur="$(calc "${Argmaskblur:-0} + $Globalmaskblur")"
-    }
+    #[ "$Globalmaskblur" ] && [ "$Argtype" = "mask" ] && {
+    #  Argmaskblur="$(calc "${Argmaskblur:-0} + $Globalmaskblur")"
+    #}
     
     maskarg_store "$Maskmethodcount"
   done <<< "$Maskmethodlist"
@@ -3502,22 +3514,28 @@ main() {
   mkimg_transparent "$Resultimage"
   [ -n "$Maskmethodlist" ] && {
     focus_generate_masks                  || error "Error in mask generation"
+    [ "$Error" ] && return 1
     focus_merge_masks                     || error "Error in mask merge"
+    [ "$Error" ] && return 1
     focus_montage --alpha "$Globalalpha" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || error "Error in montage"
+    [ "$Error" ] && return 1
     # --alpha=ARG
     [ "$Globalalpha" ] && {
       note "Applying --alpha=$Globalalpha"
       alphalevel --image "$Resultimage" --mask "$Resultmask" --level "$Globalalpha" || error "Error in leveling --alpha='$Globalalpha'"
+      [ "$Error" ] && return 1
     }
     # --finalblur
     [ "$Finalblur" ] && {
       note "Applying --finalblur=p${Finalblurpercent},s${Finalblursigma1},S${Finalblursigma2}"
       finalblur --image "$Resultimage" --mask "$Resultmask" --percent "$Finalblurpercent" --sigma1 "$Finalblursigma1" --sigma2 "$Finalblursigma2" || error "Error in --finalblur"
+      [ "$Error" ] && return 1
     }
     # --threshold
     [ "$Globalthreshold" ] && {
       note "Applying --threshold=$Globalthreshold"
       threshold --image "$Resultimage" --mask "$Resultmask" --percent "$Globalthreshold" || error "Error -in --threshold"
+      [ "$Error" ] && return 1
     }
   }
   # --background
