@@ -6,6 +6,7 @@ Version="0.6.7.5-beta"
 # ToDo:
 #
 # imfuse:
+# --revert: broken
 # ARG close: how to match --close ARG?
 # whitespace in file names -> file names into array
 # --maskblur altogether?
@@ -25,10 +26,14 @@ Version="0.6.7.5-beta"
 # imgview:
 # layered tifs
 
+# soft concept:
+# multiply images with mask
+# add all images (plus)
+# divide result by max
+
 usage() {
   echo "imfuse v$Version
 Combines focus stackshot images to one overall sharp image.
-Aims to be similar to enfuse, but based on ImageMagick.
 
 Note that imfuse expects already aligned input images.
 It assumes that the alphanumerical order of the input images goes from
@@ -281,6 +286,15 @@ Mask generation and fusion adjustments:
                       setting one of r oder R to 12.
                       Percent p is a threshold value; --close is only applied
                       to contrast areas stronger than percent p.
+ --clutmask [=CONTRASTxMIDPOINT]   Change grayscale distribution of contrast
+                      masks along a sigmoidal curve. 
+                      Helps to strenghten high contrast areas and to weaken
+                      low contrast areas. Main use case is option --soft.
+                      CONTRAST bends the curve; the higher, the stronger.
+                      MIDPOINT is the inflection point of the curve in percent.
+                      Compare IM option -sigmoidal-contrast.
+                      Default CONTRAST: 10, default MIDPOINT: 50%
+                      Try script 'demo-clutmask' to understand the effects.
  --cutblur [=SIGMA]   Blur cut masks in final montage. Default SIGMA: 2
  --denoise [=%]       Experimental option to remove noise in low contrast areas.
                       The percent value is a threshold. 
@@ -319,6 +333,11 @@ Mask generation and fusion adjustments:
                       Applied to contrast masks only.
  --prefertop [=%]     Prefer top layer images up to %. Default %: 40
                       Similar to --less, but a rather brute-force attempt.
+ --soft               Enable soft fusion mode. Different concept than default
+                      maximum contrast montage. Images are multiplied with 
+                      their contrast masks and added altogether as a whole.
+                      Contrast enhancement with option --clutmask.
+                      Does not support --less.
  --threshold [=%]     Make low contrast area transparent. Default %: 50
                            
 Basics:                   
@@ -626,10 +645,10 @@ masklist() {
 ### image processing helpers
 
 alphalevel() {
-  local Command Image Mask Level
+  local Command Image Mask Level Clut Clutimage
   local Longoptions Parsedoptions
   
-  Longoptions="image:,mask:,level:"
+  Longoptions="image:,mask:,level:,clut:"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
   
@@ -638,6 +657,7 @@ alphalevel() {
       --image)        Image="${2:-}" ; shift ;;
       --mask)         Mask="${2:-}"  ; shift ;;
       --level)        Level="${2:-}" ; shift ;;
+      --clut)         Clut="${2:-}"  ; shift ;;
     esac
     shift
   done
@@ -646,6 +666,14 @@ alphalevel() {
   Level="${Level:-0x100}"
   Level="$(levelparse "$Level")"
   Level="$(levelpercent "$Level")"
+  
+  [ "$Clut" ] && {  
+    Clutimage="$Cachedir/clutmask-$Clut.tif"
+    [ -e "$Clutimage" ] || {
+      $Magickbin -size 256x256 gradient: -rotate 90 -depth 16 -sigmoidal-contrast ${Clut}% "$Clutimage" || error "alphalevel(): Error in clut $Clut%"
+      showimage "$Clutimage"
+    }
+  }
   
   Command="$Magickbin
   '$Image'
@@ -667,17 +695,36 @@ alphalevel() {
     -delete 0"
     ;;
   esac
+  [ "$Clut" ] && Command="$Command
+  mpr:mask
+  $Clutimage
+    -clut
+    -write mpr:mask
+    -delete 0"
   Command="$Command
+  mpr:mask
+    +level $Level
+    -write mpr:mask
+    -delete 0
   mpr:image
-  ( mpr:mask +level $Level )
+  mpr:mask
     -alpha off
     -compose CopyOpacity -composite
     $Tifstorealpha
   $Image"
   
+  verbose "alphalevel():
+$Command"
+  
   multicore --showimage "$Image" -- $Command || error "Error in alphalevel(): $Parsedoptions"
   multicore_wait                             || error "Error in alphalevel(): $Parsedoptions"
   return ${Error:-0}
+}
+clut_gaussian() {
+  local Clutimage Sigma
+  Clutimage="${1:-}"
+  Sigma="${2:-1}"
+  $Magickbin -size 1x1 xc:white -bordercolor Black -border 2x0 -filter gaussian -define filter:sigma=$Sigma -resize 512x256! -crop 50%x100%+0+0 -auto-level "$Clutimage"
 }
 denoisecode() {
   echo "
@@ -1202,10 +1249,11 @@ level_masks() {
   case $Redistshape in
     ""|none)    Prefix="level_" ; Redistshape="" ;;
     "uniform")  Prefix="levelU_" ;;
-    "gaussian") Prefix="levelG_" ;;
+    "gaussian") Prefix="levelG${Redistpeak}_" ;;
   esac
   Maskbasename="${Prefix}${Maskbasename}"
 
+  [ "$Forceoverwrite" = "level" ] && rm $Cachedir/$Maskbasename*
   maskexist "$Maskbasename" && {
     verbose "level_masks(): Already exists, skipping: $Maskbasename"
     echo "$Maskbasename"
@@ -1223,7 +1271,8 @@ level_masks() {
   
   $Magickbin $Maskmax -level ${Levelmin}%,${Levelmax}% $Maskmax
 
-  [ "$Redistshape" ] && redist $Maskmax $Clutimage $Redistshape
+  [ "$Redistshape" ] && redist --image "$Maskmax" --clutimage "$Clutimage" --shape "$Redistshape" --peak "${Redistpeak:-50}"
+  #[ "$Testsetup" ] && $Magickbin $Clutimage +level ${Testarg}%x100% $Clutimage
 
   Startzeit="$(date +%s)"
   Count=0
@@ -1342,12 +1391,156 @@ redist() {
   local Factor LowArr HighArr PointArr
   local i x y 
   local intFunctionList integralArr
+  local Longoptions Parsedoptions
   
-  Referenceimage="${1:-}"
-  Clutimage="${2:-}"
-  Shape="${3:-uniform}"
+  Longoptions="image:,clutimage:,shape:,peak:"
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"
   
-  Peak=50  # 0..100
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --image)     Referenceimage="${2:-}" ;;
+      --clutimage) Clutimage="${2:-}" ;;
+      --shape)     Shape="${2:-}" ;;
+      --peak)      Peak="${2:-}" ;;
+    esac
+    shift
+    shift
+  done
+  
+  Shape="${Shape:-uniform}"
+  Peak=${Peak:-50}  # 0..100
+  Low=50   # >0
+  High=50  # >0
+
+  Histogram="$Referenceimage.histogram-$Shape.tif"
+      
+  Quantumrange="$($Magickbin $Referenceimage -format "%[fx:quantumrange]" info:)" || return 1
+  Expo="$($Magickbin xc: -format "%[fx:e]" info:)" 
+
+  #Clutimage="$Cachedir/clut.$Maskmd5.miff"
+
+  #cumHistogram 
+  histArr=($($Magickbin $Referenceimage -colorspace gray -depth 8 -format "%c" histogram:info:- \
+               | sed -n 's/[ ]*\([0-9]*\).*gray[(]\([0-9]*\).*$/\1 \2/p' \
+               | awk '# AWK to generate a zero filled histogram
+                      { bin[int($2)] += $1; } 
+                      END { for (i=0;i<256;i++) {hist = bin[i]+0; print hist; }
+                      } ' ))
+
+  ccountArr=($(echo ${histArr[*]} \
+               | awk '# AWK to generate a cumulative histogram
+                      { split($0,count," ") }
+                      END { for (i=0;i<256;i++) { cum += count[i]; print cum } }' ))
+  totpix=${ccountArr[255]}
+  
+  case $Shape in
+    uniform)
+      # genUniformLutArr
+      # special function to generate lut for Uniform Distribution which is just the cumulative histogram normalized to max value 
+      # the uniform distribution has an integral which is f(x)=x
+      # this Peaks that the cumulative distribution of the image is its own lut and only needs to be scaled
+      
+      # get raw cumulative histogram
+      Factor="$($Magickbin xc: -format "%[fx:$Quantumrange/$totpix]" info:)"
+      Lutlist="$(for ((i=0; i<256; i++)); do
+        echo "${ccountArr[$i]}"
+      done | awk -v Factor="$Factor" '{ print int(Factor*$1); }')"
+    ;;
+    gaussian)
+      # function to generate gaussian array in two parts: 0 to Peak and Peak to 255
+      Peak="$((256*Peak/100))"
+
+      # create low part of gaussian distribution
+      Factor="$($Magickbin xc: -format "%[fx:1/(2*($Low)^2)]" info:)"
+      LowArr=($(awk -v Peak="$Peak" -v Factor="$Factor" -v Expo="$Expo" -v Quantumrange="$Quantumrange" '
+	                BEGIN { for (i=0;i<=Peak;i++) print Quantumrange*Expo^(-((i-Peak)^2)*Factor); }'))
+
+      # create high part of gaussian distribution
+      Factor="$($Magickbin xc: -format "%[fx:1/(2*($High)^2)]" info:)"
+      HighArr=($(awk -v Peak="$Peak" -v Factor="$Factor" -v Expo="$Expo" -v Quantumrange="$Quantumrange" '
+                    BEGIN { for (i=Peak+1;i<256;i++) print Quantumrange*Expo^(-((i-Peak)^2)*Factor); }'))
+
+      # combine low and high parts of gaussian distribution
+      gausslist="${LowArr[*]} ${HighArr[*]}"
+      functionArr=($gausslist)
+      
+      # integrate function distribution
+      intFunctionList=$(for ((i=0; i<256; i++)); do
+        echo "$i ${functionArr[$i]}"
+      done | awk -v totpix="$totpix" '
+                 # AWK to integrate a function
+                 { cum += $2; rcum[$1] = cum; } 
+                 END { for (i=0;i<256;i++) print int(totpix*rcum[i]/cum); }')
+      integralArr=($intFunctionList)
+    
+      # for each possible bin graylevel (0 to 255) of cc2 starting at 0
+      # get count from cumulate histogram cc2 at that bin, then
+      # increment along bin graylevels of integrated function cc1 until that count exceeds that of cc2
+      # find the bin graylevel in cc1 and use that as the output value of the lut transformation 
+      # where the cc2 bin graylevel is the input value of the lut transformation
+      # repeat for the next cc2 bin, but starting at graylevel where left off from previous.
+      # as cumulative histograms never decrease, you don't have to start at graylevel 0 each time
+
+      Lutlist=$(for ((i=0; i<256; i++)); do
+        echo "$i ${integralArr[$i]} ${ccountArr[$i]}"
+      done | awk -v Quantumrange="$Quantumrange" '# AWK to generate transformation lut
+                 BEGIN { i=0; } { cc1[$1]=$2; cc2[$1]=$3; } 
+                 END { for ( j=0;j<256;j++ ) 
+                 { while ( i != 255 && cc1[i] <= cc2[j] ) 
+                 { i++ } lut = Quantumrange*i/255; print lut; } }')
+    ;;
+  esac
+  
+  # now convert lutArr into lut image
+  # Use NetPBM (PGM format implied intermediate image)
+
+  echo "P2 256 1 $Quantumrange $Lutlist" | $Magickbin - -scale 256x1\! "$Clutimage"
+  
+  # draw histogram
+  $Magickbin $Referenceimage $Clutimage -clut -define histogram:unique-colors=false histogram:- | $Magickbin - -filter point -resize 256x200! $Histogram
+  case $Shape in
+    "gaussian")
+      # now overlay graph on histogram; scale graph to 128 wide (take every other point) and 100 tall and invert the y coordinates
+      x=0
+      while [ "$x" -lt 256 ] ; do
+        y="$((200 - (200 * ${functionArr[$x]%.*} / $Quantumrange) ))"
+        PointArr[$x]="$x,$y"
+        x="$((x+1))"
+      done
+      $Magickbin $Histogram -stroke red -strokewidth 2 -fill none -draw "polyline ${PointArr[*]}" $Histogram
+    ;;
+  esac
+  verbose "histogram:
+$Histogram"
+  showimage $Histogram
+}
+redistX() {
+  local Referenceimage Clutimage Shape
+  local histArr ccountArr totpix Lutlist
+  local Peak Low High Expo Quantumrange
+  local Factor LowArr HighArr PointArr
+  local i x y 
+  local intFunctionList integralArr
+  local Longoptions Parsedoptions
+  
+  Longoptions="image:,clutimage:,shape:,peak:"
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"
+  
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --image)     Referenceimage="${2:-}" ;;
+      --clutimage) Clutimage="${2:-}" ;;
+      --shape)     Shape="${2:-}" ;;
+      --peak)      Peak="${2:-}" ;;
+    esac
+    shift
+    shift
+  done
+  
+  Shape="${Shape:-uniform}"
+  Peak=${Peak:-50}  # 0..100
   Low=50   # >0
   High=50  # >0
 
@@ -1504,7 +1697,7 @@ threshold() {
 # core focus stack routines
 
 focus_generate_masks() {
-  local Maskgenerator Maskgenerator_all= Basenamelist= Maskready= Maskmax Showimage= Mode Line Imagename Command= Maskmd5=
+  local Maskgenerator Maskgenerator_all= Basenamelist= Maskready= Maskmax Showimage= Mode Line Imagename Command= Maskmd5
   local Startzeit Dauer Restzeit Count
     
   Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
@@ -1512,7 +1705,15 @@ focus_generate_masks() {
     [ "$Error" ] && break
     
     maskarg_parse "$Line"
+      
+    Maskmd5="$(md5cut "$Sourcemd5 $Argmethod $Argdiff $Argnegate $Argclose1 $Argclose2 $Argmaskblur")"
+    Argbasename="$Argmethod.$Maskmd5"
+    maskarg_store
+    
     Maskgenerator="$(focus_maskmethod "$Argmethod")"
+#    [ "$Argmethod" = "enfuse" ] && Maskgenerator="
+#  $Cachedir/$Argbasename.NUMBER.tif
+#    -depth 16"
         
     [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
   mpr:sourcegray
@@ -1529,13 +1730,9 @@ focus_generate_masks() {
     -blur 0x$Argmaskblur"
     }
 
-    [ "$Argmethod" = "enfuse" ] && Enfuse_needlist="$Enfuse_needlist enfuse"
+    [ "$Argmethod" = "enfuse" ] && Image_needlist="$Image_needlist enfuse"
     #[ "$Argalpha" ]             && Enfuse_needlist="$Enfuse_needlist enfuse"
-      
-    Maskmd5="$(md5cut "$Sourcemd5 $Maskgenerator")"
-    Argbasename="$Argmethod.$Maskmd5"
-    maskarg_store
-      
+    
     ## avoid [double] creating of existing masks
     Maskready=""
     grep -q -x "$Argbasename" <<< "$Basenamelist" && Maskready="yes"
@@ -1544,6 +1741,9 @@ $Argbasename"
     maskexist "$Argbasename" && Maskready="yes" || rm -f $(masklist "$Argbasename")
     
     [ -z "$Maskready" ] && {
+#      [ "$Argmethod" = "enfuse" ] && {
+#        enfuse --exposure-weight=0 --saturation-weight=0 --contrast-weight=1 --save-masks=$Cachedir/$Argbasename.%n.tif $Sourceimagelist
+#      }
       Maskgenerator_all="$Maskgenerator_all
 $Maskgenerator
     -write '$Cachedir/$Argbasename.NUMBER.tif'"
@@ -1607,18 +1807,20 @@ $(grep "\S" <<< "$Command")"
   multicore_wait || error "Failure in mask generation"
   
   
+  # level
   # less,alpha
   while read Line; do
     [ "$Error" ] && break
     maskarg_parse "$Line"
     
-    # get -level min/max values for contrast masks
+    # level and uniform masks
     [ "$Arglevel" = "yes" ] && {
       Argbasename="$(level_masks "$Argbasename")" || error "Error in level_masks()"
       maskarg_store
     }
     [ "$Error" ] && break
     
+    # =alpha,less
     [ "${Argless}" ] && [ "${Argalpha}" ] && {
       note "Generating alpha&less image for mask $Argmethod"
       Imagename="$Cachedir/$Argbasename-prepare-less${Argless}-alpha${Argalpha}-cb${Cutblur}.tif"
@@ -1639,6 +1841,7 @@ $(grep "\S" <<< "$Command")"
       maskarg_store      
     }
     
+    # =less
     [ "${Argless}" ] && [ -z "${Argalpha}" ] && {
       Imagename="$Cachedir/$Argbasename-prepare-less$Argless-cb${Cutblur}.tif"
       Maskmax="$Cachedir/$Argbasename-less${Argless}-cb$Cutblur.mask.tif"
@@ -1651,7 +1854,8 @@ $(grep "\S" <<< "$Command")"
       maskarg_store
     }
   done <<< "$Maskmethodlist"
-
+  
+  
   return ${Error:-0}
 }
 focus_merge_masks() {
@@ -1669,12 +1873,13 @@ focus_merge_masks() {
   #Skipmerge=no
   [ "$Maskmethodnumber" -gt "1" ] && Skipmerge="no"
   [ "$Prefertop" ]                && Skipmerge="no"
+  [ "$Forceoverwrite" = "merge" ] && Skipmerge="no"
 
   [ -z "$Maskmethodlist" ] && {
     note "Skipping merge, no mask options are specified."
     return 0
   }
-  
+    
   while read Line; do
     maskarg_parse "$Line"
     [ "${Argweight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Argweight:-100}"
@@ -1753,7 +1958,7 @@ focus_merge_masks() {
     -delete 0"
     Mergemaskbasename="$Mergemaskbasename-blur"
   }
-    
+  
   case "$Skipmerge" in
     yes) 
       [ "$Maskmethodnumber" = "1" ] && Mergemaskbasename="$Argbasename" 
@@ -1821,7 +2026,7 @@ focus_montage() {
   local Stepwise Sourcepartimage Sourcepartimagelist= Sourcemask
   local Longoptions Parsedoptions
   
-  Longoptions="alpha:,lessthanmax:,maskmax:,maskstrength:,output:"
+  Longoptions="alpha:,lessthanmax:,maskmax:,output:"
   
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
@@ -1829,7 +2034,7 @@ focus_montage() {
   while [ $# -gt 0 ]; do
     case "${1:-}" in
       --output)       Outputimage="${2:-}" ; shift ;;
-      --alpha)         Alphalevel="${2:-}"  ; shift ;;
+      --alpha)        Alphalevel="${2:-}" ; shift ;;
       --lessthanmax)  Lessthanmax="${2:-}" ; shift ;;
       --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
       --) ;;
@@ -1854,6 +2059,7 @@ focus_montage() {
   
   Maskmax="${Maskmax:-$Cachedir/montage.max.$Resultmd5.tif}" 
   
+  [ "$Forceoverwrite" = "focus" ] && rm $Resultimageready
   [ -e "$Resultimage" ] && [ -e "$Resultimageready" ] && {
     verbose "Skipping montage, already exists: $(basename $Resultimage)"
     showimage "$Resultimage"
@@ -2104,6 +2310,245 @@ $(grep "\S" <<< "$Command")"
   $Magickbin "$Resultimage" -alpha off $Tifstore "$Outputimage" || error "Error converting '$Outputimage' to '$Resultimage'"
   
   return "${Error:-0}"
+}
+focus_soft() {
+  local Addsource Resultimageready Outputimage Alphalevel Maskmaxcopy Maskimagelist= Resultimage
+  local Addmask
+  local Count Number Skipmontage=
+  local Startzeit Dauer Restzeit
+  local Longoptions Parsedoptions
+  local Clutmaximage Clutmaskimage Sigmoidal=
+  
+  Longoptions="alpha:,maskmax:,output:,sigmoidal:"
+  
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"
+  
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --output)       Outputimage="${2:-}" ; shift ;;
+      --alpha)        Alphalevel="${2:-}" ; shift ;;
+      --sigmoidal)    Sigmoidal="${2:-}" ; shift ;;
+      --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
+      --) ;;
+      *)              Maskimagelist="$Maskimagelist ${1:-}" ;;
+    esac
+    shift
+  done
+  [ -z "$Maskimagelist" ] && Maskimagelist="$(masklist $Mergemaskbasename | tr '\n' ' ')"
+
+  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist)" $Sigmoidal)"
+  Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
+  [ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
+  Resultimage="$Cachedir/soft-$Resultimage.$Resultmd5"
+  Resultimageready="$Resultimage.ready"
+  Addmask="$Resultimage.addmask.tif"
+  Resultimage="$Resultimage.tif"
+
+  Addsource="$Cachedir/soft-addsource.tif"
+  Clutmaximage="$Cachedir/soft-clutmax.tif"
+  Clutmaskimage="$Cachedir/soft-clutmask$Sigmoidal.tif"
+  
+  [ "$Forceoverwrite" = "focus" ] && rm $Resultimageready
+  [ -e "$Resultimage" ] && [ -e "$Resultimageready" ] && {
+    verbose "Skipping montage, already exists: $(basename $Resultimage)"
+    showimage "$Resultimage"
+    Skipmontage="yes"
+  }
+  
+  [ "$Skipmontage" ] || {
+    mkimg_black $Addmask
+    mkimg_black $Addsource
+  }
+  
+  [ "$Sigmoidal" = "auto" ] && Sigmoidal=""
+  [ "$Sigmoidal" ] && {
+    $Magickbin -size 256x256 gradient: -rotate 90 -depth 16 -sigmoidal-contrast ${Sigmoidal}% "$Clutmaskimage" || error "Error generating clut '$Sigmoidal' for --soft."
+    showimage "$Clutmaskimage"
+  }
+  
+  Startzeit="$(date +%s)"
+  Count=0
+  [ "$Skipmontage" ] || for Sourceimage in $Sourceimagelist; do
+    [ "$Error" ] && break
+    Count="$((Count+1))"
+    Number="$(printnum $Count $Imagenumberlength)"
+    Sourcemask="$Cachedir/$Mergemaskbasename.$Number.tif"
+    Command="$Magickbin
+  $Sourceimage
+    -depth 16
+    -write mpr:sourceimage
+    -delete 0
+  $Sourcemask
+    -depth 16
+    -write mpr:mask
+    -delete 0"
+    [ "$Sigmoidal" ] && Command="$Command
+  mpr:mask
+  $Clutmaskimage
+    -clut
+    -write mpr:mask
+    -delete 0"
+    Command="$Command
+  mpr:mask
+    +level 2%,100%
+    -evaluate Divide $Imagenumber
+    -write mpr:mask
+    -delete 0
+  $Addmask
+  mpr:mask
+    -compose Plus -composite
+    -write mpr:addmask
+    $Tifstore
+    -write $Addmask
+    -delete 0
+  $Addsource
+  ( mpr:sourceimage mpr:mask -compose Multiply -composite )
+    -evaluate-sequence Add
+    -write mpr:sourceadd
+    $Tifstore
+    -write $Addsource
+    -delete 0"
+    [ "$Showimageprocessing" ] && {
+      Command="$Command
+  mpr:sourceadd
+  mpr:addmask
+    -compose DivideSrc -composite
+    $Tifstorealpha
+    -write $Resultimage"
+    }
+    Command="$Command
+  xc: null:"
+  
+    [ "$Count" = "1" ] && verbose "Focus soft with:
+$(grep "\S" <<< "$Command")"
+  
+    $Command || error "Error in focus_soft()"
+    showimage $Resultimage
+    Dauer="$(( $(date +%s)-Startzeit))"
+    Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
+    verbose "Montage $Count/$Imagenumber. Duration: $(date -u -d @$Dauer +"%T"); ETA: $(date -u -d @$Restzeit +"%T")"
+  done
+  [ "$Error" ] && return 1
+  
+  :> $Resultimageready
+
+  [ "$Maskmaxcopy" ] && {
+    redist --image "$Addmask" --clut "$Clutmaximage"  
+    $Magickbin "$Addmask" "$Clutmaximage" -clut "$Maskmaxcopy"
+  }
+  $Magickbin "$Resultimage" $Tifstore "$Outputimage"
+
+  return ${Error:-0}
+}
+focus_softX() {
+  local Addsource Resultimageready Outputimage Alphalevel Maskmaxcopy Maskimagelist= Power Resultimage
+  local Addmask
+  local Count Number Skipmontage=
+  local Longoptions Parsedoptions
+  
+  Longoptions="alpha:,maskmax:,power:,output:"
+  
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"
+  
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --output)       Outputimage="${2:-}" ; shift ;;
+      --alpha)        Alphalevel="${2:-}" ; shift ;;
+      --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
+      --power)        Power="${2:-}" ; shift ;;
+      --) ;;
+      *)              Maskimagelist="$Maskimagelist ${1:-}" ;;
+    esac
+    shift
+  done
+  [ -z "$Maskimagelist" ] && Maskimagelist="$(masklist $Mergemaskbasename | tr '\n' ' ')"
+  Power="${Power:-2}"
+
+  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Power")"
+  Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
+  [ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
+  Resultimage="$Resultimage-power$Power"
+  Resultimage="$Cachedir/soft-$Resultimage.$Resultmd5"
+  Resultimageready="$Resultimage.ready"
+  Addmask="$Resultimage.mask.tif"
+  Resultimage="$Resultimage.tif"
+
+  Addsource="$Cachedir/soft-addsource.tif"
+  Clutimage="$Cachedir/soft-clut.tif"
+  
+  [ -e "$Resultimage" ] && [ -e "$Resultimageready" ] && {
+    verbose "Skipping montage, already exists: $(basename $Resultimage)"
+    showimage "$Resultimage"
+    Skipmontage="yes"
+  }
+  
+  [ "$Skipmontage" ] || {
+    mkimg_black $Addmask
+    mkimg_black $Addsource
+  }
+  
+  Count=0
+  [ "$Skipmontage" ] || for Sourceimage in $Sourceimagelist; do
+    [ "$Error" ] && break
+    Count="$((Count+1))"
+    Number="$(printnum $Count $Imagenumberlength)"
+    Sourcemask="$Cachedir/$Argbasename.$Number.tif"
+    Command="$Magickbin
+  $Sourceimage
+    -depth 16
+    -write mpr:sourceimage
+    -delete 0
+  $Sourcemask
+    -write mpr:mask
+    -depth 16
+    -evaluate Pow ${Power:-2}
+    -evaluate Divide $Imagenumber
+    -write mpr:mask
+    -delete 0
+  $Addmask
+  mpr:mask
+    -compose Plus -composite
+    -write mpr:addmask
+    $Tifstore
+    -write $Addmask
+    -delete 0
+  $Addsource
+  ( mpr:sourceimage mpr:mask -compose Multiply -composite )
+    -evaluate-sequence Add
+    -write mpr:sourceadd
+    $Tifstore
+    -write $Addsource
+    -delete 0"
+    
+    [ "$Showimageprocessing" ] && Command="$Command
+  mpr:sourceadd
+  mpr:addmask
+    -compose DivideSrc -composite
+    $Tifstorealpha
+    -write $Resultimage"
+    
+    Command="$Command
+  xc: null:"
+  
+    $Command || error "Error in focus_soft()"
+    showimage $Resultimage
+  done
+  [ "$Error" ] && return 1
+  
+  :> $Resultimageready
+  
+#          -sigmoidal-contrast ${Testarg:-8},$Percent% # -treshold 15%
+#          -function sinusoid 0.5,-90,0.5,0.5
+
+  [ "$Maskmaxcopy" ] && {
+    redist --image "$Addmask" --clut "$Clutimage"  
+    $Magickbin "$Addmask" "$Clutimage" -clut "$Maskmaxcopy"
+  }
+  $Magickbin "$Resultimage" $Tifstore "$Outputimage"
+
+  return ${Error:-0}
 }
 focus_maskmethod() {
   # Mask generating ImageMagick options
@@ -2872,7 +3317,6 @@ declare_variables() {
   Composefactor="" ### FIXME
   Cutblur=""
   Difference_needlist=""
-  Enfuse_needlist=""
   Error=""
   Exifsourceimage=""
   Fakehdr=""
@@ -2918,12 +3362,14 @@ declare_variables() {
   Parsedoptions=""
   Preservecache=""
   Prefertop=""
-  Redistshapedefault="uniform"
-  Redistshape="$Redistshapedefault"
+  Redistdefault=""
+  Redistpeak=""
+  Redistshape=""
   Revertimagelist=""
   Resultimage=""
   Showimageprocessing=""
   Showname=""
+  Softmode=""
   Sourceimage=""
   Sourceimagelist=""
   Sourcemd5=""
@@ -2936,6 +3382,7 @@ declare_variables() {
   Verbose=""
   Video=""
   Videoframecount=""
+  Viewnior=""
   
   return 0
 }
@@ -2943,9 +3390,9 @@ parse_options() {
   local Shortoptions Longoptions Parsererror Parsererrorfile Maskgeneratorargument
   #local Parsedoptions
   
-  Shortoptions="ho:vV"
-  Longoptions="basename:,cache::,exif::,force,help,output:,showimage,showname,test::,threads:,verbose,version,video"
-  Longoptions="$Longoptions,alpha::,bg:,background::,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,prefertop::,redist::,revert,threshold::"
+  Shortoptions="ho:vVW"
+  Longoptions="basename:,cache::,exif::,force::,help,output:,showimage,showname,test::,threads:,verbose,version,video"
+  Longoptions="$Longoptions,alpha::,bg::,background::,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,prefertop::,redist::,revert,soft::,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -2966,27 +3413,29 @@ parse_options() {
          --close)             Globalclose="${2:-auto}"    ; shift ;;
          --cutblur)           Cutblur="${2:-auto}"        ; shift ;;      
          --denoise)           Globaldenoise="${2:-auto}"  ; shift ;;
-         --exif)              Exifsourceimage="${2:-auto}"        ; shift ;;
+         --exif)              Exifsourceimage="${2:-auto}"; shift ;;
          --fakehdr)           Fakehdr="${2:-auto}"        ; shift ;;
          --finalblur)         Finalblur="${2:-auto}"      ; shift ;;
-         --force)             Forceoverwrite="yes"        ;;
+         --force)             Forceoverwrite="${2:-yes}"  ; shift ;;
          --grayscale)         Grayscale="${2:-auto}"      ; shift ;;
       -h|--help)              usage                       ; exit 0 ;;
          --layers)            Layers="${2:-auto}"         ; shift ;;
          --less)              Globalless="${2:-auto}"     ; shift ;;
          --maskblur)          Globalmaskblur="${2:-auto}" ; shift ;;      
          --prefertop)         Prefertop="${2:-auto}"      ; shift ;;      
-         --redist)            Redistshape="${2:-$Redistshapedefault}" ; shift ;;
+         --redist)            Redistshape="${2:-auto}"    ; shift ;;
       -o|--output)            Outputimage="${2:-}"        ; shift ;;
          --revert)            Revertimagelist="yes"       ;;
       -V|--showimage)         Showimageprocessing="yes"   ;;
          --showname)          Showname="yes"              ;;
-         --test)              Testsetup="test" Testarg="${2:-}"    ; shift ;;
+         --soft)              Softmode="${2:-auto}"       ; shift ;;
+         --test)              Testsetup="test"            ; Testarg="${2:-}" ; shift ;;
          --threads)           Multicore_maxprocesses="${2:-}" ; shift ;;
          --threshold)         Globalthreshold="${2:-auto}" ; shift ;;
       -v|--verbose)           Verbose="yes"               ;;
          --version)           echo "imfuse v$Version"     ; exit 0 ;;
          --video)             Video="auto"                ;;
+      -W)                     Viewnior="yes"              ;;
       
 --blur|--channel|--chroma|--comet|--compass|--compose|--darkness|--diffstat|--dog|--enfuse|--evaluate|\
 --experimental|--free|--freediff|\
@@ -3012,7 +3461,7 @@ $(realpath "${1:-}")"
   return ${Error:-0}
 }  
 check_options() {
-  local Arg
+  local Arg Part1 Part2
   
   # source images
   [ -z "$Sourceimagelist" ] && error "No images specified"
@@ -3241,6 +3690,15 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     auto) Prefertop="40" ;;
   esac
   
+  # --redist
+  Redistdefault="uniform"
+  case $Redistshape in
+    "") Redistshape="uniform" ;;
+    uniform|gaussian) ;;
+    auto) Redistshape="$Redistdefault" ;;
+    off|none) Redistshape="off" ;;
+  esac
+  
   # --revert
   [ "$Revertimagelist" = "yes" ] && Sourceimagelist="$(tac <<< "$Sourceimagelist")"
   
@@ -3251,6 +3709,19 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   Please install imgview."
       Showimageprocessing=""
     }
+  }
+  
+  # --soft
+  
+  
+  # --clutmask
+  [ "$Softmode" ] && [ "$Softmode" != "auto" ] && {
+    Softmode="$(percentrm "$Softmode")"
+    Part1="$(cut -dx -f1 <<< "$Softmode")"
+    Part2="$(cut -dx -f2 -s <<< "$Softmode")"
+    Part1="${Part1:-10}"
+    Part2="${Part2:-50}"
+    Softmode="${Part1}x${Part2}"
   }
   
   # --threshold
@@ -3318,6 +3789,10 @@ check_background() {
 check_outputname() {
   # --output
   Resultimage="imfuse."
+  [ "$Softmode" ] && {
+    Resultimage="${Resultimage}soft"
+    [ "$Softmode" != "auto" ] && Resultimage="${Resultimage}$Softmode"
+  }
         
   while read Line; do
     maskarg_parse "$Line"   
@@ -3382,8 +3857,8 @@ check_outputname() {
     *) Resultimage="${Resultimage}_denoise$Globaldenoise" ;;
   esac
   case $Redistshape in
-    "$Redistshapedefault") ;;
-    *) Resultimage="${Resultimage}_redist=${Redistshape:-none}" ;;
+    ""|"off") ;;
+    *) Resultimage="${Resultimage}_redist=${Redistshape:-off}${Redistpeak}" ;;
   esac
   case $Revertimagelist in
     "yes") Resultimage="${Resultimage}_rev" ;;
@@ -3407,7 +3882,9 @@ check_outputname() {
   Resultimage="$(sed "s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
   #Resultimage="$(sed "s/=-/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
     
-  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist $Background $Fakehdr $Globalclose $Globaldenoise $Globalless $Globalmaskblur $Prefertop $Globalalpha $Cutblur $Finalblur $Grayscale $Revertimagelist $Testsetup" )"
+  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist \
+$Background $Cutblur $Fakehdr $Finalblur $Globalalpha $Globalclose $Globaldenoise $Globalless $Globalmaskblur \
+$Grayscale $Prefertop $Redistpeak $Redistshape $Revertimagelist $Softmode $Testsetup" )"
   
   Resultimage="${Resultimage}.${Fusemd5sum}"
   [ -z "$Outputdir" ] && Outputdir="$(pwd)"
@@ -3495,6 +3972,7 @@ main() {
     note "Skipping all, output image already exists with matching md5sum."
     echo "$Outputimage"
     showimage "$Outputimage"
+    [ "$Viewnior" ] && viewnior "$Outputimage" &
     return "${Error:-0}"
   }
 
@@ -3520,11 +3998,14 @@ main() {
     [ "$Error" ] && return 1
     focus_merge_masks                     || error "Error in mask merge"
     [ "$Error" ] && return 1
-    focus_montage --alpha "$Globalalpha" --lessthanmax "$Globalless" --maskmax "$Resultmask" --output "$Resultimage"  || error "Error in montage"
+    case $Softmode in
+      "") focus_montage --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --lessthanmax "$Globalless" || error "Error in focus_montage" ;;
+      *)  focus_soft    --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --sigmoidal "$Softmode"     || error "Error in focus_soft" ;;
+    esac
     [ "$Error" ] && return 1
     # --alpha=ARG
     [ "$Globalalpha" ] && {
-      note "Applying --alpha=$Globalalpha"
+      note "Applying --alpha={$Globalalpha}"
       alphalevel --image "$Resultimage" --mask "$Resultmask" --level "$Globalalpha" || error "Error in leveling --alpha='$Globalalpha'"
       [ "$Error" ] && return 1
     }
@@ -3566,6 +4047,8 @@ main() {
   showimage "$Outputimage"
   note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   echo "$Outputimage"
+  
+  [ "$Viewnior" ] && viewnior "$Outputimage" &
   
   [ "$Video" ] && {
     note "Generating video $Video"
