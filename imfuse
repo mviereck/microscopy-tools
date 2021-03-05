@@ -6,6 +6,7 @@ Version="0.6.7.5-beta"
 # ToDo:
 #
 # imfuse:
+# redist() fails with b&w masks -> clut and result black
 # --revert: broken
 # ARG close: how to match --close ARG?
 # whitespace in file names -> file names into array
@@ -83,9 +84,6 @@ Arguments taken by few options only:
   r         Radius. Must be an integer value.
             Increased radius mostly causes less noise, less details and
             more contrast. Smaller radius causes more details and more noise.
-            (Options taking a sigma argument have a radius of 0 by default,
-            which means that a radius fitting the sigma value will be 
-            calculated automatically by imagemagick.)
   s         Sigma. Takes non-integer values like 0.75.
             Increased sigma mostly causes less noise, less details and
             more contrast. Smaller sigma causes more details and more noise.
@@ -97,12 +95,10 @@ Arguments taken by few options only:
 Contrast mask options:
  --blur [=ARG]        Blur edge detection. 
                       Similar to --gaussian, but faster and less accurate.
-                      ARG additionally takes arguments: 
-                        r       radius               Default: 0
+                      ARG additionally takes argument: 
                         s       sigma                Default: 0.75
  --comet [=ARG]       Comet edge detection. Compares rotated mean areas.
                       ARG additionally takes arguments: 
-                        r       radius               Default: 0
                         s       sigma                Default: 5
                         (word)  MODE                 Default: Lighten
                       MODE can be one of '$(basename $Magicklist) -list compose'
@@ -110,7 +106,6 @@ Contrast mask options:
  --compass [=ARG]     Compass edge detection. 
  --dog [=ARG]         Difference of Gaussian. 
                       ARG additionally takes arguments: 
-                        r       radius               Default: 0
                         s       sigma                Default: 0.3
                         S       sigma2               Default: 1.6*sigma1
  --diffstat [=ARG]    Compares two local statistics of source images. 
@@ -147,8 +142,7 @@ Contrast mask options:
                       Default: A combination of modes 1 and 2.
  --gaussian [=ARG]    Gaussian blur edge detection. 
                       Similar to --blur, but slower and more accurate.
-                      ARG additionally takes arguments: 
-                        r       radius               Default: 0
+                      ARG additionally takes argument: 
                         s       sigma                Default: 0.3
  --kirsch [=ARG]      Kirsch edge detection. 
  --laplacian [=ARG]   Laplacian edge detection.
@@ -157,8 +151,7 @@ Contrast mask options:
                       Possible MODENUMBERs at:
                       http://www.imagemagick.org/Usage/convolve/#laplacian
  --log [=ARG]         Laplacian of Gaussian.
-                      ARG additionally takes arguments: 
-                        r       radius               Default: 0
+                      ARG additionally takes argument: 
                         s       sigma                Default: 0.2
  --morphology [=ARG]  Morphology edge detection.
                       ARG additionally takes arguments: 
@@ -186,8 +179,7 @@ Contrast mask options:
                         10|standarddeviation|dev
                       Get an impressive strong contrast with a high radius.
  --unsharp [=ARG]     Difference of -unsharp.
-                      ARG additionally takes arguments: 
-                        r       radius               Default: 0
+                      ARG additionally takes argument: 
                         s       sigma                Default: 2
  --wavelet [=ARG]     Based on ImageMagick option -wavelet-denoise.
                       ARG additionally takes arguments:
@@ -331,7 +323,7 @@ Mask generation and fusion adjustments:
                       rather use 'less' as a mask argument than globally.)
  --maskblur [=SIGMA]  Blur masks with SIGMA (default 1). Enhances contrast.
                       Applied to contrast masks only.
- --prefertop [=%]     Prefer top layer images up to %. Default %: 40
+ --prefertop [=%]     Prefer top layer images up to %. Default %: 20
                       Similar to --less, but a rather brute-force attempt.
  --soft               Enable soft fusion mode. Different concept than default
                       maximum contrast montage. Images are multiplied with 
@@ -645,7 +637,7 @@ masklist() {
 ### image processing helpers
 
 alphalevel() {
-  local Command Image Mask Level Clut Clutimage
+  local Command Image Mask Level Clut= Clutimage
   local Longoptions Parsedoptions
   
   Longoptions="image:,mask:,level:,clut:"
@@ -695,26 +687,37 @@ alphalevel() {
     -delete 0"
     ;;
   esac
+  
   [ "$Clut" ] && Command="$Command
   mpr:mask
   $Clutimage
     -clut
     -write mpr:mask
     -delete 0"
+    
   Command="$Command
   mpr:mask
     +level $Level
     -write mpr:mask
-    -delete 0
+    -delete 0"
+    
+  case "$Mask" in
+    "") ;;
+    *)
+      Command="$Command
+  mpr:mask
+    -write $Mask
+    -delete 0"
+    ;;
+  esac
+  
+  Command="$Command
   mpr:image
   mpr:mask
     -alpha off
     -compose CopyOpacity -composite
     $Tifstorealpha
   $Image"
-  
-  verbose "alphalevel():
-$Command"
   
   multicore --showimage "$Image" -- $Command || error "Error in alphalevel(): $Parsedoptions"
   multicore_wait                             || error "Error in alphalevel(): $Parsedoptions"
@@ -1148,6 +1151,7 @@ generate_image() {
   }
   
   [ -e "$Imagename" ] && return 0
+  set -x
   note "Generating image $Imagetype: $Mode"
   
   case "$Imagetype" in
@@ -1175,7 +1179,7 @@ generate_image() {
     ;;
   esac
   showimage "$Imagename"
-  
+  set +x
   return "${Error:-0}"
 }
 layered_tif() {
@@ -1247,7 +1251,7 @@ level_masks() {
  
   note "Leveling with $Redistshape: $Maskbasename"
   case $Redistshape in
-    ""|none)    Prefix="level_" ; Redistshape="" ;;
+    ""|"none"|"off")  Prefix="level_" ; Redistshape="" ;;
     "uniform")  Prefix="levelU_" ;;
     "gaussian") Prefix="levelG${Redistpeak}_" ;;
   esac
@@ -1372,8 +1376,10 @@ mkimg_black() {
 mkimg_color() {
   local Size
   Size="${2:-}"
+  set -x
   [ -z "$Size" ] && Size="${Imagewidth:-100}x${Imageheight:-100}"
-  $Magickbin -size "$Size" xc:${3:-black}            -type TrueColor      $Tifstore "${1:-color.tif}"       || error "Failed to create colored image."
+  $Magickbin -size "$Size" canvas:${1:-black} -type TrueColor       "${3:-color.tif}"       || error "Failed to create colored image."
+  set +x
 }
 mkimg_transparent() {
   # Generate transparent image $1 with size $2
@@ -1705,15 +1711,8 @@ focus_generate_masks() {
     [ "$Error" ] && break
     
     maskarg_parse "$Line"
-      
-    Maskmd5="$(md5cut "$Sourcemd5 $Argmethod $Argdiff $Argnegate $Argclose1 $Argclose2 $Argmaskblur")"
-    Argbasename="$Argmethod.$Maskmd5"
-    maskarg_store
     
     Maskgenerator="$(focus_maskmethod "$Argmethod")"
-#    [ "$Argmethod" = "enfuse" ] && Maskgenerator="
-#  $Cachedir/$Argbasename.NUMBER.tif
-#    -depth 16"
         
     [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
   mpr:sourcegray
@@ -1730,8 +1729,11 @@ focus_generate_masks() {
     -blur 0x$Argmaskblur"
     }
 
-    [ "$Argmethod" = "enfuse" ] && Image_needlist="$Image_needlist enfuse"
-    #[ "$Argalpha" ]             && Enfuse_needlist="$Enfuse_needlist enfuse"
+#    [ "$Argmethod" = "enfuse" ] && Image_needlist="$Image_needlist enfuse"
+      
+    Maskmd5="$(md5cut "$Sourcemd5 $Maskgenerator")"
+    Argbasename="$Argmethod.$Maskmd5"
+    maskarg_store
     
     ## avoid [double] creating of existing masks
     Maskready=""
@@ -1741,9 +1743,9 @@ $Argbasename"
     maskexist "$Argbasename" && Maskready="yes" || rm -f $(masklist "$Argbasename")
     
     [ -z "$Maskready" ] && {
-#      [ "$Argmethod" = "enfuse" ] && {
-#        enfuse --exposure-weight=0 --saturation-weight=0 --contrast-weight=1 --save-masks=$Cachedir/$Argbasename.%n.tif $Sourceimagelist
-#      }
+      [ "$Argmethod" = "enfuse" ] && {
+        enfuse --exposure-weight=0 --saturation-weight=0 --contrast-weight=1 --hard-mask --save-masks=$Cachedir/enfuse-soft.%n.tif:$Cachedir/enfuse-hard.%n.tif $Sourceimagelist || error "Error in --enfuse"
+      }
       Maskgenerator_all="$Maskgenerator_all
 $Maskgenerator
     -write '$Cachedir/$Argbasename.NUMBER.tif'"
@@ -1752,6 +1754,7 @@ $Maskgenerator
     -delete 0"
     }
   done <<< "$Maskmethodlist"
+  [ "$Error" ] && return 1
   
   verbose "mask generator kernels:
 $(magick xc:white -define morphology:showkernel=1 $(grep -E -- '-define|-morphology' <<< "$Maskgenerator_all" | grep -v "Close") null: 2>&1)"
@@ -1967,7 +1970,7 @@ focus_merge_masks() {
     ;;
   esac
   
-  Mergemaskbasename="$Mergemaskbasename.$(md5cut "$Sourcemd5 $Mergecode" )"
+  Mergemaskbasename="$Mergemaskbasename.$(md5cut "$Sourcemd5 $Mergecode $Prefertop" )"
   maskexist "$Mergemaskbasename" && {
     note "Skipping merge, masks already exist: $Mergemaskbasename"
     return 0
@@ -2337,7 +2340,7 @@ focus_soft() {
   done
   [ -z "$Maskimagelist" ] && Maskimagelist="$(masklist $Mergemaskbasename | tr '\n' ' ')"
 
-  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist)" $Sigmoidal)"
+  Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Sigmoidal")"
   Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
   [ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
   Resultimage="$Cachedir/soft-$Resultimage.$Resultmd5"
@@ -2617,6 +2620,14 @@ Maskgenerator="$Maskgenerator
     -compose Difference -composite"
     ;;
     enfuse)
+#      case "${Argword1:-soft}" in
+#        soft) Maskgenerator="
+#  $Cachedir/enfuse-soft.NUMBER.tif
+#    -depth 16" ;;
+#        hard) Maskgenerator="
+#  $Cachedir/enfuse-hard.NUMBER.tif
+#    -depth 16" ;;
+#      esac
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
   ( '$(generate_image --showname enfuse)' $Grayscaleconverter -alpha off )
@@ -3060,22 +3071,22 @@ maskarg_defaultvalue() {
     ;;
     radius1)
       case "${1:-}" in
-        blur)       echo "" ;; # 0
-        comet)      echo "" ;; # 0
+        #blur)       echo "" ;; # 0
+        #comet)      echo "" ;; # 0
         compass)    echo "" ;;
         diffstat)   echo "3" ;;
-        dog)        echo "" ;; # 0
+        #dog)        echo "" ;; # 0
         freichen)   echo "" ;;
-        gaussian)   echo "" ;; # 0
+        #gaussian)   echo "" ;; # 0
         kirsch)     echo "" ;;
         laplacian)  echo "" ;;
-        log)        echo "" ;; # 0
+        #log)        echo "" ;; # 0
         morphology) echo "1" ;;
         prewitt)    echo "" ;;
         roberts)    echo "" ;;
         sobel)      echo "" ;;
         statistic)  echo "2" ;;
-        unsharp)    echo "" ;; # 0
+        #unsharp)    echo "" ;; # 0
         *)          echo "" ;;
       esac
     ;;
@@ -3181,7 +3192,8 @@ maskarg_checkallowed() {
   case "$Option" in
     radius1)
       case "$Method" in
-        blur|comet|dog|gaussian|halo|log|morphology|unsharp|wavelet) ;;
+        #blur|comet|dog|gaussian|halo|log|morphology|unsharp|wavelet) ;;
+        halo|morphology) ;;
         diffstat|statistic)
           [ "$Arg" -lt "2" ] && error "--$Method needs a radius of at least 2"
         ;;
@@ -3216,6 +3228,7 @@ maskarg_checkallowed() {
     ;;
     word1)
       case "$Method" in
+        enfuse) ;;
         comet|channel|freichen|freediff|laplacian) ;;
         compose|evaluate|morphology)
           Arg="$(lowercase "${Arg}")"
@@ -3498,7 +3511,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     [ -n "$Argword1" ]    && { Argword1="$(maskarg_checkallowed    "$Argmethod" word1    "$Argword1")"    || Error=1 ; }
     [ -n "$Argword2" ]    && { Argword2="$(maskarg_checkallowed    "$Argmethod" word2    "$Argword2")"    || Error=1 ; }
     case $Argmethod in
-      blur|comet|compass|diffstat|dog|free|freediff|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
+      blur|comet|compass|diffstat|dog|enfuse|free|freediff|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
         Arglevel="yes"
       ;;
     esac
@@ -3687,7 +3700,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   
   # --prefertop
   case $Prefertop in
-    auto) Prefertop="40" ;;
+    auto) Prefertop="20" ;;
   esac
   
   # --redist
@@ -3727,7 +3740,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   # --threshold
   case $Globalthreshold in
     "") ;;
-    auto) Globalthreshold="25" ;;
+    auto) Globalthreshold="50" ;;
   esac
   [ "$Globalthreshold" ] && Background="${Background:-transparent}"
   
