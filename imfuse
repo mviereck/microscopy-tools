@@ -278,15 +278,6 @@ Mask generation and fusion adjustments:
                       setting one of r oder R to 12.
                       Percent p is a threshold value; --close is only applied
                       to contrast areas stronger than percent p.
- --clutmask [=CONTRASTxMIDPOINT]   Change grayscale distribution of contrast
-                      masks along a sigmoidal curve. 
-                      Helps to strenghten high contrast areas and to weaken
-                      low contrast areas. Main use case is option --soft.
-                      CONTRAST bends the curve; the higher, the stronger.
-                      MIDPOINT is the inflection point of the curve in percent.
-                      Compare IM option -sigmoidal-contrast.
-                      Default CONTRAST: 10, default MIDPOINT: 50%
-                      Try script 'demo-clutmask' to understand the effects.
  --cutblur [=SIGMA]   Blur cut masks in final montage. Default SIGMA: 2
  --denoise [=%]       Experimental option to remove noise in low contrast areas.
                       The percent value is a threshold. 
@@ -325,11 +316,19 @@ Mask generation and fusion adjustments:
                       Applied to contrast masks only.
  --prefertop [=%]     Prefer top layer images up to %. Default %: 20
                       Similar to --less, but a rather brute-force attempt.
- --soft               Enable soft fusion mode. Different concept than default
-                      maximum contrast montage. Images are multiplied with 
-                      their contrast masks and added altogether as a whole.
-                      Contrast enhancement with option --clutmask.
-                      Does not support --less.
+ --sigmoidalclut [=CONTRASTxMIDPOINT]   Change grayscale distribution of 
+                      contrast masks along a sigmoidal curve. 
+                      Helps to strenghten high contrast areas and to weaken
+                      low contrast areas. Main use case is option --soft.
+                      CONTRAST bends the curve; the higher, the stronger.
+                      MIDPOINT is the inflection point of the curve in percent.
+                      Compare IM option -sigmoidal-contrast.
+                      Default CONTRAST: 10, default MIDPOINT: 50%
+ --soft [=CONTRASTxMIDPOINT]   Enable soft fusion mode. Different concept than 
+                      default maximum contrast montage. Images are multiplied 
+                      with their contrast masks and added altogether as a whole.
+                      For arguments compare --sigmoidalclut.
+                      Does not support --less and --cutblur.
  --threshold [=%]     Make low contrast area transparent. Default %: 50
                            
 Basics:                   
@@ -1869,6 +1868,7 @@ focus_merge_masks() {
   local Command
   local Skipmerge Methodmask Mergecode=
   local Startzeit Dauer Restzeit
+  local Clutmaskimage
   
   note "Merging masks"
   
@@ -1876,6 +1876,7 @@ focus_merge_masks() {
   #Skipmerge=no
   [ "$Maskmethodnumber" -gt "1" ] && Skipmerge="no"
   [ "$Prefertop" ]                && Skipmerge="no"
+  [ "$Globalsigmoidal" ]          && Skipmerge="no"
   [ "$Forceoverwrite" = "merge" ] && Skipmerge="no"
 
   [ -z "$Maskmethodlist" ] && {
@@ -1889,6 +1890,13 @@ focus_merge_masks() {
   done <<< "$Maskmethodlist"
       
   Mergemaskbasename="mergemask"
+  
+  # --sigmoidalclut
+  [ "$Globalsigmoidal" ] && {
+    Clutmaskimage="$Cachedir/mergeclut.tif"
+    $Magickbin -size 256x256 gradient: -rotate 90 -depth 16 -sigmoidal-contrast ${Globalsigmoidal}% "$Clutmaskimage" || error "Error generating clut '$Globalsigmoidal' for --soft."
+    showimage "$Clutmaskimage"
+  }
   
   # generate merge code
   Mergecode="
@@ -1928,12 +1936,22 @@ focus_merge_masks() {
   # denoise low contrast areas
   [ "$Globaldenoise" ] && {
     Mergecode="$Mergecode $(denoisecode "$Globaldenoise")"
-    Mergemaskbasename="$Mergemaskbasename-denoise"
+    Mergemaskbasename="$Mergemaskbasename-denoise$Globaldenoise"
   }
     
   Mergecode="$Mergecode
     -write mpr:mergemask
     -delete 0"
+  
+  # --maskblur
+  [ "$Globalmaskblur" ] && {
+    Mergecode="$Mergecode
+  mpr:mergemask
+    -blur 0x$Globalmaskblur
+    -write mpr:mergemask
+    -delete 0"
+    Mergemaskbasename="$Mergemaskbasename-blur$Globalmaskblur"
+  }
     
   # --close    
   [ "$Globalclose" ] && {
@@ -1950,19 +1968,24 @@ focus_merge_masks() {
     -compose Lighten -composite
     -write mpr:mergemask
     -delete 0"
-    Mergemaskbasename="$Mergemaskbasename-close"
+    Mergemaskbasename="$Mergemaskbasename-close=r{$Globalclose1}R${Globalclose2}p${Globalclosethreshold}"
   }
   
-  [ "$Globalmaskblur" ] && {
+  # --sigmoidalclut
+  [ "$Globalsigmoidal" ] && {
     Mergecode="$Mergecode
   mpr:mergemask
-    -blur 0x$Globalmaskblur
+  $Clutmaskimage
+    -clut
     -write mpr:mergemask
     -delete 0"
-    Mergemaskbasename="$Mergemaskbasename-blur"
+    Mergemaskbasename="$Mergemaskbasename-sigmoidal$Globalsigmoidal"
   }
+    
+  # --prefertop
+  [ "$Prefertop" ] && Mergemaskbasename="$Mergemaskbasename-prefertop$Prefertop"
   
-  case "$Skipmerge" in
+  [ "$Forceoverwrite" != "merge" ] && case "$Skipmerge" in
     yes) 
       [ "$Maskmethodnumber" = "1" ] && Mergemaskbasename="$Argbasename" 
       note "Skipping merge, not needed."
@@ -1971,7 +1994,7 @@ focus_merge_masks() {
   esac
   
   Mergemaskbasename="$Mergemaskbasename.$(md5cut "$Sourcemd5 $Mergecode $Prefertop" )"
-  maskexist "$Mergemaskbasename" && {
+  [ "$Forceoverwrite" != "merge" ] && maskexist "$Mergemaskbasename" && {
     note "Skipping merge, masks already exist: $Mergemaskbasename"
     return 0
   }
@@ -2386,12 +2409,14 @@ focus_soft() {
     -depth 16
     -write mpr:mask
     -delete 0"
+    
     [ "$Sigmoidal" ] && Command="$Command
   mpr:mask
   $Clutmaskimage
     -clut
     -write mpr:mask
     -delete 0"
+    
     Command="$Command
   mpr:mask
     +level 2%,100%
@@ -3341,6 +3366,7 @@ declare_variables() {
   Firstmaskmethod=""
   Forceoverwrite=""
   Freemem=""
+  Globalalpha=""
   Globalclose=""
   Globalclose1=""
   Globalclose2=""
@@ -3348,7 +3374,7 @@ declare_variables() {
   Globaldenoise=""
   Globalmaskblur=""
   Globalless=""
-  Globalalpha=""
+  Globalsigmoidal=""
   Globalthreshold=""
   Grayscale=""
   Grayscaleconverter=""
@@ -3405,7 +3431,7 @@ parse_options() {
   
   Shortoptions="ho:vVW"
   Longoptions="basename:,cache::,exif::,force::,help,output:,showimage,showname,test::,threads:,verbose,version,video"
-  Longoptions="$Longoptions,alpha::,bg::,background::,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,prefertop::,redist::,revert,soft::,threshold::"
+  Longoptions="$Longoptions,alpha::,bg::,background::,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,prefertop::,redist::,revert,sigmoidalclut::,soft::,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -3419,36 +3445,37 @@ parse_options() {
   while [ $# -gt 0 ]; do
     [ "$Error" ] && break
     case "${1:-}" in
-         --alpha)             Globalalpha="${2:-auto}"    ; shift ;;
-         --bg|--background)   Background="${2:-auto}"     ; shift ;;
-         --basename)          Basename="${2:-auto}"       ; shift ;;
-         --cache)             Preservecache="yes"         ; Cachedir="${2:-auto}" ; shift ;;
-         --close)             Globalclose="${2:-auto}"    ; shift ;;
-         --cutblur)           Cutblur="${2:-auto}"        ; shift ;;      
-         --denoise)           Globaldenoise="${2:-auto}"  ; shift ;;
-         --exif)              Exifsourceimage="${2:-auto}"; shift ;;
-         --fakehdr)           Fakehdr="${2:-auto}"        ; shift ;;
-         --finalblur)         Finalblur="${2:-auto}"      ; shift ;;
-         --force)             Forceoverwrite="${2:-yes}"  ; shift ;;
-         --grayscale)         Grayscale="${2:-auto}"      ; shift ;;
-      -h|--help)              usage                       ; exit 0 ;;
-         --layers)            Layers="${2:-auto}"         ; shift ;;
-         --less)              Globalless="${2:-auto}"     ; shift ;;
-         --maskblur)          Globalmaskblur="${2:-auto}" ; shift ;;      
-         --prefertop)         Prefertop="${2:-auto}"      ; shift ;;      
-         --redist)            Redistshape="${2:-auto}"    ; shift ;;
-      -o|--output)            Outputimage="${2:-}"        ; shift ;;
-         --revert)            Revertimagelist="yes"       ;;
-      -V|--showimage)         Showimageprocessing="yes"   ;;
-         --showname)          Showname="yes"              ;;
-         --soft)              Softmode="${2:-auto}"       ; shift ;;
-         --test)              Testsetup="test"            ; Testarg="${2:-}" ; shift ;;
+         --alpha)             Globalalpha="${2:-auto}"        ; shift ;;
+         --bg|--background)   Background="${2:-auto}"         ; shift ;;
+         --basename)          Basename="${2:-auto}"           ; shift ;;
+         --cache)             Preservecache="yes"             ; Cachedir="${2:-auto}" ; shift ;;
+         --close)             Globalclose="${2:-auto}"        ; shift ;;
+         --cutblur)           Cutblur="${2:-auto}"            ; shift ;;      
+         --denoise)           Globaldenoise="${2:-auto}"      ; shift ;;
+         --exif)              Exifsourceimage="${2:-auto}"    ; shift ;;
+         --fakehdr)           Fakehdr="${2:-auto}"            ; shift ;;
+         --finalblur)         Finalblur="${2:-auto}"          ; shift ;;
+         --force)             Forceoverwrite="${2:-yes}"      ; shift ;;
+         --grayscale)         Grayscale="${2:-auto}"          ; shift ;;
+      -h|--help)              usage                           ; exit 0 ;;
+         --layers)            Layers="${2:-auto}"             ; shift ;;
+         --less)              Globalless="${2:-auto}"         ; shift ;;
+         --maskblur)          Globalmaskblur="${2:-auto}"     ; shift ;;      
+         --prefertop)         Prefertop="${2:-auto}"          ; shift ;;      
+         --redist)            Redistshape="${2:-auto}"        ; shift ;;
+      -o|--output)            Outputimage="${2:-}"            ; shift ;;
+         --revert)            Revertimagelist="yes"           ;;
+      -V|--showimage)         Showimageprocessing="yes"       ;;
+         --showname)          Showname="yes"                  ;;
+         --sigmoidalclut)     Globalsigmoidal="${2:-auto}"    ; shift ;;
+         --soft)              Softmode="${2:-auto}"           ; shift ;;
+         --test)              Testsetup="test"                ; Testarg="${2:-}" ; shift ;;
          --threads)           Multicore_maxprocesses="${2:-}" ; shift ;;
-         --threshold)         Globalthreshold="${2:-auto}" ; shift ;;
-      -v|--verbose)           Verbose="yes"               ;;
-         --version)           echo "imfuse v$Version"     ; exit 0 ;;
-         --video)             Video="auto"                ;;
-      -W)                     Viewnior="yes"              ;;
+         --threshold)         Globalthreshold="${2:-auto}"    ; shift ;;
+      -v|--verbose)           Verbose="yes"                   ;;
+         --version)           echo "imfuse v$Version"         ; exit 0 ;;
+         --video)             Video="auto"                    ;;
+      -W)                     Viewnior="yes"                  ;;
       
 --blur|--channel|--chroma|--comet|--compass|--compose|--darkness|--diffstat|--dog|--enfuse|--evaluate|\
 --experimental|--free|--freediff|\
@@ -3724,10 +3751,18 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     }
   }
   
+  # --sigmoidalclut
+  [ "$Globalsigmoidal" ] && {
+    [ "$Globalsigmoidal" = "auto" ] && Globalsigmoidal="10x50%"
+    Globalsigmoidal="$(percentrm "$Globalsigmoidal")"
+    Part1="$(cut -dx -f1 <<< "$Globalsigmoidal")"
+    Part2="$(cut -dx -f2 -s <<< "$Globalsigmoidal")"
+    Part1="${Part1:-10}"
+    Part2="${Part2:-50}"
+    Globalsigmoidal="${Part1}x${Part2}"
+  }
+  
   # --soft
-  
-  
-  # --clutmask
   [ "$Softmode" ] && [ "$Softmode" != "auto" ] && {
     Softmode="$(percentrm "$Softmode")"
     Part1="$(cut -dx -f1 <<< "$Softmode")"
@@ -3735,6 +3770,8 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     Part1="${Part1:-10}"
     Part2="${Part2:-50}"
     Softmode="${Part1}x${Part2}"
+    [ "$Cutblur" ]    && error "Option --soft does not support option --cutsoft."
+    [ "$Globalless" ] && error "Option --soft does not support option --less. You can specify 'less' as a mask argument instead."
   }
   
   # --threshold
@@ -3838,10 +3875,6 @@ check_outputname() {
     "") ;;
     *) Resultimage="${Resultimage}_hdr$Fakehdr" ;;
   esac
-  case $Globalalpha in
-    "") ;;
-    *) Resultimage="${Resultimage}_alpha$Globalalpha" ;;
-  esac
   case $Globalless in
     ""|0) ;;
     *) Resultimage="${Resultimage}_less$Globalless" ;;
@@ -3853,15 +3886,22 @@ check_outputname() {
   [ "$Globalmaskblur" ] && {
     Resultimage="${Resultimage}_maskblur$Globalmaskblur"
   }
+  [ "$Prefertop" ] && {
+    Resultimage="${Resultimage}_prefertop$Prefertop"
+  }
+  [ "$Globalsigmoidal" ] && {
+    Resultimage="${Resultimage}_sigmoidal$Globalsigmoidal"
+  }
   [ "$Cutblur" ] && {
     Resultimage="${Resultimage}_cutblur$Cutblur"
   }
   [ "$Finalblur" ] && {
     Resultimage="${Resultimage}_finalblur=p${Finalblurpercent}-s${Finalblursigma1}-S${Finalblursigma2}"
   }
-  [ "$Prefertop" ] && {
-    Resultimage="${Resultimage}_prefertop$Prefertop"
-  }
+  case $Globalalpha in
+    "") ;;
+    *) Resultimage="${Resultimage}_alpha$Globalalpha" ;;
+  esac
   [ "$Globalthreshold" ] && {
     Resultimage="${Resultimage}_threshold$Globalthreshold"
   }
@@ -3870,7 +3910,7 @@ check_outputname() {
     *) Resultimage="${Resultimage}_denoise$Globaldenoise" ;;
   esac
   case $Redistshape in
-    ""|"off") ;;
+    $Redistdefault) ;;
     *) Resultimage="${Resultimage}_redist=${Redistshape:-off}${Redistpeak}" ;;
   esac
   case $Revertimagelist in
@@ -4018,7 +4058,7 @@ main() {
     [ "$Error" ] && return 1
     # --alpha=ARG
     [ "$Globalalpha" ] && {
-      note "Applying --alpha={$Globalalpha}"
+      note "Applying --alpha=$Globalalpha"
       alphalevel --image "$Resultimage" --mask "$Resultmask" --level "$Globalalpha" || error "Error in leveling --alpha='$Globalalpha'"
       [ "$Error" ] && return 1
     }
