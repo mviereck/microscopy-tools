@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.7.5-beta"
+Version="0.6.7.6-beta"
 
 # ToDo:
 #
@@ -1150,7 +1150,6 @@ generate_image() {
   }
   
   [ -e "$Imagename" ] && return 0
-  set -x
   note "Generating image $Imagetype: $Mode"
   
   case "$Imagetype" in
@@ -1178,7 +1177,6 @@ generate_image() {
     ;;
   esac
   showimage "$Imagename"
-  set +x
   return "${Error:-0}"
 }
 layered_tif() {
@@ -1375,10 +1373,8 @@ mkimg_black() {
 mkimg_color() {
   local Size
   Size="${2:-}"
-  set -x
   [ -z "$Size" ] && Size="${Imagewidth:-100}x${Imageheight:-100}"
   $Magickbin -size "$Size" canvas:${1:-black} -type TrueColor       "${3:-color.tif}"       || error "Failed to create colored image."
-  set +x
 }
 mkimg_transparent() {
   # Generate transparent image $1 with size $2
