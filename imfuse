@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.7.6-beta"
+Version="0.6.7.7-beta"
 
 # ToDo:
 #
@@ -285,12 +285,11 @@ Mask generation and fusion adjustments:
  --fakehdr [=%]       Balances over- and underexposed areas. Default %: 50
                       Remaining artefacts at borders of overexposured areas
                       might be fixed with --saturation. Alternative: --halo
- --finalblur [=p%,sSIGMA1,Ssigma2]   Soft blur of bokeh.
-                      Blurs low contrast areas with a contrast strenght 
-                      up to % with SIGMA1 and/or sigma2. 
-                      Default %: 50, default SIGMA1: 2, default sigma2: 1
-                      If sigma2 is given, the bokeh blurs out into sharp
-                      areas for a soft transition.
+ --finalblur [=p%,sSIGMA1,Ssigma2]   Soft blur of bokeh. Blurs low contrast 
+                      areas with a contrast strenght up to % with SIGMA1.
+                      Default %: 50, default SIGMA1: 3, default sigma2: 2
+                      If sigma2 is given, the cut border between bokeh and 
+                      foreground is blurred for a soft transition.
  --grayscale=MODE     Grayscale converting method before mask generation.
                       Compare ImageMagick option -grayscale. Default: RMS
                       MODE is one of: (number or name)
@@ -378,13 +377,13 @@ Go to the folder above 'stackshot'.
 ### Messages
 
 error() {
-  [ -z "$Error" ] && echo "imfuse ERROR: $*
+  [ -z "${Error:-}" ] && echo "imfuse ERROR: $*
 " >&2
   Error=1
   #exit 1
 }
 note() {
-  [ -z "$Error" ] && echo "imfuse note: $*
+  [ -z "${Error:-}" ] && echo "imfuse note: $*
 " >&2
   return 0
 }
@@ -1060,22 +1059,19 @@ finalblur() {
     -threshold ${Percent:-10}%
     -negate
     -write mpr:cutmask
-    -delete 0
+    -delete 0"
+    Command="$Command
   mpr:resultimage
-  mpr:cutmask
-    -alpha off
-    -compose CopyOpacity -composite
     -blur 0x$Sigma1
     -write mpr:bokeh
     -delete 0
   mpr:bokeh
-  mpr:cutmask
-    -blur 0x$Sigma2
+  ( mpr:cutmask -blur 0x$Sigma2 )
     -alpha off
     -compose CopyOpacity -composite
     -write mpr:partsource_blurred
     -delete 0"
-  [ "$Globalalpha" ] && {
+  false && [ "$Globalalpha" ] && {
     Command="$Command
   mpr:maskmax
   mpr:cutmask
@@ -1091,11 +1087,11 @@ finalblur() {
       "
   }
   Command="$Command
-  mpr:partsource_blurred
   mpr:resultimage
-    -compose DstOver -composite
+  mpr:partsource_blurred
+    -compose Over -composite
   $Image"
-  
+  note "$Command"
   $Command || error "Error with --finalblur"
   showimage "$Image"
   return ${Error:-0}
@@ -1273,7 +1269,6 @@ level_masks() {
   $Magickbin $Maskmax -level ${Levelmin}%,${Levelmax}% $Maskmax
 
   [ "$Redistshape" ] && redist --image "$Maskmax" --clutimage "$Clutimage" --shape "$Redistshape" --peak "${Redistpeak:-50}"
-  #[ "$Testsetup" ] && $Magickbin $Clutimage +level ${Testarg}%x100% $Clutimage
 
   Startzeit="$(date +%s)"
   Count=0
@@ -1381,8 +1376,6 @@ mkimg_transparent() {
   local Size
   Size="${2:-}"
   [ -z "$Size" ] && Size="${Imagewidth:-100}x${Imageheight:-100}"
-  verbose "Generating transparent image:
-  $Magickbin -size $Size canvas:transparent -type TrueColorAlpha ${1:-transparent.tif}"
   $Magickbin -size "$Size" canvas:transparent -type TrueColorAlpha "${1:-transparent.tif}"
 }
 redist() {
@@ -1780,6 +1773,12 @@ $(magick xc:white -define morphology:showkernel=1 $(grep -E -- '-define|-morphol
     -delete 0
   mpr:sourceimage"
   
+    [ "$Testsetup" ] && Command="$Command
+  mpr:sourceimage
+    -contrast-stretch 0
+    -write mpr:sourceimage
+    -delete 0"
+  
     # --grayscale
     [ "$Grayscaleconverter" ] && Command="$Command
     $Grayscaleconverter"
@@ -1860,7 +1859,7 @@ focus_merge_masks() {
   # Merge different masks.
   
   local Mergemask
-  local Count Number Weightmax Prefertopcode=
+  local Count Number Weightmax Prefertopcode= Methodnumber=
   local Command
   local Skipmerge Methodmask Mergecode=
   local Startzeit Dauer Restzeit
@@ -1883,6 +1882,7 @@ focus_merge_masks() {
   while read Line; do
     maskarg_parse "$Line"
     [ "${Argweight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Argweight:-100}"
+    Methodnumber="$((Methodnumber+1))"
   done <<< "$Maskmethodlist"
       
   Mergemaskbasename="mergemask"
@@ -1923,9 +1923,9 @@ focus_merge_masks() {
     [ "$Argdenoise" ] && Mergecode="$Mergecode $(denoisecode "$Argdenoise")"
     
     Mergecode="$Mergecode
-    +level 0%,$(calc "(100 * ${Argweight:-100}) / $Weightmax" )% 
+    +level 0%,$(calc "(100 * ${Argweight:-100}) / ( $Weightmax * $Methodnumber )" )% 
   )
-    -compose Lighten -composite"
+    -compose Screen -composite"
   done <<< "$Maskmethodlist"
 #    +level 0%,$(calc "(100 * ${Argweight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
 
@@ -1946,7 +1946,7 @@ focus_merge_masks() {
     -blur 0x$Globalmaskblur
     -write mpr:mergemask
     -delete 0"
-    Mergemaskbasename="$Mergemaskbasename-blur$Globalmaskblur"
+    Mergemaskbasename="$Mergemaskbasename-maskblur$Globalmaskblur"
   }
     
   # --close    
@@ -1964,7 +1964,7 @@ focus_merge_masks() {
     -compose Lighten -composite
     -write mpr:mergemask
     -delete 0"
-    Mergemaskbasename="$Mergemaskbasename-close=r{$Globalclose1}R${Globalclose2}p${Globalclosethreshold}"
+    Mergemaskbasename="$Mergemaskbasename-close=r${Globalclose1}R${Globalclose2}p${Globalclosethreshold}"
   }
   
   # --sigmoidalclut
@@ -3661,7 +3661,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
       maskarg_parse "$Globalclose"
       Globalclose1="${Argradius1:-2}"
       Globalclose2="${Argradius2:-2}"
-      Globalclosethreshold="${Argpercent1:-25}"
+      Globalclosethreshold="${Argpercent1:-0}"
       Globalclose="r${Globalclose1},R${Globalclose2},p${Globalclosethreshold}"
     ;;
   esac
@@ -3682,8 +3682,8 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     Argmethod="finalblur"
     maskarg_parse "$Finalblur"
     Finalblurpercent="${Argpercent1:-$(maskarg_defaultvalue $Firstmaskmethod noise)}"
-    Finalblursigma1="${Argsigma1:-2}"
-    Finalblursigma2="${Argsigma2:-1}"
+    Finalblursigma1="${Argsigma1:-3}"
+    Finalblursigma2="${Argsigma2:-2}"
   }
 
   # --grayscale
@@ -3847,7 +3847,7 @@ check_outputname() {
     [ "$Argradius1" ]            && Resultimage="$Resultimage-r$Argradius1"
     [ "$Argsigma1" ]             && Resultimage="$Resultimage-s$Argsigma1"
     [ "$Argradius2" ]            && Resultimage="$Resultimage-R$Argradius2"
-    [ "$Argsigma2" ]             && Resultimage="$Resultimage-s$Argsigma2"
+    [ "$Argsigma2" ]             && Resultimage="$Resultimage-S$Argsigma2"
     [ "$Argpercent1" ]           && Resultimage="$Resultimage-p$Argpercent1"
     [ "$Argpercent2" ]           && Resultimage="$Resultimage-P$Argpercent2"
     [ "$Argalpha" ]              && Resultimage="$Resultimage-alpha$Argalpha"
