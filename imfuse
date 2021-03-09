@@ -1884,6 +1884,7 @@ focus_merge_masks() {
     [ "${Argweight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Argweight:-100}"
     Methodnumber="$((Methodnumber+1))"
   done <<< "$Maskmethodlist"
+  Methodnumber=1
       
   Mergemaskbasename="mergemask"
   
@@ -1925,9 +1926,12 @@ focus_merge_masks() {
     Mergecode="$Mergecode
     +level 0%,$(calc "(100 * ${Argweight:-100}) / ( $Weightmax * $Methodnumber )" )% 
   )
-    -compose Screen -composite"
+  "
   done <<< "$Maskmethodlist"
-#    +level 0%,$(calc "(100 * ${Argweight:-100}) / (${Maskmethodnumber:-1} * $Weightmax)" )% 
+#    -compose Screen -composite"
+    Mergecode="$Mergecode
+    -colorspace gray
+    -evaluate-sequence mean"
 
   # denoise low contrast areas
   [ "$Globaldenoise" ] && {
