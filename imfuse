@@ -1,11 +1,12 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.7.7-beta"
+Version="0.6.8-beta"
 
 # ToDo:
 #
 # imfuse:
+# --level for --soft?
 # redist() fails with b&w masks -> clut and result black
 # --revert: broken
 # ARG close: how to match --close ARG?
@@ -26,11 +27,6 @@ Version="0.6.7.7-beta"
 #
 # imgview:
 # layered tifs
-
-# soft concept:
-# multiply images with mask
-# add all images (plus)
-# divide result by max
 
 usage() {
   echo "imfuse v$Version
@@ -65,6 +61,7 @@ General options:
      --version            Show imfuse version and exit.
  -V, --showimage          Show intermediate results with image viewer geeqie.
      --video              Generate a video of shown intermediate images.
+ -W                       Show result with image viewer viewnior.
 
 The mask generating options below can take additionally arguments [=ARG].
 Multiple arguments are comma-separated. 
@@ -201,6 +198,7 @@ Image comparision mask options: (Intended for artefact removal)
                       ARG additionally takes arguments:
                         (word)   MODE                Default: max
                       MODE can be one of '$(basename $Magicklist) -list evaluate'
+                      Compare --max, --min, --mean, --median.
                       Most of interest:
                         max      Brightest pixels in sequence. 
                         mean     Average pixel values in sequence. 
@@ -221,21 +219,27 @@ Image comparision mask options: (Intended for artefact removal)
                       similarity with source images.
                       ARG additionally takes arguments:
                         (word)   An image file name
+ --max [=ARG]         Same as --evaluate=max. Brightest pixels of stack.
+                      Result similar to --lightness.
+ --mean [=ARG]        Same as --evaluate=mean. Average of pixels in stack.
+ --median [=ARG]      Same as --evaluate=median. Median pixel of stack.
+ --min [=ARG]         Same as --evaluate=min. Darkest pixels of stack.
+                      Result similar to --darkness.
                            
 Colorspace channel mask options: (Intended for artefact removal)
 (All are variations of --channel, most of interest is --saturation)
- --channel            Use a colorspace channel as mask.
+ --channel [=ARG]     Use a colorspace channel as mask.
                       ARG additionally takes arguments:
                         (word)   Colorspace           Default: HSL
                         (word)   Color channel        Default: 1
                       Colorspace can be one of '$(basename $Magicklist) -list colorspace'
                       The color channel is a number from 0..31.
- --chroma             Chroma channel from HCL colorspace.
- --darkness           Negated lightness channel from HSL colorspace.
-                      (Similar to --evaluate=min)
- --lightness          Lightness channel from HSL colorspace.
-                      (Similar to --evaluate=max)
- --saturation         Saturation channel from HSB colorspace.
+ --chroma [=ARG]      Chroma channel from HCL colorspace.
+ --darkness [=ARG]    Negated lightness channel from HSL colorspace.
+                      Dark result, similar to --min.
+ --lightness [=ARG]   Lightness channel from HSL colorspace. 
+                      Bright result, -similar to --max.
+ --saturation [=ARG]  Saturation channel from HSB colorspace.
 
 Mask generation and fusion adjustments:
  --alpha [=LEVEL]     Generate transparent image using the contrast mask as 
@@ -1884,7 +1888,7 @@ focus_merge_masks() {
     [ "${Argweight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Argweight:-100}"
     Methodnumber="$((Methodnumber+1))"
   done <<< "$Maskmethodlist"
-  Methodnumber=1
+  Methodnumber=1 # overwritten for mean instead of Screen
       
   Mergemaskbasename="mergemask"
   
@@ -2659,10 +2663,10 @@ Maskgenerator="$Maskgenerator
     -compose Difference -composite
     -negate"
     ;;
-    evaluate)
+    evaluate|min|max|mean|median)
       Maskgenerator="
   ( mpr:sourcegray -alpha off )
-  ( '$(generate_image --showname "$Argword1")' $Grayscaleconverter -alpha off )
+  ( '$(generate_image --showname "${Argword1:-$Method}")' $Grayscaleconverter -alpha off )
     -compose Difference -composite
     -negate"
     ;;
@@ -2936,8 +2940,7 @@ maskarg_parse() {
 }
 maskarg_store() {
   Maskmethodcount="${1:-$Maskmethodcount}"
-  Newoption="NUM=$Maskmethodcount"
-  Newoption="$Newoption,METHOD=$Argmethod"
+  Newoption="METHOD=$Argmethod"
   [ "$Argweight" ]             && Newoption="$Newoption,w=$Argweight"
   [ "$Argradius1" ]            && Newoption="$Newoption,r=$Argradius1"
   [ "$Argradius2" ]            && Newoption="$Newoption,R=$Argradius2"
@@ -2952,16 +2955,17 @@ maskarg_store() {
   [ "$Argword2" ]              && Newoption="$Newoption,WORD2=$Argword2"
   [ "$Argdenoise" ]            && Newoption="$Newoption,denoise=$Argdenoise"
   [ "$Argdiff" ]               && Newoption="$Newoption,diff"
-  [ "$Argalpha" ]               && Newoption="$Newoption,alpha=$Argalpha"
+  [ "$Argalpha" ]              && Newoption="$Newoption,alpha=$Argalpha"
   [ "$Argmaskblur" ]           && Newoption="$Newoption,maskblur=$Argmaskblur"
   [ "$Argnegate" ]             && Newoption="$Newoption,negate"
   [ "$Argdarkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Argdarkenmask"
   [ "$Arglevel" ]              && Newoption="$Newoption,LEVEL"
   [ "$Argtype" ]               && Newoption="$Newoption,TYPE=$Argtype"
   [ "$Argbasename" ]           && Newoption="$Newoption,BASENAME=$Argbasename"
+  Newoption="$Newoption,NUM=$Maskmethodcount"
 
-  grep -q "NUM=$Maskmethodcount," <<< "$Maskmethodlist" \
-    && Maskmethodlist="$(sed "s&^NUM=$Maskmethodcount,.*&$Newoption&" <<< "$Maskmethodlist")" \
+  grep -q "NUM=$Maskmethodcount" <<< "$Maskmethodlist" \
+    && Maskmethodlist="$(sed "s&.*NUM=$Maskmethodcount.*&$Newoption&" <<< "$Maskmethodlist")" \
     || Maskmethodlist="$Maskmethodlist
 $Newoption"
   Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
@@ -3151,26 +3155,6 @@ maskarg_defaultvalue() {
     ;;
     alpha)
       echo "100"
-      false && case "${1:-}" in
-        blur)       echo "25" ;;
-        comet)      echo "30" ;;
-        compass)    echo "35" ;;
-        diffstat)   echo "25" ;;
-        dog)        echo "25" ;;
-        freichen)   echo "1" ;;
-        gaussian)   echo "25" ;;
-        #kirsch
-        #laplacian)  echo "10" ;;
-        log)        echo "25" ;;
-        morphology) echo "25" ;;
-        prewitt)    echo "2" ;;
-        roberts)    echo "50" ;;
-        sobel)      echo "2" ;;
-        statistic)  echo "35" ;;
-        #unsharp
-        wavelet)    echo "75" ;;
-        *)          echo "15" ;;
-      esac
     ;;
     type)
       case "${1:-}" in
@@ -3432,7 +3416,7 @@ parse_options() {
   Shortoptions="ho:vVW"
   Longoptions="basename:,cache::,exif::,force::,help,output:,showimage,showname,test::,threads:,verbose,version,video"
   Longoptions="$Longoptions,alpha::,bg::,background::,close::,cutblur::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,prefertop::,redist::,revert,sigmoidalclut::,soft::,threshold::"
-  Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,saturation::"
+  Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,max::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
   
@@ -3479,8 +3463,9 @@ parse_options() {
       
 --blur|--channel|--chroma|--comet|--compass|--compose|--darkness|--diffstat|--dog|--enfuse|--evaluate|\
 --experimental|--free|--freediff|\
---freichen|--gaussian|--halo|--image|--kirsch|--laplacian|--lightness|--log|--morphology|--none|\
---prewitt|--roberts|--saturation|--sobel|--statistic|--unsharp|--wavelet)
+--freichen|--gaussian|--halo|--image|--kirsch|--laplacian|--lightness|--log|--morphology|\
+--max|--mean|--median|--min|\
+--none|--prewitt|--roberts|--saturation|--sobel|--statistic|--unsharp|--wavelet)
         Argmethod="${1#--}"
         Maskgeneratorargument="${2:-}" && shift
         Maskmethodnumber="$((Maskmethodnumber+1))"
@@ -3518,6 +3503,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     auto) Globalmaskblur="1" ;;
   esac
   
+  Maskmethodlist="$(sort -V   <<< "$Maskmethodlist")"
   Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
   [ -n "$Maskmethodlist" ] && while read Line; do
     maskarg_parse "$Line"
@@ -3578,6 +3564,9 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
       ;;
       image)
         [ -e "$Argword1" ] || error "--image needs an image file name as argument. Not found: '$Argword1'"
+      ;;
+      max|mean|median|min)
+        Image_needlist="$Image_needlist $Argmethod"      
       ;;
       morphology)
         case $Argword1 in
@@ -3763,6 +3752,10 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   }
   
   # --soft
+  [ "$Softmode" ] && {
+    [ "$Cutblur" ]    && error "Option --soft does not support option --cutsoft."
+    [ "$Globalless" ] && error "Option --soft does not support option --less. You can specify 'less' as a mask argument instead."
+  }
   [ "$Softmode" ] && [ "$Softmode" != "auto" ] && {
     Softmode="$(percentrm "$Softmode")"
     Part1="$(cut -dx -f1 <<< "$Softmode")"
@@ -3770,8 +3763,6 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     Part1="${Part1:-10}"
     Part2="${Part2:-50}"
     Softmode="${Part1}x${Part2}"
-    [ "$Cutblur" ]    && error "Option --soft does not support option --cutsoft."
-    [ "$Globalless" ] && error "Option --soft does not support option --less. You can specify 'less' as a mask argument instead."
   }
   
   # --threshold
