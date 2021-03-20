@@ -1,11 +1,12 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.9-beta"
+Version="0.6.10-beta"
 
 # ToDo:
 #
 # imfuse:
+# add w to each mask if n>1
 # --level for --soft?
 # redist() fails with b&w masks -> clut and result black
 # --revert: broken
@@ -1839,7 +1840,7 @@ $(grep "\S" <<< "$Command")"
       note "Generating alpha&less image for mask $Argmethod"
       Imagename="$Cachedir/$Argbasename-prepare-less${Argless}-alpha${Argalpha}-cb${Cutblur}.tif"
       Maskmax="$Cachedir/$Argbasename-prepare-less${Argless}-alpha${Argalpha}-cb${Cutblur}.mask.tif"
-      focus_montage --alpha "$Argalpha" --lessthanmax "$Argless" --maskmax="$Maskmax" --output "$Imagename" -- $(masklist "$Argbasename") || error "Error in focus_generate_masks->focus_montage for less+alpha"
+      focus_montage --alpha "$Argalpha" --lessthanmax "$Argless" --cutblur "$Cutblur" --maskmax="$Maskmax" --output "$Imagename" -- $(masklist "$Argbasename") || error "Error in focus_generate_masks->focus_montage for less+alpha"
       alphalevel --image "$Imagename" --mask "$Maskmax" --level "$Argalpha" || error "Error in focus_generate_masks->alphalevel"
       [ "$Error" ] && break
       #$Magickbin "$Enfusebaseimage" "$Imagename" -compose Over -composite "$Imagename" || error "Failed to compose alpha result on enfuse background"
@@ -1898,7 +1899,8 @@ focus_merge_masks() {
     
   while read Line; do
     maskarg_parse "$Line"
-    [ "${Argweight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Argweight:-100}"
+    #[ "${Argweight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Argweight:-100}"
+    awk 'BEGIN {exit !('${Argweight:-100}' >= '${Weightmax:-0}')}' && Weightmax="${Argweight:-100}"
     Methodnumber="$((Methodnumber+1))"
   done <<< "$Maskmethodlist"
   Methodnumber=1 # overwritten for mean instead of Screen
@@ -1908,14 +1910,14 @@ focus_merge_masks() {
   # --sigmoidalclut
   [ "$Globalsigmoidal" ] && {
     Clutmaskimage="$Cachedir/mergeclut.tif"
-    $Magickbin -size 256x256 gradient: -rotate 90 -depth 16 -sigmoidal-contrast ${Globalsigmoidal}% "$Clutmaskimage" || error "Error generating clut '$Globalsigmoidal' for --soft."
+    $Magickbin -size 256x256 gradient: -rotate 90 -depth 16 -sigmoidal-contrast ${Globalsigmoidal}% "$Clutmaskimage" || error "Error generating clut '$Globalsigmoidal' for --sigmoidalclut."
     showimage "$Clutmaskimage"
   }
   
   # generate merge code
-  Mergecode="
-  -colorspace gray
-  ( -size ${Imagewidth}x${Imageheight} xc:black )"
+#  Mergecode="
+#  -colorspace gray
+#  ( -size ${Imagewidth}x${Imageheight} xc:black )"
   while read Line; do
     maskarg_parse "$Line"
     Mergemaskbasename="$Mergemaskbasename-$Argmethod"
@@ -2059,7 +2061,7 @@ $(grep "\S" <<< "$Command")"
 focus_montage() {
   # Finally: focus stacking
 
-  local Resultimage Resultimageready Resultfinalblur Outputimage Sourceimage Maskimagelist= Resultmd5
+  local Resultimage Resultimageready Resultfinalblur Outputimage Sourceimage Maskimagelist= Resultmd5 Cutblur=
   local Lessthanmaxmask
   local Maskmax Maskmaxcopy= Maskmaxready= Levelmax
   local Count Number
@@ -2069,7 +2071,7 @@ focus_montage() {
   local Stepwise Sourcepartimage Sourcepartimagelist= Sourcemask
   local Longoptions Parsedoptions
   
-  Longoptions="alpha:,lessthanmax:,maskmax:,output:"
+  Longoptions="alpha:,lessthanmax:,maskmax:,output:,cutblur:"
   
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
@@ -2078,6 +2080,7 @@ focus_montage() {
     case "${1:-}" in
       --output)       Outputimage="${2:-}" ; shift ;;
       --alpha)        Alphalevel="${2:-}" ; shift ;;
+      --cutblur)      Cutblur="${2:-}" ; shift ;;
       --lessthanmax)  Lessthanmax="${2:-}" ; shift ;;
       --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
       --) ;;
@@ -3278,7 +3281,8 @@ maskarg_checkallowed() {
           Arg="$(lowercase "${Arg}")"
           Arg="$(maskarg_checkstatistic "$Arg")"
         ;;
-        *) error "$Method does not take argument word1 $Arg" ;;
+        channel) ;;
+        *) error "$Method does not take argument word2 $Arg" ;;
       esac
     ;;
   esac
@@ -3499,7 +3503,7 @@ $(realpath "${1:-}")"
   return ${Error:-0}
 }  
 check_options() {
-  local Arg Part1 Part2
+  local Arg Part1 Part2 Weightsum=
   
   # source images
   [ -z "$Sourceimagelist" ] && error "No images specified"
@@ -3509,12 +3513,6 @@ check_options() {
 $(grep -m1 ' ' <<< "$Sourceimagelist")"
   Sourceimagelist="$(grep -v -x "" <<< "$Sourceimagelist")"
   [ "$Error" ] && return 1
-
-  # --maskblur
-  case $Globalmaskblur in
-    0)    Globalmaskblur="" ;;
-    auto) Globalmaskblur="1" ;;
-  esac
   
   Maskmethodlist="$(sort -V   <<< "$Maskmethodlist")"
   Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
@@ -3536,6 +3534,8 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     [ -n "$Argsigma2" ]   && { Argsigma2="$(maskarg_checkallowed   "$Argmethod" sigma2   "$Argsigma2")"   || Error=1 ; }
     [ -n "$Argword1" ]    && { Argword1="$(maskarg_checkallowed    "$Argmethod" word1    "$Argword1")"    || Error=1 ; }
     [ -n "$Argword2" ]    && { Argword2="$(maskarg_checkallowed    "$Argmethod" word2    "$Argword2")"    || Error=1 ; }
+    [ -z "$Argweight" ]   && Argweight="100"
+    Weightsum="$((Weightsum + Argweight))"
     case $Argmethod in
       blur|comet|compass|diffstat|dog|enfuse|free|freediff|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
         Arglevel="yes"
@@ -3599,13 +3599,17 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
       ;;
     esac
     
-    #[ "$Globalmaskblur" ] && [ "$Argtype" = "mask" ] && {
-    #  Argmaskblur="$(calc "${Argmaskblur:-0} + $Globalmaskblur")"
-    #}
-    
     maskarg_store "$Maskmethodcount"
   done <<< "$Maskmethodlist"
   [ "$Error" ] && return 1
+  
+  # w, weight
+  [ -n "$Maskmethodlist" ] && while read Line; do
+    maskarg_parse "$Line"
+    Argweight="$(calc "$Argweight * 100 / $Weightsum")"
+    maskarg_store "$Maskmethodcount"
+  done <<< "$Maskmethodlist"
+    
   
   # --alpha
   case $Globalalpha in
@@ -3725,6 +3729,12 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   case $Globalless in
     0)    Globalless="" ;;
     auto) Globalless="$(maskarg_defaultvalue "$Firstmaskmethod" less )" ;;
+  esac
+
+  # --maskblur
+  case $Globalmaskblur in
+    0)    Globalmaskblur="" ;;
+    auto) Globalmaskblur="2" ;;
   esac
   
   # --prefertop
@@ -3851,7 +3861,7 @@ check_outputname() {
   while read Line; do
     maskarg_parse "$Line"   
     Resultimage="${Resultimage}_${Argmethod}="
-    [ "$Argweight" ]             && Resultimage="$Resultimage-w$Argweight"
+    [ "$Argweight" != "100" ]    && Resultimage="$Resultimage-w$(awk 'BEGIN{printf "%0.0f",'$Argweight'}')"
     [ "$Argradius1" ]            && Resultimage="$Resultimage-r$Argradius1"
     [ "$Argsigma1" ]             && Resultimage="$Resultimage-s$Argsigma1"
     [ "$Argradius2" ]            && Resultimage="$Resultimage-R$Argradius2"
@@ -4056,7 +4066,7 @@ main() {
     focus_merge_masks                     || error "Error in mask merge"
     [ "$Error" ] && return 1
     case $Softmode in
-      "") focus_montage --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --lessthanmax "$Globalless" || error "Error in focus_montage" ;;
+      "") focus_montage --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --lessthanmax "$Globalless" --cutblur "$Cutblur" || error "Error in focus_montage" ;;
       *)  focus_soft    --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --sigmoidal "$Softmode"     || error "Error in focus_soft" ;;
     esac
     [ "$Error" ] && return 1
