@@ -1532,8 +1532,8 @@ redist() {
       $Magickbin $Histogram -stroke red -strokewidth 2 -fill none -draw "polyline ${PointArr[*]}" $Histogram
     ;;
   esac
-  verbose "histogram:
-$Histogram"
+#  verbose "histogram:
+#$Histogram"
   showimage $Histogram
 }
 redistX() {
@@ -2553,13 +2553,15 @@ $(grep "\S" <<< "$Command")"
   done
   [ "$Error" ] && return 1
   
+  $Magickbin $Addsource $Addmask -compose DivideSrc -composite $Tifstorealpha $Resultimage || error "Error in softfusion: failed to divide by mask"
+  
   :> $Resultimageready
 
   [ "$Maskmaxcopy" ] && {
-    redist --image "$Addmask" --clut "$Clutmaximage"  
-    $Magickbin "$Addmask" "$Clutmaximage" -clut "$Maskmaxcopy"
+    redist --image "$Addmask" --clut "$Clutmaximage"  || error "Error generating clut for maskmax"
+    $Magickbin "$Addmask" "$Clutmaximage" -clut "$Maskmaxcopy" || error "Error adjusting maskmax"
   }
-  $Magickbin "$Resultimage" $Tifstore "$Outputimage"
+  $Magickbin "$Resultimage" $Tifstore "$Outputimage" || error "Error storing result of softfusion"
 
   return ${Error:-0}
 }
@@ -4133,7 +4135,7 @@ main() {
   
   # --cache
   mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
-  [ "$Preservecache" ] || rm -f $Cachedir/*
+  [ "$Preservecache" ] || rm -rf $Cachedir/*
   rm -f $Cachedir/videoframe????.*
   Testimage="$Cachedir/test.png"
   Resultmask="$Cachedir/result.max.tif"
