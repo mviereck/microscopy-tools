@@ -6,6 +6,8 @@ Version="0.6.10-beta"
 # ToDo:
 #
 # imfuse:
+# --slab
+# BUG: levelU kills data near 0% (--test pyramid)
 # add w to each mask if n>1
 # --level for --soft?
 # redist() fails with b&w masks -> clut and result black
@@ -324,6 +326,9 @@ Mask generation and fusion adjustments:
                       MIDPOINT is the inflection point of the curve in percent.
                       Compare IM option -sigmoidal-contrast.
                       Default CONTRAST: 10, default MIDPOINT: 50%
+ --slab [=LAYERS]     Split stack into LAYERS different stacks and fuse them
+                      separately. Fuse these results afterwards with increased
+                      sigma and radius.
  --soft [=CONTRASTxMIDPOINT]   Enable soft fusion mode. Different concept than 
                       default maximum contrast montage. Images are multiplied 
                       with their contrast masks and added altogether as a whole.
@@ -1723,6 +1728,61 @@ focus_generate_masks() {
     maskarg_parse "$Line"
     
     Maskgenerator="$(focus_maskmethod "$Argmethod")"
+    
+    [ "$Testsetup" ] && [ "$Argtype" = "mask" ] && Maskgenerator="$Maskgenerator
+    -write mpr:level0
+    -delete 0
+  mpr:sourcegray
+    -write mpr:sourcegraybak
+    -delete 0
+  mpr:sourcegraybak
+    -resize 80%
+    -write mpr:sourcegray
+    -delete 0
+$(focus_maskmethod "$Argmethod")
+    -write mpr:level1
+    -auto-level
+    -delete 0
+  mpr:sourcegraybak
+    -resize 50%
+    -write mpr:sourcegray
+    -delete 0
+$(focus_maskmethod "$Argmethod")
+    -write mpr:level2
+    -delete 0
+  mpr:sourcegraybak
+    -resize 25%
+    -write mpr:sourcegray
+    -delete 0
+$(focus_maskmethod "$Argmethod")
+    -write mpr:level3
+    -delete 0
+  mpr:level3
+    -resize ${Imagewidth}x${Imageheight}
+    -write mpr:level3
+    -delete 0
+  mpr:level2
+    -resize ${Imagewidth}x${Imageheight}
+    -write mpr:level2
+    -delete 0
+  mpr:level1
+    -resize ${Imagewidth}x${Imageheight}
+    -write mpr:level1
+    -delete 0
+  mpr:level0 mpr:level1 mpr:level2 mpr:level3 
+    -evaluate-sequence ${Testarg:-mean}"
+  false && echo "mpr:level0 -evaluate Divide 2 -write mpr:level0 -delete 0
+  mpr:level1 -evaluate Divide 2 -write mpr:level1 -delete 0
+  mpr:level2 -evaluate Divide 2 -write mpr:level2 -delete 0
+  mpr:level3 -evaluate Divide 2 -write mpr:level3 -delete 0
+  mpr:level0 
+  mpr:level1 
+    -compose $Mergemethod -composite
+  mpr:level2 
+    -compose $Mergemethod -composite
+  mpr:level3
+    -compose $Mergemethod -composite
+    "
         
     [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
   mpr:sourcegray
@@ -1812,6 +1872,7 @@ ${Maskgenerator_all//NUMBER/$Number}"
 $(grep "\S" <<< "$Command")"
 
     multicore --showimage "${Showimage//NUMBER/$Number}" -- $Command || error "Failure in mask generation"
+#    multicore --showimage "$Testimage" -- $Command || error "Failure in mask generation"
     
     Dauer="$(( $(date +%s)-Startzeit))"
     Restzeit="$(( Dauer*(Imagenumber-Count) / Count ))"
@@ -2091,7 +2152,7 @@ focus_montage() {
     shift
   done
   [ -z "$Maskimagelist" ] && Maskimagelist="$(masklist $Mergemaskbasename | tr '\n' ' ')"
-  
+  echo "$Maskimagelist"
   note "Focus montage"
   
   Resultmd5="$(md5cut "$(ls -l --full-time $Maskimagelist) $Lessthanmax $Cutblur $Cutsoft")"
@@ -2100,6 +2161,7 @@ focus_montage() {
   Resultimage="$(cut -d- -f2- <<< "$Mergemaskbasename" | cut -d. -f1)"
   [ -z "$Resultimage" ] && Resultimage="$(basename $(awk '{print $1}' <<< "$Maskimagelist") | cut -d. -f1)"
   [ "$Lessthanmax" ]    && Resultimage="$Resultimage-less${Lessthanmax:-0}"
+  [ "$Cutsoft" ]        && Resultimage="$Resultimage-cutsoft${Cutsoft:-0}"
   [ "$Cutblur" ]        && Resultimage="$Resultimage-cutblur${Cutblur:-0}"
   Resultimage="$Cachedir/montage-$Resultimage.$Resultmd5.tif"
   #Resultimage="$Cachedir/montage.${Resultmd5}.tif"
@@ -2924,7 +2986,8 @@ maskarg_parse() {
       Value="$(sed "s/${Key:-NOKEY}//"  <<< "$Line")"
     }
     case $Key in
-      "w"|"w%")       Argweight="${Value:-$(maskarg_defaultvalue    "$Firstmaskmethod" noise)}" ;;
+      #"w"|"w%")       Argweight="${Value:-$(maskarg_defaultvalue    "$Firstmaskmethod" noise)}" ;;
+      "w"|"w%")           Argweight="${Value:-}" ;;
       "r")                Argradius1="$Value" ;;
       "R")                Argradius2="${Value}" ;;
       "s")                Argsigma1="$Value" ;;
@@ -3023,6 +3086,7 @@ maskarg_defaultvalue() {
           case "$Argword1,$Argword2" in
             "median,mean") echo "45" ;;
             "min,max")     echo "45" ;;
+            *)             echo "45" ;;
           esac
         ;;
         freichen)   
@@ -3187,9 +3251,6 @@ maskarg_defaultvalue() {
     type)
       case "${1:-}" in
         blur|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
-          echo "mask"
-        ;;
-        saturation)
           echo "mask"
         ;;
         *)
@@ -3423,6 +3484,14 @@ declare_variables() {
   Resultimage=""
   Showimageprocessing=""
   Showname=""
+  Slabkernelfactor=""
+  Slabmasks=""
+  Slaboptions=""
+  Slaboverlap=""
+  Slabs=""
+  Slabsize=""
+  Slabsourcelist=""
+  Slabstep=""
   Softmode=""
   Sourceimage=""
   Sourceimagelist=""
@@ -3446,7 +3515,7 @@ parse_options() {
   
   Shortoptions="ho:vVW"
   Longoptions="basename:,cache::,exif::,force::,help,output:,showimage,showname,test::,threads:,verbose,version,video"
-  Longoptions="$Longoptions,alpha::,bg::,background::,close::,cutblur::,cutsoft::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,merge::,prefertop::,redist::,revert,sigmoidalclut::,soft::,threshold::"
+  Longoptions="$Longoptions,alpha::,bg::,background::,close::,cutblur::,cutsoft::,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,merge::,prefertop::,redist::,revert,sigmoidalclut::,slabs::,soft::,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,max::,mean::,median::,min::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -3485,6 +3554,7 @@ parse_options() {
       -V|--showimage)         Showimageprocessing="yes"       ;;
          --showname)          Showname="yes"                  ;;
          --sigmoidalclut)     Globalsigmoidal="${2:-auto}"    ; shift ;;
+         --slabs)             Slabs="${2:-auto}"              ; shift ;;
          --soft)              Softmode="${2:-auto}"           ; shift ;;
          --test)              Testsetup="test"                ; Testarg="${2:-}" ; shift ;;
          --threads)           Multicore_maxprocesses="${2:-}" ; shift ;;
@@ -3519,7 +3589,7 @@ $(realpath "${1:-}")"
   return ${Error:-0}
 }  
 check_options() {
-  local Arg Part1 Part2 Weightsum= Masknoweightcount=
+  local Arg Part1 Part2 Weightsum= Weightrest Masknoweightcount=
   
   # source images
   [ -z "$Sourceimagelist" ] && error "No images specified"
@@ -3528,6 +3598,15 @@ check_options() {
   grep -q ' ' <<< "$Sourceimagelist" && error "imfuse does not accept whitespace in pathes or file names:
 $(grep -m1 ' ' <<< "$Sourceimagelist")"
   Sourceimagelist="$(grep -v -x "" <<< "$Sourceimagelist")"
+  
+  Imagenumber="$(grep -c "." <<< "$Sourceimagelist")"
+  Imagenumberlength="${#Imagenumber}"
+  Image="$(head -n1 <<< "$Sourceimagelist")"
+  Imagewidth="$($Magickbin  -format '%w' "$Image" info:)"
+  Imageheight="$($Magickbin -format '%h' "$Image" info:)"
+  Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
+  Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
+  Imagelistmemsize="$((Imagenumber*Imagememsize))"
   [ "$Error" ] && return 1
   
   #Maskmethodlist="$(sort -V   <<< "$Maskmethodlist")"
@@ -3562,6 +3641,8 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
     [ "${Argalpha}" ] && Background="${Background:-enfuse}"
     [ "$Maskmethodcount" = "1" ] && Firstmaskmethod="$Argmethod"
+    
+    Slabmasks="$Slabmasks --$Argmethod=w$Argweight,r$Argradius1,R$Argradius2,s$Argsigma1,S$Argsigma2,p$Argpercent1,P$Argpercent2,$Argword1,$Argword2"
   
     case $Argmethod in
       chroma)
@@ -3619,7 +3700,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     maskarg_store "$Maskmethodcount"
   done <<< "$Maskmethodlist"
   [ "$Error" ] && return 1
-  
+
   # w, weight
   Weightrest="$((100-Weightsum))"
   awk 'BEGIN {exit !('${Weightsum:-100}' > 100)}' && error "Sum of weight arguments exceed 100%."
@@ -3630,9 +3711,8 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
       awk 'BEGIN {exit !('${Weightrest:-0}' <= 0)}' && error "Sum of weight arguments exceed 100%, nothing left for --$Argmethod."
       Argweight="$(calc "$Weightrest / $Masknoweightcount")"
     }
-    maskarg_store "$Maskmethodcount"
+    maskarg_store
   done <<< "$Maskmethodlist"
-    
   
   # --alpha
   case $Globalalpha in
@@ -3751,7 +3831,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   case $Layers in
     auto) Layers="5" ;;
   esac
-  
+
   # --less
   case $Globalless in
     0)    Globalless="" ;;
@@ -3803,6 +3883,19 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     Part1="${Part1:-10}"
     Part2="${Part2:-50}"
     Globalsigmoidal="${Part1}x${Part2}"
+  }
+  
+  # --slabs
+  [ "$Slabs" ] && {
+    [ "$Slabs" = "auto" ] && Slabs="10"
+    Slabsize="$((Imagenumber / Slabs))"
+    Slaboverlap=3
+    Slabkernelfactor=3
+    [ "$Verbose" ]             && Slaboptions="$Slaboptions -v"
+    [ "$Showimageprocessing" ] && Slaboptions="$Slaboptions -V"
+    for Slabstep in $(seq $Slabs); do
+      Slabsourcelist[$Slabstep]="$(sed -n $((Slabsize*(Slabstep-1) +1)),$((Slabsize*Slabstep+Slaboverlap))p <<< "$(tac <<< "$Sourceimagelist")")"
+    done
   }
   
   # --soft
@@ -3888,6 +3981,9 @@ check_outputname() {
   [ "$Softmode" ] && {
     Resultimage="${Resultimage}soft"
     [ "$Softmode" != "auto" ] && Resultimage="${Resultimage}$Softmode"
+  }
+  [ "$Slabs" ] && {
+    Resultimage="${Resultimage}slabs$Slabs"
   }
         
   while read Line; do
@@ -4007,6 +4103,7 @@ $Grayscale $Mergemethod $Prefertop $Redistpeak $Redistshape $Revertimagelist $So
 main() {
   trap trap_sigint SIGINT
   set -u
+  local Slabopt
   
   declare_variables
   multicore_init
@@ -4040,18 +4137,6 @@ main() {
   rm -f $Cachedir/videoframe????.*
   Testimage="$Cachedir/test.png"
   Resultmask="$Cachedir/result.max.tif"
-
-  # check source images
-  Imagenumber="$(grep -c "." <<< "$Sourceimagelist")"
-  Imagenumberlength="${#Imagenumber}"
-  
-  Image="$(head -n1 <<< "$Sourceimagelist")"
-  Imagewidth="$($Magickbin  -format '%w' "$Image" info:)"
-  Imageheight="$($Magickbin -format '%h' "$Image" info:)"
-  Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
-  Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
-  Imagelistmemsize="$((Imagenumber*Imagememsize))"
-  Image=""
   
   note "
   Image number:           $Imagenumber
@@ -4093,8 +4178,40 @@ main() {
   # --background
   check_background
   for Mode in $Image_needlist; do
+    [ "$Error" ] && break
     generate_image "$Mode"
   done 
+  [ "$Error" ] && return 1
+  
+  
+  # --slabs
+  [ "$Slabs" ] && {
+    Sourceimagelist=""
+    for Slabstep in $(seq $Slabs); do
+      [ "$Error" ] && break
+      note "--slabs: Creating slab $Slabstep / $Slabs"
+      Slabopt="$Slaboptions $Slabmasks --cache=$Cachedir/slab$Slabstep ${Slabsourcelist[$Slabstep]}"
+      Image="$(imfuse --showname --basename=$Cachedir/slab$Slabs.$(printnum $Slabstep)_ $Slabopt)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
+      Sourceimagelist="$Image
+$Sourceimagelist"
+      [ -e "$Image" ] || {
+        imfuse -o $Image $Slabopt || error "Error in slab step $Slabstep"
+      }
+    done
+    Imagenumber=$Slabs
+    Sourceimagelist="$(grep . <<< "$Sourceimagelist")"
+    
+    [ -n "$Maskmethodlist" ] && while read Line; do
+      maskarg_parse "$Line"
+      [ -n "$Argradius1" ]  && Argradius1="$(calc "$Argradius1 * $Slabkernelfactor")"
+      [ -n "$Argradius2" ]  && Argradius2="$(calc "$Argradius2 * $Slabkernelfactor")"
+      [ -n "$Argsigma1" ]   && Argsigma1="$(calc  "$Argsigma1  * $Slabkernelfactor")"
+      [ -n "$Argsigma2" ]   && Argsigma2="$(calc  "$Argsigma2  * $Slabkernelfactor")"
+#      [ -n "$Argpercent1" ] && { Argpercent1="$(maskarg_checkallowed "$Argmethod" percent1 "$Argpercent1")" || Error=1 ; }
+#      [ -n "$Argpercent2" ] && { Argpercent2="$(maskarg_checkallowed "$Argmethod" percent2 "$Argpercent2")" || Error=1 ; }
+      maskarg_store
+    done <<< "$Maskmethodlist"
+  }
   [ "$Error" ] && return 1
   
   # Generating stackshot image
