@@ -1,0 +1,83 @@
+#! /bin/bash
+# Wrapper for imfuse to generate a stack from several substacks.
+# This is also known as "slabbing".
+# Compare http://extreme-macro.co.uk/zerene-slabbing/
+
+# Adjust following variables:
+
+# imfuse options to generate the substacks (low sigma and radius values are possible)
+Substackimfuseoptions="-vV --log=s0.5 --maskblur --min=w25 --soft"
+# imfuse options to fuse the substack results (use rather high sigma or radius values)
+Finalimfuseoptions="-vVW --log=s2 --maskblur --darkness --finalblur --less"
+
+# Number of substacks
+Substacks=5
+# Shared neighbored images
+Overlap=3
+
+Cachedir="$(pwd)/cache.slab"
+Outputimagebasename="$(pwd)/slab${Substacks}_"
+
+error() {
+  [ -z "${Error:-}" ] && echo "imfuse ERROR: $*
+" >&2
+  Error=1
+  #exit 1
+}
+note() {
+  [ -z "${Error:-}" ] && echo "imfuse note: $*
+" >&2
+  return 0
+}
+printnum(){
+  # print number $1 with leading zeroes.
+  # $1 number
+  # $2 digits. Default: 3
+  printf %0${2:-3}d "${1:-0}"
+}
+
+# read image names from command line
+while [ $# -gt 0 ]; do
+  Sourceimagelist="$Sourceimagelist
+${1:-}"
+  shift
+done
+Sourceimagelist="$(grep .  <<< "$Sourceimagelist")"
+Sourceimagelist="$(sort -V <<< "$Sourceimagelist")"
+Imagenumber="$(grep -c .   <<< "$Sourceimagelist")"
+
+# Split image list into substack source lists
+Slabsize="$((Imagenumber / Substacks))"
+for Slabstep in $(seq $Substacks); do
+  Slabsourcelist[$Slabstep]="$(sed -n $((Slabsize*(Slabstep-1) +1)),$((Slabsize*Slabstep+Overlap))p <<< "$Sourceimagelist")"
+done
+
+# create substacks
+for Slabstep in $(seq $Substacks); do
+  [ "$Error" ] && break
+  note "--slabs: Creating slab $Slabstep / $Substacks"
+  Imfuseoptions="$Substackimfuseoptions --cache=$Cachedir/_slab$Slabstep ${Slabsourcelist[$Slabstep]}"
+  Image="$(imfuse --showname --basename=$Cachedir/slab$Substacks.$(printnum $Slabstep)_ $Imfuseoptions)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
+  Resultimagelist="$Image
+$Resultimagelist"
+  [ -e "$Image" ] || {
+    imfuse -o $Image $Imfuseoptions || error "Error in slab step $Slabstep"
+  }
+done
+rm -R $Cachedir/_slab*
+[ "$Error" ] && exit 1
+
+# show results of substacks
+echo "$Resultimagelist"
+viewnior $Resultimagelist &
+
+# Generate result image fusing the substacks
+note "Generating final image from slab results"
+Imfuseoptions="$Finalimfuseoptions --cache=$Cachedir/_slaball $Resultimagelist"
+Image="$(imfuse --showname --basename=$Outputimagebasename $Imfuseoptions)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
+[ "$Error" ] && exit 1
+
+imfuse -o $Image $Imfuseoptions || error "Error in generating final image from slab results"
+
+rm -R $Cachedir/_slab*
+exit ${Error:-0}
