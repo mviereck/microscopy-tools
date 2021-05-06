@@ -1947,8 +1947,8 @@ focus_merge_masks() {
   
   note "Merging masks"
   
-  Skipmerge="yes"
-  #Skipmerge=no
+  #Skipmerge="yes"
+  Skipmerge=no
   [ "$Maskmethodnumber" -gt "1" ] && Skipmerge="no"
   [ "$Darkenmask" ]               && Skipmerge="no"
   [ "$Prefertop" ]                && Skipmerge="no"
@@ -2093,7 +2093,7 @@ focus_merge_masks() {
     return 0
   }
     
-  # merge images
+  # merge masks
   Startzeit="$(date +%s)"
   Count=0
   while read Sourceimage; do
@@ -2109,7 +2109,17 @@ focus_merge_masks() {
         
     Command="
 $Magickbin
+  $Sourceimage
+    -alpha set 
+    -alpha extract
+    -write mpr:sourcealpha
+    -delete 0
 $(sed "s/NUMBER/$Number/g" <<< "$Mergecode" )
+  mpr:mergemask
+  mpr:sourcealpha
+    -compose Darken -composite
+    -write mpr:mergemask
+    -delete 0
   mpr:mergemask
     $Prefertopcode
     $Tifstore 
