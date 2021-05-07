@@ -4016,9 +4016,10 @@ check_outputname() {
   }
         
   while read Line; do
+    [ -z "$Line" ] && break
     maskarg_parse "$Line"   
     Resultimage="${Resultimage}_${Argmethod}="
-    [ "$Argweight" != "100" ]    && Resultimage="$Resultimage-w$(awk 'BEGIN{printf "%0.0f",'$Argweight'}')"
+    [ "$Argweight" != "100" ]    && Resultimage="$Resultimage-w$(awk 'BEGIN {printf "%0.0f",'$Argweight'}')"
     [ "$Argradius1" ]            && Resultimage="$Resultimage-r$Argradius1"
     [ "$Argsigma1" ]             && Resultimage="$Resultimage-s$Argsigma1"
     [ "$Argradius2" ]            && Resultimage="$Resultimage-R$Argradius2"
