@@ -13,45 +13,64 @@ Substacks=4
 Overlap=10
 
 # Threshold to drop unsharp areas. At least 50%
-Thresholdpercent="75"
+Thresholdtransparent="75"
+Thresholddarken="85"
 
-# 
-Threshold="yes"
+# Make unsharp areas transparent
+Threshold="yes" # yes|no
+#Threshold="no" # yes|no
 
 # Use threshold mask to disregard area in following (deeper) substacks 
 Darken="yes"  # yes|no
 #Darken="no"  # yes|no
 
-# Background to fill threshold area
-Background="min"
+# Final background to fill transparent area
+Background="enfuse"
+
+# Verbose terminal output (-v), show intermediate results (-V)
+Verbosity="-vV"
+
+# Show final result and substack results
+Showimage="yes"
 
 # Substackimfuseoptions = imfuse options to generate the substacks (low sigma and radius values are possible)
 # Finalimfuseoptions    = imfuse options to fuse the substack results (use rather high sigma or radius values)
-Optionset=2
+Optionset=1
 case $Optionset in
   1)
     Substackimfuseoptions="--dog=s2 --maskblur --close=r3,R3"
     Finalimfuseoptions="--dog=s2"
-    Darken="yes"
-    Threshold="yes"
-    Background="mean"
   ;;
   2)
     Substackimfuseoptions="--dog=s2 --maskblur --close=r3,R3"
     Finalimfuseoptions="--dog=s2"
-    Darken="yes"
-    Threshold="yes"
-    Background="min"
+    Background="mean"
+    Threshold="no"
   ;;
   3)
-    Substackimfuseoptions="--dog=s2 --maskblur --close=r3,R3 --finalblur=s5,p$Thresholdpercent"
+    Substackimfuseoptions="--dog=s2 --maskblur --close=r3,R3"
     Finalimfuseoptions="--dog=s2"
-    Darken="yes"
+    Background="mean"
+    Darken="no"
+  ;;
+  4)
+    Substackimfuseoptions="--dog=s2 --maskblur --close=r3,R3"
+    Finalimfuseoptions="--dog=s2"
+    Background="mean"
     Threshold="no"
+    Darken="no"
+  ;;
+  5)
+    Substackimfuseoptions="--dog=s2 --maskblur --close=r3,R3"
+    Finalimfuseoptions="--dog=s2"
     Background="min"
   ;;
+  6)
+    Substackimfuseoptions="--dog=s2 --maskblur --close=r3,R3"
+    Finalimfuseoptions="--dog=s2"
+    Background="green"
+  ;;
 esac
-Verbosity="-vV"
 
 ##########
 
@@ -86,13 +105,13 @@ Imagenumber="$(grep -c .   <<< "$Sourceimagelist")"
 # cache
 Cachedir="$(pwd)/cache.slab"
 mkdir -p "$Cachedir"
-Outputimagebasename="$(pwd)/slab${Substacks}_ov${Overlap}_p${Thresholdpercent}_"
-[ "$Darken" = "yes" ] && Outputimagebasename="${Outputimagebasename}dark${Thresholdpercent}_"
+Outputimagebasename="$(pwd)/slab${Substacks}_ov${Overlap}_p${Thresholdtransparent}_"
+[ "$Darken" = "yes" ] && Outputimagebasename="${Outputimagebasename}dark${Thresholddarken}_"
 [ "$Threshold" = "yes" ] && Outputimagebasename="${Outputimagebasename}t_"
 
 # background is inserted in cutout areas if Darken=yes
-Backgroundimage=$Cachedir/background.tif
-imfuse --bg=$Background --force --output=$Backgroundimage $Sourceimagelist || error "Error generating mean background image"
+Backgroundimage="$(imfuse --showname --basename=$Cachedir/ --bg=$Background $Sourceimagelist)"
+imfuse --bg=$Background --output=$Backgroundimage $Sourceimagelist || error "Error generating mean background image"
 
 # 
 Darkenmask="$Cachedir/darkenmask.tif"
@@ -110,37 +129,39 @@ for Slabstep in $(seq $Substacks); do
   [ "$Error" ] && break
   note "--slabs: Creating slab $Slabstep / $Substacks"
   Savemask="$Cachedir/mask$Slabstep.tif"
-  Thresholdmask="$Cachedir/mask${Slabstep}_t$Thresholdpercent.tif"
-  Imfuseoptions="$Substackimfuseoptions --cache=$Cachedir/_slab$Slabstep ${Slabsourcelist[$Slabstep]} --savemask=$Savemask --darkenmask=$Darkenmask --threshold=0 --bg=$Backgroundimage"
-  [ "$Slabstep" = "1" ] && [ "$Darken" = "yes" ] && Imfuseoptions="$Imfuseoptions --threshold=$Thresholdpercent"
-  [ "$Threshold" = "yes" ] && Imfuseoptions="$Imfuseoptions --threshold=$Thresholdpercent"
+  Thresholdmask="$Cachedir/mask${Slabstep}_t$Thresholdtransparent.tif"
+  Imfuseoptions="$Substackimfuseoptions --cache=$Cachedir/_slab$Slabstep ${Slabsourcelist[$Slabstep]} --savemask=$Savemask"
+  [ "$Darken" = "yes" ] &&                          Imfuseoptions="$Imfuseoptions --darkenmask=$Darkenmask"
+  [ "$Darken" = "yes" ] && [ "$Slabstep" = "1" ] && Imfuseoptions="$Imfuseoptions --threshold=$Thresholdtransparent --background=transparent"
+  [ "$Threshold" = "yes" ]                       && Imfuseoptions="$Imfuseoptions --threshold=$Thresholdtransparent --background=transparent"
+  
   Image="$(imfuse --showname --basename=$Cachedir/slab$Substacks.$(printnum $Slabstep)_ $Imfuseoptions)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
   Resultimagelist="$Image
 $Resultimagelist"
   [ -e "$Image" ] || {
     imfuse $Verbosity -o $Image $Imfuseoptions || error "Error in slab step $Slabstep"
   }
-  magick $Savemask -threshold "$Thresholdpercent"% $Thresholdmask
-  [ "$Darken" = "yes" ] && {
-    magick $Thresholdmask -negate $Darkenmask -compose Darken -composite $Darkenmask
-  }
+  
+  magick $Savemask -threshold "$Thresholddarken"% $Thresholdmask
+#  magick $Image -alpha off $Thresholdmask -compose CopyOpacity -composite $Image
+  magick $Thresholdmask -negate $Darkenmask -compose Darken -composite $Darkenmask
 done
 rm -R $Cachedir/_slab*
 [ "$Error" ] && exit 1
 
 # show results of substacks
 echo "$Resultimagelist"
-viewnior $Resultimagelist &
+[ "$Showimage" = "yes" ] && viewnior $Resultimagelist &
 
 # Generate result image fusing the substacks
 note "Generating final image from slab results"
 Savemask="$Cachedir/maskall.tif"
-Imfuseoptions="$Finalimfuseoptions --cache=$Cachedir/_slaball $Resultimagelist --savemask=$Savemask"
+Imfuseoptions="$Finalimfuseoptions --cache=$Cachedir/_slaball --threshold=0 --background=$Backgroundimage $Resultimagelist --savemask=$Savemask"
 Image="$(imfuse --showname --basename=$Outputimagebasename $Imfuseoptions)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
 [ "$Error" ] && exit 1
 
 imfuse $Verbosity -o "$Image" $Imfuseoptions || error "Error in generating final image from slab results"
-viewnior "$Image" &
+[ "$Showimage" = "yes" ] && viewnior "$Image" &
 
 rm -R $Cachedir/_slab*
 exit ${Error:-0}
