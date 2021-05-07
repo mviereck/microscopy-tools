@@ -3,23 +3,37 @@
 # This is also known as "slabbing".
 # Compare http://extreme-macro.co.uk/zerene-slabbing/
 
-###########
+########### Adjust following variables:
 
-# Adjust following variables:
+#Substacksplitting="auto"
+Substacksplitting="manual"
 
-# Number of substacks ("slabs")
-Substacks=4
-# Shared neighbored images
-Overlap=10
+case $Substacksplitting in
+  auto)
+    # Number of substacks ("slabs")
+    Substacknumber=4
+    # Shared neighbored images
+    Overlap=10
+  ;;
+  manual)
+    # Define substack sizes yourself. "1,25" means source images from first to 25th. "26,*" means from 26th to last.
+    # More substacks are allowed, array must be numbered from 1 to n.
+    # Overlapping is allowed, too.
+    Substack[1]="1,25"
+    Substack[2]="26,*"
+  ;;
+esac
 
-# Threshold to drop unsharp areas. At least 50%
+# It makes sense to define Optionsets below to change following variables. 
+
+# Threshold to drop unsharp areas. At least 50%. Thresholddarken should be >= Thresholdtransparent. Rather set to same size.
 Thresholdtransparent="75"
-Thresholddarken="85"
+Thresholddarken="75"
 
+## Rather leave the following at "yes" for now.
 # Make unsharp areas transparent
 Threshold="yes" # yes|no
 #Threshold="no" # yes|no
-
 # Use threshold mask to disregard area in following (deeper) substacks 
 Darken="yes"  # yes|no
 #Darken="no"  # yes|no
@@ -70,9 +84,14 @@ case $Optionset in
     Finalimfuseoptions="--dog=s2"
     Background="green"
   ;;
+  7)
+    Substackimfuseoptions="--dog=s2 --maskblur --close=r3,R3"
+    Finalimfuseoptions="--dog=s2"
+    Darken=no
+  ;;
 esac
 
-##########
+########## End of variables to adjust
 
 error() {
   [ -z "${Error:-}" ] && echo "imfuse ERROR: $*
@@ -105,7 +124,7 @@ Imagenumber="$(grep -c .   <<< "$Sourceimagelist")"
 # cache
 Cachedir="$(pwd)/cache.slab"
 mkdir -p "$Cachedir"
-Outputimagebasename="$(pwd)/slab${Substacks}_ov${Overlap}_p${Thresholdtransparent}_"
+Outputimagebasename="$(pwd)/slab${Substacknumber}_ov${Overlap}_p${Thresholdtransparent}_"
 [ "$Darken" = "yes" ] && Outputimagebasename="${Outputimagebasename}dark${Thresholddarken}_"
 [ "$Threshold" = "yes" ] && Outputimagebasename="${Outputimagebasename}t_"
 
@@ -117,17 +136,34 @@ imfuse --bg=$Background --output=$Backgroundimage $Sourceimagelist || error "Err
 Darkenmask="$Cachedir/darkenmask.tif"
 magick "$(head -n1 <<< "$Sourceimagelist")" -threshold 100% -negate $Darkenmask
 
-# Split image list into substack source lists
-Slabsize="$((Imagenumber / Substacks))"
-for Slabstep in $(seq $Substacks); do
-  Slabsourcelist[$Slabstep]="$(sed -n $((Slabsize*(Slabstep-1) +1)),$((Slabsize*Slabstep+Overlap))p <<< "$Sourceimagelist")"
-done
+case $Substacksplitting in
+  auto)
+    # Split image list into substack source lists
+    Slabsize="$((Imagenumber / Substacknumber))"
+    for Slabstep in $(seq $Substacknumber); do
+      Slabsourcelist[$Slabstep]="$(sed -n $((Slabsize*(Slabstep-1) +1)),$((Slabsize*Slabstep+Overlap))p <<< "$Sourceimagelist")"
+    done
+  ;;
+  manual)
+  set -x
+    for Slabstep in $(seq 100); do
+      [ -z "${Substack[$Slabstep]}" ] && break
+      Begin="$(cut -d,  -f1 <<< "${Substack[$Slabstep]}")"
+      End="$(cut -d, -s -f2 <<< "${Substack[$Slabstep]}")"
+      [ "$End" = "*" ] && End=""
+      End="${End:-$Imagenumber}"
+      Slabsourcelist[$Slabstep]="$(sed -n ${Begin},${End}p <<< "$Sourceimagelist")"
+    done
+    Substacknumber="$((Slabstep - 1))"
+    set +x
+  ;;
+esac
 
 # create substacks
 
-for Slabstep in $(seq $Substacks); do
+for Slabstep in $(seq $Substacknumber); do
   [ "$Error" ] && break
-  note "--slabs: Creating slab $Slabstep / $Substacks"
+  note "--slabs: Creating slab $Slabstep / $Substacknumber"
   Savemask="$Cachedir/mask$Slabstep.tif"
   Thresholdmask="$Cachedir/mask${Slabstep}_t$Thresholdtransparent.tif"
   Imfuseoptions="$Substackimfuseoptions --cache=$Cachedir/_slab$Slabstep ${Slabsourcelist[$Slabstep]} --savemask=$Savemask"
@@ -135,16 +171,18 @@ for Slabstep in $(seq $Substacks); do
   [ "$Darken" = "yes" ] && [ "$Slabstep" = "1" ] && Imfuseoptions="$Imfuseoptions --threshold=$Thresholdtransparent --background=transparent"
   [ "$Threshold" = "yes" ]                       && Imfuseoptions="$Imfuseoptions --threshold=$Thresholdtransparent --background=transparent"
   
-  Image="$(imfuse --showname --basename=$Cachedir/slab$Substacks.$(printnum $Slabstep)_ $Imfuseoptions)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
+  Image="$(imfuse --showname --basename=$Cachedir/slab$Substacknumber.$(printnum $Slabstep)_ $Imfuseoptions)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
   Resultimagelist="$Image
 $Resultimagelist"
   [ -e "$Image" ] || {
     imfuse $Verbosity -o $Image $Imfuseoptions || error "Error in slab step $Slabstep"
   }
   
-  magick $Savemask -threshold "$Thresholddarken"% $Thresholdmask
+  magick $Savemask -threshold "$Thresholdtransparent"% $Thresholdmask
+  viewnior $Thresholdmask &
 #  magick $Image -alpha off $Thresholdmask -compose CopyOpacity -composite $Image
-  magick $Thresholdmask -negate $Darkenmask -compose Darken -composite $Darkenmask
+  magick $Savemask -threshold "$Thresholddarken"% -negate $Darkenmask -compose Darken -composite $Darkenmask
+  viewnior $Darkenmask &
 done
 rm -R $Cachedir/_slab*
 [ "$Error" ] && exit 1
