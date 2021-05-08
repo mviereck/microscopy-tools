@@ -337,7 +337,8 @@ Mask generation and fusion adjustments:
                       with their contrast masks and added altogether as a whole.
                       For arguments compare --sigmoidalclut.
                       Does not support --less and --cutblur.
- --threshold [=%]     Make low contrast area transparent. Default %: 50
+ --threshold [=%,sSIGMA] Make low contrast area transparent. Default %: 50
+                      Set SIGMA to blur the cut mask border. Default SIGMA: 0
                            
 Basics:                   
 Fusing a focus stack aims to generate an overall sharp image of several single
@@ -485,16 +486,6 @@ parse_percent() {
     return 1
   }
   echo "$Percent"
-}
-parse_sigma() {
-  local Sigma
-  Sigma="${1:-}"
-  Sigma="$(tr -d 'sS' <<< "$Sigma")"
-  [ "$Sigma" = "$(digitonly "$Sigma")" ] || {
-    error "Invalid sigma value: ${1:}"
-    return 1
-  }
-  echo "$Sigma"
 }
 percentrm() {
   # remove % from string
@@ -1671,14 +1662,15 @@ $Histogram"
   showimage $Histogram
 }
 threshold() {
-  local Image Mask Threshold Command Error
+  local Image Mask Threshold Thresholdblur Command Error
   local Longoptions Parsedoptions
   
-  Longoptions="image:,mask:,percent:"
+  Longoptions="image:,mask:,percent:,blur:"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
   while [ $# -gt 0 ]; do
     case "${1:-}" in
+      --blur)    Thresholdblur="${2:-}" ;;
       --image)   Image="${2:-}" ;;
       --mask)    Mask="${2:-}" ;;
       --percent) Threshold="${2:-}" ;;
@@ -1698,7 +1690,7 @@ threshold() {
     "")
       Command="$Command
   mpr:image
-  ( mpr:mask -threshold ${Threshold}% )
+  ( mpr:mask -threshold ${Threshold}% -alpha off -blur 0x${Thresholdblur:-0} )
     -alpha off
     -compose CopyOpacity -composite
   $Image"
@@ -1706,13 +1698,13 @@ threshold() {
     *)
       Command="$Command
   mpr:image
-  ( mpr:mask -black-threshold ${Threshold}% )
+  ( mpr:mask -black-threshold ${Threshold}% -alpha off -blur 0x${Thresholdblur:-0} )
     -alpha off
     -compose CopyOpacity -composite
   $Image"
     ;;
   esac
-  
+
   $Command || error "Error in --threshold=$Threshold"
   showimage "$Image"
   return ${Error:-0}
@@ -3410,6 +3402,36 @@ maskarg_checkstatistic() {
   echo "$Mode"
   return 0
 }
+maskarg_checkpercent() {
+  # Allow percent values to be given without a leading 'p'. Few options only.
+  [ -z "$Argpercent1" ] && [ -n "$Argword1" ] && {
+    Argpercent1="$Argword1"
+    Argword1=""
+  }
+  [ -n "$Argpercent1" ] && [ -n "$Argword1" ] && {
+    error "Option does not take percent value along with a word argument"
+    return 1
+  }
+  [ "$Argpercent1" = "$(digitonly "$Argpercent1")" ] || {
+    error "Invalid sigma value: $Argpercent1"
+    return 1
+  }
+}
+maskarg_checksigma() {
+  # Allow sigma values to be given without a leading 's'. Few options only.
+  [ -z "$Argsigma1" ] && [ -n "$Argword1" ] && {
+    Argsigma1="$Argword1"
+    Argword1=""
+  }
+  [ -n "$Argsigma1" ] && [ -n "$Argword1" ] && {
+    error "Option does not take sigma value along with a word argument"
+    return 1
+  }
+  [ "$Argsigma1" = "$(digitonly "$Argsigma1")" ] || {
+    error "Invalid sigma value: $Argsigma1"
+    return 1
+  }
+}
 
 ### main
 
@@ -3477,6 +3499,7 @@ declare_variables() {
   Globalless=""
   Globalsigmoidal=""
   Globalthreshold=""
+  Globalthresholdblur=""
   Grayscale=""
   Grayscaleconverter=""
   Grayscalenumber=""
@@ -3808,12 +3831,26 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   esac
   
   # --cutblur
-  [ "$Cutblur" = "auto" ] && Cutblur="2"
-  [ "$Cutblur" ] && Cutblur="$(parse_sigma "$Cutblur")"
+  case "$Cutblur" in
+    "") ;;
+    auto) Cutblur="2" ;;
+    *)
+      maskarg_parse "$Cutblur"
+      maskarg_checksigma "$Cutblur"
+      Cutblur="$Argsigma1"
+    ;;
+  esac
   
   # --cutsoft
-  [ "$Cutsoft" = "auto" ] && Cutsoft="4"
-  [ "$Cutsoft" ] && Cutsoft="$(parse_sigma "$Cutsoft")"
+  case "$Cutsoft" in
+    "") ;;
+    auto) Cutsoft="2" ;;
+    *)
+      maskarg_parse "$Cutsoft"
+      maskarg_checksigma "$Cutsoft"
+      Cutsoft="$Argsigma1"
+    ;;
+  esac
   
   # --denoise
   case $Globaldenoise in
@@ -3822,12 +3859,22 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   
   # --fakehdr
   [ "$Fakehdr" = "auto" ] && Fakehdr="40"
+  case "$Fakehdr" in
+    "") ;;
+    auto) Fakehdr="40" ;;
+    *)
+      maskarg_parse "$Fakehdr"
+      maskarg_checkpercent "$Fakehdr"
+      Fakehdr="$Argpercent1"
+    ;;
+  esac
 
   # --finalblur
   [ "$Finalblur" ] && {
     Argmethod="finalblur"
     maskarg_parse "$Finalblur"
-    Finalblurpercent="${Argpercent1:-$(maskarg_defaultvalue $Firstmaskmethod noise)}"
+    maskarg_checkpercent "$Finalblur"
+    Finalblurpercent="${Argpercent1:-50}"
     Finalblursigma1="${Argsigma1:-3}"
     Finalblursigma2="${Argsigma2:-2}"
   }
@@ -3865,12 +3912,21 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   case $Globalless in
     0)    Globalless="" ;;
     auto) Globalless="$(maskarg_defaultvalue "$Firstmaskmethod" less )" ;;
+    *)    
+      maskarg_parse "$Globalless"
+      maskarg_checkpercent "$Globalless"
+      Globalless="$Argpercent1"
   esac
 
   # --maskblur
   case $Globalmaskblur in
     0)    Globalmaskblur="" ;;
     auto) Globalmaskblur="2" ;;
+    *)
+      maskarg_parse "$Globalmaskblur"
+      maskarg_checksigma "$Globalmaskblur"
+      Globalmaskblur="$Argsigma1"
+    ;;
   esac
   
   # --merge
@@ -3879,7 +3935,12 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   
   # --prefertop
   case $Prefertop in
+    "") ;;
     auto) Prefertop="20" ;;
+    *)
+      maskarg_parse "$Prefertop"
+      maskarg_checkpercent "$Prefertop"
+      Prefertop="$Argpercent1"
   esac
   
   # --redist
@@ -3946,6 +4007,12 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   case $Globalthreshold in
     "") ;;
     auto) Globalthreshold="50" ;;
+    *)
+      maskarg_parse "$Globalthreshold"
+      maskarg_checkpercent "$Globalthreshold"
+      Globalthreshold="$Argpercent1"
+      Globalthresholdblur="$Argsigma1"
+    ;;
   esac
   [ "$Globalthreshold" ] && Background="${Background:-transparent}"
   
@@ -4045,44 +4112,45 @@ check_outputname() {
   done <<< "$Maskmethodlist"
   case $Fakehdr in
     "") ;;
-    *) Resultimage="${Resultimage}_hdr$Fakehdr" ;;
+    *) Resultimage="${Resultimage}_hdr=p$Fakehdr" ;;
   esac
   case $Globalless in
     ""|0) ;;
-    *) Resultimage="${Resultimage}_less$Globalless" ;;
+    *) Resultimage="${Resultimage}_less=p$Globalless" ;;
   esac
   case $Globalclose in
     "") ;;
     *) Resultimage="${Resultimage}_close=$Globalclose" ;;
   esac
   [ "$Globalmaskblur" ] && {
-    Resultimage="${Resultimage}_maskblur$Globalmaskblur"
+    Resultimage="${Resultimage}_maskblur=s$Globalmaskblur"
   }
   [ "$Prefertop" ] && {
-    Resultimage="${Resultimage}_prefertop$Prefertop"
+    Resultimage="${Resultimage}_prefertop=p$Prefertop"
   }
   [ "$Globalsigmoidal" ] && {
-    Resultimage="${Resultimage}_sigmoidal$Globalsigmoidal"
+    Resultimage="${Resultimage}_sigmoidal=$Globalsigmoidal"
   }
   [ "$Cutsoft" ] && {
-    Resultimage="${Resultimage}_cutsoft$Cutsoft"
+    Resultimage="${Resultimage}_cutsoft=s$Cutsoft"
   }
   [ "$Cutblur" ] && {
-    Resultimage="${Resultimage}_cutblur$Cutblur"
+    Resultimage="${Resultimage}_cutblur=s$Cutblur"
   }
   [ "$Finalblur" ] && {
     Resultimage="${Resultimage}_finalblur=p${Finalblurpercent}-s${Finalblursigma1}-S${Finalblursigma2}"
   }
   case $Globalalpha in
     "") ;;
-    *) Resultimage="${Resultimage}_alpha$Globalalpha" ;;
+    *) Resultimage="${Resultimage}_alpha=$Globalalpha" ;;
   esac
   [ "$Globalthreshold" ] && {
-    Resultimage="${Resultimage}_threshold$Globalthreshold"
+    Resultimage="${Resultimage}_threshold=p$Globalthreshold"
+    [ "$Globalthresholdblur" ] && Resultimage="${Resultimage},s$Globalthresholdblur"
   }
   case $Globaldenoise in
     "") ;;
-    *) Resultimage="${Resultimage}_denoise$Globaldenoise" ;;
+    *) Resultimage="${Resultimage}_denoise=$Globaldenoise" ;;
   esac
   case $Redistshape in
     $Redistdefault) ;;
@@ -4097,7 +4165,7 @@ check_outputname() {
   esac
   case $Grayscalenumber in
     9) ;;
-    *) Resultimage="${Resultimage}_gray$Grayscalenumber" ;;
+    *) Resultimage="${Resultimage}_gray=$Grayscalenumber" ;;
   esac
   [ "$Background" ] && case $Backgroundtype in
     "") ;;
@@ -4105,7 +4173,7 @@ check_outputname() {
     *)     Resultimage="${Resultimage}_bg=$Background" ;;
   esac
   [ "$Layers" ] && {
-    Resultimage="${Resultimage}_layers$Layers"
+    Resultimage="${Resultimage}_layers=$Layers"
   }
   [ "$Darkenmask" ] && {
     Resultimage="${Resultimage}_darkenmask"
@@ -4118,7 +4186,8 @@ check_outputname() {
   #Resultimage="$(sed "s/=-/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
     
   Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist \
-$Background $([ "$Darkenmask" ] && md5sum "$Darkenmask") $Cutblur $Cutsoft $Fakehdr $Finalblur $Globalalpha $Globalclose $Globaldenoise $Globalless $Globalmaskblur \
+$Background $([ "$Darkenmask" ] && md5sum "$Darkenmask") $Cutblur $Cutsoft $Fakehdr $Finalblur \
+$Globalalpha $Globalclose $Globaldenoise $Globalless $Globalmaskblur $Globalthreshold $Globalthresholdblur \
 $Grayscale $Mergemethod $Prefertop $Redistpeak $Redistshape $Revertimagelist $Softmode $Testsetup" )"
   
   Resultimage="${Resultimage}_md${Fusemd5sum}"
@@ -4277,7 +4346,7 @@ $Sourceimagelist"
     # --threshold
     [ "$Globalthreshold" ] && {
       note "Applying --threshold=$Globalthreshold"
-      threshold --image "$Resultimage" --mask "$Resultmask" --percent "$Globalthreshold" || error "Error -in --threshold"
+      threshold --image "$Resultimage" --mask "$Resultmask" --percent "$Globalthreshold" --blur "$Globalthresholdblur" || error "Error -in --threshold"
       [ "$Error" ] && return 1
     }
     # --savemask
