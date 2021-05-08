@@ -5,6 +5,23 @@
 
 ########### Adjust following variables:
 
+# Threshold to drop unsharp areas (if not defined otherwise in Threshold[n])
+Globalthreshold="75"
+# Sigma value for a soft cut border (if not defined otherwise in Thresholdblur[n])
+Globalthresholdblur="2"
+
+# Final background to fill transparent area
+Background="enfuse"
+
+# Globalimfuseargs = imfuse options to generate the substacks (if not defined otherwise in Substackargs[n])
+# Finalimfuseargs  = imfuse options to fuse the substack results
+Optionset=1
+case $Optionset in
+  1)
+    Globalimfuseargs="--dog=s1 --maskblur --close=r2,R2"
+  ;;
+esac
+
 #Substacksplitting="auto"
 Substacksplitting="manual"
 
@@ -13,13 +30,13 @@ case $Substacksplitting in
     # Number of substacks ("slabs")
     Substacknumber=4
     # Shared neighbored images
-    Overlap=10
+    Overlap=0
   ;;
   manual)
     # Define substack sizes yourself. "1,25" means source images from first to 25th. "26,*" means from 26th to last.
     # More substacks are allowed, array must be numbered from 1 to n.
     # Overlapping is allowed, too.
-    Setting="croped_ant_enfuse_finalblur"
+    Setting="croped_ant_enfuse"
     case $Setting in
       croped_ant_enfuse)
         Substack[1]="1,25"
@@ -45,17 +62,17 @@ case $Substacksplitting in
         Threshold[1]="60"
         Threshold[2]="50"
       ;;
+      bw)
+        Substack[1]="1,63"
+        Substack[2]="64,*"
+        #Substack[3]="31,50"
+        #Substack[4]="51,*"
+        Threshold[1]="80"
+        Threshold[2]="80"
+      ;;
     esac
   ;;
 esac
-
-### It makes sense to define an Optionset below to change following variables instead of canging directly. 
-
-# Threshold to drop unsharp areas if not defined otherwise in Threshold[n]
-Globalthreshold="75"
-
-# Final background to fill transparent area
-Background="enfuse"
 
 # Verbose terminal output (-v), show intermediate results (-V)
 Verbosity="-vV"
@@ -64,7 +81,7 @@ Verbosity="-vV"
 Showimage="yes"
 
 # delete cache of substacks in cache.slab
-Removesubcache="yes"
+#Removesubcache="yes"
 Removecache="no"
 
 ### Rather leave the Dothreshold and Dodarken at "yes" for now.
@@ -75,17 +92,6 @@ Dothreshold="yes" # yes|no
 Dodarken="yes"  # yes|no
 #Dodarken="no"  # yes|no
 
-
-# Globalimfuseargs = imfuse options to generate the substacks (if not defined otherwise in Substackargs[n])
-# Finalimfuseargs  = imfuse options to fuse the substack results
-Optionset=1
-case $Optionset in
-  1)
-    Globalimfuseargs="--dog=s2 --maskblur --close=r3,R3"
-    Finalimfuseargs="--dog=s2"
-  ;;
-esac
-
 ########## End of variables to adjust
 
 error() {
@@ -93,6 +99,10 @@ error() {
 " >&2
   Error=1
   #exit 1
+}
+md5cut() {
+  # print last 6 digits
+  md5sum <<< "${1:-}" | cut -c27-32
 }
 note() {
   [ -z "${Error:-}" ] && echo "imfuse note: $*
@@ -119,9 +129,6 @@ Imagenumber="$(grep -c .   <<< "$Sourceimagelist")"
 # cache
 Cachedir="$(pwd)/cache.slab"
 mkdir -p "$Cachedir"
-Outputimagebasename="$(pwd)/slab${Substacknumber}_ov${Overlap}_p${Thresholdtransparent}_"
-[ "$Dodarken" = "yes" ] && Outputimagebasename="${Outputimagebasename}dark${Thresholddarken}_"
-[ "$Dothreshold" = "yes" ] && Outputimagebasename="${Outputimagebasename}t_"
 
 # background is inserted in cutout areas if Dodarken=yes
 Backgroundimage="$(imfuse --showname --basename=$Cachedir/ --bg=$Background $Sourceimagelist)"
@@ -136,21 +143,26 @@ case $Substacksplitting in
     # Split image list into substack source lists
     Slabsize="$((Imagenumber / Substacknumber))"
     for Slabstep in $(seq $Substacknumber); do
-      Slabsourcelist[$Slabstep]="$(sed -n $((Slabsize*(Slabstep-1) +1)),$((Slabsize*Slabstep+Overlap))p <<< "$Sourceimagelist")"
+      Substack[$Slabstep]="$((Slabsize*(Slabstep-1) +1)),$((Slabsize*Slabstep+Overlap))"
     done
   ;;
   manual)
     for Slabstep in $(seq 100); do
       [ -z "${Substack[$Slabstep]}" ] && break
-      Begin="$(cut -d,  -f1 <<< "${Substack[$Slabstep]}")"
-      End="$(cut -d, -s -f2 <<< "${Substack[$Slabstep]}")"
-      [ "$End" = "*" ] && End=""
-      End="${End:-$Imagenumber}"
-      Slabsourcelist[$Slabstep]="$(sed -n ${Begin},${End}p <<< "$Sourceimagelist")"
+      Substack[$Slabstep]="$(sed "s/*/$Imagenumber/" <<< "${Substack[$Slabstep]}" )"
     done
     Substacknumber="$((Slabstep - 1))"
   ;;
 esac
+for Slabstep in $(seq $Substacknumber); do
+  Slabsourcelist[$Slabstep]="$(sed -n ${Substack[$Slabstep]}p <<< "$Sourceimagelist")"
+  [ -z "${Substackargs[$Slabstep]}" ]  && Substackargs[$Slabstep]="${Globalimfuseargs:-"--statistic"}"
+  [ -z "${Threshold[$Slabstep]}" ]     && Threshold[$Slabstep]="${Globalthreshold:-75}"
+  [ -z "${Thresholdblur[$Slabstep]}" ] && Thresholdblur[$Slabstep]="${Globalthresholdblur:-0}"
+done
+
+# Checksum for file names
+Md5="$(md5cut "$Sourceimagelist $Background $Dothreshold $Dodarken ${Substack[*]} ${Substackargs[*]} ${Threshold[*]} ${Thresholdblur[*]}")"
 
 # create substacks
 
@@ -159,36 +171,29 @@ for Slabstep in $(seq $Substacknumber); do
   note "--slabs: Creating slab $Slabstep / $Substacknumber"
   
   Savemask="$Cachedir/mask$Slabstep.tif"
-  Thresholdmask="$Cachedir/mask${Slabstep}_t$Thresholdtransparent.tif"
   
-  case "${Substackargs[$Slabstep]}" in
-    "") Imfuseoptions="$Globalimfuseargs" ;;
-    *)  Imfuseoptions="${Substackargs[$Slabstep]}" ;;
-  esac
-  case "${Threshold[$Slabstep]}" in
-    "") Slabthreshold="$Globalthreshold" ;;
-    *)  Slabthreshold="${Threshold[$Slabstep]}" ;;
-  esac
-  Thresholdtransparent="$Slabthreshold"
-  Thresholddarken="$Slabthreshold"
+  Imfuseoptions="${Substackargs[$Slabstep]}"
+  Thresholdtransparent="${Threshold[$Slabstep]}"
+  Thresholddarken="${Threshold[$Slabstep]}"
   
   Imfuseoptions="$Imfuseoptions --cache=$Cachedir/_slab$Slabstep ${Slabsourcelist[$Slabstep]} --savemask=$Savemask"
   [ "$Dodarken" = "yes" ] &&                          Imfuseoptions="$Imfuseoptions --darkenmask=$Darkenmask"
-  [ "$Dodarken" = "yes" ] && [ "$Slabstep" = "1" ] && Imfuseoptions="$Imfuseoptions --threshold=$Thresholdtransparent --background=transparent"
-  [ "$Dothreshold" = "yes" ]                       && Imfuseoptions="$Imfuseoptions --threshold=$Thresholdtransparent --background=transparent"
+  [ "$Dodarken" = "yes" ] && [ "$Slabstep" = "1" ] && Imfuseoptions="$Imfuseoptions --threshold=p${Thresholdtransparent},s${Thresholdblur[$Slabstep]} --background=transparent"
+  [ "$Dothreshold" = "yes" ]                       && Imfuseoptions="$Imfuseoptions --threshold=p${Thresholdtransparent},s${Thresholdblur[$Slabstep]} --background=transparent"
   
   Image="$(imfuse --showname --basename=$Cachedir/slab$Substacknumber.$(printnum $Slabstep)_ $Imfuseoptions)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
+  Slabresult[$Slabstep]="$Image"
   Resultimagelist="$Image
 $Resultimagelist"
   [ -e "$Image" ] || {
     imfuse $Verbosity -o $Image $Imfuseoptions || error "Error in slab step $Slabstep"
   }
   
-  magick $Savemask -threshold "$Thresholdtransparent"% $Thresholdmask
-  #viewnior $Thresholdmask &
   magick $Savemask -threshold "$Thresholddarken"% -negate $Darkenmask -compose Darken -composite $Darkenmask
+#  magick $Savemask -threshold "$Thresholddarken"% -alpha off -blur 0x${Thresholdblur[$Slabstep]} -negate $Darkenmask -compose Darken -composite $Darkenmask
   #viewnior $Darkenmask &
 done
+
 [ "$Removesubcache" = "yes" ] && rm -R "$Cachedir"/_slab*
 [ "$Error" ] && exit 1
 
@@ -196,14 +201,17 @@ done
 echo "$Resultimagelist"
 [ "$Showimage" = "yes" ] && viewnior $Resultimagelist &
 
-# Generate result image fusing the substacks
-note "Generating final image from slab results"
-Savemask="$Cachedir/maskall.tif"
-Imfuseoptions="$Finalimfuseargs --cache=$Cachedir/_slaball --threshold=0 --background=$Backgroundimage $Resultimagelist --savemask=$Savemask"
-Image="$(imfuse --showname --basename=$Outputimagebasename $Imfuseoptions)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
-[ "$Error" ] && exit 1
+#imfuse $Verbosity -o "$Image" $Imfuseoptions || error "Error in generating final image from slab results"
 
-imfuse $Verbosity -o "$Image" $Imfuseoptions || error "Error in generating final image from slab results"
+Image="slab_${Md5}.tif"
+Command="magick $Backgroundimage"
+for Slabstep in $(seq $Substacknumber); do
+  Command="$Command ${Slabresult[$Slabstep]} -compose Over -composite"
+done
+Command="$Command $Image"
+
+$Command
+
 [ "$Showimage" = "yes" ] && viewnior "$Image" &
 
 [ "$Removesubcache" = "yes" ] && rm -R "$Cachedir"/_slab*
