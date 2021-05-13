@@ -36,7 +36,7 @@ case $Substacksplitting in
     # Define substack sizes yourself. "1,25" means source images from first to 25th. "26,*" means from 26th to last.
     # More substacks are allowed, array must be numbered from 1 to n.
     # Overlapping is allowed, too.
-    Setting="croped_ant_enfuse"
+    Setting="fg_100_dark"
     case $Setting in
       croped_ant_enfuse)
         Substack[1]="1,25"
@@ -45,6 +45,46 @@ case $Substacksplitting in
         Substackargs[2]="--dog=s1 --maskblur --close=r3,R3"
         Threshold[1]="60"
         Threshold[2]="50"
+      ;;
+      croped_ant_min)
+        Substack[1]="1,25"
+        Substack[2]="26,*"
+        Substackargs[1]="--dog=s1 --maskblur --close=r5,R5"
+        Substackargs[2]="--dog=s1 --maskblur --close=r3,R3"
+        Threshold[1]="60"
+        Threshold[2]="50"
+        Background="min"
+      ;;
+      croped_ant_mean)
+        Substack[1]="1,25"
+        Substack[2]="26,*"
+        Substackargs[1]="--dog=s1 --maskblur --close=r5,R5"
+        Substackargs[2]="--dog=s1 --maskblur --close=r3,R3"
+        Threshold[1]="60"
+        Threshold[2]="50"
+        Background="mean"
+      ;;
+      croped_ant_enfuse_close6)
+        Substack[1]="1,25"
+        Substack[2]="26,*"
+        Substack[3]="26,*"
+        Substackargs[1]="--dog=s1 --maskblur --close=r5,R5"
+        Substackargs[2]="--dog=s1 --maskblur --close=r3,R3"
+        Substackargs[3]="--dog=s1 --maskblur --close=r6,R6"
+        Threshold[1]="60"
+        Threshold[2]="50"
+        Threshold[3]="50"
+      ;;
+      croped_ant_enfuse_close10)
+        Substack[1]="1,25"
+        Substack[2]="26,*"
+        Substack[3]="26,*"
+        Substackargs[1]="--dog=s1 --maskblur --close=r5,R5"
+        Substackargs[2]="--dog=s1 --maskblur --close=r3,R3"
+        Substackargs[3]="--dog=s1 --maskblur --close=r10,R10"
+        Threshold[1]="60"
+        Threshold[2]="50"
+        Threshold[3]="50"
       ;;
       croped_ant_finalblur)
         Substack[1]="1,25"
@@ -62,13 +102,86 @@ case $Substacksplitting in
         Threshold[1]="60"
         Threshold[2]="50"
       ;;
-      bw)
+      bw_top)
         Substack[1]="1,63"
         Substack[2]="64,*"
         #Substack[3]="31,50"
         #Substack[4]="51,*"
         Threshold[1]="80"
         Threshold[2]="80"
+      ;;
+      bw_front)
+        Substack[1]="1,110"
+        Substack[2]="111,*"
+        Substackargs[1]="--dog=s1 --maskblur --close=r4,R4"
+        Substackargs[2]="--dog=s0.75 --maskblur"
+        Threshold[1]="75"
+        Threshold[2]="55"
+      ;;
+      bw_front2)
+        Substack[1]="1,80"
+        Substack[2]="81,*"
+        Substackargs[1]="--dog=s1 --maskblur --close=r4,R4"
+        Substackargs[2]="--dog=s0.75 --maskblur"
+        Threshold[1]="90"
+        Threshold[2]="55"
+      ;;
+      fg_20)
+        Substack[1]="1,13"
+        Substackargs[1]="--dog=s0.75"
+        Threshold[1]="85"
+        Thresholdblur[1]=0.1
+        Substack[2]="5,26"
+        Substackargs[2]="--dog=s0.25"
+        Threshold[2]="65"
+        Thresholdblur[2]=0.1
+        Substack[3]="22,*"
+        Substackargs[3]="--dog=s0.25 --finalblur"
+        Threshold[3]="25"
+        Thresholdblur[3]=0.1
+      ;;
+      fg_100)
+        Substack[1]="1,15"
+        Substackargs[1]="--dog=s1"
+        Threshold[1]="70"
+        Thresholdblur[1]="0.5"
+        Substack[2]="5,25"
+        Substackargs[2]="--dog=s1 --close"
+        Threshold[2]="65"
+        Thresholdblur[2]="2"
+        Substack[3]="21,28"
+        Substackargs[3]="--dog=s1 --close=r4,R4"
+        Threshold[3]="85"
+        Thresholdblur[3]="1"
+      ;;
+      fg_100_min)
+        Substack[1]="1,15"
+        Substackargs[1]="--dog=s1"
+        Threshold[1]="70"
+        Thresholdblur[1]="0.5"
+        Substack[2]="5,25"
+        Substackargs[2]="--dog=s1 --close"
+        Threshold[2]="65"
+        Thresholdblur[2]="2"
+        Substack[3]="21,28"
+        Substackargs[3]="--dog=s1 --close=r4,R4"
+        Threshold[3]="85"
+        Thresholdblur[3]="1"
+        Background=min
+      ;;
+      fg_100_dark)
+        Substack[1]="1,15"
+        Substackargs[1]="--dog=s1 --darkness"
+        Threshold[1]="70"
+        Thresholdblur[1]="0.5"
+        Substack[2]="5,25"
+        Substackargs[2]="--dog=s1 --close --darkness"
+        Threshold[2]="65"
+        Thresholdblur[2]="2"
+        Substack[3]="21,28"
+        Substackargs[3]="--dog=s1 --close=r4,R4 --darkness"
+        Threshold[3]="85"
+        Thresholdblur[3]="1"
       ;;
     esac
   ;;
@@ -148,10 +261,14 @@ case $Substacksplitting in
   ;;
   manual)
     for Slabstep in $(seq 100); do
-      [ -z "${Substack[$Slabstep]}" ] && break
-      Substack[$Slabstep]="$(sed "s/*/$Imagenumber/" <<< "${Substack[$Slabstep]}" )"
+      [ -n "${Substack[$Slabstep]}" ] && {
+        Substacknumber=$Slabstep
+        Substack[$Slabstep]="$(sed "s/*/$Imagenumber/" <<< "${Substack[$Slabstep]}" )"
+      }
+      #[ -z "${Substack[$Slabstep]}" ] && break
+      #Substack[$Slabstep]="$(sed "s/*/$Imagenumber/" <<< "${Substack[$Slabstep]}" )"
     done
-    Substacknumber="$((Slabstep - 1))"
+    #Substacknumber="$((Slabstep - 1))"
   ;;
 esac
 for Slabstep in $(seq $Substacknumber); do
@@ -168,30 +285,33 @@ Md5="$(md5cut "$Sourceimagelist $Background $Dothreshold $Dodarken ${Substack[*]
 
 for Slabstep in $(seq $Substacknumber); do
   [ "$Error" ] && break
-  note "--slabs: Creating slab $Slabstep / $Substacknumber"
+  [ -n "${Substack[$Slabstep]}" ] && {
+    note "Creating slab $Slabstep / $Substacknumber"
   
-  Savemask="$Cachedir/mask$Slabstep.tif"
+    Savemask="$Cachedir/mask$Slabstep.tif"
   
-  Imfuseoptions="${Substackargs[$Slabstep]}"
-  Thresholdtransparent="${Threshold[$Slabstep]}"
-  Thresholddarken="${Threshold[$Slabstep]}"
+    Imfuseoptions="${Substackargs[$Slabstep]}"
+    Thresholdtransparent="${Threshold[$Slabstep]}"
+    Thresholddarken="${Threshold[$Slabstep]}"
   
-  Imfuseoptions="$Imfuseoptions --cache=$Cachedir/_slab$Slabstep ${Slabsourcelist[$Slabstep]} --savemask=$Savemask"
-  [ "$Dodarken" = "yes" ] &&                          Imfuseoptions="$Imfuseoptions --darkenmask=$Darkenmask"
-  [ "$Dodarken" = "yes" ] && [ "$Slabstep" = "1" ] && Imfuseoptions="$Imfuseoptions --threshold=p${Thresholdtransparent},s${Thresholdblur[$Slabstep]} --background=transparent"
-  [ "$Dothreshold" = "yes" ]                       && Imfuseoptions="$Imfuseoptions --threshold=p${Thresholdtransparent},s${Thresholdblur[$Slabstep]} --background=transparent"
+    Imfuseoptions="$Imfuseoptions --cache=$Cachedir/_slab$Slabstep ${Slabsourcelist[$Slabstep]} --savemask=$Savemask"
+    [ "$Dodarken" = "yes" ] &&                          Imfuseoptions="$Imfuseoptions --darkenmask=$Darkenmask"
+    [ "$Dodarken" = "yes" ] && [ "$Slabstep" = "1" ] && Imfuseoptions="$Imfuseoptions --threshold=p${Thresholdtransparent},s${Thresholdblur[$Slabstep]} --background=transparent"
+    [ "$Dothreshold" = "yes" ]                       && Imfuseoptions="$Imfuseoptions --threshold=p${Thresholdtransparent},s${Thresholdblur[$Slabstep]} --background=transparent"
   
-  Image="$(imfuse --showname --basename=$Cachedir/slab$Substacknumber.$(printnum $Slabstep)_ $Imfuseoptions)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
-  Slabresult[$Slabstep]="$Image"
-  Resultimagelist="$Image
+    Image="$(imfuse --showname --basename=$Cachedir/slab$Substacknumber.$(printnum $Slabstep)_ $Imfuseoptions)" || error "--slabs: Failed to retrieve image name in step $Slabstep"
+    Slabresult[$Slabstep]="$Image"
+    Resultimagelist="$Image
 $Resultimagelist"
-  [ -e "$Image" ] || {
-    imfuse $Verbosity -o $Image $Imfuseoptions || error "Error in slab step $Slabstep"
-  }
+    [ -e "$Image" ] || {
+      imfuse $Verbosity -o $Image $Imfuseoptions || error "Error in slab step $Slabstep"
+    }
   
-  magick $Savemask -threshold "$Thresholddarken"% -negate $Darkenmask -compose Darken -composite $Darkenmask
-#  magick $Savemask -threshold "$Thresholddarken"% -alpha off -blur 0x${Thresholdblur[$Slabstep]} -negate $Darkenmask -compose Darken -composite $Darkenmask
-  #viewnior $Darkenmask &
+    magick $Savemask -threshold "$Thresholddarken"% -negate $Darkenmask -compose Darken -composite $Darkenmask
+    #  magick $Darkenmask -alpha off -morphology Close:5 Octagon:5 $Darkenmask
+    #  magick $Savemask -threshold "$Thresholddarken"% -alpha off -blur 0x${Thresholdblur[$Slabstep]} -negate $Darkenmask -compose Darken -composite $Darkenmask
+    #  viewnior $Darkenmask &
+  }
 done
 
 [ "$Removesubcache" = "yes" ] && rm -R "$Cachedir"/_slab*

@@ -1,11 +1,12 @@
 #! /bin/bash
 
 # imfuse
-Version="0.6.12-beta"
+Version="0.6.13-beta"
 
 # ToDo:
 #
 # imfuse:
+# split enfuse with crops having ~10px overlap
 # --slab
 # BUG: levelU kills data near 0% (--test pyramid)
 # add w to each mask if n>1
@@ -768,6 +769,42 @@ denoisecode() {
     -compose over -composite
 "
 }
+enfuse_split() {
+  local Mem_free Mem_needed Outputimage Enfuseoptions Sourceimage Sourceimagelist
+  
+  Outputimage="${1:-}" ; shift
+  Sourceimagelist=""
+  while [ $# -gt 0 ]; do
+    Sourceimagelist="$Sourceimagelist
+${1:-}"
+    shift
+  done
+  Sourceimagelist="$(grep . <<< "$Sourceimagelist")"
+  
+  Mem_free="$(freememory)"
+  Mem_needed="$((Imagewidth * Imageheight * 2 * 32 / 8))"
+  Enfuseoptions="--contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask"
+  
+  #[ "$Mem_needed" -lt "$Mem_free" ] && {
+    nice enfuse $Enfuseoptions -o "$Outputimage" $Sourceimagelist 2>&1 || error "Failed to generate enfuse image"
+    return "${Error:-0}"
+  #}
+  
+  [ "$Mem_needed" -ge "$Mem_free" ] && {
+    note "enfuse needs more memory than available for this stack. Splitting source images."
+    Splits=3
+    Splitcache="$Cachedir/enfuse.split"
+    Splitwidth=$((Imagewidth/Splits))
+    mkdir -p $Splitcache
+    for Split in $(seq $Splits); do
+      Splitgeometry[$Split]="$((Splitwidth + 20))x${Imageheight}+$(( (Split -1) * Splitwidth ))+0"
+    done
+    for Sourceimage in $Sourceimagelist; do
+      $Magickbin $Sourceimage -crop 
+    done
+    return
+  }
+}
 evaluate() {
   local Sourceimagelist Resultimage Mode
   local Startzeit Dauer Restzeit
@@ -1171,7 +1208,7 @@ generate_image() {
   
   case "$Imagetype" in
     enfuse)
-      nice enfuse --contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask -o "$Imagename" $Sourceimagelist 2>&1 || error "Failed to generate enfuse base image"
+      enfuse_split "$Imagename" $Sourceimagelist
     ;;
     saturation)
       imfuse --cache="$Cachedir" --output="$Imagename" --saturation $([ "$Showimageprocessing" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation image"
@@ -2063,12 +2100,15 @@ focus_merge_masks() {
   [ "$Prefertop" ] && Mergemaskbasename="$Mergemaskbasename-prefertop$Prefertop"
   
   # --darkenmask
-  [ "$Darkenmask" ] && Mergecode="$Mergecode
+  [ "$Darkenmask" ] && {
+    Mergecode="$Mergecode
   mpr:mergemask
   $Darkenmask
     -compose Darken -composite
     -write mpr:mergemask
     -delete 0"
+    Mergemaskbasename="$Mergemaskbasename-darken$(md5cut "$Darkenmask")"
+  }
   
   [ "$Forceoverwrite" != "merge" ] && case "$Skipmerge" in
     yes) 
@@ -3412,8 +3452,9 @@ maskarg_checkpercent() {
     error "Option does not take percent value along with a word argument"
     return 1
   }
-  [ "$Argpercent1" = "$(digitonly "$Argpercent1")" ] || {
-    error "Invalid sigma value: $Argpercent1"
+  
+  [ "$Argpercent1" = "auto" ] || [ "$Argpercent1" = "$(digitonly "$Argpercent1")" ] || {
+    error "Invalid percent value: $Argpercent1"
     return 1
   }
 }
@@ -3427,7 +3468,7 @@ maskarg_checksigma() {
     error "Option does not take sigma value along with a word argument"
     return 1
   }
-  [ "$Argsigma1" = "$(digitonly "$Argsigma1")" ] || {
+  [ "$Argsigma1" = "auto" ] || [ "$Argsigma1" = "$(digitonly "$Argsigma1")" ] || {
     error "Invalid sigma value: $Argsigma1"
     return 1
   }
@@ -3874,6 +3915,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     Argmethod="finalblur"
     maskarg_parse "$Finalblur"
     maskarg_checkpercent "$Finalblur"
+    [ "$Argpercent1" = "auto" ] && Argpercent1=""
     Finalblurpercent="${Argpercent1:-50}"
     Finalblursigma1="${Argsigma1:-3}"
     Finalblursigma2="${Argsigma2:-2}"
