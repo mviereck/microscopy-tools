@@ -3,6 +3,8 @@
 # This is also known as "slabbing".
 # Compare http://extreme-macro.co.uk/zerene-slabbing/
 
+Magickbin="$(which magick)"
+
 ########### Adjust following variables:
 
 # Threshold to drop unsharp areas (if not defined otherwise in Threshold[n])
@@ -36,7 +38,7 @@ case $Substacksplitting in
     # Define substack sizes yourself. "1,25" means source images from first to 25th. "26,*" means from 26th to last.
     # More substacks are allowed, array must be numbered from 1 to n.
     # Overlapping is allowed, too.
-    Setting="fg_100_dark"
+    Setting="fg_100"
     case $Setting in
       croped_ant_enfuse)
         Substack[1]="1,25"
@@ -249,7 +251,7 @@ imfuse --bg=$Background --output=$Backgroundimage $Sourceimagelist || error "Err
 
 # 
 Darkenmask="$Cachedir/darkenmask.tif"
-magick "$(head -n1 <<< "$Sourceimagelist")" -threshold 100% -negate $Darkenmask # white mask to begin with
+$Magickbin "$(head -n1 <<< "$Sourceimagelist")" -threshold 100% -negate $Darkenmask # white mask to begin with
 
 case $Substacksplitting in
   auto)
@@ -307,9 +309,9 @@ $Resultimagelist"
       imfuse $Verbosity -o $Image $Imfuseoptions || error "Error in slab step $Slabstep"
     }
   
-    magick $Savemask -threshold "$Thresholddarken"% -negate $Darkenmask -compose Darken -composite $Darkenmask
-    #  magick $Darkenmask -alpha off -morphology Close:5 Octagon:5 $Darkenmask
-    #  magick $Savemask -threshold "$Thresholddarken"% -alpha off -blur 0x${Thresholdblur[$Slabstep]} -negate $Darkenmask -compose Darken -composite $Darkenmask
+    $Magickbin $Savemask -threshold "$Thresholddarken"% -negate $Darkenmask -compose Darken -composite $Darkenmask
+    #  $Magickbin $Darkenmask -alpha off -morphology Close:5 Octagon:5 $Darkenmask
+    #  $Magickbin $Savemask -threshold "$Thresholddarken"% -alpha off -blur 0x${Thresholdblur[$Slabstep]} -negate $Darkenmask -compose Darken -composite $Darkenmask
     #  viewnior $Darkenmask &
   }
 done
@@ -324,7 +326,7 @@ echo "$Resultimagelist"
 #imfuse $Verbosity -o "$Image" $Imfuseoptions || error "Error in generating final image from slab results"
 
 Image="slab_${Md5}.tif"
-Command="magick $Backgroundimage"
+Command="$Magickbin $Backgroundimage"
 for Slabstep in $(seq $Substacknumber); do
   Command="$Command ${Slabresult[$Slabstep]} -compose Over -composite"
 done

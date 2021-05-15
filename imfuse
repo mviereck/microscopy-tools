@@ -2,6 +2,7 @@
 
 # imfuse
 Version="0.6.13-beta"
+Magickbin="$(which magick)"
 
 # ToDo:
 #
@@ -4256,8 +4257,10 @@ main() {
   multicore_init
   
   # check magick version
-  command -v convert >/dev/null && Magickbin="convert"
-  command -v magick  >/dev/null && Magickbin="magick"
+  [ -z "$Magickbin" ] && {
+    command -v convert >/dev/null && Magickbin="convert"
+    command -v magick  >/dev/null && Magickbin="magick"
+  }
   [ -z "$Magickbin" ] && error "Neither command convert nor magick found. Please install ImageMagick."
   Magickversion="$($Magickbin -version)"
   grep -q " Q8 "   <<< "$Magickversion" && Magickpixelmemory="4"
