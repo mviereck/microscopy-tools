@@ -183,7 +183,7 @@ check_stackdir() {
   local Stackdir Newstackdir Stackdirvalid Projectname Projecthome
   
   Stackdir="$(storeinfo dump stackshotdir)"
-  Newstackdir="${1:-}"
+  Newstackdir="$(realpath "${1:-}")"
   Newstackdir="${Newstackdir:-$Stackdir}"
   Newstackdir="${Newstackdir%/}"
   
@@ -567,7 +567,7 @@ ${1:-}"
       failure "showimage: Not found: ${1:-}"
       Image="$(storeinfo dump notfoundimage)"
       [ -e "$Image" ] || $Magickbin -size 300x200 xc:red -fill black -pointsize 20 -gravity center -draw "text 0,0 'image not found'" "$Image"
-      #geeqie -t -r File:"$Image" 1>&2
+      geeqie -t -r File:"$Image" 1>&2
       storeinfo drop showimage
       return 1
     ;;
@@ -577,8 +577,8 @@ ${1:-}"
         gif)
           case $(identify "$Image" | grep -c GIF) in
             1) 
-              #geeqie -t -r File:"$Image" 1>&2
-              imgview "$Image"
+              geeqie -t -r File:"$Image" 1>&2
+              #imgview "$Image"
               storeinfo   "showimage=$Image"
             ;;
             *) showvideo "$Image" ;;
@@ -588,8 +588,8 @@ ${1:-}"
           showvideo "$Image" 
         ;;
         *)       
-          #geeqie -t -r File:"$Image" 1>&2
-          imgview "$Image"
+          geeqie -t -r File:"$Image" 1>&2
+          #imgview "$Image"
           storeinfo   "showimage=$Image"
         ;;
       esac
@@ -978,7 +978,7 @@ align_ais() {
     [ -z "$Stacklist" ] && break
     Aligndir=$Cachedir/align.$Stackcount
     mkdir $Aligndir
-    nice align_image_stack $Opt1 -v -l --use-given-order -p $Cachedir/ais.$Stackcount.pto -a $Aligndir/align $Firstimage $Stacklist || Error=1
+    nice align_image_stack $Opt1 -v --use-given-order -p $Cachedir/ais.$Stackcount.pto -a $Aligndir/align $Firstimage $Stacklist || Error=1
     Firstimage="$(fileglob "$Aligndir/align*" | tail -n1)"
     showimage $Firstimage
     Dauer="$(( $(date +%s)-Startzeit))"
@@ -1058,8 +1058,8 @@ align_ais_ONE() {
   mkdir $Distortdir
   
   note "align_ais(): Running align_image_stack now. That will take a while."
-#  nice align_image_stack -v -v -v -v -v -l $Opt1 -a $Distortdir/align --use-given-order $Imagelist || return 1
-  nice align_image_stack $Opt1 -l --use-given-order -v -v -v -v -v -a $Distortdir/align -p $Cachedir/controlpoints.pto $Imagelist || return 1
+#  nice align_image_stack -v -v -v -v -v $Opt1 -a $Distortdir/align --use-given-order $Imagelist || return 1
+  nice align_image_stack $Opt1 --use-given-order -v -v -v -v -v -a $Distortdir/align -p $Cachedir/controlpoints.pto $Imagelist || return 1
 
   Alignlist="$(fileglob "$Distortdir/*")"
 
@@ -1129,8 +1129,8 @@ $Imagelist1"
   echo "List2:
 $Imagelist2"
   showpercent busy
-  multicore "align_image_stack -l $Opt1 --gpu -a $Part1dir/align --use-given-order $Imagelist1" || return 1
-  multicore "align_image_stack -l $Opt1 --gpu -a $Part2dir/align --use-given-order $Imagelist2" || return 1
+  multicore "align_image_stack $Opt1 --gpu -a $Part1dir/align --use-given-order $Imagelist1" || return 1
+  multicore "align_image_stack $Opt1 --gpu -a $Part2dir/align --use-given-order $Imagelist2" || return 1
   multicore_wait || return 1
 
   Alignlist="$(fileglob "$Part1dir/*")"
@@ -1543,7 +1543,7 @@ align_vidstab_ffmpeg() {
   
   # settings
   Shakiness="${Opt2:-1}"
-  Stepsize=6
+  Stepsize=2 #6
   
   # cache setup
   Motionsfile="$Cachedir/global_motions.trf"
@@ -3824,6 +3824,7 @@ cat $Kaptaingrammarfile
           Count="${Button#stackshot}"
           Dir="${Dirarray[$Count]}"
           storeinfo "stackshotdir=$Dir"
+          echo "$Dir" | xclip -i -selection clipboard
           check_stackdir
           storeinfo "refreshgui_main=yes"
         ;;
@@ -4465,7 +4466,11 @@ main() {
   multicore_init
   create_cachefiles
   check_dependencies
-    
+  
+  [ -d "${1:-}" ] && {
+    #storeinfo "stackshotdir=${1:-}"
+    check_stackdir "${1:-}"
+  }
   storeinfo "cache=$Maincachedir"
   storeinfo test projecthome       || storeinfo "projecthome=$Projecthome"
   storeinfo test stackshotdir      || storeinfo "stackshotdir=$Projecthome"
