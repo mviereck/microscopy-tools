@@ -42,21 +42,27 @@ milisleep() {
 get_latest_file() {
   ## Funktion: Neueste erstellte Datei ermitteln
   # $1 kann Suche auf Dateien DATEI* begrenzen
-  ls -p -t $1* 2> /dev/null | grep -v "/" | head -n 1
+  #ls -p -t $1* 2> /dev/null | grep -v "/" | head -n 1
+  find ${1:-"."} -maxdepth 1 -type f -printf "%T@ %p\n" | sort -n | awk '{print $2}' | head -n1
 }
 get_last_file() {
-  # Find alphanumerically last file beginning with $1 in pwd.
-  local Filelist
-  Filelist="$(find -mindepth 1 -maxdepth 1 | xargs realpath --relative-base $(pwd) | grep "^${1:-}")"
+  # Find alphanumerically last file beginning with $1 in pwd or $2.
+  local Filelist Dir
+  Dir="${2:-$(pwd)}"
+#  Filelist="$(find $Dir/${1:-}* -mindepth 1 -maxdepth 1 | xargs realpath --relative-base "$Dir" | grep "^${1:-}")"
+  Filelist="$(find $Dir/${1:-}* -maxdepth 1)"
   Filelist="$(sort -V <<< "$Filelist")"
   tail -n1 <<< "$Filelist"
 }
-get_free_filenumber(){
+get_free_filenumber() {
   # Provide next free file number to file base name $1. 
   # Provide $1 without _00N.
   # $1 must not contain _
-  local Number
-  Number="$(get_last_file ${1:-} | rev | cut -d_ -f1 | rev | cut -d. -f1)"
+  local Number Dir Basename
+  Dir="$(dirname "${1:-}")"
+  Dir="${Dir:-$(pwd)}"
+  Basename="$(basename "${1:-}")"
+  Number="$(get_last_file "$Basename" "$Dir" | rev | cut -d_ -f1 | rev | cut -d. -f1)"
   Number="${Number:-0}"
   Number="$(awk "BEGIN {print \"$Number\" + 1}" )"
   printf "%04d" "$Number"
@@ -309,8 +315,9 @@ stackshot() {
   Stackshotbasename="${Stackshotbasename:-st}" ### FIXME declare in GUI
   
   cd "$Storagebasedir/$Projectname"
-  Stackshotname="${Stackshotbasename}_$(get_free_filenumber "$Stackshotbasename")"
-  
+  set -x
+  Stackshotname="${Stackshotbasename}_$(get_free_filenumber "$Storagebasedir/$Projectname/$Stackshotbasename")"
+  set +x
   Stackshotdir="$Storagebasedir/$Projectname/$Stackshotname"
   setvar "lateststack=$Stackshotdir"
   mkdir -p "$Stackshotdir/stackshot"
@@ -392,7 +399,7 @@ stackshot() {
         preview)
           gphoto2_wrap --capture-preview
           Latestimage="$Stackshotdir/stackshot/preview_$(printf "%04d" $Loopcount).jpg"
-          mv -f capture_preview.jpg "$Latestimage"
+          mv capture_preview.jpg "$Latestimage"
           setvar "latestimage=$Latestimage"
         ;;
       esac
@@ -417,8 +424,8 @@ stackshot() {
       note "stack: Aligning captures of step $Loopcount."
       statusmessage "Aligning median captures of step $Loopcount."
       align_image_stack -l --use-given-order -a ${Mediangroup}_align $Mediangroup*.jpg 2>&1 | grep -v "Unable to read EXIF data"
-      Latestimage="$Stackshotdir/stackshot/${Fotomodus}_$(printf "%04d" $Loopcount).jpg"
-      $Convert ${Mediangroup}_align*.tif -evaluate-sequence median "$Latestimage"
+      Latestimage="$Stackshotdir/stackshot/${Fotomodus}_$(printf "%04d" $Loopcount).tif"
+      $Magickbin ${Mediangroup}_align*.tif -evaluate-sequence median "$Latestimage"
       showimage "$Latestimage"
     }
 
@@ -471,12 +478,12 @@ gphoto2_cmd () {
       Workdir="$(pwd)/captures"
       mkdir -p "$Workdir"
       # %C als Suffix läßt gphoto2 Dateiende selbst richtig einsetzen (jpg oder cr2 oder ...)
-      Latestimage="$Workdir/capture_$(get_free_filenumber capture).%C"
+      Latestimage="$Workdir/capture_$(get_free_filenumber $Workdir/capture).%C"
       gphoto2_wrap --capture-image-and-download --filename $Latestimage
       Return=$?
       # Dateiname mit tatsächlichem Suffix ermitteln. 
-      Latestimage="$Workdir/$(get_latest_file "capture*.jpg")"
-      [ "$Latestimage" ] || Latestimage="$Workdir/$(get_latest_file "capture*")"
+      Latestimage="$(get_latest_file "$Workdir/capture*.jpg")"
+      [ "$Latestimage" ] || Latestimage="$(get_latest_file "$Workdir/capture*")"
       setvar "latestimage=$Latestimage"
       ;;
     capture-preview)                         # Einzelnes Videobild aufnehmen, ohne daß der Spiegel zuklappt
@@ -487,7 +494,7 @@ gphoto2_cmd () {
       gphoto2_wrap --capture-preview
       Return=$?
       [ "$Return" = "0" ] && {
-        Latestimage="$Workdir/preview_$(get_free_filenumber preview).jpg"
+        Latestimage="$Workdir/preview_$(get_free_filenumber $Workdir/preview).jpg"
         mv capture_preview.jpg "$Latestimage"
         setvar "latestimage=$Latestimage"
       } 
@@ -564,7 +571,7 @@ video() {
       Workdir="$(pwd)/video"
       mkdir -p "$Workdir"
       # Dateiname für neues Video
-      Latestvideo="$Workdir/video_$(get_free_filenumber).mjpg"
+      Latestvideo="$Workdir/video_$(get_free_filenumber "$Workdir/video").mjpg"
       $GPHOTO2 | $FFMPEG | tee $Latestvideo | $FFPLAY & Pidffplay=$!
     ;;
     stop)
@@ -1184,10 +1191,10 @@ showpercent() {
   Percentimage="$Percentcachedir/$Percentimage"
 
   [ -e "$Percentimage" ] || case "$Part" in
-    idle)  convert -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"   "$Percentimage" ;;
-    error) convert -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"  "$Percentimage" ;;
-    busy)  convert -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'"   "$Percentimage" ;;
-    *)     convert -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
+    idle)  magick -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"   "$Percentimage" ;;
+    error) magick -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"  "$Percentimage" ;;
+    busy)  magick -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'"   "$Percentimage" ;;
+    *)     magick -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
   esac
   sendkaptain "cmdpercent('$Percentimage')=''"
 }
@@ -1195,6 +1202,8 @@ showpercent() {
 #### main
 
 declare_variables() {
+  Magickbin="magick"
+
   Cachebasedir="$HOME/.cache/stackshots"
   Maincachedir="$Cachebasedir/stackshooter"
   Percentcachedir="$Cachebasedir/percent"
