@@ -10,7 +10,6 @@ Tools for microscopy and image focus stacking.
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
  - Tools considered to be ready:
    - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image (Terminal)
-   - [`imgview`](#imgview): Simple image viewer (GUI)
 
    
 `stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
@@ -39,15 +38,6 @@ Considered to be ready for general use.
 
 Dependencies:
  - `imagemagick`
- 
-## imgview
-
-Simple image viewer that allows remote content refresh
-without window flickering and without blocking the terminal.
-
-Dependencies:
- - [`kaptain`](https://github.com/mviereck/kaptain)
- - `imagemagick` (optional to show some meta data)
 
 ## stackfuser
 
@@ -75,8 +65,8 @@ Folder structure:
 Dependencies, most essentiell:
  - `align_image_stack` (hugin tools)
  - `enfuse`
+ - `geeqie`
  - `imagemagick`
- - [`imgview`](#imgview) (optional image viewer)
  - [`imfuse`](#imfuse)
  - [`kaptain`](https://github.com/mviereck/kaptain)
  - `viewnior`
@@ -106,6 +96,7 @@ Dependencies:
  - `align_image_stack` (hugin tools)
  - [`kaptain`](https://github.com/mviereck/kaptain)
  - `xinput`
+ - `xdotool`
  
 ## camcfg
 `dialog` frontend for `gphoto2` camera configuration. Reads possible configurations of a camera and provides a dialog in terminal to choose desired settings. Beta stage, already useable.
