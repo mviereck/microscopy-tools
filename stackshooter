@@ -43,7 +43,7 @@ get_latest_file() {
   ## Funktion: Neueste erstellte Datei ermitteln
   # $1 kann Suche auf Dateien DATEI* begrenzen
   #ls -p -t $1* 2> /dev/null | grep -v "/" | head -n 1
-  find ${1:-"."} -maxdepth 1 -type f -printf "%T@ %p\n" | sort -n | awk '{print $2}' | head -n1
+  find ${1:-"."} -maxdepth 1 -type f -printf "%T@ %p\n" | sort -n | awk '{print $2}' | tail -n1
 }
 get_last_file() {
   # Find alphanumerically last file beginning with $1 in pwd or $2.
@@ -315,9 +315,7 @@ stackshot() {
   Stackshotbasename="${Stackshotbasename:-st}" ### FIXME declare in GUI
   
   cd "$Storagebasedir/$Projectname"
-  set -x
   Stackshotname="${Stackshotbasename}_$(get_free_filenumber "$Storagebasedir/$Projectname/$Stackshotbasename")"
-  set +x
   Stackshotdir="$Storagebasedir/$Projectname/$Stackshotname"
   setvar "lateststack=$Stackshotdir"
   mkdir -p "$Stackshotdir/stackshot"
@@ -386,7 +384,7 @@ stackshot() {
       case $Fotomodus in
         capture) 
           Filename="$(LC_ALL=C gphoto2_wrap --capture-image-and-download --force-overwrite | grep 'Saving file as')"
-          gphoto2_cmd mirrorup
+          gphoto2_cmd mirrorup || setvar "cmdbreak=yes"
           Filename="$(awk '{print $4}' <<< "$Filename")"
           Latestimage="$Stackshotdir/stackshot/capture_$(printf "%04d" $Loopcount).jpg"
           [ -e "$Filename" ] || {
@@ -397,7 +395,7 @@ stackshot() {
           mv "$Filename" "$Latestimage"
         ;;
         preview)
-          gphoto2_wrap --capture-preview
+          gphoto2_wrap --capture-preview || setvar "cmdbreak=yes"
           Latestimage="$Stackshotdir/stackshot/preview_$(printf "%04d" $Loopcount).jpg"
           mv capture_preview.jpg "$Latestimage"
           setvar "latestimage=$Latestimage"
@@ -1264,14 +1262,15 @@ storepid() {
 finish() {
   trap - EXIT
   local Line Pid Comm
-  
+
   # kill stored pids
   while read Line; do
     Pid="$(awk  '{print $1}' <<< "$Line")"
-    Comm="$(awk '{print $2}' <<< "$Line")"
-    [ "$(ps -p $Pid -h -o comm)" = "$Comm" ] && kill $Pid
+    #Comm="$(awk '{print $2}' <<< "$Line")"
+    #[ "$(ps -p $Pid -h -o comm)" = "$Comm" ] && kill $Pid
+    ps -p $Pid -h -o pid -o comm && kill $Pid
   done <$Storepidfile
-  
+
   # close device
   exec 6>&-
   
@@ -1325,7 +1324,7 @@ main() {
   } || failure "Cannot watch keyboard. xinput not installed? Invalid keyboard id '$Keyboardid'?"
   
   gui_main
+  finish
 }
 
 main "$@"
-finish
