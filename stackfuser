@@ -2540,13 +2540,15 @@ wizard() {
   esac
   Options="$Opt1 $Opt2 $Opt3 +repage"
   
-  [ "$Sourcedir" = "$Targetprepareddir" ] && grep -q -E "auto-gamma|auto-level|auto-contrast-stretch|contrast-stretch max" <<< "$Options" && {
+#  [ "$Sourcedir" = "$Targetprepareddir" ] && grep -q -E "auto-gamma|auto-level|auto-contrast-stretch|contrast-stretch max" <<< "$Options" && {
+  grep -q -E "auto-gamma|auto-level|auto-contrast-stretch|contrast-stretch max" <<< "$Options" && {
     imageproperties -s "$Sourcedir" -g "$Sourcefileglob" -c "$Cachedir" || return 1
     Options="$(sed "s/-auto-gamma/-gamma $Imageautogamma/ ; 
                            s/-auto-contrast-stretch/-contrast-stretch ${Imageminlevel}x${Imagemaxlevel}/ ; 
-                           s/-contrast-stretch max/-channel red -contrast-stretch ${Imageminlevelred}x${Imagemaxlevelred} -channel green -contrast-stretch ${Imageminlevelgreen}x${Imagemaxlevelgreen} -channel blue -contrast-stretch ${Imageminlevelblue}x${Imagemaxlevelblue} +channel/ ; 
+                           s/-contrast-stretch max/-channel RGBK -contrast-stretch 0 +channel/ ; 
                            s/-auto-level/-level ${Imageminlevel}%x${Imagemaxlevel}%/"    <<< "$Options")"
   }
+#                           s/-contrast-stretch max/-channel red -contrast-stretch ${Imageminlevelred}x${Imagemaxlevelred} -channel green -contrast-stretch ${Imageminlevelgreen}x${Imagemaxlevelgreen} -channel blue -contrast-stretch ${Imageminlevelblue}x${Imagemaxlevelblue} +channel/ ; 
   
   note "wizard: $Options"
   Startzeit="$(date +%s)"
