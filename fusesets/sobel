@@ -1,10 +1,10 @@
 imfuse --sobel
 imfuse --sobel --finalblur=w75
-imfuse --sobel --cutblur=1
-imfuse --sobel --cutblur=2
-imfuse --sobel --cutblur=1 --finalblur=w75
-imfuse --sobel --cutblur=1 --finalblur=w75 --less
-imfuse --sobel --cutblur=2 --finalblur=w75 --less
+imfuse --sobel --cutsoft=1
+imfuse --sobel --cutsoft=2
+imfuse --sobel --cutsoft=1 --finalblur=w75
+imfuse --sobel --cutsoft=1 --finalblur=w75 --less
+imfuse --sobel --cutsoft=2 --finalblur=w75 --less
 imfuse --sobel --bg=enfuse --alpha=0x150
-imfuse --sobel --bg=enfuse --alpha=0x150 --cutblur=1 --less
-imfuse --sobel --bg=enfuse --alpha=0x150 --cutblur=2 --less
+imfuse --sobel --bg=enfuse --alpha=0x150 --cutsoft=1 --less
+imfuse --sobel --bg=enfuse --alpha=0x150 --cutsoft=2 --less
