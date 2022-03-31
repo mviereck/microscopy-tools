@@ -136,6 +136,7 @@ computer.
  - `gphoto2`: The gphoto2 library allows access and control of various digital camera models. Command line tool, used by `stackshooter`.
  - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `stackfuser` and `stackshooter`.
  - `hugin`: Hugin is a panorama photo stitching program for several overlapping photos taken from the same location, transforming the photos to one larger image.
+ - [`mfkter`](https://github.com/hqhoang/mftker): GUI for enfuse. Replaces former MacroFusion.
  - `rawtherapee`: RawTherapee is an advanced program for developing raw photos and for processing
 non-raw photos.
 
