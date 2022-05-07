@@ -15,6 +15,9 @@ Tools for microscopy and image focus stacking.
 `stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
 However, if you are already interested to try them out, please give me some feedback in the [issue tracker](https://github.com/mviereck/microscopy-tools/issues) and I'll help to set them up.
 
+These projects are currently asleep. But I'll continue to develop them some day. The major step that currently blocks me is to learn `python3`. 
+I need to switch from `bash` to `python3` to provide some GUI tools with image mask editing features.
+
 ## imfuse
 
 Combines focus stackshot images to an overall sharp image.
@@ -134,8 +137,8 @@ computer.
  - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack): A cross-platform tool for focus stacking images based on wavelet algorithms.
  - [`pulsar123/Macro-scripts`](https://github.com/pulsar123/Macro-scripts): A set of BASH scripts and C++ programs representing a complete workflow for processing macro focus stacking photographs.
  - `gphoto2`: The gphoto2 library allows access and control of various digital camera models. Command line tool, used by `stackshooter`.
- - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `stackfuser` and `stackshooter`.
  - `hugin`: Hugin is a panorama photo stitching program for several overlapping photos taken from the same location, transforming the photos to one larger image.
+ - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `stackfuser` and `stackshooter`.
  - [`mfkter`](https://github.com/hqhoang/mftker): GUI for enfuse. Replaces former MacroFusion.
  - `rawtherapee`: RawTherapee is an advanced program for developing raw photos and for processing
 non-raw photos.
