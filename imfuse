@@ -3729,14 +3729,15 @@ check_background() {
 check_outputname() {
   # --output
   Resultimage="imfuse."
+  [ "$Align" = "yes" ] && Resultimage="${Resultimage}align-"
   [ "$Softmode" ] && {
-    Resultimage="${Resultimage}soft"
-    [ "$Softmode" != "auto" ] && Resultimage="${Resultimage}$Softmode"
+    Resultimage="${Resultimage}soft-"
+    [ "$Softmode" != "auto" ] && Resultimage="${Resultimage}$Softmode-"
   }
   [ "$Slabs" ] && {
-    Resultimage="${Resultimage}slabs$Slabs"
+    Resultimage="${Resultimage}slabs$Slabs-"
   }
-        
+
   while read Line; do
     [ -z "$Line" ] && break
     maskarg_parse "$Line"   
@@ -3833,14 +3834,13 @@ check_outputname() {
     "") ;;
     *) Resultimage="${Resultimage}_test$Testarg" ;;
   esac
-  Resultimage="$(sed "s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
-  #Resultimage="$(sed "s/=-/=/g ; s/=\./=/g ; s/=$//g" <<< "$Resultimage")"
-    
+  Resultimage="$(sed "s/--/-/g ; s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
+
   Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist \
 $Background $([ "$Darkenmask" ] && md5sum "$Darkenmask") $Cutblur $Cutsoft $Fakehdr $Finalblur \
 $Globalalpha $Globalclose $Globaldenoise $Globalless $Globalmaskblur $Globalthreshold $Globalthresholdblur \
 $Grayscale $Mergemethod $Prefertop $Revertimagelist $Softmode $Testsetup" )"
-  
+
   Resultimage="${Resultimage}_md${Fusemd5sum}"
   [ -z "$Outputdir" ] && Outputdir="$(pwd)"
   case $Outputimage in
@@ -3850,10 +3850,10 @@ $Grayscale $Mergemethod $Prefertop $Revertimagelist $Softmode $Testsetup" )"
   Outputimage="$(realpath -m "$Outputimage")"
   [ "$Video" ] && Video="$Outputimage.webm"
   Resultimage="$Cachedir/${Basename:-}$Resultimage.${Imageformat}"
-  
+
   # --savemask
   [ "$Savemask" = "auto" ] && Savemask="$Outputimage.mask.tif"
-  
+
   return ${Error:-0}
 }
 main_setup() {
