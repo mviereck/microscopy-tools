@@ -23,6 +23,7 @@ Aims to be similar to enfuse, but based on ImageMagick.
 
 Dependencies:
  - `imagemagick` version 7.
+ - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack) (optional for option `--align`)
  - `enfuse` (optional, needed for some options)
  - `geeqie` and `viewnior` (optional image viewers)
  - `exiftool` (optional to preserve exif meta data)

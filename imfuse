@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.7.1-beta"
+Version="0.7.2-beta"
 
 # ToDo:
 # New BUG s:
@@ -9,6 +9,8 @@ Version="0.7.1-beta"
 # --fakehdr error
 # --soft: preview of montage is grey
 # enfuse_split() not ready
+# --slabs
+# --saturation: bash pointer error
 #
 # imfuse:
 # split enfuse with crops having ~10px overlap
@@ -38,13 +40,14 @@ usage() {
   echo "imfuse v$Version
 Combines focus stackshot images to one overall sharp image.
 
-Note that imfuse expects already aligned input images.
 It assumes that the alphanumerical order of the input images goes from
 top to bottom; for the other way around use option --revert.
 
 Dependencies:
   imagemagick         Mandatory (command 'convert' or 'magick').
-  enfuse              Recommended, needed for some options.
+  enfuse              Optional, needed for some options.
+  focus-stack         Optional, needed for option --align.
+                      https://github.com/PetteriAimonen/focus-stack
   geeqie              Optional, used by option -V, --showimage.
   exiftool            Optional, to transfer metadata from first image to result.
 
@@ -52,6 +55,7 @@ Usage:
   imfuse [OPTIONS] -- image1 image2 image3 ...
 
 General options:
+     --align              Align images.
      --basename [=NAME]   Base name [+path] for output image. 
      --cache=DIR          Specify a cache folder DIR. Default: ./cache.imfuse
      --exif [=IMAGE]      Transfer exif meta data from IMAGE or first image.
@@ -378,12 +382,12 @@ Examples:
 Have a folder 'stackshot' containing all stack source images.
 Go to the folder above 'stackshot'.
   Run imfuse with:
-    imfuse -V --diffstat stackshot/*
+    imfuse -VW --align --diffstat stackshot/*
   You might be unsatisfied with low contrast areas. Try:
-    imfuse -V --diffstat --saturation=w50       stackshot/*
-    imfuse -V --diffstat --alpha                stackshot/*
+    imfuse -VW --align --diffstat --soft                     stackshot/*
+    imfuse -VW --align --diffstat --alpha --bg=enfuse        stackshot/*
   You might have incomplete foreground objects. Try:
-    imfuse -V --diffstat --alpha --less --close stackshot/*
+    imfuse -VW --align --diffstat --alpha --bg=enfuse --less stackshot/*
 "
 }
 
@@ -547,6 +551,58 @@ mpr:$Basename.$(printnum $Count).tif"
 
 ### image processing helpers
 
+align() {
+  # align with focus-stack
+  # https://github.com/PetteriAimonen/focus-stack
+
+  local Log Line Image Count Command
+  local X Y W H Lmax=0 Tmax=0 Rmin=10000000 Bmin=10000000
+
+  Log="$Cachedir/align.log"
+  mkdir -p "$Cachedir/aligned"
+
+  note "Aligning source images."
+  focus-stack --verbose --output="$Cachedir/aligned/" --align-only --no-contrast --no-whitebalance $Sourceimagelist >"$Log" || return 1
+
+  # calculate smallest valid area common to all aligned images
+  while read Line; do
+    Line="$(cut -d' ' -f4- <<< "$Line")"
+    X="$(digitonly "$(cut -d, -f1 <<< "$Line")" )"
+    Y="$(digitonly "$(cut -d, -f2 <<< "$Line")" )"
+    W="$(digitonly "$(cut -d, -f3 <<< "$Line")" )"
+    H="$(digitonly "$(cut -d, -f4 <<< "$Line")" )"
+    [ "$X" -gt "$Lmax" ] && Lmax="$X"
+    [ "$Y" -gt "$Tmax" ] && Tmax="$Y"
+    [ "$((X+W))" -lt "$Rmin" ] && Rmin="$((X+W))"
+    [ "$((Y+H))" -lt "$Bmin" ] && Bmin="$((X+W))"
+  done < <(grep "valid area" <<< "$Log" ||:)
+  X="$Lmax"
+  Y="$Tmax"
+  W="$((Rmin-Lmax-1))"
+  H="$((Bmin-Tmax-1))"
+
+  # crop aligned images to valid area, store as mpr source images
+  Count=0
+  while read Image; do
+    Count="$((Count+1))"
+    Command=""
+    Number="$(printnum "$Count")"
+    Image="$Cachedir/aligned/$(basename "$Image")"
+    Command="$Command
+  $(sendmagickmessage "PROGRESS:Loading and cropping aligned source image $Count / $Imagenumber")"
+    Command="$Command
+  $Image
+    -crop ${W}x${H}+${X}+${Y}
+    -write mpr:sourceimage.$Number
+    -delete 0"
+    cmd "$Command"
+  done <<< "$Sourceimagelist"
+  sendmagickmessage "/PROGRESS"
+  cmd_waitforready
+
+  rm -r "$Cachedir/aligned"
+  return 0
+}
 alphalevel() {
   local Command Image Mask Level Clut= Clutimage
   local Longoptions Parsedoptions
@@ -1141,6 +1197,31 @@ level_masks() {
   cmd_waitforready
 
   return "${Error:-0}"
+}
+load_images() {
+  # Load source images into imagemagick registry
+  local Sourceimage Count Number Command
+
+  Count="0"
+  while read Sourceimage; do
+    Count="$((Count+1))"
+    Number="$(printnum "$Count")"
+    Command=""
+
+    Command="$Command
+  $(sendmagickmessage "PROGRESS:Loading source image $Count / $Imagenumber")"
+    Command="$Command
+  '$Sourceimage'
+    -alpha off
+    -depth 16
+    -write mpr:sourceimage.${Number}
+    -delete 0"
+
+    cmd "$Command"
+  done <<< "$Sourceimagelist"
+  sendmagickmessage "/PROGRESS"
+  cmd_waitforready
+  return 0
 }
 maskfromimage() {
   # Generate masks with basename $2 based on comparision with a single image $1
@@ -1742,11 +1823,8 @@ $(magick xc:white -define morphology:showkernel=1 $(grep -E -- '-define|-morphol
     Command="$Command
   $(sendmagickmessage "PROGRESS:Mask generation step $Count / $Imagenumber")"
     Command="$Command
-  '$Sourceimage'
-    -alpha off
-    -depth 16
+  mpr:sourceimage.${Number}
     -write mpr:sourceimage
-    -write mpr:sourceimage.${Number}
     -delete 0
   mpr:sourceimage"
 
@@ -3011,6 +3089,7 @@ trap_sigint() {
 }
 finish() {
   local Count=0
+  trap - ERR
   cmd "-exit"
   while ps -p "$Magickscriptpid" >/dev/null 2>&1; do
     sleep 1
@@ -3022,7 +3101,6 @@ finish() {
   [ -f "$Magickfifolog" ]   && cp "$Magickfifolog" ~/
   [ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" ~/
   [ -d "$Cachedir" ] && rm -R "$Cachedir"
-  trap - ERR
   trap - EXIT
   trap - SIGINT
   exit "${1:-0}"
@@ -3053,7 +3131,8 @@ declare_variables() {
   Argword2=""
   '
   eval $Arglist
-  
+
+  Align=""
   Background=""
   Backgroundimage=""
   Backgroundtype=""
@@ -3152,7 +3231,7 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
   Shortoptions="ho:vVW"
-  Longoptions="basename:,cache:,exif::,force::,help,limit-memory::,output:,savemask::,showimage,showname,test::,threads:,verbose,version,video"
+  Longoptions="align,basename:,cache:,exif::,force::,help,limit-memory::,output:,savemask::,showimage,showname,test::,threads:,verbose,version,video"
   Longoptions="$Longoptions,alpha::,background::,bg::,close::,cutblur::,cutsoft::,darkenmask:,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,merge::,prefertop::,revert,sigmoidalclut::,slabs::,soft::,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,max::,mean::,median::,min::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
@@ -3164,14 +3243,15 @@ parse_options() {
   while [ $# -gt 0 ]; do
     [ "$Error" ] && break
     case "${1:-}" in
+         --align)             Align="yes"                     ;;
          --alpha)             Globalalpha="${2:-auto}"        ; shift ;;
          --bg|--background)   Background="${2:-auto}"         ; shift ;;
          --basename)          Basename="${2:-auto}"           ; shift ;;
          --darkenmask)        Darkenmask="${2:-}"             ; shift ;;
          --cache)             Cachedir="${2:-}"               ; shift ;;
          --close)             Globalclose="${2:-auto}"        ; shift ;;
-         --cutblur)           Cutblur="${2:-auto}"            ; shift ;;      
-         --cutsoft)           Cutsoft="${2:-auto}"            ; shift ;;      
+         --cutblur)           Cutblur="${2:-auto}"            ; shift ;;
+         --cutsoft)           Cutsoft="${2:-auto}"            ; shift ;;
          --denoise)           Globaldenoise="${2:-auto}"      ; shift ;;
          --exif)              Exifsourceimage="${2:-auto}"    ; shift ;;
          --fakehdr)           Fakehdr="${2:-auto}"            ; shift ;;
@@ -3182,9 +3262,9 @@ parse_options() {
          --layers)            Layers="${2:-auto}"             ; shift ;;
          --limit-memory)      Limitmemory="${2:-"80%"}"       ; shift ;;
          --less)              Globalless="${2:-auto}"         ; shift ;;
-         --maskblur)          Globalmaskblur="${2:-auto}"     ; shift ;;      
-         --merge)             Mergemethod="${2:-auto}"        ; shift ;;      
-         --prefertop)         Prefertop="${2:-auto}"          ; shift ;;      
+         --maskblur)          Globalmaskblur="${2:-auto}"     ; shift ;;
+         --merge)             Mergemethod="${2:-auto}"        ; shift ;;
+         --prefertop)         Prefertop="${2:-auto}"          ; shift ;;
       -o|--output)            Outputimage="${2:-}"            ; shift ;;
          --revert)            Revertimagelist="yes"           ;;
          --savemask)          Savemask="${2:-auto}"           ; shift ;;
@@ -3200,7 +3280,7 @@ parse_options() {
          --version)           echo "imfuse v$Version"         ; exit 0 ;;
          --video)             Video="auto"                    ;;
       -W)                     Viewnior="yes"                  ;;
-      
+
 --blur|--channel|--chroma|--comet|--compass|--compose|--darkness|--diffstat|--dog|--enfuse|--evaluate|\
 --experimental|--free|--freediff|\
 --freichen|--gaussian|--halo|--image|--kirsch|--laplacian|--lightness|--log|--morphology|\
@@ -3477,6 +3557,15 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     ""|none) Grayscaleconverter="" ;;
     *)       Grayscaleconverter="-grayscale $Grayscale" ;;
   esac
+
+  # --align
+  [ "$Align" = "yes" ] && {
+    command -v focus-stack >/dev/null || {
+      error "--align: focus-stack not found.
+  Please install focus-stack.
+  https://github.com/PetteriAimonen/focus-stack"
+    }
+  }
 
   # --layers
   case $Layers in
@@ -3862,7 +3951,7 @@ main_setup() {
 }
 main() {
   trap trap_sigint SIGINT
-  trap finish EXIT ERR
+  trap finish EXIT #ERR
   set -Eu
   local Slabopt
 
@@ -3883,13 +3972,8 @@ main() {
 
   # --background
   check_background
-  for Mode in $Image_needlist; do
-    [ "$Error" ] && break
-    generate_image "$Mode"
-  done 
-  [ "$Error" ] && return 1
 
-  # --slabs
+  # --slabs ### FIXME
   [ "$Slabs" ] && {
     Sourceimagelist=""
     for Slabstep in $(seq $Slabs); do
@@ -3920,31 +4004,35 @@ $Sourceimagelist"
 
   # Generating stackshot image
   [ -n "$Maskmethodlist" ] && {
-    focus_generate_masks                  || error "Error in mask generation"
+    case "$Align" in
+      yes) align ;;
+      *)   load_images ;;
+    esac
+    focus_generate_masks
     [ "$Error" ] && return 1
-    focus_merge_masks                     || error "Error in mask merge"
+    focus_merge_masks
     [ "$Error" ] && return 1
     case $Softmode in
-      "") focus_hard --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --lessthanmax "$Globalless" --cutsoft "$Cutsoft" --cutblur "$Cutblur" || error "Error in focus_hard" ;;
-      *)  focus_soft    --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --sigmoidal "$Softmode"     || error "Error in focus_soft" ;;
+      "") focus_hard --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --lessthanmax "$Globalless" --cutsoft "$Cutsoft" --cutblur "$Cutblur" ;;
+      *)  focus_soft    --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --sigmoidal "$Softmode" ;;
     esac
     [ "$Error" ] && return 1
     # --finalblur
     [ "$Finalblur" ] && {
       note "Applying --finalblur=p${Finalblurpercent},s${Finalblursigma1},S${Finalblursigma2}"
-      finalblur --image "$Resultimage" --mask "$Resultmask" --percent "$Finalblurpercent" --sigma1 "$Finalblursigma1" --sigma2 "$Finalblursigma2" || error "Error in --finalblur"
+      finalblur --image "$Resultimage" --mask "$Resultmask" --percent "$Finalblurpercent" --sigma1 "$Finalblursigma1" --sigma2 "$Finalblursigma2"
       [ "$Error" ] && return 1
     }
     # --alpha=ARG
     [ "$Globalalpha" ] && {
       note "Applying --alpha=$Globalalpha"
-      alphalevel --image "$Resultimage" --mask "$Resultmask" --level "$Globalalpha" || error "Error in leveling --alpha='$Globalalpha'"
+      alphalevel --image "$Resultimage" --mask "$Resultmask" --level "$Globalalpha"
       [ "$Error" ] && return 1
     }
     # --threshold
     [ "$Globalthreshold" ] && {
       note "Applying --threshold=$Globalthreshold"
-      threshold --image "$Resultimage" --mask "$Resultmask" --percent "$Globalthreshold" --blur "$Globalthresholdblur" || error "Error -in --threshold"
+      threshold --image "$Resultimage" --mask "$Resultmask" --percent "$Globalthreshold" --blur "$Globalthresholdblur"
       [ "$Error" ] && return 1
     }
     # --savemask
