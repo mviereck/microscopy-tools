@@ -1,7 +1,7 @@
 #! /bin/bash
 # gradient table to show effect of +level a%,b% / arguments of option --soft.
 # A semi-transparent image $1 can be given as option and will be added as table example.
-# Get a test image with 'imfuse --statistic --soft --background=transparent IMAGES'.
+# Get a test image with 'imfuse --statistic --alpha --background=transparent IMAGES'.
 
 Image="${1:-}"
 Size="256"
@@ -37,14 +37,22 @@ Command="magick
     -delete 0"
     
 for Level in $Levels; do
+  Levelwop="$(tr -d "%" <<< "$Level")"
+  Clutimage="demo-alphalevel-tmp-$Levelwop.tif"
+  magick -size ${Size}x${Size} gradient: -rotate 90 +level $Level "$Clutimage"
+  Clutgraph="demo-alphalevel-tmp-$Levelwop-graph.tif"
+  clutgraph "$Clutimage" "$Clutgraph"
+  
   Command="$Command
   \( mpr:gradient
       +level $Level
       -write mpr:gradientlevel
       -delete 0
+    $Clutgraph
     mpr:gradientlevel
+      +append
       -gravity west
-      -stroke green
+      -stroke blue
       -pointsize 24
       -draw \"text 0,0 '$Level'\" 
       -write mpr:gradientlevel
@@ -81,8 +89,8 @@ done
 
 Command="$Command
     -append
-  gradient+level.tif"
+  gradient+level.png"
   
 eval $Command 
-
-viewnior gradient+level.tif
+rm demo-alphalevel-tmp-*.tif
+viewnior gradient+level.png &

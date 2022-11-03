@@ -2,21 +2,18 @@
 
 Tools for microscopy and image focus stacking.
 
- - Tools already useable, in active development:
-   - [`imfuse`](#imfuse): Fuse focus stackshot images with imagemagick. (Terminal)
-   - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
- - Tools already useable, awaiting further development:
-   - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
-   - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
+ - Tools already useful, in active development:
+   - [`imfuse`](#imfuse): Fuse focus stackshot images with ImageMagick. (Terminal)
  - Tools considered to be ready:
    - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image (Terminal)
+ - Tools already useable, awaiting further development:
+   - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
+   - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
+   - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
 
    
 `stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
-However, if you are already interested to try them out, please give me some feedback in the [issue tracker](https://github.com/mviereck/microscopy-tools/issues) and I'll help to set them up.
-
-These projects are currently asleep. But I'll continue to develop them some day. The major step that currently blocks me is to learn `python3`. 
-I need to switch from `bash` to `python3` to provide some GUI tools with image mask editing features.
+Especially they need a new GUI backend because the currently used `kaptain` GUI is outdated and does not run on up-to-date systems.
 
 ## imfuse
 
@@ -25,9 +22,9 @@ Aims to be similar to enfuse, but based on ImageMagick.
 In active development, beta stage. (Terminal) 
 
 Dependencies:
- - `imagemagick`
- - `enfuse` (recommended, needed for some options)
- - [`imgview`](#imgview) (optional image viewer)
+ - `imagemagick` version 7.
+ - `enfuse` (optional, needed for some options)
+ - `geeqie` and `viewnior` (optional image viewers)
  - `exiftool` (optional to preserve exif meta data)
 
 ## imgruler
