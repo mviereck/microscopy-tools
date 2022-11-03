@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.7.0-beta"
+Version="0.7.1-beta"
 
 # ToDo:
 # New BUG s:
@@ -439,28 +439,6 @@ digitrm() {
   #sed "s/[0-9.]//g" <<< "${1:-}"
   echo "${1//[0-9.]/}"
 }
-printfreememory() {
-  # print current free memory including zram
-  local Memory Line Zram
-  Memory="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
-  while read Line; do
-    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print ($3 - $4)}' <<< "$Line")"
-    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
-    Memory="$((Memory + Zram))"
-  done < <(/sbin/swapon --bytes | grep zram)
-  echo $Memory
-}
-printtotalmemory() {
-  # print total memory including zram
-  local Memory Line Zram
-  Memory="$(LC_ALL=C free | grep "Mem:" | awk '{print $2}')"
-  while read Line; do
-    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print $3}' <<< "$Line")"
-    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
-    Memory="$((Memory + Zram))"
-  done < <(/sbin/swapon --bytes | grep zram)
-  echo $Memory
-}
 generate_key() {
   # generate a unique key value from current time and nanoseconds
   date +%s.%N
@@ -519,6 +497,28 @@ printnum(){
 printsameline() {
   # print $1 without newline at begin of current line
   echo -ne "${1:-}\033[0K\r" >&2
+}
+printfreememory() {
+  # print current free memory including zram
+  local Memory Line Zram
+  Memory="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
+  while read Line; do
+    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print ($3 - $4)}' <<< "$Line")"
+    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
+    Memory="$((Memory + Zram))"
+  done < <(/sbin/swapon --bytes | grep zram)
+  echo $Memory
+}
+printtotalmemory() {
+  # print total memory including zram
+  local Memory Line Zram
+  Memory="$(LC_ALL=C free | grep "Mem:" | awk '{print $2}')"
+  while read Line; do
+    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print $3}' <<< "$Line")"
+    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
+    Memory="$((Memory + Zram))"
+  done < <(/sbin/swapon --bytes | grep zram)
+  echo $Memory
 }
 unspecialstring() {
   # Replace all characters except those described in "a-zA-Z0-9_" with a '-'. 
@@ -3149,22 +3149,18 @@ declare_variables() {
   return 0
 }
 parse_options() {
-  local Shortoptions Longoptions Parsererror Parsererrorfile Maskgeneratorargument
-  #local Parsedoptions
-  
+  local Shortoptions Longoptions Parsedoptions
+
   Shortoptions="ho:vVW"
   Longoptions="basename:,cache:,exif::,force::,help,limit-memory::,output:,savemask::,showimage,showname,test::,threads:,verbose,version,video"
   Longoptions="$Longoptions,alpha::,background::,bg::,close::,cutblur::,cutsoft::,darkenmask:,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,merge::,prefertop::,revert,sigmoidalclut::,slabs::,soft::,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,max::,mean::,median::,min::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
-  
-  Parsererrorfile="/tmp/imfuse.parserserror.$RANDOM"
-  Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@" 2>"$Parsererrorfile")"
-  [ -e $Parsererrorfile ] && Parsererror="$(cat "$Parsererrorfile")" && rm "$Parsererrorfile"
-  [ "$Parsererror" ] && error "$Parsererror"
+
+  Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error while parsing options."
   eval set -- "$Parsedoptions"
-  
+
   while [ $# -gt 0 ]; do
     [ "$Error" ] && break
     case "${1:-}" in
@@ -3217,11 +3213,8 @@ parse_options() {
         maskarg_parse "$Maskgeneratorargument"
         maskarg_store "$Maskmethodcount"
       ;;
-      
       --) ;;
       *)
-#        Sourceimagelist="$Sourceimagelist
-#$(realpath "${1:-}")" 
         Sourceimagelist="$Sourceimagelist
 ${1:-}"
         [ -f "${1:-}" ] || error "File not found: ${1:-}"
@@ -3230,6 +3223,7 @@ ${1:-}"
     shift
   done
   Sourceimagelist="$(grep .     <<< "$Sourceimagelist")"
+  Sourceimagelist="$(sort -V -r <<< "$Sourceimagelist")"
   return ${Error:-0}
 }
 check_options() {
@@ -3237,7 +3231,6 @@ check_options() {
 
   # source images
   [ -z "$Sourceimagelist" ] && error "No images specified"
-  Sourceimagelist="$(sort -V -r <<< "$Sourceimagelist")"
   grep -q ' ' <<< "$Sourceimagelist" && error "imfuse does not accept whitespace ' ' in pathes or file names:
 $(grep -m1 ' ' <<< "$Sourceimagelist")"
   Imagenumber="$(grep -c "." <<< "$Sourceimagelist")"
@@ -3372,7 +3365,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
 
   # --cachedir
   [ -n "$Cachedir" ]       && Cachedir="$Cachedir/cache.imfuse.$$"
-  [ -z "$Cachedir" ]       && Cachedir="./cache.imfuse"
+  [ -z "$Cachedir" ]       && Cachedir="./cache.imfuse.$$"
   Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
   #Cachedir="$(realpath -m "$Cachedir")"
 

@@ -1,0 +1,126 @@
+#! /bin/bash
+# align - frontend to align image stack with different possible tools.
+
+usage() {
+  echo "
+align - align image stack
+
+Usage:
+  align [OPTIONS] IMAGES ...
+
+Options:
+ --help                    Show this help.
+ --output=DIR              Store aligned images in directory DIR.
+                           Default: ./aligned
+ --contrast [=yes|no]      Correct contrast and exposure differences.
+ --whitebalance [=yes|no]  Correct white balance differences.
+
+Depends on:
+ - focus-stack from Petteri Aimonen:
+   https://github.com/PetteriAimonen/focus-stack
+ - ImageMagick
+"
+}
+digitonly() {
+  echo "${1//[^0-9.]/}"
+}
+align_focusstack() {
+  local Log Line Image Options=
+  local X Y W H Lmax=0 Tmax=0 Rmin=10000000 Bmin=10000000
+
+  # align with focus-stack
+  [ "$Contrast" = "yes" ]     || Options="$Options --no-contrast"
+  [ "$Whitebalance" = "yes" ] || Options="$Options --no-whitebalance"
+  Log="$(focus-stack --verbose --output="$Destinationdir/" --align-only $Options $Sourceimagelist)" || return 1
+
+  # calculate smallest valid area common to all aligned images
+  while read Line; do
+    Line="$(cut -d' ' -f4- <<< "$Line")"
+    X="$(digitonly "$(cut -d, -f1 <<< "$Line")" )"
+    Y="$(digitonly "$(cut -d, -f2 <<< "$Line")" )"
+    W="$(digitonly "$(cut -d, -f3 <<< "$Line")" )"
+    H="$(digitonly "$(cut -d, -f4 <<< "$Line")" )"
+    [ "$X" -gt "$Lmax" ] && Lmax="$X"
+    [ "$Y" -gt "$Tmax" ] && Tmax="$Y"
+    [ "$((X+W))" -lt "$Rmin" ] && Rmin="$((X+W))"
+    [ "$((Y+H))" -lt "$Bmin" ] && Bmin="$((X+W))"
+  done < <(grep "valid area" <<< "$Log")
+  X="$Lmax"
+  Y="$Tmax"
+  W="$((Rmin-Lmax-1))"
+  H="$((Bmin-Tmax-1))"
+
+  # crop aligned images to valid area
+  while read Line; do
+    Image="${Line#*"task: Save "}"
+    $Magickbin "$Image" -crop ${W}x${H}+${X}+${Y} "$Image"
+  done < <(grep "task: Save" <<< "$Log")
+
+  return 0
+}
+declare_variables() {
+  # Global variables with default values
+  Contrast="no"
+  Destinationdir="./aligned"
+  Magickbin=""
+  Sourceimagelist=""
+  Whitebalance="no"
+  return 0
+}
+parse_options() {
+  local Shortoptions Longoptions Parsedoptions Terminate=
+
+  Shortoptions=""
+  Longoptions="contrast::,help,output:,whitebalance::"
+
+  Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")"
+  eval set -- "$Parsedoptions"
+
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --contrast)     Contrast="${2:-yes}" ; shift ;;
+      --help)         usage ; Terminate="yes" ;;
+      --output)       Destinationdir="${2:-$Destinationdir}" ; shift ;;
+      --whitebalance) Whitebalance="${2:-yes}" ; shift ;;
+      --) ;;
+      *)
+        Sourceimagelist="$Sourceimagelist
+${1:-}"
+        [ -f "${1:-}" ] || error "File not found: ${1:-}"
+      ;;
+    esac
+    shift
+  done
+
+  Sourceimagelist="$(grep .  <<< "$Sourceimagelist")"
+  Sourceimagelist="$(sort -V <<< "$Sourceimagelist")"
+
+  [ "$Terminate" ] && exit 0
+  return 0
+}
+main() {
+  set -Eu
+
+  declare_variables
+  parse_options "$@" || return 1
+
+  # check dependencies
+  command -v focus-stack >/dev/null || {
+    echo "Error: focus-stack not found." >&2
+    return 1
+  }
+  command -v convert  && Magickbin="convert"
+  command -v magick   && Magickbin="magick"
+  [ -z "$Magickbin" ] && {
+    echo "Error: imagemagick not found." >&2
+    return 1
+  }
+
+  # run
+  mkdir -p "$Destinationdir" || return 1
+  align_focusstack || return 1
+
+  return 0
+}
+main "$@"
+exit

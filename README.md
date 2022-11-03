@@ -5,13 +5,14 @@ Tools for microscopy and image focus stacking.
  - Tools already useful, in active development:
    - [`imfuse`](#imfuse): Fuse focus stackshot images with ImageMagick. (Terminal)
  - Tools considered to be ready:
-   - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image (Terminal)
+   - [`align`](#align): Align image stack with the help of [focus-stack]((https://github.com/PetteriAimonen/focus-stack)) and ImageMagick.
+   - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image. (Terminal)
  - Tools already useable, awaiting further development:
    - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
    - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
 
-   
+
 `stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
 Especially they need a new GUI backend because the currently used `kaptain` GUI is outdated and does not run on up-to-date systems.
 
@@ -19,13 +20,22 @@ Especially they need a new GUI backend because the currently used `kaptain` GUI 
 
 Combines focus stackshot images to an overall sharp image.
 Aims to be similar to enfuse, but based on ImageMagick.
-In active development, beta stage. (Terminal) 
 
 Dependencies:
  - `imagemagick` version 7.
  - `enfuse` (optional, needed for some options)
  - `geeqie` and `viewnior` (optional image viewers)
  - `exiftool` (optional to preserve exif meta data)
+
+## align
+
+Aligns image stack.
+
+Dependencies:
+ - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack)
+ - `imagemagick`
+
+The core work is done by `focus-stack`, this tool helps to crop the images to the usable common area.
 
 ## imgruler
 
@@ -58,7 +68,6 @@ Folder structure:
                             |--img001.jpg
                             |--img002.jpg
                             |--img003.jpg
-              
 ```
 `stackfuser` will create further subfolders in `somedir` containing intermediate and final results.
 
