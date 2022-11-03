@@ -594,6 +594,7 @@ align() {
   $Image
     -crop ${W}x${H}+${X}+${Y}
     -write mpr:sourceimage.$Number
+    $(showimagecode)
     -delete 0"
     cmd "$Command"
   done <<< "$Sourceimagelist"
@@ -1215,6 +1216,7 @@ load_images() {
     -alpha off
     -depth 16
     -write mpr:sourceimage.${Number}
+    $(showimagecode)
     -delete 0"
 
     cmd "$Command"
@@ -4002,12 +4004,19 @@ $Sourceimagelist"
   }
   [ "$Error" ] && return 1
 
-  # Generating stackshot image
+  # load [and --align] images
+  case "$Align" in
+    yes) align ;;
+    *)   load_images ;;
+  esac
+
+  # generate backgrounds etc.
+  for Mode in $Image_needlist; do
+    generate_image "$Mode"
+  done 
+
+  # Generate stackshot image
   [ -n "$Maskmethodlist" ] && {
-    case "$Align" in
-      yes) align ;;
-      *)   load_images ;;
-    esac
     focus_generate_masks
     [ "$Error" ] && return 1
     focus_merge_masks
