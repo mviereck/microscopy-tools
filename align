@@ -109,8 +109,8 @@ main() {
     echo "Error: focus-stack not found." >&2
     return 1
   }
-  command -v convert  && Magickbin="convert"
-  command -v magick   && Magickbin="magick"
+  command -v convert >/dev/null && Magickbin="convert"
+  command -v magick  >/dev/null && Magickbin="magick"
   [ -z "$Magickbin" ] && {
     echo "Error: imagemagick not found." >&2
     return 1
