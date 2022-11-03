@@ -1,5 +1,5 @@
 #! /bin/bash
-# align - frontend to align image stack with different possible tools.
+# align - align image stack with focus-stack
 
 usage() {
   echo "
