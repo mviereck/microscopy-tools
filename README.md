@@ -4,14 +4,14 @@ Tools for microscopy and image focus stacking.
 
  - Tools already useful, in active development:
    - [`imfuse`](#imfuse): Fuse focus stackshot images with ImageMagick. (Terminal)
+   - [`preparestack`](#preparestack): Batch processing of image stack for contrast, crop, gamma etc. 
  - Tools considered to be ready:
    - [`align`](#align): Align image stack with the help of [focus-stack]((https://github.com/PetteriAimonen/focus-stack)) and ImageMagick.
    - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image. (Terminal)
- - Tools already useable, awaiting further development:
+ - Tools awaiting further development, currently less useful:
    - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
    - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
-
 
 `stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
 Especially they need a new GUI backend because the currently used `kaptain` GUI is outdated and does not run on up-to-date systems.
@@ -38,6 +38,13 @@ Dependencies:
 
 The core work is done by `focus-stack`, this tool helps to crop the images to the usable common area.
 
+## preparestack
+
+Batch processing of image stack for contrast, crop, gamma etc.
+
+Dependencies:
+ - `imagemagick`
+
 ## imgruler
 
 Draws a ruler into an image.
@@ -49,10 +56,19 @@ Considered to be ready for general use.
 
 Dependencies:
  - `imagemagick`
+ 
+## camcfg
+`dialog` frontend for `gphoto2` camera configuration. Reads possible configurations of a camera and provides a dialog in terminal to choose desired settings. Beta stage, already useable.
+ - `camcfg` shows all available configurations.
+ - `camcfg ENTRY` shows configuration of entry ENTRY. Example: `camcfg iso`
+ 
+Dependencies:
+ - `dialog`
+ - `gphoto2`
 
 ## stackfuser
 
-GUI frontend for image foto stacking with enfuse. In active development, beta stage.
+GUI frontend for image foto stacking with enfuse. In development, beta stage. Needs severe rework.
 
 Provides:
  - Image preprocessing with `imagemagick` to enhance contrast and sharpness. 
@@ -89,8 +105,9 @@ Dependencies, also recommended:
  
 ## stackshooter
 GUI for foto stacking with a stepper motor controlled by an Arduino and a camera connected on USB. 
-Beta stage, in active development. 
 Note: The user must be in group `dialout` to access the Arduino.
+
+Beta stage, in development, needs severe rework. 
 
 Features:
  - Camera control with `gphoto2` for preview videos and tethered shooting.
@@ -107,15 +124,6 @@ Dependencies:
  - [`kaptain`](https://github.com/mviereck/kaptain)
  - `xinput`
  - `xdotool`
- 
-## camcfg
-`dialog` frontend for `gphoto2` camera configuration. Reads possible configurations of a camera and provides a dialog in terminal to choose desired settings. Beta stage, already useable.
- - `camcfg` shows all available configurations.
- - `camcfg ENTRY` shows configuration of entry ENTRY. Example: `camcfg iso`
- 
-Dependencies:
- - `dialog`
- - `gphoto2`
 
 ## Example
 Image of some flower pollen. Generated with `stackshooter` and `stackfuser`. 
