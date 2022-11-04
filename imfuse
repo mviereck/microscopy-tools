@@ -5,6 +5,7 @@ Version="0.7.2-beta"
 
 # ToDo:
 # New BUG s:
+# --less
 # =alpha,less: wrong result
 # --fakehdr error
 # --soft: preview of montage is grey
@@ -575,7 +576,7 @@ align() {
     [ "$Y" -gt "$Tmax" ] && Tmax="$Y"
     [ "$((X+W))" -lt "$Rmin" ] && Rmin="$((X+W))"
     [ "$((Y+H))" -lt "$Bmin" ] && Bmin="$((X+W))"
-  done < <(grep "valid area" <<< "$Log" ||:)
+  done < <(grep "valid area" "$Log" ||:)
   X="$Lmax"
   Y="$Tmax"
   W="$((Rmin-Lmax-1))"
@@ -589,7 +590,7 @@ align() {
     Number="$(printnum "$Count")"
     Image="$Cachedir/aligned/$(basename "$Image")"
     Command="$Command
-  $(sendmagickmessage "PROGRESS:Loading and cropping aligned source image $Count / $Imagenumber")"
+  $(sendmagickmessage "PROGRESS:Loading aligned source image and cropping ${W}x${H}+${X}+${Y} $Count / $Imagenumber")"
     Command="$Command
   $Image
     -crop ${W}x${H}+${X}+${Y}
@@ -1029,7 +1030,9 @@ generate_image() {
     ;;
     saturation)
       sendmagickmessage "[ saturation image gerated with a second imfuse instance ]"
+      ### FIXME make this internally
       imfuse --cache="$Cachedir" --output="$Imagename_cache" --saturation $([ "$Showimageprocessing" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation image"
+      showimage "$Imagename"
     ;;
     evaluate)
       evaluate "$Mode" "$Imagename" $Sourceimagelist
@@ -1047,6 +1050,7 @@ generate_image() {
     $Swap
     -compose $Mode -composite
     -write $Imagename
+    $(showimagecode)
     -delete 0
   +set registry:$(generate_image --showname min | cut -d: -f2)
   +set registry:$(generate_image --showname max | cut -d: -f2)"
@@ -1075,7 +1079,6 @@ generate_image() {
   esac
 
   :> "$Cachedir/$(tr : - <<< "$Imagename")"
-  showimage "$Imagename"
   return 0
 }
 layered_tif() {
@@ -2656,8 +2659,8 @@ maskarg_defaultvalue() {
           esac
         ;;
         log)        echo "60" ;;
-        morphology) echo "45" ;;
-        prewitt)    echo "45" ;;
+        morphology) echo "60" ;;
+        prewitt)    echo "60" ;;
         roberts)    echo "60" ;;
         sobel)      echo "45" ;;
         statistic)  echo "45" ;;
@@ -3226,7 +3229,7 @@ declare_variables() {
   Video=""
   Videoframecount=""
   Viewnior=""
-  
+
   return 0
 }
 parse_options() {
@@ -3731,13 +3734,13 @@ check_background() {
 check_outputname() {
   # --output
   Resultimage="imfuse."
-  [ "$Align" = "yes" ] && Resultimage="${Resultimage}align-"
+  [ "$Align" = "yes" ] && Resultimage="${Resultimage}align_"
   [ "$Softmode" ] && {
-    Resultimage="${Resultimage}soft-"
-    [ "$Softmode" != "auto" ] && Resultimage="${Resultimage}$Softmode-"
+    Resultimage="${Resultimage}soft_"
+    [ "$Softmode" != "auto" ] && Resultimage="${Resultimage}${Softmode}_"
   }
   [ "$Slabs" ] && {
-    Resultimage="${Resultimage}slabs$Slabs-"
+    Resultimage="${Resultimage}slabs${Slabs}_"
   }
 
   while read Line; do
@@ -3836,7 +3839,7 @@ check_outputname() {
     "") ;;
     *) Resultimage="${Resultimage}_test$Testarg" ;;
   esac
-  Resultimage="$(sed "s/--/-/g ; s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
+  Resultimage="$(sed "s/__/_/g ; s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
 
   Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist \
 $Background $([ "$Darkenmask" ] && md5sum "$Darkenmask") $Cutblur $Cutsoft $Fakehdr $Finalblur \
@@ -3977,6 +3980,7 @@ main() {
 
   # --slabs ### FIXME
   [ "$Slabs" ] && {
+    note "--slabs does not work well yet."
     Sourceimagelist=""
     for Slabstep in $(seq $Slabs); do
       note "--slabs: Creating slab $Slabstep / $Slabs"
