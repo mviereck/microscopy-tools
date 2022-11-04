@@ -10,8 +10,9 @@ Usage:
 
 Options:
  --help                    Show this help.
- --output=DIR              Store aligned images in directory DIR.
+ --output DIR              Store aligned images in directory DIR.
                            Default: ./aligned
+ --rotate DEGREE           Rotate images clockwise by degree DEGREE.
  --contrast [=yes|no]      Correct contrast and exposure differences.
  --whitebalance [=yes|no]  Correct white balance differences.
 
@@ -25,13 +26,13 @@ digitonly() {
   echo "${1//[^0-9.]/}"
 }
 align_focusstack() {
-  local Log Line Image Options=
+  local Log Line Image Outputimage Options= Command
   local X Y W H Lmax=0 Tmax=0 Rmin=10000000 Bmin=10000000
 
   # align with focus-stack
   [ "$Contrast" = "yes" ]     || Options="$Options --no-contrast"
   [ "$Whitebalance" = "yes" ] || Options="$Options --no-whitebalance"
-  Log="$(focus-stack --verbose --output="$Destinationdir/" --align-only $Options $Sourceimagelist)" || return 1
+  Log="$(focus-stack --verbose --output="$Destinationdir/" --jpgquality=100 --align-only $Options $Sourceimagelist)" || return 1
 
   # calculate smallest valid area common to all aligned images
   while read Line; do
@@ -53,7 +54,25 @@ align_focusstack() {
   # crop aligned images to valid area
   while read Line; do
     Image="${Line#*"task: Save "}"
-    $Magickbin "$Image" -crop ${W}x${H}+${X}+${Y} "$Image"
+    Outputimage="$(rev <<< "$Image" | cut -d. -f2- | rev).tif"
+
+    Command="
+$Magickbin
+  $Image
+    -crop ${W}x${H}+${X}+${Y}
+    +repage
+    -background transparent
+    -rotate ${Rotation:-0}
+    +repage
+    -quality 100%
+    -compress lzw
+    -type TrueColorAlpha
+    -write $Outputimage
+    -delete 0
+  -exit"
+    $Command
+
+    [ "$Image" != "$Outputimage" ] && rm "$Image"
   done < <(grep "task: Save" <<< "$Log")
 
   return 0
@@ -63,6 +82,7 @@ declare_variables() {
   Contrast="no"
   Destinationdir="./aligned"
   Magickbin=""
+  Rotation="0"
   Sourceimagelist=""
   Whitebalance="no"
   return 0
@@ -71,7 +91,7 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions Terminate=
 
   Shortoptions=""
-  Longoptions="contrast::,help,output:,whitebalance::"
+  Longoptions="contrast::,help,output:,rotate:,whitebalance::"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")"
   eval set -- "$Parsedoptions"
@@ -81,6 +101,7 @@ parse_options() {
       --contrast)     Contrast="${2:-yes}" ; shift ;;
       --help)         usage ; Terminate="yes" ;;
       --output)       Destinationdir="${2:-$Destinationdir}" ; shift ;;
+      --rotate)       Rotation="${2:-0}" ; shift ;;
       --whitebalance) Whitebalance="${2:-yes}" ; shift ;;
       --) ;;
       *)
