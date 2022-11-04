@@ -1,0 +1,335 @@
+#! /bin/bash
+# preparestack - prepare image stack with ImageMagick
+
+usage() {
+  echo "
+preparestack - prepare image stack
+
+Usage:
+  preparestack [OPTIONS] IMAGES ...
+
+Options:
+ --help                       Show this help.
+ --output DIR                 Store prepared images in directory DIR.
+                              Default: ./prepared
+
+For the following options and their arguments see also documentation of
+ImageMagick options with same name.
+ --contrast                   Enhance contrast the simple way.
+ --contrast-stretch           Contrast with color stretch.  Default: auto
+ --crop [=GEOMETRY]           Crop a part of the images.
+                                         Default: 640x480 from the middle.
+ --gamma [=ARG]               Adjust image gamma.           Default: auto
+ --level [=ARG]               Adjust image level.           Default: auto
+ --resize [=ARG]              Resize images.                Default: 50%
+ --rotate [=DEGREE]           Rotate images clockwise.      Default: 90
+ --sharpen [=ARG]             Sharpen images.               Default: 2x1
+ --shave [=ARG]               Shave away edges from images. Default: 30%
+ --sigmoidal-contrast [=ARG]  Enhance contrast.             Default: 3x50%
+ --im OPTIONS                 ImageMagick options to apply literally.
+
+Option sets:
+ --set [=SET]                 Apply a predefined set of options. SET can be:
+                                gamma1   gamma2   gamma3
+                                level1   level2   level3
+                                stretch1 stretch2 stretch3
+                                sharp1   sharp2   sharp3
+
+Depends on:
+ - ImageMagick
+"
+}
+digitonly() {
+  echo "${1//[^0-9.]/}"
+}
+meanproperties() {
+  Imageproperties="$($Magickbin $Sourceimagelist -evaluate-sequence mean -format '
+Imagemean=%[mean]
+Imagequantumrange=%[fx:quantumrange]
+Imageautogamma=%[fx:log(mean)/log(0.5)]
+Imageminlevel=%[fx:minima*100]
+Imagemaxlevel=%[fx:maxima*100]
+Imageminlevelred=%[fx:minima.r*100]
+Imagemaxlevelred=%[fx:maxima.r*100]
+Imageminlevelgreen=%[fx:minima.g*100]
+Imagemaxlevelgreen=%[fx:maxima.g*100]
+Imageminlevelblue=%[fx:minima.b*100]
+Imagemaxlevelblue=%[fx:maxima.b*100]
+Imagewidth=%[w]
+Imageheight=%[h]
+' info:)"
+  eval $Imageproperties
+}
+prepare_focusstack() {
+  local Image Outputimage Command
+
+  # crop aligned images to valid area
+  while read Image; do
+    Outputimage="$(rev <<< "$Image" | cut -d. -f2- | rev).tif"
+    Outputimage="$(basename "$Outputimage")"
+    Outputimage="$Destinationdir/$Outputimage"
+
+    Command="
+$Magickbin
+  $Image
+    -orient undefined
+    $Prepareoptions
+    +repage
+    -compress lzw
+    -type TrueColorAlpha
+    -write $Outputimage
+    -delete 0
+  -exit"
+    $Command || break
+  done <<< "$Sourceimagelist"
+
+  return 0
+}
+declare_variables() {
+  # Global variables with default values
+  Destinationdir="./prepared"
+  Imagemean=""
+  Imagequantumrange=""
+  Imageautogamma=""
+  Imageminlevel=""
+  Imagemaxlevel=""
+  Imageminlevelred=""
+  Imagemaxlevelred=""
+  Imageminlevelgreen=""
+  Imagemaxlevelgreen=""
+  Imageminlevelblue=""
+  Imagemaxlevelblue=""
+  Imagewidth=""
+  Imageheight=""
+  Magickbin=""
+  Prepareoptions=""
+  Sourceimagelist=""
+  return 0
+}
+parse_options() {
+  local Shortoptions Longoptions Parsedoptions Terminate= Arg=
+  local X Y W H Cropgeometry
+
+  Shortoptions=""
+  Longoptions="help,output:"
+  Longoptions="$Longoptions,im:,set::"
+  Longoptions="$Longoptions,contrast,contrast-stretch::,crop::,gamma::,level::,resize::,rotate::,sharpen::,shave::,sigmoidal-contrast::"
+
+  Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")"
+  eval set -- "$Parsedoptions"
+
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --help)
+        usage
+        Terminate="yes"
+        break
+      ;;
+      --output)
+        Destinationdir="${2:-$Destinationdir}"
+        shift
+      ;;
+      ### Imagemagick options
+      --contrast)
+        Prepareoptions="$Prepareoptions
+    -contrast"
+        shift
+      ;;
+      --contrast-stretch)
+        [ "$Arg" = "auto" ] && Arg=""
+        Arg="${2:-"IMAGEMINLEVELxIMAGEMAXLEVEL"}"
+        Prepareoptions="$Prepareoptions
+    -contrast-stretch $Arg"
+        shift
+      ;;
+      --crop)
+        [ -z "$Arg" ] && Arg="IMAGECROPGEOMETRY"
+        Prepareoptions="$Prepareoptions
+    -crop $Arg"
+        shift
+      ;;
+      --gamma)
+        [ "$Arg" = "auto" ] && Arg=""
+        Arg="${2:-"IMAGEAUTOGAMMA"}"
+        Prepareoptions="$Prepareoptions
+    -gamma $Arg"
+        shift
+      ;;
+      --im)
+        Prepareoptions="$Prepareoptions
+    ${2:-}"
+        shift
+      ;;
+      --level)
+        [ "$Arg" = "auto" ] && Arg=""
+        Arg="${2:-"IMAGEMINLEVEL%xIMAGEMAXLEVEL%"}"
+        Prepareoptions="$Prepareoptions
+    -level $Arg"
+        shift
+      ;;
+      --resize)
+        Arg="${2:-"50%"}"
+        Prepareoptions="$Prepareoptions
+    -resize $Arg"
+        shift
+      ;;
+      --rotate)
+        Prepareoptions="$Prepareoptions
+    -background transparent
+    -rotate '${2:-0}'"
+        shift
+      ;;
+      --set)
+        Arg="${2:-"gamma1"}"
+        case "$Arg" in
+          gamma1)
+            Prepareoptions="$Prepareoptions
+    -gamma IMAGEAUTOGAMMA
+    -sigmoidal-contrast 3x50%
+    -sharpen 2x1"
+          ;;
+          gamma2)
+            Prepareoptions="$Prepareoptions
+    -gamma IMAGEAUTOGAMMA
+    -sigmoidal-contrast 5x50%
+    -sharpen 4x2"
+          ;;
+          gamma3)
+            Prepareoptions="$Prepareoptions
+    -gamma IMAGEAUTOGAMMA
+    -sigmoidal-contrast 7x50%
+    -sharpen 8x4"
+          ;;
+          level1)
+            Prepareoptions="$Prepareoptions
+    -level IMAGEMINLEVEL%xIMAGEMAXLEVEL%
+    -sigmoidal-contrast 3x50%
+    -sharpen 2x1"
+          ;;
+          level2)
+            Prepareoptions="$Prepareoptions
+    -level IMAGEMINLEVEL%xIMAGEMAXLEVEL%
+    -sigmoidal-contrast 5x50%
+    -sharpen 4x2"
+          ;;
+          level3)
+            Prepareoptions="$Prepareoptions
+    -level IMAGEMINLEVEL%xIMAGEMAXLEVEL%
+    -sigmoidal-contrast 7x50%
+    -sharpen 8x4"
+          ;;
+          stretch1)
+            Prepareoptions="$Prepareoptions
+    -sigmoidal-contrast 3x50%
+    -sharpen 2x1
+    -contrast-stretch IMAGEMINLEVELxIMAGEMAXLEVEL"
+          ;;
+          stretch2)
+            Prepareoptions="$Prepareoptions
+    -sigmoidal-contrast 5x50%
+    -sharpen 4x2
+    -contrast-stretch IMAGEMINLEVELxIMAGEMAXLEVEL"
+          ;;
+          stretch3)
+            Prepareoptions="$Prepareoptions
+    -sigmoidal-contrast 7x50%
+    -sharpen 8x4
+    -contrast-stretch IMAGEMINLEVELxIMAGEMAXLEVEL"
+          ;;
+          sharp1)
+            Prepareoptions="$Prepareoptions
+    -contrast
+    -sigmoidal-contrast 3x50%
+    -sharpen 2x1"
+          ;;
+          sharp2)
+            Prepareoptions="$Prepareoptions
+    -contrast
+    -sigmoidal-contrast 5x50%
+    -sharpen 4x2"
+          ;;
+          sharp3)
+            Prepareoptions="$Prepareoptions
+    -contrast
+    -sigmoidal-contrast 7x50%
+    -sharpen 8x4"
+          ;;
+          *)
+            echo "Option --set: Unknown set '$Arg'" >&2
+            Terminate="yes"
+            break
+          ;;
+        esac
+        shift
+      ;;
+      --sharpen)
+        Arg="${2:-"2x1"}"
+        grep -q "x" <<< "$Arg" || Arg="${Arg}x1"
+        Prepareoptions="$Prepareoptions
+    -sigmoidal-contrast $Arg"
+        shift
+      ;;
+      --shave)
+        Arg="${2:-"30%"}"
+        Prepareoptions="$Prepareoptions
+    -shave $Arg
+    +repage"
+        shift
+      ;;
+      --sigmoidal-contrast)
+        Arg="${2:-"3x50%"}"
+        grep -q "x" <<< "$Arg" || Arg="${Arg}x50%"
+        Prepareoptions="$Prepareoptions
+    -sigmoidal-contrast $Arg"
+        shift
+      ;;
+      --) ;;
+      *)
+        Sourceimagelist="$Sourceimagelist
+${1:-}"
+        [ -f "${1:-}" ] || error "File not found: ${1:-}"
+      ;;
+    esac
+    shift
+  done
+
+  Sourceimagelist="$(grep .  <<< "$Sourceimagelist")"
+  Sourceimagelist="$(sort -V <<< "$Sourceimagelist")"
+
+  [ "$Terminate" ] && exit 0
+  return 0
+}
+main() {
+  set -Eu
+  declare_variables
+  parse_options "$@" || return 1
+
+  # check dependencies
+  command -v convert >/dev/null && Magickbin="convert"
+  command -v magick  >/dev/null && Magickbin="magick"
+  [ -z "$Magickbin" ] && {
+    echo "Error: imagemagick not found." >&2
+    return 1
+  }
+
+  # get and insert some image stack properties if needed
+  grep -q IMAGE <<< "$Prepareoptions" && {
+    meanproperties
+
+    [ "$Imagewidth"  -gt 640 ] && W="640" || W="$((Imagewidth/2))"
+    [ "$Imageheight" -gt 480 ] && H="480" || H="$((Imageheight/2))"
+    X="$(( (Imagewidth-W)/2 ))"
+    Y="$(( (Imageheight-H)/2 ))"
+    Cropgeometry="${W}x${H}+${X}+${Y}"
+
+    Prepareoptions="$(sed "s/IMAGEMINLEVEL/$Imageminlevel/g ; s/IMAGEMAXLEVEL/$Imagemaxlevel/g ; s/IMAGEAUTOGAMMA/$Imageautogamma/g ; s/IMAGECROPGEOMETRY/$Cropgeometry/g" <<< "$Prepareoptions")"
+  }
+
+  # run
+  mkdir -p "$Destinationdir" || return 1
+  prepare_focusstack         || return 1
+
+  return 0
+}
+main "$@"
+exit
