@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.7.2-beta"
+Version="0.7.3-beta"
 
 # ToDo:
 # New BUG s:
@@ -253,7 +253,7 @@ Mask generation and fusion adjustments:
                       alpha channel (=transparency channel).
                       Good method to reduce noise in low contrast areas.
                       The semitransparent result is composed over a background.
-                      Default background is 'transparent'.
+                      Default background is 'enfuse'. Check also 'transparent'.
                       Can take an argument as one or two percent values.
                       Simplified usage: If only one value is given, 
                       positive values make the image more transparent and 
@@ -297,8 +297,24 @@ Mask generation and fusion adjustments:
  --denoise [=%]       Experimental option to remove noise in low contrast areas.
                       The percent value is a threshold. 
                       Rather use --alpha or --finalblur.
- --finalblur [=p%,sSIGMA1,Ssigma2]   Soft blur of bokeh. Blurs low contrast 
-                      areas with a contrast strenght up to % with SIGMA1.
+ --finalblur [=p%,rRADIUS,sSIGMA]   Soft blur of bokeh. 
+                      Blurs along a sigmoidal curve from low contrast (much blur)
+                      to high contrast (less blur). 
+                        r        radius of blur      Default: 4
+                        s        sigma of curve      Default: 5
+                        p        mid-point of curve  Default: 50%
+                      The curve looks like:
+                                xxxx
+                              xx
+                             x
+                           xx
+                       xxxx
+                       The stronger sigma is, the steepening the curve will be.
+                       A higher percent moves mid-point to the right and 
+                       will blur more low contrast areas.
+                       A bigger radius causes a stronger blur.
+ Blurs low contrast 
+                      areas with RADIUS.
                       Default %: 50, default SIGMA1: 3, default sigma2: 2
                       If sigma2 is given, the cut border between bokeh and 
                       foreground is blurred for a soft transition.
@@ -383,12 +399,21 @@ Examples:
 Have a folder 'stackshot' containing all stack source images.
 Go to the folder above 'stackshot'.
   Run imfuse with:
-    imfuse -VW --align --diffstat stackshot/*
+    imfuse -VW --align --diffstat                            stackshot/*
   You might be unsatisfied with low contrast areas. Try:
-    imfuse -VW --align --diffstat --soft                     stackshot/*
-    imfuse -VW --align --diffstat --alpha --bg=enfuse        stackshot/*
+    imfuse -VW --align --diffstat --maskblur                 stackshot/*
+    imfuse -VW --align --diffstat --maskblur --soft          stackshot/*
+    imfuse -VW --align --diffstat --maskblur --alpha         stackshot/*
   You might have incomplete foreground objects. Try:
-    imfuse -VW --align --diffstat --alpha --bg=enfuse --less stackshot/*
+    imfuse -VW --align --diffstat --maskblur --alpha --less  stackshot/*
+
+  Try also other mask options instead of (or additionally to) --diffstat,
+  e.g. --wavelet or --morphology. Play with radius/sigma of mask options,
+  e.g. --diffstat=r5. Try different percent values for --less,
+  e.g. --less=p30 or --less=p80.
+  Think of radius or sigma like brush sizes.
+  Small values create small brushes painting more details and more noise.
+  Great values create big brushes painting less details and less noise.
 "
 }
 
@@ -2107,7 +2132,7 @@ focus_hard() {
 
   Resultimage="mpr:resultimage"
   mkimg_transparent "$Resultimage"
-  Maskmax="${Maskmax:-mpr:maskmax}"
+  Maskmax="${Maskmax:-mpr:resultmask}"
 
   evaluate max "$Maskmax" $Maskimagelist
   Levelmax="$(getmagickinfo "$Maskmax" "%[fx:maxima*100]")"
@@ -2124,7 +2149,7 @@ focus_hard() {
     -delete 0
   $Maskmax
     -alpha off
-    -write mpr:maskmax
+    -write mpr:resultmask
     -delete 0"
   cmd "$Command"
 
@@ -2153,14 +2178,15 @@ focus_hard() {
     Command="$Command
   # stepwise increase maskmax
   mpr:sourcemask 
-  mpr:maskmax 
+  mpr:resultmask 
     -compose Lighten -composite
-    -write mpr:maskmax
+    -write mpr:resultmask
+    -write ./maskmax.tif
     -delete 0"
 
     Command="$Command
   # get area of source mask equal or sharper than current max
-  mpr:maskmax
+  mpr:resultmask
   mpr:sourcemask
     -compose MinusSrc -composite -fill white +opaque black
     -alpha off
@@ -2186,7 +2212,7 @@ focus_hard() {
 
       Command="$Command
   # get part of actual maskmax
-  mpr:maskmax
+  mpr:resultmask
   mpr:cutmask_max
     -alpha Off -compose CopyOpacity -composite
     -write mpr:maskmax_part
@@ -2216,10 +2242,10 @@ focus_hard() {
     -compose CopyOpacity -composite
     -write mpr:sourcemask_part
     -delete 0
-  mpr:maskmax
+  mpr:resultmask
   mpr:sourcemask_part
     -compose Over -composite
-    -write mpr:maskmax
+    -write mpr:resultmask
     -delete 0"
 
       Command="$Command
@@ -2233,7 +2259,7 @@ focus_hard() {
       Command="$Command
   # get area of source mask equal or sharper than current max (same code as above, but now with less-adjusted maskmax.
   mpr:sourcemask
-  mpr:maskmax
+  mpr:resultmask
     -compose MinusDst -composite -fill white +opaque black
     -alpha off
     -negate
@@ -2299,7 +2325,7 @@ focus_hard() {
   [ "$Maskmaxcopy" ] && {
     Command="
   # store max mask
-  mpr:maskmax
+  mpr:resultmask
     -write $Maskmaxcopy
     -delete 0"
     cmd "$Command"
@@ -3103,8 +3129,8 @@ finish() {
   done
   echo "" >&2
   ps -p "$Magickmessagepid" >/dev/null 2>&1 && kill "$Magickmessagepid"
-  [ -f "$Magickfifolog" ]   && cp "$Magickfifolog" ~/
-  [ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" ~/
+  #[ -f "$Magickfifolog" ]   && cp "$Magickfifolog" ~/
+  #[ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" ~/
   [ -d "$Cachedir" ] && rm -R "$Cachedir"
   trap - EXIT
   trap - SIGINT
@@ -3155,8 +3181,8 @@ declare_variables() {
   Fakehdr=""
   Finalblur=""
   Finalblurpercent=""
-  Finalblursigma1=""
-  Finalblursigma2=""
+  Finalblurradius=""
+  Finalblursigma=""
   Firstimage=""
   Firstmaskmethod=""
   Forceoverwrite=""
@@ -3431,7 +3457,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     *)
       [ "$Globalalpha" = "auto" ] && Globalalpha="0x100"
       Globalalpha="$(levelparse "$Globalalpha")"
-      Background="${Background:-transparent}"
+      Background="${Background:-enfuse}"
     ;;
   esac
 
@@ -3535,8 +3561,8 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     maskarg_checkpercent "$Finalblur"
     [ "$Argpercent1" = "auto" ] && Argpercent1=""
     Finalblurpercent="${Argpercent1:-50}"
-    Finalblursigma1="${Argsigma1:-3}"
-    Finalblursigma2="${Argsigma2:-2}"
+    Finalblurradius="${Argradius1:-4}"
+    Finalblursigma="${Argsigma1:-5}"
   }
 
   # --grayscale
@@ -3799,7 +3825,7 @@ check_outputname() {
     Resultimage="${Resultimage}_cutblur=s$Cutblur"
   }
   [ "$Finalblur" ] && {
-    Resultimage="${Resultimage}_finalblur=p${Finalblurpercent}-s${Finalblursigma1}-S${Finalblursigma2}"
+    Resultimage="${Resultimage}_finalblur=p${Finalblurpercent}-r${Finalblurradius}-s${Finalblursigma}"
   }
   case $Globalalpha in
     "") ;;
@@ -4022,19 +4048,47 @@ $Sourceimagelist"
   # Generate stackshot image
   [ -n "$Maskmethodlist" ] && {
     focus_generate_masks
-    [ "$Error" ] && return 1
     focus_merge_masks
-    [ "$Error" ] && return 1
     case $Softmode in
       "") focus_hard --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --lessthanmax "$Globalless" --cutsoft "$Cutsoft" --cutblur "$Cutblur" ;;
       *)  focus_soft    --maskmax "$Resultmask" --output "$Resultimage" --alpha "$Globalalpha" --sigmoidal "$Softmode" ;;
     esac
-    [ "$Error" ] && return 1
+
     # --finalblur
     [ "$Finalblur" ] && {
-      note "Applying --finalblur=p${Finalblurpercent},s${Finalblursigma1},S${Finalblursigma2}"
-      finalblur --image "$Resultimage" --mask "$Resultmask" --percent "$Finalblurpercent" --sigma1 "$Finalblursigma1" --sigma2 "$Finalblursigma2"
-      [ "$Error" ] && return 1
+      #finalblur --image "$Resultimage" --mask "$Resultmask" --percent "$Finalblurpercent" --sigma1 "$Finalblurradius" --sigma2 "$Finalblursigma"
+      sendmagickmessage "Applying --finalblur=p${Finalblurpercent},r${Finalblurradius},s${Finalblursigma}"
+      Command="
+  $Resultimage
+    -write mpr:resultimage
+    -delete 0
+  -size 1x256
+  gradient:
+    -rotate 90
+    -depth 8
+    -sigmoidal-contrast ${Finalblursigma}x$((100-Finalblurpercent))%
+    -write mpr:clut
+    -delete 0
+  mpr:resultmask
+    -negate
+    -write mpr:mask
+    -delete 0
+  mpr:mask
+  mpr:clut
+    -clut
+    -write mpr:mask
+    -delete 0
+  mpr:resultimage
+  mpr:mask
+    -compose Blur
+    -set option:compose:args ${Finalblurradius}x${Finalblurradius}
+    -composite
+    -write mpr:resultimage
+    -write $Resultimage
+    -delete 0
+"
+      cmd "$Command"
+      cmd_waitforready
     }
     # --alpha=ARG
     [ "$Globalalpha" ] && {
