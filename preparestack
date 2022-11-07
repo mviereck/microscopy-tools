@@ -1,6 +1,9 @@
 #! /bin/bash
 # preparestack - prepare image stack with ImageMagick
 
+# Notes:
+# add --meanbalance?
+
 usage() {
   echo "
 preparestack - prepare image stack
@@ -12,12 +15,15 @@ Options:
  --help                       Show this help.
  --output DIR                 Store prepared images in directory DIR.
                               Default: ./prepared
+ -V, --showimage              Show images in image viewer geeqie.
+ -1, --one                    Show one middle image only, do not store.
+
 
 For the following options and their arguments see also documentation of
 ImageMagick options with same name.
  --contrast                   Enhance contrast the simple way.
- --contrast-stretch           Contrast with color stretch.  Default: auto
- --crop [=GEOMETRY]           Crop a part of the images.
+ --contrast-stretch [=ARG]    Contrast with color stretch.  Default: auto
+ --crop [=GEOMETRY]           Crop a part of the images. GEOMETRY is WxH+X+Y.
                                          Default: 640x480 from the middle.
  --gamma [=ARG]               Adjust image gamma.           Default: auto
  --level [=ARG]               Adjust image level.           Default: auto
@@ -34,75 +40,90 @@ Option sets:
                                 level1   level2   level3
                                 stretch1 stretch2 stretch3
                                 sharp1   sharp2   sharp3
-
 Depends on:
  - ImageMagick
+ - geeqie (optional)
 "
+}
+error() {
+  echo "preparestack ERROR: ${1:-}" >&2
+  exit 1
 }
 digitonly() {
   echo "${1//[^0-9.]/}"
 }
+showimage() {
+  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"${1:-}" 2>/dev/null &
+  return 0
+}
+printsameline() {
+  # print $1 without newline at begin of current line
+  echo -ne "${1:-}\033[0K\r" >&2
+}
 meanproperties() {
   Imageproperties="$($Magickbin $Sourceimagelist -evaluate-sequence mean -format '
-Imagemean=%[mean]
-Imagequantumrange=%[fx:quantumrange]
 Imageautogamma=%[fx:log(mean)/log(0.5)]
 Imageminlevel=%[fx:minima*100]
 Imagemaxlevel=%[fx:maxima*100]
-Imageminlevelred=%[fx:minima.r*100]
-Imagemaxlevelred=%[fx:maxima.r*100]
-Imageminlevelgreen=%[fx:minima.g*100]
-Imagemaxlevelgreen=%[fx:maxima.g*100]
-Imageminlevelblue=%[fx:minima.b*100]
-Imagemaxlevelblue=%[fx:maxima.b*100]
 Imagewidth=%[w]
 Imageheight=%[h]
-' info:)"
+' -write info: \
+  -filter box -resize 1x1! -format "Imagemeancolor=%[pixel:u]" -write info: \
+  -delete 0 \
+  -exit)"
   eval $Imageproperties
 }
 prepare_focusstack() {
-  local Image Outputimage Command
+  local Image Outputimage Command Count
 
-  # crop aligned images to valid area
+  Count=0
   while read Image; do
+    Count="$((Count+1))"
     Outputimage="$(rev <<< "$Image" | cut -d. -f2- | rev).tif"
     Outputimage="$(basename "$Outputimage")"
     Outputimage="$Destinationdir/$Outputimage"
 
+    printsameline "preparestack: Processing image $Count / $Imagenumber"
+
     Command="
 $Magickbin
   $Image
-    -orient undefined
-    $Prepareoptions
+    -orient undefined $Prepareoptions
     +repage
     -compress lzw
     -type TrueColorAlpha
     -write $Outputimage
     -delete 0
   -exit"
-    $Command || break
+    $Command
+
+    Error="$?"
+    [ "$Error" != "0" ] && break
+    showimage "$Outputimage"
   done <<< "$Sourceimagelist"
+  echo ""
+
+  [ "$Oneimageonly" = "yes" ] && echo "$Command"
+  [ "$Error" != "0" ] && error "magick failed: $Command"
 
   return 0
 }
 declare_variables() {
   # Global variables with default values
+  Cropgeometry=""
   Destinationdir="./prepared"
-  Imagemean=""
-  Imagequantumrange=""
+  Force="no"
   Imageautogamma=""
-  Imageminlevel=""
-  Imagemaxlevel=""
-  Imageminlevelred=""
-  Imagemaxlevelred=""
-  Imageminlevelgreen=""
-  Imagemaxlevelgreen=""
-  Imageminlevelblue=""
-  Imagemaxlevelblue=""
-  Imagewidth=""
   Imageheight=""
+  Imagemaxlevel=""
+  Imagemeancolor=""
+  Imageminlevel=""
+  Imagenumber=""
+  Imagewidth=""
   Magickbin=""
+  Oneimageonly=""
   Prepareoptions=""
+  Showimageprocessing=""
   Sourceimagelist=""
   return 0
 }
@@ -110,12 +131,12 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions Terminate= Arg=
   local X Y W H Cropgeometry
 
-  Shortoptions=""
-  Longoptions="help,output:"
+  Shortoptions="1fV"
+  Longoptions="force,help,one,output:,showimage"
   Longoptions="$Longoptions,im:,set::"
   Longoptions="$Longoptions,contrast,contrast-stretch::,crop::,gamma::,level::,resize::,rotate::,sharpen::,shave::,sigmoidal-contrast::"
 
-  Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")"
+  Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Option parsing error."
   eval set -- "$Parsedoptions"
 
   while [ $# -gt 0 ]; do
@@ -125,9 +146,18 @@ parse_options() {
         Terminate="yes"
         break
       ;;
+      -1|--one)
+        Oneimageonly="yes"
+      ;;
       --output)
         Destinationdir="${2:-$Destinationdir}"
         shift
+      ;;
+      -f|--force)
+        Force="yes"
+      ;;
+      -V|--showimage)
+        Showimageprocessing="yes"
       ;;
       ### Imagemagick options
       --contrast)
@@ -143,7 +173,7 @@ parse_options() {
         shift
       ;;
       --crop)
-        [ -z "$Arg" ] && Arg="IMAGECROPGEOMETRY"
+        Arg="${2:-IMAGECROPGEOMETRY}"
         Prepareoptions="$Prepareoptions
     -crop $Arg"
         shift
@@ -176,7 +206,7 @@ parse_options() {
       --rotate)
         Prepareoptions="$Prepareoptions
     -background transparent
-    -rotate '${2:-0}'"
+    -rotate ${2:-0}"
         shift
       ;;
       --set)
@@ -295,38 +325,71 @@ ${1:-}"
 
   Sourceimagelist="$(grep .  <<< "$Sourceimagelist")"
   Sourceimagelist="$(sort -V <<< "$Sourceimagelist")"
-
-  [ "$Terminate" ] && exit 0
+  Imagenumber="$(grep -c .   <<< "$Sourceimagelist")"
+  [ "$Terminate" ] && exit 1
   return 0
 }
 main() {
   set -Eu
   declare_variables
-  parse_options "$@" || return 1
+  parse_options "$@"
+
+  # -1, --one
+  [ "$Oneimageonly" = "yes" ] && {
+    Sourceimagelist="$(head -n5 <<< "$Sourceimagelist" | tail -n1)"
+    Imagenumber="1"
+    Destinationdir="/tmp"
+    Showimageprocessing="yes"
+  }
 
   # check dependencies
   command -v convert >/dev/null && Magickbin="convert"
   command -v magick  >/dev/null && Magickbin="magick"
-  [ -z "$Magickbin" ] && {
-    echo "Error: imagemagick not found." >&2
-    return 1
+  [ -z "$Magickbin" ] && error "Error: imagemagick not found."
+
+  # -V, --showimage
+  [ "$Showimageprocessing" = "yes" ] && {
+    command -v geeqie >/dev/null || error "-V, --showimage: geeqie not found."
+    geeqie -t -r --File:"$(head -n1 <<< "$Sourceimagelist")"
   }
 
   # get and insert some image stack properties if needed
   grep -q IMAGE <<< "$Prepareoptions" && {
     meanproperties
 
-    [ "$Imagewidth"  -gt 640 ] && W="640" || W="$((Imagewidth/2))"
-    [ "$Imageheight" -gt 480 ] && H="480" || H="$((Imageheight/2))"
-    X="$(( (Imagewidth-W)/2 ))"
-    Y="$(( (Imageheight-H)/2 ))"
-    Cropgeometry="${W}x${H}+${X}+${Y}"
+    [ -z "$Cropgeometry" ] && {
+      [ "$Imagewidth"  -gt 640 ] && W="640" || W="$((Imagewidth/2))"
+      [ "$Imageheight" -gt 480 ] && H="480" || H="$((Imageheight/2))"
+      X="$(( (Imagewidth-W)/2 ))"
+      Y="$(( (Imageheight-H)/2 ))"
+      Cropgeometry="${W}x${H}+${X}+${Y}"
+    }
 
     Prepareoptions="$(sed "s/IMAGEMINLEVEL/$Imageminlevel/g ; s/IMAGEMAXLEVEL/$Imagemaxlevel/g ; s/IMAGEAUTOGAMMA/$Imageautogamma/g ; s/IMAGECROPGEOMETRY/$Cropgeometry/g" <<< "$Prepareoptions")"
   }
 
-  # run
+  # --output
+  [ -e "$Destinationdir" ] && case "$Force" in
+    "yes")
+      case "$Destinationdir" in
+        ""|"$HOME"|"/")
+          error "--output: Invalid output directory: '$Destinationdir'"
+        ;;
+        "/tmp") ;;
+        *)
+          #rm -r "$Destinationdir" || return 1
+        ;;
+      esac
+    ;;
+    "no")
+      error "Output directory already exists:
+  $Destinationdir
+  You can force to use it with option --force."
+    ;;
+  esac
   mkdir -p "$Destinationdir" || return 1
+
+  # run
   prepare_focusstack         || return 1
 
   return 0
