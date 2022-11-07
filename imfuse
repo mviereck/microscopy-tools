@@ -111,7 +111,7 @@ Contrast mask options:
  --compass [=ARG]     Compass edge detection. 
  --dog [=ARG]         Difference of Gaussian. 
                       ARG additionally takes arguments: 
-                        s       sigma                Default: 0.3
+                        s       sigma                Default: 0.4
                         S       sigma2               Default: 1.6*sigma1
  --diffstat [=ARG]    Compares two local statistics of source images. 
                       Uses ImageMagick option -statistic. Compare --statistic.
@@ -937,8 +937,12 @@ generate_image() {
     return 0
   }
 
-  [ -e "$Cachedir/$(tr : - <<< "$Imagename")" ] && return 0
-  note "Generating image $Imagename"
+  sendmagickmessage "NOTE:Generating image $Imagename"
+  [ -e "$Cachedir/$(tr : - <<< "$Imagename")" ] && {
+    sendmagickmessage "NOTE: Skipping image generation, already exists: $Imagename"
+    return 0
+  }
+  load_sourceimages
 
   case "$Imagetype" in
     enfuse)
@@ -2772,7 +2776,7 @@ maskarg_defaultvalue() {
         comet)      echo "5" ;;
         compass)    echo "" ;;
         diffstat)   echo "" ;;
-        dog)        echo "0.3" ;;
+        dog)        echo "0.4" ;;
         freichen)   echo "" ;;
         gaussian)   echo "0.3" ;;
         halo)       echo "5" ;;
@@ -2791,7 +2795,7 @@ maskarg_defaultvalue() {
     ;;
     sigma2)
       case "${1:-}" in
-        dog)       echo "$(calc "${Argsigma1:-0.75} * 1.6")" ;;
+        dog)       echo "$(calc "${Argsigma1:-0.3} * 1.6")" ;;
         *)         echo "" ;;
       esac
     ;;
@@ -2990,8 +2994,10 @@ maskarg_checksigma() {
 cmd() {
   local Command
   Command="${1:-}"
-  echo "$Command" >> "$Magickfifo"
-  echo "$Command" >> "$Magickscriptlog"
+  [ -n "$Magickfifo" ] && {
+    echo "$Command" >> "$Magickfifo"
+    echo "$Command" >> "$Magickscriptlog"
+  }
   return 
 }
 cmd_waitforkeyvalue() {
@@ -3996,7 +4002,7 @@ main() {
 
   # --slabs ### FIXME
   [ "$Slabs" ] && {
-    error "--slabs does not work yet."
+    note "--slabs is experimental yet."
     Sourceimagelist=""
     for Slabstep in $(seq $Slabs); do
       note "--slabs: Creating slab $Slabstep / $Slabs"
