@@ -5,12 +5,12 @@ Version="0.7.4-beta"
 
 # ToDo:
 # New BUG s:
-# --less
+# --chroma --max --saturation: combination has odd Argword1 issues
+
 # =alpha,less: wrong result
 # --soft: preview of montage is grey
 # enfuse_split() not ready
 # --slabs
-# --saturation: bash pointer error
 #
 # imfuse:
 # split enfuse with crops having ~10px overlap
@@ -333,13 +333,12 @@ Post processing options:
  --bg, --background BG    Specify a background to paint on. Default: enfuse
                       BG can be an image name or one out of:
                         enfuse
-                        saturation
                         transparent
                         magick -list color
                         magick -list evaluate (compare --evaluate)
                         magick -list compose  (compare --compose)
                       Useful with options --alpha and --threshold.
-                      Recommendations: enfuse saturation mean max min
+                      Recommendations: enfuse mean max min
                                        colorize colorize2 pinlight pinlight2
                       Interesting: interpolate overlay pegtoplight reflect
  --finalblur [=p%,rRADIUS,sSIGMA]   Soft blur of bokeh. 
@@ -381,11 +380,7 @@ has some weaknesses and can lead to artefacts.
    - Option --alpha gives a quite satisfying result for low contrast noise areas.
      Example: '--diffstat --alpha' or '--diffstat=alpha'
    - Another possibility to soften the noise is option --finalblur.
-     Example: '--diffstat --finalblur=w25,s2'
-   - Combining the contrast mask with a color saturation mask.
-     Example: '--diffstat --saturation=w25'
-     (Weight argument 'w25' causes the saturation mask to take effect only 
-     in low contrast areas (<=25%) of the '--diffstat' mask.)
+     Example: '--diffstat --finalblur'
 
  - Objects in foreground with background artefacts:
   Sometimes objects in background result in a stronger contrast mask than
@@ -452,7 +447,7 @@ showimage() {
 ### Misc
 
 calc() {
-  awk "BEGIN {print $* }"
+  LC_ALL=C awk "BEGIN {print $* }"
 }
 comma2whitespace() {
   #sed "s/,/ /g" <<< "${1:-}"
@@ -529,10 +524,10 @@ printsameline() {
 printfreememory() {
   # print current free memory including zram
   local Memory Line Zram
-  Memory="$(LC_ALL=C free | grep "Mem:" | awk '{print $7}')"
+  Memory="$(LC_ALL=C free | grep "Mem:" | LC_ALL=C awk '{print $7}')"
   while read Line; do
-    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print ($3 - $4)}' <<< "$Line")"
-    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
+    Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print ($3 - $4)}' <<< "$Line")"
+    Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
     Memory="$((Memory + Zram))"
   done < <(/sbin/swapon --bytes | grep zram)
   echo $Memory
@@ -540,10 +535,10 @@ printfreememory() {
 printtotalmemory() {
   # print total memory including zram
   local Memory Line Zram
-  Memory="$(LC_ALL=C free | grep "Mem:" | awk '{print $2}')"
+  Memory="$(LC_ALL=C free | grep "Mem:" | LC_ALL=C awk '{print $2}')"
   while read Line; do
-    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print $3}' <<< "$Line")"
-    Zram="$(awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
+    Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print $3}' <<< "$Line")"
+    Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
     Memory="$((Memory + Zram))"
   done < <(/sbin/swapon --bytes | grep zram)
   echo $Memory
@@ -920,13 +915,11 @@ generate_image() {
   checkmagicklist compose  "$(tr -d "2" <<< "$Mode")" && Imagetype="compose"
   case "$Mode" in
     enfuse)                                              Imagetype="enfuse" ;;
-    saturation)                                          Imagetype="saturation" ;;
   esac
   Imagename_cache="$Cachedir/$Imagetype.tif"
 
   case "$Imagetype" in
     enfuse)     Imagename="mpr:enfuse" ;;
-    saturation) Imagename="mpr:saturation" ;;
     evaluate)   Imagename="mpr:evaluate.$Mode" ;;
     compose)    Imagename="mpr:compose.$Mode" ;;
     color)      Imagename="mpr:color.$Mode" ;;
@@ -947,12 +940,6 @@ generate_image() {
   case "$Imagetype" in
     enfuse)
       enfuse_split "$Imagename_cache" $Sourceimagelist
-    ;;
-    saturation)
-      sendmagickmessage "[ saturation image gerated with a second imfuse instance ]"
-      ### FIXME make this internally
-      imfuse --cache="$Cachedir" --output="$Imagename_cache" --saturation $([ "$Showimageprocessing" ] && echo -V) $Sourceimagelist || error "Failed to generate saturation image"
-      showimage "$Imagename"
     ;;
     evaluate)
       evaluate "$Mode" "$Imagename" $Imsourceimagelist
@@ -987,7 +974,7 @@ generate_image() {
   esac
 
   case "$Imagetype" in
-    enfuse|saturation)
+    enfuse)
       Command="
   $Imagename_cache
     -write $Imagename
@@ -1237,15 +1224,15 @@ mkclut_uniform() {
   cmd_waitforready
   Histogramarray="$(sed -n "/$Key1/,/$Key2/p" $Magickfifolog | sed '1d ; $d')"
   Histogramarray=($(echo "$Histogramarray" | sed -n  's/[ ]*\([0-9]*\).*gray[(]\([0-9]*\).*$/\1 \2/p' \
-                                           | awk     '{ bin[int($2)] += $1; } 
+                                           | LC_ALL=C awk     '{ bin[int($2)] += $1; } 
                                                       END { for (i=0;i<256;i++) {hist = bin[i]+0; print hist; } } ' ) )
-  Colorcountarray=($(echo ${Histogramarray[*]} | awk '{ split($0,count," ") }
+  Colorcountarray=($(echo ${Histogramarray[*]} | LC_ALL=C awk '{ split($0,count," ") }
                                                        END { for (i=0;i<256;i++) { cum += count[i]; print cum } }' ))
   Totalpixel=${Colorcountarray[255]}
   Factor="$(getmagickinfo rose: "%[fx:$Quantumrange/$Totalpixel]")"
   Lutlist="$(for ((Count=0; Count<256; Count++)); do
     echo "${Colorcountarray[$Count]}"
-  done | awk -v Factor="$Factor" '{ print int(Factor*$1); }')"
+  done | LC_ALL=C awk -v Factor="$Factor" '{ print int(Factor*$1); }')"
 
   Netpbm="P2 256 1 $Quantumrange $Lutlist"
   Netpbmdata="$(base64 <<< "$Netpbm")"
@@ -1371,7 +1358,6 @@ focus_maskmethod() {
   local Maskgenerator=
 
   Method="${1:-none}"
-
   case $Method in
     blur)
       Maskgenerator="
@@ -1837,7 +1823,7 @@ focus_merge_masks() {
   while read Line; do
     maskarg_parse "$Line"
     #[ "${Argweight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Argweight:-100}"
-    awk 'BEGIN {exit !('${Argweight:-100}' >= '${Weightmax:-0}')}' && Weightmax="${Argweight:-100}"
+    LC_ALL=C awk 'BEGIN {exit !('${Argweight:-100}' >= '${Weightmax:-0}')}' && Weightmax="${Argweight:-100}"
     Methodnumber="$((Methodnumber+1))"
   done <<< "$Maskmethodlist"
   Methodnumber=1 # overwritten for mean instead of Screen
@@ -2093,7 +2079,7 @@ focus_hard() {
   for Count in $(seq $Imagenumber); do
     Command=""
     Number="$(printnum $Count)"
-    Sourcemask="$(awk "{print \$$Number}" <<< "$Maskimagelist")"
+    Sourcemask="$(LC_ALL=C awk "{print \$$Number}" <<< "$Maskimagelist")"
     Sourceimage="$(sourceimagename $Count)"
 
     Command="$Command
@@ -2116,7 +2102,6 @@ focus_hard() {
   mpr:resultmask 
     -compose Lighten -composite
     -write mpr:resultmask
-    -write ./maskmax.tif
     -delete 0"
 
     Command="$Command
@@ -2378,7 +2363,7 @@ focus_soft() {
   for Count in $(seq $Imagenumber); do
     Command=""
     Number="$(printnum $Count)"
-    Sourcemask="$(awk "{print \$$Number}" <<< "$Maskimagelist")"
+    Sourcemask="$(LC_ALL=C awk "{print \$$Number}" <<< "$Maskimagelist")"
     Sourceimage="$(sourceimagename $Count)"
 
     Command="$Command
@@ -2518,7 +2503,7 @@ maskarg_parse() {
   Argweight=""
   Argword1=""
   Argword2=""
-    
+
   while read -d, Line; do
     grep -q "=" <<< "$Line" && {
       Key="$(cut   -d= -f1    <<< "$Line")"
@@ -2679,7 +2664,7 @@ maskarg_defaultvalue() {
             "min,max")     echo "0" ;;
           esac
         ;;
-        freichen)   
+        freichen)
           case $Argword1 in
             "") echo "33.6584" ;;
             15) echo "19" ;;
@@ -3440,12 +3425,12 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
 
   # w, weight
   Weightrest="$((100-Weightsum))"
-  awk 'BEGIN {exit !('${Weightsum:-100}' > 100)}' && error "Sum of weight arguments exceed 100%."
+  LC_ALL=C awk 'BEGIN {exit !('${Weightsum:-100}' > 100)}' && error "Sum of weight arguments exceed 100%."
   [ -n "$Maskmethodlist" ] && while read Line; do
     maskarg_parse "$Line"
     #Argweight="$(calc "$Argweight * 100 / $Weightsum")"
     [ -z "$Argweight" ] && {
-      awk 'BEGIN {exit !('${Weightrest:-0}' <= 0)}' && error "Sum of weight arguments exceed 100%, nothing left for --$Argmethod."
+      LC_ALL=C awk 'BEGIN {exit !('${Weightrest:-0}' <= 0)}' && error "Sum of weight arguments exceed 100%, nothing left for --$Argmethod."
       Argweight="$(calc "$Weightrest / $Masknoweightcount")"
     }
     maskarg_store
@@ -3711,7 +3696,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     checkmagicklist compose  "$(tr -d "2" <<< "$Background")" && Backgroundtype="compose"
     [ -f "$Background" ]                                      && Backgroundtype="image"
     case $Background in
-      enfuse|saturation)                                         Backgroundtype="$Background" ;;
+      enfuse)                                                    Backgroundtype="$Background" ;;
       none)                   Background="" ;                    Backgroundtype="none" ;;
     esac
     [ "$Backgroundtype" ] || error "--background: Unknown background: '$Background'"
@@ -3721,7 +3706,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
 }
 check_background() {
   # --background
-  
+
   case $Backgroundtype in
     none)
       Background=""
@@ -3732,7 +3717,7 @@ check_background() {
       Image_needlist="$Image_needlist min max $Background"
       Backgroundimage="$(generate_image --showname "$Background")"
     ;;
-    evaluate)    
+    evaluate)
       Background="$(lowercase $Background)"
       Image_needlist="$Image_needlist $Background"
       Backgroundimage="$(generate_image --showname "$Background")"
@@ -3743,10 +3728,6 @@ check_background() {
     ;;
     image)
       Backgroundimage="$Background"
-    ;;
-    saturation)
-      Image_needlist="$Image_needlist saturation"
-      Backgroundimage="$(generate_image --showname "$Background")"
     ;;
     enfuse)
       Image_needlist="$Image_needlist enfuse"
@@ -3770,7 +3751,7 @@ check_outputname() {
     [ -z "$Line" ] && break
     maskarg_parse "$Line"   
     Resultimage="${Resultimage}_${Argmethod}="
-    [ "$Argweight" != "100" ]    && Resultimage="$Resultimage-w$(awk 'BEGIN {printf "%0.0f",'$Argweight'}')"
+    [ "$Argweight" != "100" ]    && Resultimage="$Resultimage-w$(LC_ALL=C awk 'BEGIN {printf "%0.0f",'$Argweight'}')"
     [ "$Argradius1" ]            && Resultimage="$Resultimage-r$Argradius1"
     [ "$Argsigma1" ]             && Resultimage="$Resultimage-s$Argsigma1"
     [ "$Argradius2" ]            && Resultimage="$Resultimage-R$Argradius2"
