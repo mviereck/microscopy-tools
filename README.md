@@ -9,9 +9,10 @@ Tools for microscopy and image focus stacking.
    - [`align`](#align): Align image stack with the help of [focus-stack]((https://github.com/PetteriAimonen/focus-stack)) and ImageMagick.
    - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image. (Terminal)
  - Tools awaiting further development, currently less useful:
-   - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
    - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
+ - Deprecated, stored for partial code reuse:
+   - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
 
 `stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
 Especially they need a new GUI backend because the currently used `kaptain` GUI is outdated and does not run on up-to-date systems.
@@ -68,25 +69,14 @@ Dependencies:
 
 ## stackfuser
 
-GUI frontend for image foto stacking with enfuse. In development, beta stage. Needs severe rework.
+GUI frontend for image foto stacking with enfuse.
+Deprecated, will be replaced by multiple single tools.
 
 Provides:
  - Image preprocessing with `imagemagick` to enhance contrast and sharpness. 
  - Image alignment with `ffmpeg`/[vidstab](https://github.com/georgmartius/vid.stab) or `align_image_stack`.
  - Generating multiple overall sharp images from stackshot with `enfuse`. Further combining of these results with `imagemagick`.
  - Animated videos of focus stackshots.
- 
-Especially supports a folder with name `stackshot` containing the source images. `stackshot` should be in an otherwise empty parent folder. The images in `stackshot` won't be changed.
-Folder structure:
-```
--.
- |--somedir--.
-              |--stackshot--.
-                            |--img001.jpg
-                            |--img002.jpg
-                            |--img003.jpg
-```
-`stackfuser` will create further subfolders in `somedir` containing intermediate and final results.
 
 Dependencies, most essentiell:
  - `align_image_stack` (hugin tools)
