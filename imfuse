@@ -7,7 +7,6 @@ Version="0.7.4-beta"
 # New BUG s:
 # --less
 # =alpha,less: wrong result
-# --fakehdr error
 # --soft: preview of montage is grey
 # enfuse_split() not ready
 # --slabs
@@ -32,10 +31,6 @@ Version="0.7.4-beta"
 # drop --halo?
 # find halo solution
 # check exiftransfer / damaged one Beerenwanze or Spinne image
-#
-# stackfuser: 
-# BUG fakehdr is missing
-# BUG exiftransfer wrong after reverse-order or block-evaluate
 
 usage() {
   echo "imfuse v$Version
@@ -222,7 +217,6 @@ Image comparision mask options: (Intended for artefact removal)
                       radius is a kernel radius.
                       Needs high 'weight' values even greater than 100.
                       Well to combine with --darkness.
-                      Alternative option: --fakehdr
  --image [=ARG]       Loads an image and generates masks based on 
                       similarity with source images.
                       ARG additionally takes arguments:
@@ -913,88 +907,6 @@ exiftransfer() {
     '-ExifTool|-System:|-File:|ImageWidth|ImageHeight|ImageSize|Compression|Orientation|Resolution' <<< "$Exifargs" \
     | sed "s/'/'\"'\"'/g ; s/=/='/ ; s/\$/'/" )"
   eval exiftool -ignoreMinorErrors -overwrite_original_in_place $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
-}
-fakehdr() {
-  # simulate a HDR image with multiple exposures combined to one image with balanced light.
-  # To achieve this some brightened and darkened images are generated with IM and combined with enfuse.
-  
-  local Darkfactor Brightfactor Darkpercent Brightpercent
-  local Error=
-  local Method Percent
-  local Imagecount Imagebasename Command Output Basename Brightimage Darkimage
-  local Longoptions Parsedoptions
-  
-  Longoptions="percent:,method:,basename:"
-  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
-  eval set -- "$Parsedoptions"  
-  while [ "$#" -gt 0 ]; do
-    case "${1:-}" in
-      --percent)  Percent="${2:-}" ; shift ;;
-      --method)   Method="${2:-}" ; shift ;;
-      --basename) Basename="${2:-}" ; shift ;;
-    esac
-    shift
-  done
-  
-  Percent="${Percent:-40}"
-  Percent="${Percent%"%"}"
-  Method="${Method:-level}"
-  Basename="${Basename:-fakehdr${Percent}.$Method.$Sourcemd5}"
-  
-  Darkpercent="$(awk   "BEGIN {print  100-$Percent}")"
-  Brightpercent="$(awk "BEGIN {print  100+$Percent}")"
-  Darkfactor="$(awk    "BEGIN {print (100-$Percent)/100}")"
-  Brightfactor="$(awk  "BEGIN {print (100+$Percent)/100}")"
-  #Brightfactor="$(awk  "BEGIN {print  1/$Darkfactor}")"
-
-  Imagecount=0
-  for Sourceimage in $Sourceimagelist; do
-    Imagecount=$((Imagecount+1))
-    Number="$(printnum $Imagecount)"
-    Imagebasename="$(basename $Sourceimage)"
-    Brightimage="$Cachedir/$Imagebasename.exp.bright.tif"
-    Darkimage="$Cachedir/$Imagebasename.exp.dark.tif"
-    
-    Command="$Magickbin '$Sourceimage' -write mpr:image -delete 0"  
-    case $Method in
-      brightness)    
-        Command="$Command ( mpr:image -brightness-contrast  ${Percent}%         -write '$Brightimage'  )" 
-        Command="$Command ( mpr:image -brightness-contrast -${Percent}%         -write '$Darkimage'   )" 
-      ;;
-      modulate)
-        Command="$Command ( mpr:image -modulate ${Brightpercent}%               -write '$Brightimage'  )" 
-        Command="$Command ( mpr:image -modulate ${Darkpercent}%                 -write '$Darkimage'   )" 
-      ;;
-      multiply)
-        Command="$Command ( mpr:image -evaluate multiply ${Brightfactor}        -write '$Brightimage'  )" 
-        Command="$Command ( mpr:image -evaluate multiply ${Darkfactor}          -write '$Darkimage'   )" 
-      ;;
-      levelgamma)    
-        Command="$Command ( mpr:image -level 0%x${Darkpercent}%,${Brightfactor} -write '$Brightimage'  )" 
-        Command="$Command ( mpr:image +level 0%x${Darkpercent}%,${Brightfactor} -write '$Darkimage'   )" 
-      ;;
-      level)    
-        Command="$Command ( mpr:image -level 0%x${Darkpercent}%                 -write '$Brightimage'  )" 
-        Command="$Command ( mpr:image +level 0%x${Darkpercent}%                 -write '$Darkimage'   )" 
-      ;;
-      gamma)
-        Command="$Command ( mpr:image -gamma ${Brightfactor}                    -write '$Brightimage'  )" 
-        Command="$Command ( mpr:image -gamma ${Darkfactor}                      -write '$Darkimage'   )" 
-      ;;
-    esac
-    Command="$Command xc:white null:"
-
-    multicore -- $Command || Error=1
-    multicore_wait || Error=1
-    [ "$Error" ] && break
-    Output="$Cachedir/$Basename.$Number.tif"
-    multicore --showimage "$Output" -- enfuse "$Sourceimage" "$Brightimage" "$Darkimage" -o "$Output" --saturation-weight=0 --gray-projector=average
-#    multicore --showimage "$Output" "enfuse $Sourceimage $(find $Cachedir/${Imagebasename}.exp* | tr "\n" " ") -o $Output --saturation-weight=0 --gray-projector=average && \
-#                                     exiftool -overwrite_original -tagsfromfile $Sourceimage -Orientation= -all:all $Output" || Error=1
-    [ "$Error" ] && break
-  done
-  multicore_wait || return 1
-  return ${Error:-0}
 }
 generate_image() {
   local Mode Imagename Imagename_cache Swap Imagetype Showname= Command
@@ -3344,7 +3256,7 @@ parse_options() {
 
   Shortoptions="ho:vVW"
   Longoptions="align,basename:,cache:,exif::,force::,help,limit-memory::,mask2cache,output:,savemask::,showimage,showname,test::,threads:,verbose,version,video"
-  Longoptions="$Longoptions,alpha::,background::,bg::,close::,cutblur::,cutsoft::,darkenmask:,denoise::,fakehdr::,finalblur::,grayscale:,layers::,less::,maskblur::,maskstat::,merge::,prefertop::,revert,sigmoidalclut::,slabs::,soft::,threshold::"
+  Longoptions="$Longoptions,alpha::,background::,bg::,close::,cutblur::,cutsoft::,darkenmask:,denoise::,finalblur::,grayscale:,layers::,less::,maskblur::,maskstat::,merge::,prefertop::,revert,sigmoidalclut::,slabs::,soft::,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,max::,mean::,median::,min::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -3366,7 +3278,6 @@ parse_options() {
          --cutsoft)           Cutsoft="${2:-auto}"            ; shift ;;
          --denoise)           Globaldenoise="${2:-auto}"      ; shift ;;
          --exif)              Exifsourceimage="${2:-auto}"    ; shift ;;
-         --fakehdr)           Fakehdr="${2:-auto}"            ; shift ;;
          --finalblur)         Finalblur="${2:-auto}"          ; shift ;;
          --force)             Forceoverwrite="${2:-yes}"      ; shift ;;
          --grayscale)         Grayscale="${2:-auto}"          ; shift ;;
@@ -3623,18 +3534,6 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   # --denoise
   case $Globaldenoise in
     auto) Globaldenoise="10" ;;
-  esac
-
-  # --fakehdr
-  [ "$Fakehdr" = "auto" ] && Fakehdr="40"
-  case "$Fakehdr" in
-    "") ;;
-    auto) Fakehdr="40" ;;
-    *)
-      maskarg_parse "$Fakehdr"
-      maskarg_checkpercent "$Fakehdr"
-      Fakehdr="$Argpercent1"
-    ;;
   esac
 
   # --finalblur
@@ -4092,15 +3991,6 @@ main() {
   [ "$Error" ] && return 1
   main_setup
 
-  # --fakehdr ### FIXME error
-  [ "$Fakehdr" ] && {
-    error "--fakehdr does not work yet."
-    fakehdr --percent "$Fakehdr" --method level --basename "fakehdr$Fakehdr.$Sourcemd5" || error "Error in --fakehdr"
-    Sourceimagelist="$(masklist "fakehdr$Fakehdr.$Sourcemd5")"
-    Sourcemd5="$(md5cut "$(ls --full-time $Sourceimagelist)" )"
-    [ "$Error" ] && return 1
-  }
-
   # --background
   check_background
 
@@ -4134,17 +4024,10 @@ $Sourceimagelist"
   }
   [ "$Error" ] && return 1
 
-  # load [and --align] images
-  case "$Align" in
-    yes) 
-#      [ "$Loadsourceimages" = "no" ] && error "--align is only supported if source images are loaded to RAM.
-#  Please use standalone script 'align' instead."
-      align
-    ;;
-    *)
-      #[ "$Loadsourceimages" = "yes" ] && load_sourceimages
-    ;;
-  esac
+  # --align
+  [ "$Align" = "yes" ] && {
+    align || error "Error in align()."
+  }
 
   # generate backgrounds etc.
   for Mode in $Image_needlist; do
