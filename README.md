@@ -151,6 +151,7 @@ non-raw photos.
 ### Closed Source freeware
  - [CombineZP](https://combinezp.software.informer.com/): Stacker for MS Windows. Works with wine on Linux, too.
  - [Picolay](http://www.picolay.de/): Stacker for MS Windows. Works with wine on Linux, too.
+ - [stacky](https://www.bewie.de/stacky.php): Stacker for MS Windows. Works with wine on Linux, too.
 ### Closed Source commercial
  - [Helicon Focus](https://www.heliconsoft.com/heliconsoft-products/helicon-focus/): 30 days trial version. Available for Mac and Windows.
  - [ZereneStacker](https://zerenesystems.com/cms/stacker): 30 days trial version. Available for Linux, Mac and Windows.
