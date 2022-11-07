@@ -1,3 +1,0 @@
-imfuse --sobel --cutsoft=1 --finalblur=w1 --less
-imfuse --sobel --cutsoft=1 --finalblur=w1
-

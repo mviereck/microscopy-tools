@@ -1,6 +1,0 @@
-imfuse --diffstat=r2,close2x2   --bg=enfuse --alpha --less
-imfuse --log=s0.2,close2x2      --bg=enfuse --alpha --less
-imfuse --dog=s0.3,close2x2      --bg=enfuse --alpha --less
-imfuse --freichen=15,close2x2   --bg=enfuse --alpha --less
-imfuse --gaussian=s0.3,close2x2 --bg=enfuse --alpha --less
-imfuse --wavelet=p10,close2x2   --bg=enfuse --alpha --less

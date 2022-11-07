@@ -1,6 +1,0 @@
-imfuse --diffstat=r3,median,mean
-imfuse --diffstat=r3,min,max
-imfuse --diffstat=r3,mode,rms
-imfuse --diffstat=r5,median,mean
-imfuse --diffstat=r5,min,max
-imfuse --diffstat=r5,mode,rms
