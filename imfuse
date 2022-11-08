@@ -1,11 +1,10 @@
 #! /bin/bash
 
 # imfuse
-Version="0.7.4-beta"
+Version="0.7.5-beta"
 
 # ToDo:
 # New BUG s:
-# --chroma --max --saturation: combination has odd Argword1 issues
 
 # =alpha,less: wrong result
 # --soft: preview of montage is grey
@@ -658,7 +657,7 @@ $Image"
   $Image
     -crop ${W}x${H}+${X}+${Y}
     -write $(sourceimagename $Count)
-    $(showimagecode)
+    $(showimagecode "$(sourceimagename $Count)")
     -delete 0"
     cmd "$Command"
   done <<< "$Sourceimagelist"
@@ -881,7 +880,7 @@ ${1:-}"
     -evaluate-sequence $Mode
     $Tifstore
     -write $Resultimage
-    $(showimagecode)
+    $(showimagecode "$Resultimage")
     -delete 0"
   cmd "$Command"
   cmd_waitforready
@@ -932,16 +931,16 @@ generate_image() {
 
   sendmagickmessage "NOTE:Generating image $Imagename"
   [ -e "$Cachedir/$(tr : - <<< "$Imagename")" ] && {
-    sendmagickmessage "NOTE: Skipping image generation, already exists: $Imagename"
+    sendmagickmessage "NOTE:Skipping image generation, already exists: $Imagename"
     return 0
   }
-  load_sourceimages
 
   case "$Imagetype" in
     enfuse)
       enfuse_split "$Imagename_cache" $Sourceimagelist
     ;;
     evaluate)
+      load_sourceimages
       evaluate "$Mode" "$Imagename" $Imsourceimagelist
     ;;
     compose)
@@ -957,7 +956,7 @@ generate_image() {
     $Swap
     -compose $Mode -composite
     -write $Imagename
-    $(showimagecode)
+    $(showimagecode "$Imagename")
     -delete 0
   +set registry:$(generate_image --showname min | cut -d: -f2)
   +set registry:$(generate_image --showname max | cut -d: -f2)"
@@ -1102,7 +1101,7 @@ level_masks() {
   $Clutimage
     -clut
     -write $Mask
-    $(showimagecode)
+    $(showimagecode "$Mask")
     -delete 0"
 
     cmd "$Command"
@@ -1136,7 +1135,7 @@ mpr:sourceimage.$(printnum $Count)"
     -alpha off
     -depth 16
     -write $(sourceimagename $Count)
-    $(showimagecode)
+    $(showimagecode "$(sourceimagename $Count)")
     -delete 0"
 
     cmd "$Command"
@@ -1158,7 +1157,7 @@ maskfromimage() {
   sendmagickmessage "NOTE:Generating mask comparing with image $Imagename"
   for Count in $(seq $Imagenumber); do
     Number="$(printnum $Count)"
-    Maskname="mpr:$Maskbasename.${Number}.tif"
+    Maskname="mpr:$Maskbasename.${Number}.tif" ### FIXME --mask2disk
     Sourceimage="$(sourceimagename $Count)"
 
     Command="$Command
@@ -1186,8 +1185,7 @@ maskfromimage() {
 #  mpr:alpha
 #    -compose multiply -composite
     -write '$Maskname'
-#    -auto-level
-    $(showimagecode)
+    $(showimagecode "$Maskname")
     -delete 0"
 
     cmd "$Command"
@@ -1272,10 +1270,10 @@ mkimg_color() {
   Command="
   # create TrueColor image
   -size $Size
-  canvas:${3:-black}
+  canvas:${1:-black}
     -type TrueColor
     -colorspace sRGB
-    -write ${1:-color.tif}
+    -write ${3:-color.tif}
     -delete 0"
   cmd "$Command"
   cmd_waitforready
@@ -1715,7 +1713,7 @@ $Argbasename"
 $Maskgenerator"
       Maskgenerator_all="$Maskgenerator_all
     -write $(maskname "$Argbasename" NUMBER)
-    $(showimagecode)
+    $(showimagecode "$(maskname "$Argbasename" NUMBER)")
     -delete 0"
     }
   done <<< "$Maskmethodlist"
@@ -1983,7 +1981,7 @@ $(sed "s/NUMBER/$Number/g" <<< "$Mergecode" )
     $Prefertopcode
     $Tifstore 
     -write $Mergemask
-    $(showimagecode)
+    $(showimagecode "$Mergemask")
     -delete 0"
 
     cmd "$Command"
@@ -2223,7 +2221,7 @@ focus_hard() {
     -compose Over -composite
     -alpha off
     -write mpr:resultimage
-    $(showimagecode)
+    $(showimagecode "mpr:resultimage")
     -delete 0"
 
     Command="$Command
@@ -2411,7 +2409,7 @@ focus_soft() {
   mpr:addmask
     -compose DivideSrc -composite
     -write mpr:resultimage
-    $(showimagecode)
+    $(showimagecode "mpr:resultimage")
     -delete 0"
     }
 
@@ -2800,14 +2798,18 @@ maskarg_defaultvalue() {
     word1)
       case "${1:-}" in
         channel)    echo "HSL" ;;
+        chroma)     echo "HCL" ;;
         comet)      echo "lighten" ;;
         compose)    echo "overlay" ;;
+        darkness)   echo "HSL" ;;
         diffstat)   echo "median" ;;
         evaluate)   echo "max" ;;
         freichen)   echo "" ;;
         freediff)   echo "-sharpen 0x3" ;;
         laplacian)  echo "3" ;;
+        lightness)  echo "HSL" ;;
         morphology) echo "edge" ;;
+        saturation) echo "HSB" ;;
         statistic)  echo "standarddeviation" ;;
         *)          echo "" ;;
       esac
@@ -2815,7 +2817,11 @@ maskarg_defaultvalue() {
     word2)
       case "${1:-}" in
         channel)    echo "2" ;;
+        chroma)     echo "1" ;;
+        darkness)   echo "2" ;;
         diffstat)   echo "mean" ;;
+        lightness)  echo "2" ;;
+        saturation) echo "1" ;;
         *)          echo "" ;;
       esac
     ;;
@@ -2869,7 +2875,8 @@ maskarg_checkallowed() {
     word1)
       case "$Method" in
         enfuse) ;;
-        comet|channel|freichen|freediff|laplacian) ;;
+        comet|freichen|freediff|laplacian) ;;
+        channel|chroma|darkness|lightness|saturation) ;;
         compose|evaluate|morphology)
           Arg="$(lowercase "${Arg}")"
           checkmagicklist "$Method" "$(tr -d '2' <<< "$Arg")" || {
@@ -2899,7 +2906,7 @@ maskarg_checkallowed() {
           Arg="$(lowercase "${Arg}")"
           Arg="$(maskarg_checkstatistic "$Arg")"
         ;;
-        channel) ;;
+        channel|chroma|darkness|lightness|saturation) ;;
         *) Errormessage="$Method does not take argument word2 $Arg" ;;
       esac
     ;;
@@ -3057,11 +3064,23 @@ sendmagickmessage() {
   cmd "$Command"
 }
 showimagecode() {
+  local Image
   # magick code to store current image and print a showimage message for readmagickmessage()
-  [ "$Showimageprocessing" ] && echo "# show image
+  [ "$Showimageprocessing" ] && {
+    Image="${1:-}"
+    case "$(cut -c1-4 <<<"$Image")" in
+      ""|"mpr:")
+        echo "# show image
     -write $Showimage
     -format 'SHOW:$Showimage\n'
     -write info:"
+      ;;
+      *)
+        sendmagickmessage "SHOW:$Image"
+      ;;
+    esac
+  }
+  return 0
 }
 getmagickinfo() {
   # get info output for image $1 in format $2
@@ -3367,19 +3386,9 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     Slabmasks="$Slabmasks --$Argmethod=w$Argweight,r$Argradius1,R$Argradius2,s$Argsigma1,S$Argsigma2,p$Argpercent1,P$Argpercent2,$Argword1,$Argword2"
 
     case $Argmethod in
-      chroma)
-        #Argmethod="channel"
-        Argword1="HCL"
-        Argword2="1"
-      ;;
       compose)
         Image_needlist="$Image_needlist max min"
         Image_needlist="$Image_needlist $Argword1"
-      ;;
-      darkness)
-        #Argmethod="channel"
-        Argword1="HSL"
-        Argword2="2"
       ;;
       evaluate)
         Image_needlist="$Image_needlist $Argword1"
@@ -3389,27 +3398,17 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
           10|12|19) Argdiff=yes ;;
         esac
       ;;
-      lightness)
-        #Argmethod="channel"
-        Argword1="HSL"
-        Argword2="2"
-      ;;
       image)
         [ -e "$Argword1" ] || error "--image needs an image file name as argument. Not found: '$Argword1'"
       ;;
       max|mean|median|min)
-        Image_needlist="$Image_needlist $Argmethod"      
+        Image_needlist="$Image_needlist $Argmethod"
       ;;
       morphology)
         case $Argword1 in
           edge|edgein|edgeout|tophat|bottomhat) ;;
           *) Argdiff="yes" ;;
         esac
-      ;;
-      saturation)
-        #Argmethod="channel"
-        Argword1="HSB"
-        Argword2="1"
       ;;
       statistic)
         case $Argword1 in
