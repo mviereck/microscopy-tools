@@ -574,7 +574,7 @@ sourceimagename() {
 maskexist() {
   case "$Masktocache" in
     yes)
-      Masklist="$(find $Cachedir/mask.${1:-}.*.tif)"
+      Masklist="$(find $Cachedir/mask.${1:-}.*.${Masksuffix})"
       Maskcount="$(grep -c . <<< "$Masklist")"
       [ "$Maskcount" = "$Imagenumber" ] && return 0 || return 1
     ;;
@@ -588,7 +588,7 @@ maskname() {
   [ -z "${2:-}" ] && error "maskname(): number not given: ${1:-} ${2:-}"
   case "$Masktocache" in
     yes)
-      echo "$Cachedir/mask.${1:-}.$(printnum "${2:-}").tif"
+      echo "$Cachedir/mask.${1:-}.$(printnum "${2:-}").${Masksuffix}"
     ;;
     no)
       echo "mpr:${1:-}.$(printnum "${2:-}")"
@@ -930,7 +930,7 @@ generate_image() {
   }
 
   sendmagickmessage "NOTE:Generating image $Imagename"
-  [ -e "$Cachedir/$(tr : - <<< "$Imagename")" ] && {
+  [ -e "$Cachedir/$(tr : - <<< "generatedimg.$Imagename")" ] && {
     sendmagickmessage "NOTE:Skipping image generation, already exists: $Imagename"
     return 0
   }
@@ -984,7 +984,7 @@ generate_image() {
     ;;
   esac
 
-  :> "$Cachedir/$(tr : - <<< "$Imagename")"
+  :> "$Cachedir/$(tr : - <<< "generatedimg.$Imagename")"
   return 0
 }
 layered_tif() {
@@ -1148,16 +1148,15 @@ mpr:sourceimage.$(printnum $Count)"
 }
 maskfromimage() {
   # Generate masks with basename $2 based on comparision with a single image $1
-  local Imagename Maskbasename
-  local Count Number
+  local Imagename Maskbasename Sourceimage Maskname
+  local Command Count
 
   Imagename="${1:-}"
   Maskbasename="${2:-}"
 
   sendmagickmessage "NOTE:Generating mask comparing with image $Imagename"
   for Count in $(seq $Imagenumber); do
-    Number="$(printnum $Count)"
-    Maskname="mpr:$Maskbasename.${Number}.tif" ### FIXME --mask2disk
+    Maskname="$(maskname "$Maskbasename" "$Count")"
     Sourceimage="$(sourceimagename $Count)"
 
     Command="$Command
@@ -1432,14 +1431,6 @@ Maskgenerator="$Maskgenerator
     -compose Difference -composite"
     ;;
     enfuse)
-#      case "${Argword1:-soft}" in
-#        soft) Maskgenerator="
-#  $Cachedir/enfuse-soft.NUMBER.tif
-#    -depth 16" ;;
-#        hard) Maskgenerator="
-#  $Cachedir/enfuse-hard.NUMBER.tif
-#    -depth 16" ;;
-#      esac
       Maskgenerator="
   # --enfuse
   ( mpr:sourcegray -alpha off )
@@ -1845,7 +1836,6 @@ focus_merge_masks() {
   while read Line; do
     maskarg_parse "$Line"
     Mergemaskbasename="$Mergemaskbasename-$Argmethod"
-    #Methodmask="mpr:$Argbasename.NUMBER.tif"
     Methodmask="$(maskname "$Argbasename" NUMBER)"
 
     Mergecode="$Mergecode
@@ -3064,7 +3054,7 @@ sendmagickmessage() {
   cmd "$Command"
 }
 showimagecode() {
-  local Image
+  local Image Suffix
   # magick code to store current image and print a showimage message for readmagickmessage()
   [ "$Showimageprocessing" ] && {
     Image="${1:-}"
@@ -3076,7 +3066,18 @@ showimagecode() {
     -write info:"
       ;;
       *)
-        sendmagickmessage "SHOW:$Image"
+        Suffix="$(rev <<< "$Image" | cut -d. -f1 | rev)"
+        case "$Suffix" in
+          "miff"|"mpc")
+            echo "# show image
+    -write $Showimage
+    -format 'SHOW:$Showimage\n'
+    -write info:"
+          ;;
+          *)
+            sendmagickmessage "SHOW:$Image"
+          ;;
+        esac
       ;;
     esac
   }
@@ -3224,6 +3225,7 @@ declare_variables() {
   Maskmethodcount=""
   Maskmethodlist=""
   Maskmethodnumber=""
+  Masksuffix="mpc"
   Masktocache="no"
   Mergemaskbasename=""
   Mergemethod=""
@@ -3459,7 +3461,7 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
   }
 
   # --cachedir
-  [ -n "$Cachedir" ]       && Cachedir="$Cachedir/cache.imfuse.$$"
+  #[ -n "$Cachedir" ]       && Cachedir="$Cachedir/cache.imfuse.$$"
   [ -z "$Cachedir" ]       && Cachedir="./cache.imfuse"
   Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
   #Cachedir="$(realpath -m "$Cachedir")"
@@ -3906,6 +3908,7 @@ main_setup() {
   # --cache
   mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
   #rm -rf $Cachedir/*
+  rm $Cachedir/generatedimg.*
   Testimage="$Cachedir/test.png"
   Resultmask="$Cachedir/result.max.tif"
   Showimage="$Cachedir/imfuse_show.tif"
@@ -4052,7 +4055,6 @@ $Sourceimagelist"
   mpr:clut
     -clut
     -write mpr:mask
-    -write ./mask.tif
     -delete 0
   mpr:resultimage
   mpr:mask
