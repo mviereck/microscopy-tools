@@ -3265,7 +3265,11 @@ white"
   Showname=""
   Slabfirstimage=""
   Slablastimage=""
+  Slabmask=""
+  Slabmaskpost=""
   Slaboverlap=""
+  Slabresult=""
+  Slabresultpost=""
   Slabs=""
   Slabsize=""
   Slabstep=""
@@ -4014,10 +4018,6 @@ main_setup() {
     return 0
   }
 
-  # start geeqie
-  generate_image transparent "$Resultimage"
-  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Resultimage" 2>/dev/null
-
   return 0
 }
 main() {
@@ -4047,7 +4047,11 @@ trap - ERR"
   Image_needlist="$(grep . <<< "$Image_needlist" | sort -V | uniq)"
   for Mode in $Image_needlist; do
     generate_image "$Mode"
-  done 
+  done
+
+  # start geeqie
+  generate_image transparent "$Resultimage"
+  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Resultimage" 2>/dev/null
 
   # Generate masks
   [ -n "$Maskmethodlist" ] && {
@@ -4074,23 +4078,34 @@ trap - ERR"
         ;;
       esac
 
+      Slabresultpost[$Slabstep]="$Resultimage.slab$Slabstep-post.tif"
+      Slabmaskpost[$Slabstep]="$Resultimage.slab$Slabstep-post-mask.tif"
+      Command="
+${Slabresult[$Slabstep]}
+  -write ${Slabresultpost[$Slabstep]}
+  -delete 0
+${Slabmask[$Slabstep]}
+  -write ${Slabmaskpost[$Slabstep]}
+  -delete 0"
+      cmd "$Command"
+
       File="$Cachedir/slab${Slabstep}-postprocessing.$(md5cut "$Resultimage")"
       [ -e "$File" ] && {
         sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
       } || {
         # --threshold
         [ "$Globalthreshold" ] && {
-          threshold --image "${Slabresult[$Slabstep]}" --mask "${Slabmask[$Slabstep]}" --percent "$Globalthreshold" --blur "$Globalthresholdblur"
+          threshold --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Globalthreshold" --blur "$Globalthresholdblur"
         }
 
         # --finalblur
         [ "$Finalblur" ] && {
-          finalblur --image "${Slabresult[$Slabstep]}" --mask "${Slabmask[$Slabstep]}" --percent "$Finalblurpercent" --sigma "$Finalblursigma" --blur "$Finalblurradius"
+          finalblur --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Finalblurpercent" --sigma "$Finalblursigma" --blur "$Finalblurradius"
         }
 
         # --alpha
         [ "$Globalalpha" ] && {
-          alphalevel --image "${Slabresult[$Slabstep]}" --mask "${Slabmask[$Slabstep]}" --level "$Globalalpha"
+          alphalevel --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --level "$Globalalpha"
         }
         :> "$File"
       }
@@ -4099,14 +4114,14 @@ trap - ERR"
 
   Command="
   # composing slab results
-  $Resultimage
+  mpr:transparent
     -alpha set
     -write mpr:resultimage
     -delete 0
   mpr:resultimage"
   for Slabstep in $(seq $Slabs); do
     Command="$Command
-  ${Slabresult[$Slabstep]}
+  ${Slabresultpost[$Slabstep]}
     -compose Over -composite
     $(showimagecode)"
   done
@@ -4121,13 +4136,13 @@ trap - ERR"
 
   # --savemask
   [ "$Savemask" ] && {
-    cmd "  ## --savemask"
-    evaluate max "$Savemask" ${Slabmask[$Slabstep]}
+    cmd "  # --savemask"
+    evaluate max "$Savemask" ${Slabmaskpost[$Slabstep]}
   }
 
   # --background
   [ "$Background" ] && [ -z "$Layers" ] && {
-    sendmagickmessage "Applying --background=$Background"
+    sendmagickmessage "NOTE:Applying --background=$Background"
     Command="
   # --background=$Background
   $Backgroundimage
