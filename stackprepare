@@ -21,17 +21,23 @@ Options:
 
 For the following options and their arguments see also documentation of
 ImageMagick options with same name.
+ --compose [=MODE]            Compose image with itself with mode MODE.
+                              Possible MODE see: magick -list compose
+                              Some modes of interest:  Interpolate Overlay
+                              SoftBurn SoftDodge SoftLight HardLight 
+                              Bumpmap Screen Multiply Freeze VividLight
+                              Modulate ColorBurn.          Default: Interpolate
  --contrast                   Enhance contrast the simple way.
- --contrast-stretch [=ARG]    Contrast with color stretch.  Default: auto
+ --contrast-stretch [=ARG]    Contrast with color stretch. Default: auto
  --crop [=GEOMETRY]           Crop a part of the images. GEOMETRY is WxH+X+Y.
                                          Default: 640x480 from the middle.
- --gamma [=ARG]               Adjust image gamma.           Default: auto
- --level [=ARG]               Adjust image level.           Default: auto
- --resize [=ARG]              Resize images.                Default: 50%
- --rotate [=DEGREE]           Rotate images clockwise.      Default: 90
- --sharpen [=ARG]             Sharpen images.               Default: 2x1
- --shave [=ARG]               Shave away edges from images. Default: 30%
- --sigmoidal-contrast [=ARG]  Enhance contrast.             Default: 3x50%
+ --gamma [=ARG]               Adjust image gamma.          Default: auto
+ --level [=ARG]               Adjust image level.          Default: auto
+ --resize [=ARG]              Resize images.               Default: 50%
+ --rotate [=DEGREE]           Rotate images clockwise.     Default: 90
+ --sharpen [=ARG]             Sharpen images.              Default: 2x1
+ --shave [=ARG]               Shave edges from images.     Default: 30%
+ --sigmoidal-contrast [=ARG]  Enhance contrast.            Default: 3x50%
  --im OPTIONS                 ImageMagick options to apply literally.
 
 Option sets:
@@ -54,6 +60,7 @@ digitonly() {
 }
 showimage() {
   [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"${1:-}" 2>/dev/null &
+  #viewnior ${1:-} &
   return 0
 }
 printsameline() {
@@ -134,7 +141,7 @@ parse_options() {
   Shortoptions="1fV"
   Longoptions="force,help,one,output:,showimage"
   Longoptions="$Longoptions,im:,set::"
-  Longoptions="$Longoptions,contrast,contrast-stretch::,crop::,gamma::,level::,resize::,rotate::,sharpen::,shave::,sigmoidal-contrast::"
+  Longoptions="$Longoptions,compose::,contrast,contrast-stretch::,crop::,gamma::,level::,resize::,rotate::,sharpen::,shave::,sigmoidal-contrast::"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Option parsing error."
   eval set -- "$Parsedoptions"
@@ -160,6 +167,15 @@ parse_options() {
         Showimageprocessing="yes"
       ;;
       ### Imagemagick options
+      --compose)
+        Prepareoptions="$Prepareoptions
+    -write mpr:composeimage
+      mpr:composeimage
+      -compose ${2:-PegtopLight}
+      -composite
+      +set registry:composeimage"
+        shift
+      ;;
       --contrast)
         Prepareoptions="$Prepareoptions
     -contrast"
@@ -369,13 +385,12 @@ main() {
   }
 
   # --output
-  [ -e "$Destinationdir" ] && case "$Force" in
+  [ -e "$Destinationdir" ] && [ "$Destinationdir" != "/tmp" ] && case "$Force" in
     "yes")
       case "$Destinationdir" in
         ""|"$HOME"|"/")
           error "--output: Invalid output directory: '$Destinationdir'"
         ;;
-        "/tmp") ;;
         *)
           #rm -r "$Destinationdir" || return 1
         ;;

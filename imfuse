@@ -3862,10 +3862,6 @@ check_outputname() {
   }
 
   # step postprocessing
-  case $Globalalpha in
-    "") ;;
-    *) Resultimage="${Resultimage}_alpha=$Globalalpha" ;;
-  esac
   [ "$Globalthreshold" ] && {
     Resultimage="${Resultimage}_threshold=p$Globalthreshold"
     [ "$Globalthresholdblur" ] && Resultimage="${Resultimage},s$Globalthresholdblur"
@@ -3877,6 +3873,10 @@ check_outputname() {
     "") ;;
     image) Resultimage="${Resultimage}_bg=image$(md5cut "$(ls -l --full-time "$Background")")" ;;
     *)     Resultimage="${Resultimage}_bg=$Background" ;;
+  esac
+  case $Globalalpha in
+    "") ;;
+    *) Resultimage="${Resultimage}_alpha=$Globalalpha" ;;
   esac
 
   # misc
@@ -4078,11 +4078,6 @@ trap - ERR"
       [ -e "$File" ] && {
         sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
       } || {
-        # --alpha
-        [ "$Globalalpha" ] && {
-          alphalevel --image "${Slabresult[$Slabstep]}" --mask "${Slabmask[$Slabstep]}" --level "$Globalalpha"
-        }
-
         # --threshold
         [ "$Globalthreshold" ] && {
           threshold --image "${Slabresult[$Slabstep]}" --mask "${Slabmask[$Slabstep]}" --percent "$Globalthreshold" --blur "$Globalthresholdblur"
@@ -4091,6 +4086,11 @@ trap - ERR"
         # --finalblur
         [ "$Finalblur" ] && {
           finalblur --image "${Slabresult[$Slabstep]}" --mask "${Slabmask[$Slabstep]}" --percent "$Finalblurpercent" --sigma "$Finalblursigma" --blur "$Finalblurradius"
+        }
+
+        # --alpha
+        [ "$Globalalpha" ] && {
+          alphalevel --image "${Slabresult[$Slabstep]}" --mask "${Slabmask[$Slabstep]}" --level "$Globalalpha"
         }
         :> "$File"
       }

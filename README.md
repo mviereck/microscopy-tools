@@ -4,15 +4,15 @@ Tools for microscopy and image focus stacking.
 
  - Tools already useful, in active development:
    - [`imfuse`](#imfuse): Fuse focus stackshot images with ImageMagick. (Terminal)
-   - [`preparestack`](#preparestack): Batch processing of image stack for contrast, crop, gamma etc. 
- - Tools considered to be ready:
-   - [`align`](#align): Align image stack with the help of [focus-stack]((https://github.com/PetteriAimonen/focus-stack)) and ImageMagick.
+   - [`stackprepare`](#preparestack): Batch processing of image stack for contrast, crop, gamma etc. 
+ - Tools considered to be (mostly) stable and ready for use:
+   - [`stackalign`](#align): Align image stack with the help of [focus-stack]((https://github.com/PetteriAimonen/focus-stack)) and ImageMagick.
    - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image. (Terminal)
  - Tools awaiting further development, currently less useful:
-   - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
  - Deprecated, stored for partial code reuse:
    - [`stackfuser`](#stackfuser): Align, prepare and fuse focus stack images. (GUI)
+   - [`stackshooter`](#stackshooter): Shoot focus stackshots with stepper motor and camera. (GUI)
 
 `stackfuser` and `stackshooter` need some further development and documentation before they can be recommended for general use.
 Especially they need a new GUI backend because the currently used `kaptain` GUI is outdated and does not run on up-to-date systems.
@@ -70,6 +70,7 @@ Dependencies:
 ## stackfuser
 
 GUI frontend for image foto stacking with enfuse.
+
 Deprecated, will be replaced by multiple single tools.
 
 Provides:
@@ -97,7 +98,7 @@ Dependencies, also recommended:
 GUI for foto stacking with a stepper motor controlled by an Arduino and a camera connected on USB. 
 Note: The user must be in group `dialout` to access the Arduino.
 
-Beta stage, in development, needs severe rework. 
+Deprecated, will be replaced.
 
 Features:
  - Camera control with `gphoto2` for preview videos and tethered shooting.
