@@ -53,15 +53,14 @@ Usage:
 General options:
      --align              Align images.
      --basename [=NAME]   Base name [+path] for output image. 
-     --cache=DIR          Specify a cache folder DIR. Default: ./cache.imfuse
+     --cache [=DIR]       Store generated masks and images in directory DIR.
+                          They can be reused by later runs of imfuse.
+                          Default DIR: ./cache.imfuse
      --exif [=IMAGE]      Transfer exif meta data from IMAGE or first image.
  -h, --help               Show this help and exit.
-     --layers [=NUMBER]   Additonally store a layered TIFF image where
-                          the layers contain different sharpness areas.
-                          NUMBER is number of sharpness layers.  Default: 24
+     --layered            Store background and single slabs in layered TIF.
      --limit-memory=ARG   Limit amount of used memory. Default: 80%
                           ARG can be a % value or an absolute value for MB.
-     --mask2cache         Store generated masks in cache for later reuse.
  -o, --output=FILE        Result image file name.
      --savemask [=FILE]   Store contrast mask in file FILE.
      --threads            Number of parallel threads to run at once.
@@ -311,6 +310,7 @@ Mask generation and fusion adjustments:
                       separately. Use --alpha and/or --threshold to make the
                       layers transparent. The layers will be composed over each
                       other onto a background (to specify with --background).
+                      See also --layered to store the single layers.
  --soft [=CONTRASTxMIDPOINT]   Enable soft fusion mode. Different concept than 
                       default maximum contrast montage. Images are multiplied 
                       with their contrast masks and added altogether as a whole.
@@ -969,7 +969,7 @@ finalblur() {
   cmd_waitforready
 }
 generate_image() {
-  local Mode Imagename Imagename_cache Swap Imagetype Showname= Command Size 
+  local Mode Imagename Swap Imagetype Showname= Command Size 
   local Generalimage= Skip=
 
   [ "${1:-}" = "--showname" ] && Showname="yes" && shift
@@ -984,15 +984,13 @@ generate_image() {
   case "$Mode" in
     enfuse)                                              Imagetype="enfuse" ;;
   esac
-  Imagename_cache="$Cachedir/$Imagetype.tif"
 
   [ -z "$Imagename" ] && {
     Generalimage="yes"
     case "$Imagetype" in
-      #enfuse)     Imagename="mpr:enfuse" ;;
       enfuse)     Imagename="$Cachedir/enfuse.$Sourcemd5.tif" ;;
-      evaluate)   Imagename="mpr:evaluate.$Mode" ;;
-      compose)    Imagename="mpr:compose.$Mode" ;;
+      evaluate)   Imagename="$Cachedir/evaluate.$Mode.$Sourcemd5.mpc" ;;
+      compose)    Imagename="$Cachedir/compose.$Mode.$Sourcemd5.mpc" ;;
       color)      Imagename="mpr:$Mode" ;;
     esac
   }
@@ -1003,14 +1001,10 @@ generate_image() {
   }
 
   [ "$Generalimage" = "yes" ] && case $Imagetype in
-    evaluate)
-      [ -e "$Cachedir/$(tr ":/" "-" <<< "generatedimg.$Imagename")" ] && Skip="yes"
-    ;;
-    enfuse)
-      [ -e "$Imagename" ] && Skip="yes"
-    ;;
+    color) ;;
+    *) [ -e "$Imagename" ] && Skip="yes" ;;
   esac
-    
+
   sendmagickmessage "NOTE:Generating image $Imagename"
   [ "$Skip" = "yes" ] && {
     sendmagickmessage "NOTE:Skipping image generation, already exists: $Imagename"
@@ -1019,7 +1013,7 @@ generate_image() {
 
   case "$Imagetype" in
     enfuse)
-      enfuse_split "$Imagename_cache" $Sourceimagelist
+      enfuse_split "$Imagename" $Sourceimagelist
     ;;
     evaluate)
       load_sourceimages
@@ -1060,19 +1054,6 @@ generate_image() {
     ;;
   esac
 
-  case "$Imagetype" in
-    enfuse)
-      Command="
-  $Imagename_cache
-    -write $Imagename
-    -delete 0"
-      cmd "$Command"
-      cmd_waitforready
-      [ -f "$Imagename_cache" ] && rm "$Imagename_cache"
-    ;;
-  esac
-
-  :> "$Cachedir/$(tr ":/" "-" <<< "generatedimg.$Imagename")"
   return 0
 }
 generate_video() {
@@ -1083,74 +1064,6 @@ generate_video() {
   nice ffmpeg -y -hide_banner -nostdin  -r $Videoframerate -f image2 -start_number 1 -i "$Cachedir/videoframe%04d.$Imageformat" "$Video" || note "ERROR in video generation"
   rm $Cachedir/videoframe*
   ffplay "$Video"
-}
-layered_tif() {
-  local Image Mask Layers Background 
-  local Layer Layerlist= Factor Command Error
-  Image="${1:-}"
-  Mask="${2:-}"
-  Layers="${3:-}"
-  Background="${4:-}"
-  Factor="$(calc "255 / $Layers")"
-
-  sendmagickmessage "NOTE:Generating $Layers layers"
-
-  Command="
-  # --layers
-  $Image
-    -write mpr:image
-    -delete 0
-  $Mask
-    -write mpr:mask
-    -delete 0"
-  for Layer in $(seq $Layers); do
-    Command="$Command
-  mpr:mask
-    -color-threshold gray($(calc "($Layer-1)*$Factor"))-gray($(calc "$Layer*$Factor"))
-    -write mpr:cutmask
-    -delete 0
-  mpr:image
-  mpr:cutmask
-    -alpha off
-    -compose CopyOpacity -composite
-    -write mpr:layer$Layer
-    -delete 0"
-    [ "$Globalalpha" ] && {
-      Command="$Command
-  mpr:mask
-  mpr:cutmask
-    -compose Darken -composite
-    -write mpr:layermask
-    -delete 0
-  mpr:layer$Layer
-  mpr:layermask
-    -alpha off
-    -compose CopyOpacity -composite
-    -write mpr:layer$Layer
-    -delete 0"
-    }
-    Layerlist="$Layerlist mpr:layer$Layer"
-  done
-
-  Command="$Command
-  $Background
-  $Layerlist
-    $Tifstorealpha
-    -write $Image
-    -delete 0"
-
-  Command="$Command
-  +set registry:image
-  +set registry:mask"
-  for Layer in $Layerlist; do
-    Command="$Command
-  +set registry:$(cut -d: -f2 <<< "$Layer")"
-  done
-
-  cmd "$Command"
-  cmd_waitforready
-
-  return 0
 }
 level_masks() {
   local Maskbasename Maskmax Maskmin Maskmd5 Clutimage Resultmask
@@ -1213,7 +1126,6 @@ load_sourceimages() {
   # Load source images into imagemagick registry
   local Sourceimage Count Number Command
 
-  [ "$Loadsourceimages" = "yes" ] || return 0
   [ "$Sourceimagesalreadyloaded" = "yes" ] && return 0
 
   Count="0"
@@ -1221,26 +1133,34 @@ load_sourceimages() {
     Count="$((Count+1))"
     Number="$(printnum "$Count")"
     Command=""
-    Imsourceimagelist="$Imsourceimagelist
+    case "$Loadsourceimages" in
+      yes)
+        Imsourceimagelist="$Imsourceimagelist
 mpr:sourceimage.$(printnum $Count)"
-    Imsourceimagelist="$(grep . <<< "$Imsourceimagelist")"
+        Imsourceimagelist="$(grep . <<< "$Imsourceimagelist")"
 
-    Command="$Command
-  $(sendmagickmessage "PROGRESS:Loading source image $Count / $Imagenumber")"
-    Command="$Command
+        sendmagickmessage "PROGRESS:Loading source image $Count / $Imagenumber"
+        Command="$Command
   '$Sourceimage'
     -alpha off
     -depth 16
     -write $(sourceimagename $Count)
     $(showimagecode "$(sourceimagename $Count)")
     -delete 0"
-
-    cmd "$Command"
+        cmd "$Command"
+      ;;
+      no)
+        Imsourceimagelist="$Imsourceimagelist
+$Sourceimage"
+      ;;
+    esac
   done <<< "$Sourceimagelist"
   sendmagickmessage "/PROGRESS"
   cmd_waitforready
 
+  Imsourceimagelist="$(grep . <<< "$Imsourceimagelist")"
   Sourceimagesalreadyloaded="yes"
+
   return 0
 }
 maskfromimage() {
@@ -3138,6 +3058,7 @@ trap_sigint() {
 finish() {
   local Count=0
   trap - ERR
+
   cmd "-exit"
   while ps -p "$Magickscriptpid" >/dev/null 2>&1; do
     sleep 1
@@ -3145,15 +3066,19 @@ finish() {
     [ "$Count" -gt "5" ] && printsameline "Waiting infinitely since $Count seconds for magick $Magickscriptpid to terminate"
   done
   echo "" >&2
+
   ps -p "$Magickmessagepid" >/dev/null 2>&1 && kill "$Magickmessagepid"
-  #[ -f "$Magickfifolog" ]   && cp "$Magickfifolog" ~/
-  [ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" ~/
   exec 3>&-
-  [ "$Masktocache" = "no" ] && [ -d "$Cachedir" ] && rm -R "$Cachedir"
+
+  #[ -f "$Magickfifolog" ]   && cp "$Magickfifolog" .
+  [ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" .
+
   [ -f "$Showimage" ] && rm "$Showimage"
-  trap - EXIT
-  trap - SIGINT
+  [ "$Keepcache" = "no" ] && [ -d "$Cachedir" ] && rm -R "$Cachedir"
+
   #jobs
+  trap - SIGINT
+  trap - EXIT
   exit "${1:-0}"
 }
 declare_variables() {
@@ -3236,7 +3161,7 @@ black
 transparent
 white"
   Imsourceimagelist=""
-  Layers=""
+  Keepcache="no"
   Limitmemory=""
   Line=""
   Loadsourceimages=""
@@ -3279,6 +3204,7 @@ white"
   Sourceimagesalreadyloaded=""
   Sourcemd5=""
   Startzeit="$(date +%s)"
+  Storelayered="no"
   Testarg=""
   Testimage=""
   Testsetup=""
@@ -3296,8 +3222,8 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
   Shortoptions="ho:vVW"
-  Longoptions="align,basename:,cache:,exif::,force::,help,limit-memory::,mask2cache,output:,savemask::,showimage,showname,test::,threads:,verbose,version,video"
-  Longoptions="$Longoptions,alpha::,background::,bg::,close::,cutblur::,cutsoft::,darkenmask:,denoise::,finalblur::,grayscale:,layers::,less::,maskblur::,maskstat::,merge::,prefertop::,revert,sigmoidalclut::,slabs::,soft::,threshold::"
+  Longoptions="align,basename:,cache::,exif::,force::,help,limit-memory::,mask2cache,output:,savemask::,showimage,showname,test::,threads:,verbose,version,video"
+  Longoptions="$Longoptions,alpha::,background::,bg::,close::,cutblur::,cutsoft::,darkenmask:,denoise::,finalblur::,grayscale:,layered,less::,maskblur::,maskstat::,merge::,prefertop::,revert,sigmoidalclut::,slabs::,soft::,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,max::,mean::,median::,min::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -3313,7 +3239,7 @@ parse_options() {
          --bg|--background)   Background="${2:-auto}"         ; shift ;;
          --basename)          Basename="${2:-auto}"           ; shift ;;
          --darkenmask)        Darkenmask="${2:-}"             ; shift ;;
-         --cache)             Cachedir="${2:-}"               ; shift ;;
+         --cache)             Cachedir="${2:-auto}"           ; shift ;;
          --close)             Globalclose="${2:-auto}"        ; shift ;;
          --cutblur)           Cutblur="${2:-auto}"            ; shift ;;
          --cutsoft)           Cutsoft="${2:-auto}"            ; shift ;;
@@ -3323,7 +3249,7 @@ parse_options() {
          --force)             Forceoverwrite="${2:-yes}"      ; shift ;;
          --grayscale)         Grayscale="${2:-auto}"          ; shift ;;
       -h|--help)              usage                           ; exit 0 ;;
-         --layers)            Layers="${2:-auto}"             ; shift ;;
+         --layered)           Storelayered="yes"              ;;
          --limit-memory)      Limitmemory="${2:-"80%"}"       ; shift ;;
          --less)              Globalless="${2:-auto}"         ; shift ;;
          --mask2cache)        Masktocache="yes"               ;;
@@ -3492,10 +3418,16 @@ $Argmethod"
   }
 
   # --cachedir
-  #[ -n "$Cachedir" ]       && Cachedir="$Cachedir/cache.imfuse.$$"
-  [ -z "$Cachedir" ]       && Cachedir="./cache.imfuse"
+  [ -n "$Cachedir" ] && {
+    Masktocache="yes"
+    Keepcache="yes"
+    [ "$Cachedir" = "auto" ] && Cachedir=""
+  }
   Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
-  #Cachedir="$(realpath -m "$Cachedir")"
+  case "$Masktocache" in
+    yes) [ -z "$Cachedir" ] && Cachedir="./cache.imfuse" ;;
+    no)  [ -z "$Cachedir" ] && Cachedir="./cache.imfuse.$$" ;;
+  esac
 
   # --close
   false && case $Globalclose in
@@ -3603,11 +3535,6 @@ $Argmethod"
     }
   }
 
-  # --layers
-  case $Layers in
-    auto) Layers="5" ;;
-  esac
-
   # --less
   case $Globalless in
     0)    Globalless="" ;;
@@ -3676,15 +3603,17 @@ $Argmethod"
   }
 
   # --slabs
-  [ "$Slabs" = "auto" ] && Slabs="10"
+  [ "$Slabs" = "auto" ] && Slabs="10,r5"
   [ -n "$Maskmethodlist" ] && {
     Slabs="${Slabs:-1}"
   } || {
     Slabs=0
   }
+  maskarg_parse "$Slabs"
+  Slabs="$Argword1"
+  Slaboverlap="${Argradius1:-5}"
   [ "$Slabs" -gt "0" ] && {
     Slabsize="$((Imagenumber / Slabs))"
-    Slaboverlap="3"
     for Slabstep in $(seq $Slabs); do
       Slabfirstimage[$Slabstep]="$((Slabsize*(Slabstep-1) +1))"
       Slablastimage[$Slabstep]="$((Slabsize*Slabstep+Slaboverlap))"
@@ -3890,8 +3819,8 @@ check_outputname() {
   [ "$Darkenmask" ] && {
     Resultimage="${Resultimage}_darkenmask"
   }
-  [ "$Layers" ] && {
-    Resultimage="${Resultimage}_layers=$Layers"
+  [ "$Storelayered" = "yes" ] && {
+    Resultimage="${Resultimage}_layered"
   }
   case $Testsetup in
     "") ;;
@@ -3912,7 +3841,6 @@ $Grayscale $Mergemethod $Prefertop $Revertimagelist $Softmode $Testsetup" )"
   esac
   Outputimage="$(realpath -m "$Outputimage")"
   [ "$Video" ] && Video="$Outputimage.webm"
-  Resultimage="$Cachedir/${Basename:-}$Resultimage.${Imageformat}"
 
   # --savemask
   [ "$Savemask" = "auto" ] && Savemask="$Outputimage.mask.tif"
@@ -3955,25 +3883,24 @@ main_setup() {
   Imagelistmemsize="$((Imagenumber*Imagememsize))"
   #Imsourceimagelist="$Sourceimagelist"
 
+  # check if source images should be loaded to RAM
+  [ "$((Imagelistmemsize))" -lt "$((Limitmemory*2/3))" ] && Loadsourceimages="yes" || Loadsourceimages="no"
+
   # --cache
   mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
   #rm -rf $Cachedir/*
-  rm $Cachedir/generatedimg.*
   Testimage="$Cachedir/test.png"
   Resultmask="$Cachedir/result.max.tif"
   Showimage="${XDG_RUNTIME_DIR:-$Cachedir}/imfuse.showimage.tif"
   Sourcemd5="$(md5cut "$(ls -l --full-time $Sourceimagelist)" )"
   echo "$Sourcemd5" > "$Cachedir/md5"
 
-  # check if source images should be loaded to RAM
-  [ "$((Imagelistmemsize))" -lt "$((Limitmemory*2/3))" ] && Loadsourceimages="yes" || Loadsourceimages="no"
-
   # --output, --basename
   check_outputname
   # --showname
   [ "$Showname" = "yes" ] && {
-    echo $Outputimage
-    exit
+    echo "$Outputimage"
+    finish
   }
 
   note "
@@ -4023,13 +3950,12 @@ main_setup() {
 main() {
   set -Eu
   trap trap_sigint SIGINT
-  trap finish EXIT ERR
+  trap finish      EXIT
+  trap finish      ERR
   Untrap="
 trap - SIGINT
 trap - EXIT
 trap - ERR"
-
-  local Slabopt
 
   declare_variables
   parse_options "$@"
@@ -4050,8 +3976,8 @@ trap - ERR"
   done
 
   # start geeqie
-  generate_image transparent "$Resultimage"
-  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Resultimage" 2>/dev/null
+  generate_image transparent "$Cachedir/transparent.tif"
+  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Cachedir/transparent.tif" 2>/dev/null
 
   # Generate masks
   [ -n "$Maskmethodlist" ] && {
@@ -4061,8 +3987,8 @@ trap - ERR"
 
   # Focus stacking
   for Slabstep in $(seq $Slabs); do
-    Slabresult[$Slabstep]="$Resultimage.slab$Slabstep.tif"
-    Slabmask[$Slabstep]="$Resultimage.slab$Slabstep-mask.tif"
+    Slabresult[$Slabstep]="$Cachedir/$Resultimage.slab$Slabstep.mpc"
+    Slabmask[$Slabstep]="$Cachedir/$Resultimage.slab$Slabstep-mask.mpc"
     [ "$Slabs" -gt "1" ] && sendmagickmessage "NOTE:Generating slab $Slabstep / $Slabs"
     [ -n "$Maskmethodlist" ] && {
       case $Softmode in
@@ -4078,21 +4004,19 @@ trap - ERR"
         ;;
       esac
 
-      Slabresultpost[$Slabstep]="$Resultimage.slab$Slabstep-post.tif"
-      Slabmaskpost[$Slabstep]="$Resultimage.slab$Slabstep-post-mask.tif"
-      Command="
+      Slabresultpost[$Slabstep]="$Cachedir/$Resultimage.slab$Slabstep-post.mpc"
+      Slabmaskpost[$Slabstep]="$Cachedir/$Resultimage.slab$Slabstep-post-mask.mpc"
+      [ -e "${Slabresultpost[$Slabstep]}" ] && {
+        sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
+      } || {
+        Command="
 ${Slabresult[$Slabstep]}
   -write ${Slabresultpost[$Slabstep]}
   -delete 0
 ${Slabmask[$Slabstep]}
   -write ${Slabmaskpost[$Slabstep]}
   -delete 0"
-      cmd "$Command"
-
-      File="$Cachedir/slab${Slabstep}-postprocessing.$(md5cut "$Resultimage")"
-      [ -e "$File" ] && {
-        sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
-      } || {
+        cmd "$Command"
         # --threshold
         [ "$Globalthreshold" ] && {
           threshold --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Globalthreshold" --blur "$Globalthresholdblur"
@@ -4107,7 +4031,6 @@ ${Slabmask[$Slabstep]}
         [ "$Globalalpha" ] && {
           alphalevel --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --level "$Globalalpha"
         }
-        :> "$File"
       }
     }
   done
@@ -4128,9 +4051,60 @@ ${Slabmask[$Slabstep]}
   Command="$Command
     -write mpr:resultimage
     $Tifstorealpha
-    -write $Resultimage
+    $(showimagecode)
+    -delete 0"
+  cmd "$Command"
+  cmd_waitforready
+
+  # --background
+  [ "$Background" ] && [ "$Storelayered" = "no" ] && {
+    sendmagickmessage "NOTE:Applying --background=$Background"
+    Command="
+  # --background=$Backgroundimage
+  $Backgroundimage
+  mpr:resultimage
+    -compose Over -composite
+    -write mpr:resultimage
+    -delete 0"
+    cmd "$Command"
+    cmd_waitforready
+  }
+
+  # --layered
+  case "$Storelayered" in
+    yes)
+      sendmagickmessage "NOTE:Generating layered tif"
+      generate_image red
+      generate_image green
+      generate_image blue
+      generate_image yellow
+      Command="
+  # --layered
+  mpr:blue
+  mpr:red
+  mpr:yellow
+  mpr:green"
+      [ "$Background" ] && Command="$Command
+  $Backgroundimage"
+      for Slabstep in $(seq $Slabs); do
+        Command="$Command
+  ${Slabresultpost[$Slabstep]}"
+      done
+      Command="$Command
+    $Tifstorealpha
+    #-define tiff:write-layers=yes
+    -write $Outputimage
     $(showimagecode "$Resultimage")
     -delete 0"
+    ;;
+    no)
+      Command="
+  mpr:resultimage
+    $Tifstorealpha
+    -write $Outputimage
+    -delete 0"
+    ;;
+  esac
   cmd "$Command"
   cmd_waitforready
 
@@ -4139,36 +4113,6 @@ ${Slabmask[$Slabstep]}
     cmd "  # --savemask"
     evaluate max "$Savemask" ${Slabmaskpost[$Slabstep]}
   }
-
-  # --background
-  [ "$Background" ] && [ -z "$Layers" ] && {
-    sendmagickmessage "NOTE:Applying --background=$Background"
-    Command="
-  # --background=$Background
-  $Backgroundimage
-  $Resultimage
-    -compose Over -composite
-    -write $Resultimage
-    -delete 0"
-    cmd "$Command"
-    cmd_waitforready
-  }
-
-  # --layered
-  [ "$Layers" ] && {
-    note "Applying --layers=$Layers"
-    layered_tif "$Resultimage" "$Resultmask" "$Layers" "$Backgroundimage" || error "Error in --layers"
-  }
-
-  [ "$Error" ] && return 1
-
-  Command="
-  $Resultimage
-    $Tifstorealpha
-    -write $Outputimage
-    -delete 0"
-  cmd "$Command"
-  cmd_waitforready
 
   # Transfer EXIF metadata from first image to result
   [ "$Exifsourceimage" ] && {
