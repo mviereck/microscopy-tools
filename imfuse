@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.7.5-beta"
+Version="0.7.6-beta"
 
 # ToDo:
 # New BUG s:
@@ -97,6 +97,7 @@ Arguments taken by few options only:
 
 
 Contrast mask options:
+Most of interest: --morphology, --statistic, --wavelet
  --blur [=ARG]        Blur edge detection. 
                       Similar to --gaussian, but faster and less accurate.
                       ARG additionally takes argument: 
@@ -189,7 +190,8 @@ Contrast mask options:
                       ARG additionally takes arguments:
                         p       percent               Default: 10
 
-Image comparision mask options: (Intended for artefact removal)
+Image comparision mask options:
+Most of interest: none
  --compose [=ARG]     Composes evaluated min,max of source images with MODE.
                       ARG additionally takes arguments:
                         (word)   MODE                Default: overlay
@@ -227,7 +229,8 @@ Image comparision mask options: (Intended for artefact removal)
  --min [=ARG]         Same as --evaluate=min. Darkest pixels of stack.
                       Result is similar to --darkness.
 
-Colorspace channel mask options: (Intended for artefact removal)
+Colorspace channel mask options:
+Most of interest: --saturation
 (All are variations of --channel, most of interest is --saturation)
  --channel [=ARG]     Use a colorspace channel as mask.
                       ARG additionally takes arguments:
@@ -245,6 +248,7 @@ Colorspace channel mask options: (Intended for artefact removal)
                       can soften the image so it looks more natural.
 
 Mask merging options:
+Most of interest: --maskstat, --maskblur, --close
  --close [=ARG]       Closes gaps between nearby contrast lines to mark the 
                       area in between as strong contrast, too.
                       Can reduce artefacts in partial transparent objects.
@@ -283,7 +287,8 @@ Mask merging options:
  --merge [=COMPOSE]   Compose mode to merge multiple masks. Default: Plus
                       Of interest: Screen Interpolate Multiply Exclusion Blend
 
-Fusion option:
+Fusion options:
+Most of interest: --less, --slab, --soft
  --cutblur [=SIGMA]   Blur cut masks in final montage. Default SIGMA: 2
  --cutsoft [=SIGMA]   Similar to --cutblur, but composes default sharp cut mask
                       over blurred cut mask. Default SIGMA: 2
@@ -306,15 +311,16 @@ Fusion option:
                       MIDPOINT is the inflection point of the curve in percent.
                       Compare IM option -sigmoidal-contrast.
                       Default CONTRAST: 10, default MIDPOINT: 50%
- --slab [=LAYERS,rOVERLAP,pTHRESHOLD] Split stack into LAYERS different
+ --slab [=LAYERS,rOVERLAP] Split stack into LAYERS different
                       stacks and fuse them separately. 
                       Use --threshold or --alpha to make layers transparent.
                       The layers will be composed over each other onto
                       a background (to specify with --background).
-                      See also --layered to store the single layers.
                       OVERLAP specifies how many images neighbored slabs share.
-                      THRESHOLD is specific for combination with --layered
-                      and adds a second slab result with threshold THRESHOLD.
+                        Default LAYERS:    5
+                        Default OVERLAP:   5
+                      See also --layered to store the single layers.
+                      That allows manual rework of the results in gimp.
  --prefertop [=%]     Prefer top layer images up to %. Default %: 20
                       Similar to --less, but a rather brute-force attempt.
  --soft [=CONTRASTxMIDPOINT]   Enable soft fusion mode. Different concept than 
@@ -339,18 +345,18 @@ Post processing options:
                       with A% and of high contrast areas with B%. 
                       Negative values and higher than 100% are possible.
                       Try script 'demo-alphalevel' to understand the effects.
- --bg, --background BG    Specify a background to paint on. Default: enfuse
+ --bg, --background [=BG]  Specify a background to paint on. Default: enfuse
                       BG can be an image name or one out of:
                         enfuse
                         transparent
                         magick -list color
                         magick -list evaluate (compare --evaluate)
                         magick -list compose  (compare --compose)
-                      Useful with options --alpha and --threshold.
+                      Useful for options --alpha, --threshold and --layered.
                       Recommendations: enfuse mean max min
                                        colorize colorize2 pinlight pinlight2
                       Interesting: interpolate overlay pegtoplight reflect
- --finalblur [=p%,rRADIUS,sSIGMA]   Soft blur of bokeh. 
+ --finalblur [=pPERCENT,rRADIUS,sSIGMA]  Soft blur of bokeh. 
                       Blurs along a sigmoidal curve from low contrast (much blur)
                       to high contrast (less blur). 
                         r        radius of blur      Default: 2
@@ -366,8 +372,10 @@ Post processing options:
                       A higher percent moves mid-point to the right and 
                       will blur more low contrast areas.
                       A bigger radius causes a stronger blur.
- --threshold [=%,sSIGMA] Make low contrast area transparent. Default %: 50
-                      Set SIGMA to blur the cut mask border. Default SIGMA: 0
+ --threshold [=pPERCENT,sSIGMA] Make low contrast area transparent. 
+                      Set SIGMA to blur the cut mask border. 
+                                                     Default PERCENT: 50
+                                                     Default SIGMA: 2
 
 Basics:
 Fusing a focus stack aims to generate an overall sharp image of several single
@@ -2419,6 +2427,147 @@ focus_soft() {
 
   return ${Error:-0}
 }
+focus_main() {
+
+  # Generate masks
+  [ -n "$Maskmethodlist" ] && {
+    focus_generate_masks
+    focus_merge_masks
+  }
+
+  # Focus stacking
+  for Slabstep in $(seq $Slabs); do
+    Slabresult[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep.mpc"
+    Slabmask[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-mask.mpc"
+    [ "$Slabs" -gt "1" ] && sendmagickmessage "NOTE:Generating slab $Slabstep / $Slabs"
+    [ -n "$Maskmethodlist" ] && {
+      case $Softmode in
+        "") 
+          focus_hard --maskmax "${Slabmask[$Slabstep]}" --output "${Slabresult[$Slabstep]}" \
+                     --firstimage="${Slabfirstimage[$Slabstep]}" --lastimage="${Slablastimage[$Slabstep]}" \
+                     --lessthanmax "$Globalless" --cutsoft "$Cutsoft" --cutblur "$Cutblur"
+        ;;
+        *)  ### FIXME
+          focus_soft --maskmax "${Slabmask[$Slabstep]}" --output "${Slabresult[$Slabstep]}" \
+                     --firstimage="${Slabfirstimage[$Slabstep]}" --lastimage="${Slablastimage[$Slabstep]}" \
+                     --alpha "$Globalalpha" --sigmoidal "$Softmode"
+        ;;
+      esac
+
+      Slabresultpost[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-post.mpc"
+      Slabmaskpost[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-post-mask.mpc"
+      [ -e "${Slabresultpost[$Slabstep]}" ] && {
+        sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
+      } || {
+        Command="
+${Slabresult[$Slabstep]}
+  -write ${Slabresultpost[$Slabstep]}
+  -delete 0
+${Slabmask[$Slabstep]}
+  -write ${Slabmaskpost[$Slabstep]}
+  -delete 0"
+        cmd "$Command"
+
+        # --finalblur
+        [ "$Finalblur" ] && {
+          finalblur --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Finalblurpercent" --sigma "$Finalblursigma" --blur "$Finalblurradius"
+        }
+
+        # --alpha
+        [ "$Globalalpha" ] && {
+          alphalevel --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --level "$Globalalpha"
+        }
+
+        # --threshold
+        [ "$Globalthreshold" ] && {
+          threshold --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Globalthreshold" --blur "$Globalthresholdblur"
+        }
+      }
+    }
+  done
+
+  Command="
+  # composing slab results
+  mpr:transparent
+    -alpha set
+    -write mpr:resultimage
+    -delete 0
+  mpr:resultimage"
+  for Slabstep in $(seq $Slabs); do
+    Command="$Command
+  ${Slabresultpost[$Slabstep]}
+    -compose Over -composite
+    $(showimagecode)"
+  done
+  Command="$Command
+    -write mpr:resultimage
+    $Tifstorealpha
+    $(showimagecode)
+    -delete 0"
+  cmd "$Command"
+  cmd_waitforready
+
+  # --background
+  [ "$Background" ] && [ "$Storelayered" = "no" ] && {
+    sendmagickmessage "NOTE:Applying --background=$Background"
+    Command="
+  # --background=$Backgroundimage
+  $Backgroundimage
+  mpr:resultimage
+    -compose Over -composite
+    -write mpr:resultimage
+    -delete 0"
+    cmd "$Command"
+    cmd_waitforready
+  }
+
+  # --layered
+  case "$Storelayered" in
+    yes)
+      sendmagickmessage "NOTE:Generating layered tif"
+      generate_image cyan
+      generate_image magenta
+      generate_image yellow
+      generate_image green
+      Command="
+  # --layered
+  mpr:resultimage
+  mpr:cyan
+  mpr:magenta
+  mpr:yellow
+  mpr:green"
+      [ "$Background" ] && Command="$Command
+  $Backgroundimage"
+      for Slabstep in $(seq $Slabs); do
+        Command="$Command
+  ${Slabresult[$Slabstep]}
+  ${Slabresultpost[$Slabstep]}"
+      done
+      Command="$Command
+    $Tifstorealpha
+    #-define tiff:write-layers=yes
+    -write $Outputimage
+    $(showimagecode "$Outputimage")
+    -delete 0"
+    ;;
+    no)
+      Command="
+  mpr:resultimage
+    $Tifstorealpha
+    -write $Outputimage
+    -delete 0"
+    ;;
+  esac
+
+  cmd "$Command"
+  cmd_waitforready
+
+  # --savemask
+  [ "$Savemask" ] && {
+    cmd "  # --savemask"
+    evaluate max "$Savemask" ${Slabmaskpost[$Slabstep]}
+  }
+}
 
 ### mask args
 
@@ -3079,7 +3228,7 @@ finish() {
   #[ -f "$Magickfifolog" ]   && cp "$Magickfifolog" .
   [ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" .
 
-  [ -f "$Showimage" ] && rm "$Showimage"
+  [ -f "${Showimage:-}" ] && rm "$Showimage"
   [ "$Keepcache" = "no" ] && [ -d "$Cachedir" ] && rm -R "$Cachedir"
 
   #jobs
@@ -3192,6 +3341,7 @@ white"
   Revertimagelist=""
   Resultbasename=""
   Savemask=""
+  Showimage=""
   Showimageprocessing=""
   Showname=""
   Slabfirstimage=""
@@ -3204,7 +3354,6 @@ white"
   Slabs=""
   Slabsize=""
   Slabstep=""
-  Slabtreshold=""
   Softmode=""
   Sourceimage=""
   Sourceimagelist=""
@@ -3610,7 +3759,7 @@ $Argmethod"
   }
 
   # --slabs
-  [ "$Slabs" = "auto" ] && Slabs="10,r5"
+  [ "$Slabs" = "auto" ] && Slabs="5,r5"
   [ -n "$Maskmethodlist" ] && {
     Slabs="${Slabs:-1}"
   } || {
@@ -3620,8 +3769,6 @@ $Argmethod"
     maskarg_parse "$Slabs"
     Slabs="${Argword1:-10}"
     Slaboverlap="${Argradius1:-5}"
-    Slabtreshold="${Argpercent1:-}"
-    [ "$Storelayered" = "no" ] && Slabtreshold=""
     Slabsize="$((Imagenumber / Slabs))"
     for Slabstep in $(seq $Slabs); do
       Slabfirstimage[$Slabstep]="$((Slabsize*(Slabstep-1) +1))"
@@ -3801,7 +3948,6 @@ check_outputname() {
   }
   [ "$Slabs" ] && {
     Resultbasename="${Resultbasename}_slabs${Slabs},r${Slaboverlap}"
-    [ "$Slabtreshold" ] && Resultbasename="${Resultbasename},p${Slabtreshold}"
   }
 
   # step postprocessing
@@ -3955,6 +4101,10 @@ main_setup() {
     return 0
   }
 
+  # start geeqie
+  generate_image transparent "$Cachedir/transparent.tif"
+  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Cachedir/transparent.tif" 2>/dev/null
+
   return 0
 }
 main() {
@@ -3985,154 +4135,8 @@ trap - ERR"
     generate_image "$Mode"
   done
 
-  # start geeqie
-  generate_image transparent "$Cachedir/transparent.tif"
-  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Cachedir/transparent.tif" 2>/dev/null
-
-  # Generate masks
-  [ -n "$Maskmethodlist" ] && {
-    focus_generate_masks
-    focus_merge_masks
-  }
-
-  # Focus stacking
-  for Slabstep in $(seq $Slabs); do
-    Slabresult[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep.mpc"
-    Slabmask[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-mask.mpc"
-    [ "$Slabs" -gt "1" ] && sendmagickmessage "NOTE:Generating slab $Slabstep / $Slabs"
-    [ -n "$Maskmethodlist" ] && {
-      case $Softmode in
-        "") 
-          focus_hard --maskmax "${Slabmask[$Slabstep]}" --output "${Slabresult[$Slabstep]}" \
-                     --firstimage="${Slabfirstimage[$Slabstep]}" --lastimage="${Slablastimage[$Slabstep]}" \
-                     --lessthanmax "$Globalless" --cutsoft "$Cutsoft" --cutblur "$Cutblur"
-        ;;
-        *)  ### FIXME
-          focus_soft --maskmax "${Slabmask[$Slabstep]}" --output "${Slabresult[$Slabstep]}" \
-                     --firstimage="${Slabfirstimage[$Slabstep]}" --lastimage="${Slablastimage[$Slabstep]}" \
-                     --alpha "$Globalalpha" --sigmoidal "$Softmode"
-        ;;
-      esac
-
-      Slabresultpost[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-post.mpc"
-      Slabmaskpost[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-post-mask.mpc"
-      [ -e "${Slabresultpost[$Slabstep]}" ] && {
-        sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
-      } || {
-        Command="
-${Slabresult[$Slabstep]}
-  -write ${Slabresultpost[$Slabstep]}
-  -delete 0
-${Slabmask[$Slabstep]}
-  -write ${Slabmaskpost[$Slabstep]}
-  -delete 0"
-        cmd "$Command"
-
-        # --finalblur
-        [ "$Finalblur" ] && {
-          finalblur --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Finalblurpercent" --sigma "$Finalblursigma" --blur "$Finalblurradius"
-        }
-
-        # --alpha
-        [ "$Globalalpha" ] && {
-          alphalevel --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --level "$Globalalpha"
-        }
-
-        # --threshold
-        [ "$Globalthreshold" ] && {
-          threshold --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Globalthreshold" --blur "$Globalthresholdblur"
-        }
-      }
-    }
-  done
-
-  Command="
-  # composing slab results
-  mpr:transparent
-    -alpha set
-    -write mpr:resultimage
-    -delete 0
-  mpr:resultimage"
-  for Slabstep in $(seq $Slabs); do
-    Command="$Command
-  ${Slabresultpost[$Slabstep]}
-    -compose Over -composite
-    $(showimagecode)"
-  done
-  Command="$Command
-    -write mpr:resultimage
-    $Tifstorealpha
-    $(showimagecode)
-    -delete 0"
-  cmd "$Command"
-  cmd_waitforready
-
-  # --background
-  [ "$Background" ] && [ "$Storelayered" = "no" ] && {
-    sendmagickmessage "NOTE:Applying --background=$Background"
-    Command="
-  # --background=$Backgroundimage
-  $Backgroundimage
-  mpr:resultimage
-    -compose Over -composite
-    -write mpr:resultimage
-    -delete 0"
-    cmd "$Command"
-    cmd_waitforready
-  }
-
-  # --layered
-  case "$Storelayered" in
-    yes)
-      sendmagickmessage "NOTE:Generating layered tif"
-      generate_image red
-      generate_image green
-      generate_image blue
-      generate_image yellow
-      Command="
-  # --layered
-  mpr:blue
-  mpr:red
-  mpr:yellow
-  mpr:green"
-      [ "$Background" ] && Command="$Command
-  $Backgroundimage"
-      for Slabstep in $(seq $Slabs); do
-        [ "$Slabtreshold" ] && {
-      Command="$Command
-  ( ${Slabresult[$Slabstep]}
-    ( ${Slabmask[$Slabstep]} -alpha off -threshold ${Slabtreshold}% )
-      -alpha off
-      -compose CopyOpacity -composite
-  )"
-        }
-        Command="$Command
-  ${Slabresultpost[$Slabstep]}"
-      done
-      Command="$Command
-    $Tifstorealpha
-    #-define tiff:write-layers=yes
-    -write $Outputimage
-    $(showimagecode "$Outputimage")
-    -delete 0"
-    ;;
-    no)
-      Command="
-  mpr:resultimage
-    $Tifstorealpha
-    -write $Outputimage
-    -delete 0"
-    ;;
-  esac
-
-  cmd "$Command"
-  cmd_waitforready
-
-  # --savemask
-  [ "$Savemask" ] && {
-    cmd "  # --savemask"
-    evaluate max "$Savemask" ${Slabmaskpost[$Slabstep]}
-  }
+  # run
+  focus_main
 
   # Transfer EXIF metadata from first image to result
   [ "$Exifsourceimage" ] && {
