@@ -4,9 +4,9 @@ Tools for microscopy and image focus stacking.
 
  - Tools already useful, in active development:
    - [`imfuse`](#imfuse): Fuse focus stackshot images with ImageMagick. (Terminal)
-   - [`stackprepare`](#preparestack): Batch processing of image stack for contrast, crop, gamma etc. 
+   - [`stackprepare`](#stackprepare): Batch processing of image stack for contrast, crop, gamma etc. 
  - Tools considered to be (mostly) stable and ready for use:
-   - [`stackalign`](#align): Align image stack with the help of [focus-stack]((https://github.com/PetteriAimonen/focus-stack)) and ImageMagick.
+   - [`stackalign`](#stackalign): Align image stack with the help of [focus-stack]((https://github.com/PetteriAimonen/focus-stack)) and ImageMagick.
    - [`imgruler`](#imgruler): Draw a ruler or micrometer into an image. (Terminal)
  - Tools awaiting further development, currently less useful:
    - [`camcfg`](#camcfg): Terminal dialog frontend for camera configuration. (Terminal)
@@ -29,7 +29,7 @@ Dependencies:
  - `geeqie` and `viewnior` (optional image viewers)
  - `exiftool` (optional to preserve exif meta data)
 
-## align
+## stackalign
 
 Aligns image stack.
 
@@ -39,7 +39,7 @@ Dependencies:
 
 The core work is done by `focus-stack`, this tool helps to crop the images to the usable common area.
 
-## preparestack
+## stackprepare
 
 Batch processing of image stack for contrast, crop, gamma etc.
 
