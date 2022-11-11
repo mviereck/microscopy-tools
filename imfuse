@@ -244,7 +244,7 @@ Colorspace channel mask options: (Intended for artefact removal)
                       Adding this with low weight, e.g. --saturation=w5,
                       can soften the image so it looks more natural.
 
-Mask generation and fusion adjustments:
+Mask merging options:
  --close [=ARG]       Closes gaps between nearby contrast lines to mark the 
                       area in between as strong contrast, too.
                       Can reduce artefacts in partial transparent objects.
@@ -258,9 +258,6 @@ Mask generation and fusion adjustments:
                       setting one of r oder R to 12.
                       Percent p is a threshold value; --close is only applied
                       to contrast areas stronger than percent p.
- --cutblur [=SIGMA]   Blur cut masks in final montage. Default SIGMA: 2
- --cutsoft [=SIGMA]   Similar to --cutblur, but composes default sharp cut mask
-                      over blurred cut mask. Default SIGMA: 2
  --darkenmask=MASK    Use mask image MASK to darken the merged contrast masks.
                       (Special use cases, needed for script slab.)
  --denoise [=%]       Experimental option to remove noise in low contrast areas.
@@ -279,6 +276,17 @@ Mask generation and fusion adjustments:
                 7 Average          (R' + G' + B') / 3.0
                 8 MS               (R'^2 + G'^2 + B'^2) / 3.0
                 9 RMS              sqrt( (R'^2 + G'^2 + B'^2) / 3.0 )
+ --maskblur [=SIGMA]  Blur masks with SIGMA (default 1). Enhances contrast.
+                      Applied to contrast masks only.
+ --maskstat [rRADIUS,METHOD]  Apply a statistic method for each mask pixel
+                      to adjust it according to its neighborhood.
+ --merge [=COMPOSE]   Compose mode to merge multiple masks. Default: Plus
+                      Of interest: Screen Interpolate Multiply Exclusion Blend
+
+Fusion option:
+ --cutblur [=SIGMA]   Blur cut masks in final montage. Default SIGMA: 2
+ --cutsoft [=SIGMA]   Similar to --cutblur, but composes default sharp cut mask
+                      over blurred cut mask. Default SIGMA: 2
  --less [=%]          Strenghtens less contrasted objects in front of strong
                       contrasted background objects. 
                       Well to combine with --close and / or --cutblur.
@@ -290,14 +298,6 @@ Mask generation and fusion adjustments:
                       --maskblur or --close.
                       (If also using color channel or image comparision masks,
                       rather use 'less' as a mask argument than globally.)
- --maskblur [=SIGMA]  Blur masks with SIGMA (default 1). Enhances contrast.
-                      Applied to contrast masks only.
- --maskstat [rRADIUS,METHOD]  Apply a statistic method for each mask pixel
-                      to adjust it according to its neighborhood.
- --merge [=COMPOSE]   Compose mode to merge multiple masks. Default: Plus
-                      Of interest: Screen Interpolate Multiply Exclusion Blend
- --prefertop [=%]     Prefer top layer images up to %. Default %: 20
-                      Similar to --less, but a rather brute-force attempt.
  --sigmoidalclut [=CONTRASTxMIDPOINT]   Change grayscale distribution of 
                       contrast masks along a sigmoidal curve. 
                       Helps to strenghten high contrast areas and to weaken
@@ -306,11 +306,17 @@ Mask generation and fusion adjustments:
                       MIDPOINT is the inflection point of the curve in percent.
                       Compare IM option -sigmoidal-contrast.
                       Default CONTRAST: 10, default MIDPOINT: 50%
- --slab [=LAYERS]     Split stack into LAYERS different stacks and fuse them
-                      separately. Use --alpha and/or --threshold to make the
-                      layers transparent. The layers will be composed over each
-                      other onto a background (to specify with --background).
+ --slab [=LAYERS,rOVERLAP,pTHRESHOLD] Split stack into LAYERS different
+                      stacks and fuse them separately. 
+                      Use --threshold or --alpha to make layers transparent.
+                      The layers will be composed over each other onto
+                      a background (to specify with --background).
                       See also --layered to store the single layers.
+                      OVERLAP specifies how many images neighbored slabs share.
+                      THRESHOLD is specific for combination with --layered
+                      and adds a second slab result with threshold THRESHOLD.
+ --prefertop [=%]     Prefer top layer images up to %. Default %: 20
+                      Similar to --less, but a rather brute-force attempt.
  --soft [=CONTRASTxMIDPOINT]   Enable soft fusion mode. Different concept than 
                       default maximum contrast montage. Images are multiplied 
                       with their contrast masks and added altogether as a whole.
@@ -3184,7 +3190,7 @@ white"
   Parsedoptions=""
   Prefertop=""
   Revertimagelist=""
-  Resultimage=""
+  Resultbasename=""
   Savemask=""
   Showimageprocessing=""
   Showname=""
@@ -3198,6 +3204,7 @@ white"
   Slabs=""
   Slabsize=""
   Slabstep=""
+  Slabtreshold=""
   Softmode=""
   Sourceimage=""
   Sourceimagelist=""
@@ -3609,10 +3616,12 @@ $Argmethod"
   } || {
     Slabs=0
   }
-  maskarg_parse "$Slabs"
-  Slabs="$Argword1"
-  Slaboverlap="${Argradius1:-5}"
-  [ "$Slabs" -gt "0" ] && {
+  [ "$Slabs" != "0" ] && {
+    maskarg_parse "$Slabs"
+    Slabs="${Argword1:-10}"
+    Slaboverlap="${Argradius1:-5}"
+    Slabtreshold="${Argpercent1:-}"
+    [ "$Storelayered" = "no" ] && Slabtreshold=""
     Slabsize="$((Imagenumber / Slabs))"
     for Slabstep in $(seq $Slabs); do
       Slabfirstimage[$Slabstep]="$((Slabsize*(Slabstep-1) +1))"
@@ -3712,131 +3721,132 @@ enfuse"
 check_outputname() {
   # Generate a unique output name showing options
 
-  Resultimage="imfuse."
-  [ "$Align" = "yes" ] && Resultimage="${Resultimage}align_"
+  Resultbasename="imfuse."
+  [ "$Align" = "yes" ] && Resultbasename="${Resultbasename}align_"
 
   # step mask generation
   case $Grayscalenumber in
     9) ;;
-    *) Resultimage="${Resultimage}_gray=$Grayscalenumber" ;;
+    *) Resultbasename="${Resultbasename}_gray=$Grayscalenumber" ;;
   esac
   while read Line; do
     [ -z "$Line" ] && break
     maskarg_parse "$Line"
-    Resultimage="${Resultimage}_${Argmethod}="
-    [ "$Argweight" != "100" ]    && Resultimage="$Resultimage-w$(LC_ALL=C awk 'BEGIN {printf "%0.0f",'$Argweight'}')"
-    [ "$Argradius1" ]            && Resultimage="$Resultimage-r$Argradius1"
-    [ "$Argsigma1" ]             && Resultimage="$Resultimage-s$Argsigma1"
-    [ "$Argradius2" ]            && Resultimage="$Resultimage-R$Argradius2"
-    [ "$Argsigma2" ]             && Resultimage="$Resultimage-S$Argsigma2"
-    [ "$Argpercent1" ]           && Resultimage="$Resultimage-p$Argpercent1"
-    [ "$Argpercent2" ]           && Resultimage="$Resultimage-P$Argpercent2"
-    [ "$Argalpha" ]              && Resultimage="$Resultimage-alpha$Argalpha"
-    [ "$Argless" ]               && Resultimage="$Resultimage-less$Argless"
-    [ "$Argclose1" ]             && Resultimage="$Resultimage-close$Argclose1"
-    [ "$Argclose2" ]             && Resultimage="${Resultimage}x$Argclose2"
-    [ "$Argmaskblur" ]           && Resultimage="$Resultimage-maskblur$Argmaskblur"
-    [ "$Argdenoise" ]            && Resultimage="$Resultimage-denoise$Argdenoise"
-    [ "$Argnegate" ]             && Resultimage="$Resultimage-neg"
+    Resultbasename="${Resultbasename}_${Argmethod}="
+    [ "$Argweight" != "100" ]    && Resultbasename="$Resultbasename-w$(LC_ALL=C awk 'BEGIN {printf "%0.0f",'$Argweight'}')"
+    [ "$Argradius1" ]            && Resultbasename="$Resultbasename-r$Argradius1"
+    [ "$Argsigma1" ]             && Resultbasename="$Resultbasename-s$Argsigma1"
+    [ "$Argradius2" ]            && Resultbasename="$Resultbasename-R$Argradius2"
+    [ "$Argsigma2" ]             && Resultbasename="$Resultbasename-S$Argsigma2"
+    [ "$Argpercent1" ]           && Resultbasename="$Resultbasename-p$Argpercent1"
+    [ "$Argpercent2" ]           && Resultbasename="$Resultbasename-P$Argpercent2"
+    [ "$Argalpha" ]              && Resultbasename="$Resultbasename-alpha$Argalpha"
+    [ "$Argless" ]               && Resultbasename="$Resultbasename-less$Argless"
+    [ "$Argclose1" ]             && Resultbasename="$Resultbasename-close$Argclose1"
+    [ "$Argclose2" ]             && Resultbasename="${Resultbasename}x$Argclose2"
+    [ "$Argmaskblur" ]           && Resultbasename="$Resultbasename-maskblur$Argmaskblur"
+    [ "$Argdenoise" ]            && Resultbasename="$Resultbasename-denoise$Argdenoise"
+    [ "$Argnegate" ]             && Resultbasename="$Resultbasename-neg"
     case $Argmethod in
       image) ;;
       saturation|chroma|darkness|lightness) ;;
-      *) [ "$Argword1" ]         && Resultimage="$Resultimage-$(unspecialstring "$Argword1")" ;;
+      *) [ "$Argword1" ]         && Resultbasename="$Resultbasename-$(unspecialstring "$Argword1")" ;;
     esac
     case $Argmethod in
       saturation|chroma|darkness|lightness) ;;
-      *) [ "$Argword2" ]         && Resultimage="$Resultimage-$(unspecialstring "$Argword2")" ;;
+      *) [ "$Argword2" ]         && Resultbasename="$Resultbasename-$(unspecialstring "$Argword2")" ;;
     esac
   done <<< "$Maskmethodlist"
 
   # step merge
   case $Globaldenoise in
     "") ;;
-    *) Resultimage="${Resultimage}_denoise=$Globaldenoise" ;;
+    *) Resultbasename="${Resultbasename}_denoise=$Globaldenoise" ;;
   esac
   [ "$Globalmaskstat" ] && {
-    Resultimage="${Resultimage}_maskstat=$Globalmaskstat"
+    Resultbasename="${Resultbasename}_maskstat=$Globalmaskstat"
   }
   [ "$Globalmaskblur" ] && {
-    Resultimage="${Resultimage}_maskblur=s$Globalmaskblur"
+    Resultbasename="${Resultbasename}_maskblur=s$Globalmaskblur"
   }
   case $Globalclose in
     "") ;;
-    *) Resultimage="${Resultimage}_close=$Globalclose" ;;
+    *) Resultbasename="${Resultbasename}_close=$Globalclose" ;;
   esac
   [ "$Globalsigmoidal" ] && {
-    Resultimage="${Resultimage}_sigmoidal=$Globalsigmoidal"
+    Resultbasename="${Resultbasename}_sigmoidal=$Globalsigmoidal"
   }
   [ "$Prefertop" ] && {
-    Resultimage="${Resultimage}_prefertop=p$Prefertop"
+    Resultbasename="${Resultbasename}_prefertop=p$Prefertop"
   }
   case $Mergemethod in
     plus) ;;
-    *) Resultimage="${Resultimage}_merge=$Mergemethod" ;;
+    *) Resultbasename="${Resultbasename}_merge=$Mergemethod" ;;
   esac
 
   # step focus
   [ "$Softmode" ] && {
-    Resultimage="${Resultimage}_soft"
-    [ "$Softmode" != "auto" ] && Resultimage="${Resultimage}=${Softmode}"
+    Resultbasename="${Resultbasename}_soft"
+    [ "$Softmode" != "auto" ] && Resultbasename="${Resultbasename}=${Softmode}"
   }
   case $Globalless in
     ""|0) ;;
-    *) Resultimage="${Resultimage}_less=p$Globalless" ;;
+    *) Resultbasename="${Resultbasename}_less=p$Globalless" ;;
   esac
   [ "$Cutsoft" ] && {
-    Resultimage="${Resultimage}_cutsoft=s$Cutsoft"
+    Resultbasename="${Resultbasename}_cutsoft=s$Cutsoft"
   }
   [ "$Cutblur" ] && {
-    Resultimage="${Resultimage}_cutblur=s$Cutblur"
+    Resultbasename="${Resultbasename}_cutblur=s$Cutblur"
   }
   [ "$Slabs" ] && {
-    Resultimage="${Resultimage}_slabs${Slabs}"
+    Resultbasename="${Resultbasename}_slabs${Slabs},r${Slaboverlap}"
+    [ "$Slabtreshold" ] && Resultbasename="${Resultbasename},p${Slabtreshold}"
   }
 
   # step postprocessing
-  [ "$Globalthreshold" ] && {
-    Resultimage="${Resultimage}_threshold=p$Globalthreshold"
-    [ "$Globalthresholdblur" ] && Resultimage="${Resultimage},s$Globalthresholdblur"
-  }
   [ "$Finalblur" ] && {
-    Resultimage="${Resultimage}_finalblur=p${Finalblurpercent}-r${Finalblurradius}-s${Finalblursigma}"
+    Resultbasename="${Resultbasename}_finalblur=p${Finalblurpercent}-r${Finalblurradius}-s${Finalblursigma}"
+  }
+  case $Globalalpha in
+    "") ;;
+    *) Resultbasename="${Resultbasename}_alpha=$Globalalpha" ;;
+  esac
+  [ "$Globalthreshold" ] && {
+    Resultbasename="${Resultbasename}_threshold=p$Globalthreshold"
+    [ "$Globalthresholdblur" ] && Resultbasename="${Resultbasename},s$Globalthresholdblur"
   }
   [ "$Background" ] && case $Backgroundtype in
     "") ;;
-    image) Resultimage="${Resultimage}_bg=image$(md5cut "$(ls -l --full-time "$Background")")" ;;
-    *)     Resultimage="${Resultimage}_bg=$Background" ;;
-  esac
-  case $Globalalpha in
-    "") ;;
-    *) Resultimage="${Resultimage}_alpha=$Globalalpha" ;;
+    image) Resultbasename="${Resultbasename}_bg=image$(md5cut "$(ls -l --full-time "$Background")")" ;;
+    *)     Resultbasename="${Resultbasename}_bg=$Background" ;;
   esac
 
   # misc
   case $Revertimagelist in
-    "yes") Resultimage="${Resultimage}_rev" ;;
+    "yes") Resultbasename="${Resultbasename}_rev" ;;
   esac
   [ "$Darkenmask" ] && {
-    Resultimage="${Resultimage}_darkenmask"
+    Resultbasename="${Resultbasename}_darkenmask"
   }
   [ "$Storelayered" = "yes" ] && {
-    Resultimage="${Resultimage}_layered"
+    Resultbasename="${Resultbasename}_layered"
   }
   case $Testsetup in
     "") ;;
-    *) Resultimage="${Resultimage}_test$Testarg" ;;
+    *) Resultbasename="${Resultbasename}_test$Testarg" ;;
   esac
-  Resultimage="$(sed "s/__/_/g ; s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultimage")"
+  Resultbasename="$(sed "s/__/_/g ; s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultbasename")"
 
   Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist \
 $Background $([ "$Darkenmask" ] && md5sum "$Darkenmask") $Cutblur $Cutsoft $Finalblur \
 $Globalalpha $Globalclose $Globaldenoise $Globalless $Globalmaskstat $Globalmaskblur $Globalthreshold $Globalthresholdblur \
 $Grayscale $Mergemethod $Prefertop $Revertimagelist $Softmode $Testsetup" )"
 
-  Resultimage="${Resultimage}_md${Fusemd5sum}"
+  Resultbasename="${Resultbasename}_md${Fusemd5sum}"
   [ -z "$Outputdir" ] && Outputdir="$(pwd)"
   case $Outputimage in
-    "") Outputimage="$Outputdir/$Basename$Resultimage.${Imageformat}" ;;
+    "") Outputimage="$Outputdir/$Basename$Resultbasename.${Imageformat}" ;;
     *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="$Outputdir/$Outputimage" ;;
   esac
   Outputimage="$(realpath -m "$Outputimage")"
@@ -3987,8 +3997,8 @@ trap - ERR"
 
   # Focus stacking
   for Slabstep in $(seq $Slabs); do
-    Slabresult[$Slabstep]="$Cachedir/$Resultimage.slab$Slabstep.mpc"
-    Slabmask[$Slabstep]="$Cachedir/$Resultimage.slab$Slabstep-mask.mpc"
+    Slabresult[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep.mpc"
+    Slabmask[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-mask.mpc"
     [ "$Slabs" -gt "1" ] && sendmagickmessage "NOTE:Generating slab $Slabstep / $Slabs"
     [ -n "$Maskmethodlist" ] && {
       case $Softmode in
@@ -4004,8 +4014,8 @@ trap - ERR"
         ;;
       esac
 
-      Slabresultpost[$Slabstep]="$Cachedir/$Resultimage.slab$Slabstep-post.mpc"
-      Slabmaskpost[$Slabstep]="$Cachedir/$Resultimage.slab$Slabstep-post-mask.mpc"
+      Slabresultpost[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-post.mpc"
+      Slabmaskpost[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-post-mask.mpc"
       [ -e "${Slabresultpost[$Slabstep]}" ] && {
         sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
       } || {
@@ -4017,10 +4027,6 @@ ${Slabmask[$Slabstep]}
   -write ${Slabmaskpost[$Slabstep]}
   -delete 0"
         cmd "$Command"
-        # --threshold
-        [ "$Globalthreshold" ] && {
-          threshold --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Globalthreshold" --blur "$Globalthresholdblur"
-        }
 
         # --finalblur
         [ "$Finalblur" ] && {
@@ -4030,6 +4036,11 @@ ${Slabmask[$Slabstep]}
         # --alpha
         [ "$Globalalpha" ] && {
           alphalevel --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --level "$Globalalpha"
+        }
+
+        # --threshold
+        [ "$Globalthreshold" ] && {
+          threshold --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Globalthreshold" --blur "$Globalthresholdblur"
         }
       }
     }
@@ -4087,6 +4098,14 @@ ${Slabmask[$Slabstep]}
       [ "$Background" ] && Command="$Command
   $Backgroundimage"
       for Slabstep in $(seq $Slabs); do
+        [ "$Slabtreshold" ] && {
+      Command="$Command
+  ( ${Slabresult[$Slabstep]}
+    ( ${Slabmask[$Slabstep]} -alpha off -threshold ${Slabtreshold}% )
+      -alpha off
+      -compose CopyOpacity -composite
+  )"
+        }
         Command="$Command
   ${Slabresultpost[$Slabstep]}"
       done
@@ -4094,7 +4113,7 @@ ${Slabmask[$Slabstep]}
     $Tifstorealpha
     #-define tiff:write-layers=yes
     -write $Outputimage
-    $(showimagecode "$Resultimage")
+    $(showimagecode "$Outputimage")
     -delete 0"
     ;;
     no)
@@ -4105,6 +4124,7 @@ ${Slabmask[$Slabstep]}
     -delete 0"
     ;;
   esac
+
   cmd "$Command"
   cmd_waitforready
 
