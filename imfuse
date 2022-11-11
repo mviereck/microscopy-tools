@@ -72,15 +72,13 @@ General options:
 
 The mask generating options below can take additionally arguments [=ARG].
 Multiple arguments are comma-separated. 
-  Example: --morphology=r3,less20,close,maskblur --saturation=w50
+  Example: --morphology=r3,close,maskblur --saturation=w10
 Arguments taken by all mask options:
   w         Mask weight. Percent value from 0 to 100.
             Of interest if specifying more than one mask generation method.
             Example: --morphology --saturation=w25
             This will generate two masks. The saturation mask will only have
             noteable effect where the morphology mask strength is below 25%.
-  less      Compare option --less, here applied for single mask only.
-  alpha     Compare option --alpha, here applied for single mask only.
   maskblur  Compare option --maskblur, here applied for single mask only.
   denoise   Compare option --denoise, here applied for single mask only.
   negate    Negate/invert the mask. Rarely needed.
@@ -262,8 +260,6 @@ Most of interest: --maskstat, --maskblur, --close
                       setting one of r oder R to 12.
                       Percent p is a threshold value; --close is only applied
                       to contrast areas stronger than percent p.
- --darkenmask=MASK    Use mask image MASK to darken the merged contrast masks.
-                      (Special use cases, needed for script slab.)
  --denoise [=%]       Experimental option to remove noise in low contrast areas.
                       The percent value is a threshold. 
                       Rather use --alpha or --finalblur.
@@ -299,10 +295,8 @@ Most of interest: --less, --slab, --soft
                       difference between background and foreground object.
                       Default % depends on first mask, mostly 45% or 60%.
                       If unsharp areas appear, use a smaller less value.
-                      If the foreground object still has holes, try --cutblur,
-                      --maskblur or --close.
-                      (If also using color channel or image comparision masks,
-                      rather use 'less' as a mask argument than globally.)
+                      If the foreground object still has holes, try --maskstat,
+                      --maskblur, --cutblur or --close.
  --sigmoidalclut [=CONTRASTxMIDPOINT]   Change grayscale distribution of 
                       contrast masks along a sigmoidal curve. 
                       Helps to strenghten high contrast areas and to weaken
@@ -682,9 +676,6 @@ check_outputname() {
   case $Revertimagelist in
     "yes") Resultbasename="${Resultbasename}_rev" ;;
   esac
-  [ "$Darkenmask" ] && {
-    Resultbasename="${Resultbasename}_darkenmask"
-  }
   [ "$Storelayered" = "yes" ] && {
     Resultbasename="${Resultbasename}_layered"
   }
@@ -695,7 +686,7 @@ check_outputname() {
   Resultbasename="$(sed "s/__/_/g ; s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultbasename")"
 
   Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist \
-$Background $([ "$Darkenmask" ] && md5sum "$Darkenmask") $Cutblur $Cutsoft $Finalblur \
+$Background $Cutblur $Cutsoft $Finalblur \
 $Globalalpha $Globalclose $Globaldenoise $Globalless $Globalmaskstat $Globalmaskblur $Globalthreshold $Globalthresholdblur \
 $Grayscale $Mergemethod $Prefertop $Revertimagelist $Softmode $Testsetup" )"
 
@@ -1872,42 +1863,10 @@ ${Maskgenerator_all//NUMBER/$Number}"
   cmd "$Command"
   cmd_waitforready
 
-  # level
-  # less,alpha
+  # level and uniform masks
   while read Line; do
     maskarg_parse "$Line"
-
-    # level and uniform masks
     [ "$Arglevel" = "yes" ] && level_masks "$Argbasename"
-
-    ### FIXME magickscript
-    # =alpha,less
-    [ "${Argless}" ] && [ "${Argalpha}" ] && {
-      error "--option=less,alpha is not supported yet."
-      note "Generating alpha&less image for mask $Argmethod"
-      Imagename="$Cachedir/$Argbasename-prepare-less${Argless}-alpha${Argalpha}-cb${Cutblur}.tif"
-      Maskmax="$Cachedir/$Argbasename-prepare-less${Argless}-alpha${Argalpha}-cb${Cutblur}.mask.tif"
-      focus_hard --alpha "$Argalpha" --lessthanmax "$Argless" --cutsoft "$Cutsoft" --cutblur "$Cutblur" --maskmax="$Maskmax" --output "$Imagename" --masklist="$(masklist "$Argbasename")" || error "Error in focus_generate_masks->focus_hard for less+alpha"
-      alphalevel --image "$Imagename" --mask "$Maskmax" --level "$Argalpha"
-      #$Magickbin "$Enfusebaseimage" "$Imagename" -compose Over -composite "$Imagename" || error "Failed to compose alpha result on enfuse background"
-      Argbasename="$Argmethod-alpha$Argalpha-less$Argless-cb$Cutblur.$(md5cut "$Argbasename $Argalpha $Argless $Cutblur" )"
-      note "Generating comparision masks from alpha&less result of $Argmethod"
-      maskfromimage $Imagename $Argbasename
-      Arglevel=""
-      Argtype="image"
-      maskarg_store
-    }
-
-    ### FIXME
-    # =less
-    [ "${Argless}" ] && [ -z "${Argalpha}" ] && {
-      error "--option=less is not supported yet."
-      Imagename="mpr:$Argbasename-prepare-less$Argless-cb${Cutblur}.tif"
-      Maskmax="mpr:$Argbasename-less${Argless}-cb$Cutblur.mask.tif"
-      focus_hard --lessthanmax "$Argless" --maskmax "$Maskmax" --output "$Imagename" -- $(masklist "$Argbasename")
-      Argdarkenmask="$Maskmax"
-      maskarg_store
-    }
   done <<< "$Maskmethodlist"
 
   return ${Error:-0}
@@ -1957,11 +1916,6 @@ focus_merge_masks() {
     Mergecode="$Mergecode
   (
   $Methodmask"
-
-    [ "$Argdarkenmask" ] && Mergecode="$Mergecode
-  # =less
-  $Argdarkenmask
-    -compose Darken -composite"
 
     [ "$Argdenoise" ] && Mergecode="$Mergecode
   # =denoise
@@ -2040,17 +1994,6 @@ focus_merge_masks() {
 
   # --prefertop
   [ "$Prefertop" ] && Mergemaskbasename="$Mergemaskbasename-prefertop$Prefertop"
-
-  [ "$Darkenmask" ] && {
-    Mergecode="$Mergecode
-  # --darkenmask
-  mpr:mergemask
-  $Darkenmask
-    -compose Darken -composite
-    -write mpr:mergemask
-    -delete 0"
-    Mergemaskbasename="$Mergemaskbasename-darken$(md5cut "$Darkenmask")"
-  }
 
   Mergemaskbasename="$Mergemaskbasename.$(md5cut "$Sourcemd5 $Mergecode $Prefertop" )"
 
@@ -2715,7 +2658,6 @@ maskarg_parse() {
   Argbasename=""
   Argclose1=""
   Argclose2=""
-  Argdarkenmask=""
   Argdenoise=""
   Argdiff=""
   Argless=""
@@ -2775,7 +2717,6 @@ maskarg_parse() {
       "CLOSE1")           Argclose1="$Value" ;;
       "CLOSE2")           Argclose2="$Value" ;;
       "LEVEL")            Arglevel="yes" ;;
-      "DARKENMASK")       Argdarkenmask="$Value" ;;
       "NUM")              Maskmethodcount="$Value" ;;
       "METHOD")           Argmethod="$Value" ;;
       "TYPE")             Argtype="$Value" ;;
@@ -2818,7 +2759,6 @@ maskarg_store() {
   [ "$Argalpha" ]              && Newoption="$Newoption,alpha=$Argalpha"
   [ "$Argmaskblur" ]           && Newoption="$Newoption,maskblur=$Argmaskblur"
   [ "$Argnegate" ]             && Newoption="$Newoption,negate"
-  [ "$Argdarkenmask" ]         && Newoption="$Newoption,DARKENMASK=$Argdarkenmask"
   [ "$Arglevel" ]              && Newoption="$Newoption,LEVEL"
   [ "$Argtype" ]               && Newoption="$Newoption,TYPE=$Argtype"
   [ "$Argbasename" ]           && Newoption="$Newoption,BASENAME=$Argbasename"
@@ -3379,7 +3319,6 @@ declare_variables() {
   Argbasename=""
   Argclose1=""
   Argclose2=""
-  Argdarkenmask=""
   Argdenoise=""
   Argdiff=""
   Argless=""
@@ -3413,7 +3352,6 @@ declare_variables() {
   Composefactor="" ### FIXME
   Cutblur=""
   Cutsoft=""
-  Darkenmask=""
   Difference_needlist=""
   Error=""
   Exifsourceimage=""
@@ -3517,7 +3455,7 @@ parse_options() {
 
   Shortoptions="ho:vVW"
   Longoptions="align,basename:,cache::,exif::,force::,help,limit-memory::,mask2cache,output:,savemask::,showimage,showname,test::,threads:,verbose,version,video"
-  Longoptions="$Longoptions,alpha::,background::,bg::,close::,cutblur::,cutsoft::,darkenmask:,denoise::,finalblur::,grayscale:,layered,less::,maskblur::,maskstat::,merge::,prefertop::,revert,sigmoidalclut::,slabs::,soft::,threshold::"
+  Longoptions="$Longoptions,alpha::,background::,bg::,close::,cutblur::,cutsoft::,denoise::,finalblur::,grayscale:,layered,less::,maskblur::,maskstat::,merge::,prefertop::,revert,sigmoidalclut::,slabs::,soft::,threshold::"
   Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,max::,mean::,median::,min::,saturation::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,enfuse::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,none::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,experimental::,free::,freediff::"
@@ -3532,7 +3470,6 @@ parse_options() {
          --alpha)             Globalalpha="${2:-auto}"        ; shift ;;
          --bg|--background)   Background="${2:-auto}"         ; shift ;;
          --basename)          Basename="${2:-auto}"           ; shift ;;
-         --darkenmask)        Darkenmask="${2:-}"             ; shift ;;
          --cache)             Cachedir="${2:-auto}"           ; shift ;;
          --close)             Globalclose="${2:-auto}"        ; shift ;;
          --cutblur)           Cutblur="${2:-auto}"            ; shift ;;
