@@ -71,7 +71,7 @@ align_focusstack() {
     Count="$((Count+1))"
     Image="$(basename "$Image")"
     Image="$Destinationdir/$Image"
-    Outputimage="$(rev <<< "$Image" | cut -d. -f2- | rev).tif"
+    Outputimage="$(rev <<< "$Image" | cut -d. -f2- | rev).png"
 
     printsameline "align: Cropping image $Count / $Imagenumber $Outputimage"
 
@@ -82,10 +82,7 @@ $Magickbin
     +repage
     -background transparent
     -rotate ${Rotation:-0}
-    +repage
-    -quality 100%
-    -compress lzw
-    -type TrueColorAlpha
+    $Storeimage
     -write $Outputimage
     -delete 0
   -exit"
@@ -107,6 +104,14 @@ declare_variables() {
   Rotation="0"
   Showimageprocessing=""
   Sourceimagelist=""
+  Storeimage="
+    -orient undefined $Prepareoptions
+    +repage
+    -compress lzw
+    -type TrueColorAlpha
+    -define png:compression-filter=2
+    -define png:compression-level=4
+    -define png:compression-strategy=1"
   Whitebalance="no"
   return 0
 }

@@ -30,6 +30,7 @@ ImageMagick options with same name.
  --contrast                   Enhance contrast the simple way.
  --contrast-stretch [=ARG]    Contrast with color stretch. Default: auto
  --crop [=GEOMETRY]           Crop a part of the images. GEOMETRY is WxH+X+Y.
+                              Use only once within a preparestack command.
                                          Default: 640x480 from the middle.
  --gamma [=ARG]               Adjust image gamma.          Default: auto
  --level [=ARG]               Adjust image level.          Default: auto
@@ -75,7 +76,7 @@ Imagemaxlevel=%[fx:maxima*100]
 Imagewidth=%[w]
 Imageheight=%[h]
 ' -write info: \
-  -filter box -resize 1x1! -format "Imagemeancolor=%[pixel:u]" -write info: \
+  -filter box -resize 1x1! -format "Imagemeancolor='%[pixel:u]'" -write info: \
   -delete 0 \
   -exit)"
   eval $Imageproperties
@@ -86,7 +87,7 @@ prepare_focusstack() {
   Count=0
   while read Image; do
     Count="$((Count+1))"
-    Outputimage="$(rev <<< "$Image" | cut -d. -f2- | rev).tif"
+    Outputimage="$(rev <<< "$Image" | cut -d. -f2- | rev).png"
     Outputimage="$(basename "$Outputimage")"
     Outputimage="$Destinationdir/$Outputimage"
 
@@ -95,10 +96,7 @@ prepare_focusstack() {
     Command="
 $Magickbin
   $Image
-    -orient undefined $Prepareoptions
-    +repage
-    -compress lzw
-    -type TrueColorAlpha
+    $Storeimage
     -write $Outputimage
     -delete 0
   -exit"
@@ -132,6 +130,14 @@ declare_variables() {
   Prepareoptions=""
   Showimageprocessing=""
   Sourceimagelist=""
+  Storeimage="
+    -orient undefined $Prepareoptions
+    +repage
+    -compress lzw
+    -type TrueColorAlpha
+    -define png:compression-filter=2
+    -define png:compression-level=4
+    -define png:compression-strategy=1"
   return 0
 }
 parse_options() {
@@ -189,9 +195,9 @@ parse_options() {
         shift
       ;;
       --crop)
-        Arg="${2:-IMAGECROPGEOMETRY}"
+        Cropgeometry="${Arg:-"M"}"
         Prepareoptions="$Prepareoptions
-    -crop $Arg"
+    -crop IMAGECROPGEOMETRY"
         shift
       ;;
       --gamma)
@@ -373,13 +379,17 @@ main() {
   grep -q IMAGE <<< "$Prepareoptions" && {
     meanproperties
 
-    [ -z "$Cropgeometry" ] && {
-      [ "$Imagewidth"  -gt 640 ] && W="640" || W="$((Imagewidth/2))"
-      [ "$Imageheight" -gt 480 ] && H="480" || H="$((Imageheight/2))"
-      X="$(( (Imagewidth-W)/2 ))"
-      Y="$(( (Imageheight-H)/2 ))"
-      Cropgeometry="${W}x${H}+${X}+${Y}"
-    }
+    [ "$Imagewidth"  -gt 640 ] && W="640" || W="$((Imagewidth/2))"
+    [ "$Imageheight" -gt 480 ] && H="480" || H="$((Imageheight/2))"
+    Cropgeometry="${Cropgeometry:-"M"}"
+    grep -q M <<< "$Cropgeometry" && X="$(( Imagewidth/2    -W/2 ))" && Y="$(( Imageheight/4   -H/2 ))"
+    grep -q T <<< "$Cropgeometry" && Y="$(( Imageheight/4   -H/2 ))"
+    grep -q B <<< "$Cropgeometry" && Y="$(( Imageheight*3/4 -H/2 ))"
+    grep -q L <<< "$Cropgeometry" && X="$(( Imagewidth/4    -W/2 ))"
+    grep -q R <<< "$Cropgeometry" && X="$(( Imagewidth*3/4  -W/2 ))"
+    Cropgeometry="$(tr -d "MTBLR" <<< "$Cropgeometry")"
+
+    [ -z "$Cropgeometry" ] && Cropgeometry="${W}x${H}+${X}+${Y}"
 
     Prepareoptions="$(sed "s/IMAGEMINLEVEL/$Imageminlevel/g ; s/IMAGEMAXLEVEL/$Imagemaxlevel/g ; s/IMAGEAUTOGAMMA/$Imageautogamma/g ; s/IMAGECROPGEOMETRY/$Cropgeometry/g" <<< "$Prepareoptions")"
   }
