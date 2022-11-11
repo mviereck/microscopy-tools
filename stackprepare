@@ -96,6 +96,7 @@ prepare_focusstack() {
     Command="
 $Magickbin
   $Image
+    $Prepareoptions
     $Storeimage
     -write $Outputimage
     -delete 0
@@ -131,7 +132,7 @@ declare_variables() {
   Showimageprocessing=""
   Sourceimagelist=""
   Storeimage="
-    -orient undefined $Prepareoptions
+    -orient undefined
     +repage
     -compress lzw
     -type TrueColorAlpha
