@@ -575,6 +575,144 @@ checkmagicklist() {
   ### FIXME
   magick -list "${1:-}" | grep -q -w -i "^${2:-XXX}"
 }
+check_outputname() {
+  # Generate a unique output name showing options
+
+  Resultbasename="imfuse."
+  [ "$Align" = "yes" ] && Resultbasename="${Resultbasename}align_"
+
+  # step mask generation
+  case $Grayscalenumber in
+    9) ;;
+    *) Resultbasename="${Resultbasename}_gray=$Grayscalenumber" ;;
+  esac
+  while read Line; do
+    [ -z "$Line" ] && break
+    maskarg_parse "$Line"
+    Resultbasename="${Resultbasename}_${Argmethod}="
+    [ "$Argweight" != "100" ]    && Resultbasename="$Resultbasename-w$(LC_ALL=C awk 'BEGIN {printf "%0.0f",'$Argweight'}')"
+    [ "$Argradius1" ]            && Resultbasename="$Resultbasename-r$Argradius1"
+    [ "$Argsigma1" ]             && Resultbasename="$Resultbasename-s$Argsigma1"
+    [ "$Argradius2" ]            && Resultbasename="$Resultbasename-R$Argradius2"
+    [ "$Argsigma2" ]             && Resultbasename="$Resultbasename-S$Argsigma2"
+    [ "$Argpercent1" ]           && Resultbasename="$Resultbasename-p$Argpercent1"
+    [ "$Argpercent2" ]           && Resultbasename="$Resultbasename-P$Argpercent2"
+    [ "$Argalpha" ]              && Resultbasename="$Resultbasename-alpha$Argalpha"
+    [ "$Argless" ]               && Resultbasename="$Resultbasename-less$Argless"
+    [ "$Argclose1" ]             && Resultbasename="$Resultbasename-close$Argclose1"
+    [ "$Argclose2" ]             && Resultbasename="${Resultbasename}x$Argclose2"
+    [ "$Argmaskblur" ]           && Resultbasename="$Resultbasename-maskblur$Argmaskblur"
+    [ "$Argdenoise" ]            && Resultbasename="$Resultbasename-denoise$Argdenoise"
+    [ "$Argnegate" ]             && Resultbasename="$Resultbasename-neg"
+    case $Argmethod in
+      image) ;;
+      saturation|chroma|darkness|lightness) ;;
+      *) [ "$Argword1" ]         && Resultbasename="$Resultbasename-$(unspecialstring "$Argword1")" ;;
+    esac
+    case $Argmethod in
+      saturation|chroma|darkness|lightness) ;;
+      *) [ "$Argword2" ]         && Resultbasename="$Resultbasename-$(unspecialstring "$Argword2")" ;;
+    esac
+  done <<< "$Maskmethodlist"
+
+  # step merge
+  case $Globaldenoise in
+    "") ;;
+    *) Resultbasename="${Resultbasename}_denoise=$Globaldenoise" ;;
+  esac
+  [ "$Globalmaskstat" ] && {
+    Resultbasename="${Resultbasename}_maskstat=$Globalmaskstat"
+  }
+  [ "$Globalmaskblur" ] && {
+    Resultbasename="${Resultbasename}_maskblur=s$Globalmaskblur"
+  }
+  case $Globalclose in
+    "") ;;
+    *) Resultbasename="${Resultbasename}_close=$Globalclose" ;;
+  esac
+  [ "$Globalsigmoidal" ] && {
+    Resultbasename="${Resultbasename}_sigmoidal=$Globalsigmoidal"
+  }
+  [ "$Prefertop" ] && {
+    Resultbasename="${Resultbasename}_prefertop=p$Prefertop"
+  }
+  case $Mergemethod in
+    plus) ;;
+    *) Resultbasename="${Resultbasename}_merge=$Mergemethod" ;;
+  esac
+
+  # step focus
+  [ "$Softmode" ] && {
+    Resultbasename="${Resultbasename}_soft"
+    [ "$Softmode" != "auto" ] && Resultbasename="${Resultbasename}=${Softmode}"
+  }
+  case $Globalless in
+    ""|0) ;;
+    *) Resultbasename="${Resultbasename}_less=p$Globalless" ;;
+  esac
+  [ "$Cutsoft" ] && {
+    Resultbasename="${Resultbasename}_cutsoft=s$Cutsoft"
+  }
+  [ "$Cutblur" ] && {
+    Resultbasename="${Resultbasename}_cutblur=s$Cutblur"
+  }
+  [ "$Slabs" -gt 1 ] && {
+    Resultbasename="${Resultbasename}_slabs=${Slabs},r${Slaboverlap}"
+  }
+
+  # step postprocessing
+  [ "$Finalblur" ] && {
+    Resultbasename="${Resultbasename}_finalblur=p${Finalblurpercent}-r${Finalblurradius}-s${Finalblursigma}"
+  }
+  case $Globalalpha in
+    "") ;;
+    *) Resultbasename="${Resultbasename}_alpha=$Globalalpha" ;;
+  esac
+  [ "$Globalthreshold" ] && {
+    Resultbasename="${Resultbasename}_threshold=p$Globalthreshold"
+    [ "$Globalthresholdblur" ] && Resultbasename="${Resultbasename},s$Globalthresholdblur"
+  }
+  [ "$Background" ] && case $Backgroundtype in
+    "") ;;
+    image) Resultbasename="${Resultbasename}_bg=image$(md5cut "$(ls -l --full-time "$Background")")" ;;
+    *)     Resultbasename="${Resultbasename}_bg=$Background" ;;
+  esac
+
+  # misc
+  case $Revertimagelist in
+    "yes") Resultbasename="${Resultbasename}_rev" ;;
+  esac
+  [ "$Darkenmask" ] && {
+    Resultbasename="${Resultbasename}_darkenmask"
+  }
+  [ "$Storelayered" = "yes" ] && {
+    Resultbasename="${Resultbasename}_layered"
+  }
+  case $Testsetup in
+    "") ;;
+    *) Resultbasename="${Resultbasename}_test$Testarg" ;;
+  esac
+  Resultbasename="$(sed "s/__/_/g ; s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultbasename")"
+
+  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist \
+$Background $([ "$Darkenmask" ] && md5sum "$Darkenmask") $Cutblur $Cutsoft $Finalblur \
+$Globalalpha $Globalclose $Globaldenoise $Globalless $Globalmaskstat $Globalmaskblur $Globalthreshold $Globalthresholdblur \
+$Grayscale $Mergemethod $Prefertop $Revertimagelist $Softmode $Testsetup" )"
+
+  Resultbasename="${Resultbasename}_md${Fusemd5sum}"
+  [ -z "$Outputdir" ] && Outputdir="$(pwd)"
+  case $Outputimage in
+    "") Outputimage="$Outputdir/$Basename$Resultbasename.${Imageformat}" ;;
+    *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="$Outputdir/$Outputimage" ;;
+  esac
+  Outputimage="$(realpath -m "$Outputimage")"
+  [ "$Video" ] && Video="$Outputimage.webm"
+
+  # --savemask
+  [ "$Savemask" = "auto" ] && Savemask="$Outputimage.mask.tif"
+
+  return ${Error:-0}
+}
 masklist() {
   local Basename List= Firstimage Lastimage
   Firstimage="${2:-1}"
@@ -3864,144 +4002,6 @@ enfuse"
       Backgroundimage="$(generate_image --showname "$Background")"
     ;;
   esac
-}
-check_outputname() {
-  # Generate a unique output name showing options
-
-  Resultbasename="imfuse."
-  [ "$Align" = "yes" ] && Resultbasename="${Resultbasename}align_"
-
-  # step mask generation
-  case $Grayscalenumber in
-    9) ;;
-    *) Resultbasename="${Resultbasename}_gray=$Grayscalenumber" ;;
-  esac
-  while read Line; do
-    [ -z "$Line" ] && break
-    maskarg_parse "$Line"
-    Resultbasename="${Resultbasename}_${Argmethod}="
-    [ "$Argweight" != "100" ]    && Resultbasename="$Resultbasename-w$(LC_ALL=C awk 'BEGIN {printf "%0.0f",'$Argweight'}')"
-    [ "$Argradius1" ]            && Resultbasename="$Resultbasename-r$Argradius1"
-    [ "$Argsigma1" ]             && Resultbasename="$Resultbasename-s$Argsigma1"
-    [ "$Argradius2" ]            && Resultbasename="$Resultbasename-R$Argradius2"
-    [ "$Argsigma2" ]             && Resultbasename="$Resultbasename-S$Argsigma2"
-    [ "$Argpercent1" ]           && Resultbasename="$Resultbasename-p$Argpercent1"
-    [ "$Argpercent2" ]           && Resultbasename="$Resultbasename-P$Argpercent2"
-    [ "$Argalpha" ]              && Resultbasename="$Resultbasename-alpha$Argalpha"
-    [ "$Argless" ]               && Resultbasename="$Resultbasename-less$Argless"
-    [ "$Argclose1" ]             && Resultbasename="$Resultbasename-close$Argclose1"
-    [ "$Argclose2" ]             && Resultbasename="${Resultbasename}x$Argclose2"
-    [ "$Argmaskblur" ]           && Resultbasename="$Resultbasename-maskblur$Argmaskblur"
-    [ "$Argdenoise" ]            && Resultbasename="$Resultbasename-denoise$Argdenoise"
-    [ "$Argnegate" ]             && Resultbasename="$Resultbasename-neg"
-    case $Argmethod in
-      image) ;;
-      saturation|chroma|darkness|lightness) ;;
-      *) [ "$Argword1" ]         && Resultbasename="$Resultbasename-$(unspecialstring "$Argword1")" ;;
-    esac
-    case $Argmethod in
-      saturation|chroma|darkness|lightness) ;;
-      *) [ "$Argword2" ]         && Resultbasename="$Resultbasename-$(unspecialstring "$Argword2")" ;;
-    esac
-  done <<< "$Maskmethodlist"
-
-  # step merge
-  case $Globaldenoise in
-    "") ;;
-    *) Resultbasename="${Resultbasename}_denoise=$Globaldenoise" ;;
-  esac
-  [ "$Globalmaskstat" ] && {
-    Resultbasename="${Resultbasename}_maskstat=$Globalmaskstat"
-  }
-  [ "$Globalmaskblur" ] && {
-    Resultbasename="${Resultbasename}_maskblur=s$Globalmaskblur"
-  }
-  case $Globalclose in
-    "") ;;
-    *) Resultbasename="${Resultbasename}_close=$Globalclose" ;;
-  esac
-  [ "$Globalsigmoidal" ] && {
-    Resultbasename="${Resultbasename}_sigmoidal=$Globalsigmoidal"
-  }
-  [ "$Prefertop" ] && {
-    Resultbasename="${Resultbasename}_prefertop=p$Prefertop"
-  }
-  case $Mergemethod in
-    plus) ;;
-    *) Resultbasename="${Resultbasename}_merge=$Mergemethod" ;;
-  esac
-
-  # step focus
-  [ "$Softmode" ] && {
-    Resultbasename="${Resultbasename}_soft"
-    [ "$Softmode" != "auto" ] && Resultbasename="${Resultbasename}=${Softmode}"
-  }
-  case $Globalless in
-    ""|0) ;;
-    *) Resultbasename="${Resultbasename}_less=p$Globalless" ;;
-  esac
-  [ "$Cutsoft" ] && {
-    Resultbasename="${Resultbasename}_cutsoft=s$Cutsoft"
-  }
-  [ "$Cutblur" ] && {
-    Resultbasename="${Resultbasename}_cutblur=s$Cutblur"
-  }
-  [ "$Slabs" ] && {
-    Resultbasename="${Resultbasename}_slabs${Slabs},r${Slaboverlap}"
-  }
-
-  # step postprocessing
-  [ "$Finalblur" ] && {
-    Resultbasename="${Resultbasename}_finalblur=p${Finalblurpercent}-r${Finalblurradius}-s${Finalblursigma}"
-  }
-  case $Globalalpha in
-    "") ;;
-    *) Resultbasename="${Resultbasename}_alpha=$Globalalpha" ;;
-  esac
-  [ "$Globalthreshold" ] && {
-    Resultbasename="${Resultbasename}_threshold=p$Globalthreshold"
-    [ "$Globalthresholdblur" ] && Resultbasename="${Resultbasename},s$Globalthresholdblur"
-  }
-  [ "$Background" ] && case $Backgroundtype in
-    "") ;;
-    image) Resultbasename="${Resultbasename}_bg=image$(md5cut "$(ls -l --full-time "$Background")")" ;;
-    *)     Resultbasename="${Resultbasename}_bg=$Background" ;;
-  esac
-
-  # misc
-  case $Revertimagelist in
-    "yes") Resultbasename="${Resultbasename}_rev" ;;
-  esac
-  [ "$Darkenmask" ] && {
-    Resultbasename="${Resultbasename}_darkenmask"
-  }
-  [ "$Storelayered" = "yes" ] && {
-    Resultbasename="${Resultbasename}_layered"
-  }
-  case $Testsetup in
-    "") ;;
-    *) Resultbasename="${Resultbasename}_test$Testarg" ;;
-  esac
-  Resultbasename="$(sed "s/__/_/g ; s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultbasename")"
-
-  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist \
-$Background $([ "$Darkenmask" ] && md5sum "$Darkenmask") $Cutblur $Cutsoft $Finalblur \
-$Globalalpha $Globalclose $Globaldenoise $Globalless $Globalmaskstat $Globalmaskblur $Globalthreshold $Globalthresholdblur \
-$Grayscale $Mergemethod $Prefertop $Revertimagelist $Softmode $Testsetup" )"
-
-  Resultbasename="${Resultbasename}_md${Fusemd5sum}"
-  [ -z "$Outputdir" ] && Outputdir="$(pwd)"
-  case $Outputimage in
-    "") Outputimage="$Outputdir/$Basename$Resultbasename.${Imageformat}" ;;
-    *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="$Outputdir/$Outputimage" ;;
-  esac
-  Outputimage="$(realpath -m "$Outputimage")"
-  [ "$Video" ] && Video="$Outputimage.webm"
-
-  # --savemask
-  [ "$Savemask" = "auto" ] && Savemask="$Outputimage.mask.tif"
-
-  return ${Error:-0}
 }
 main_setup() {
 
