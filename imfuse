@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.7.8-beta"
+Version="0.7.9-beta"
 
 # ToDo:
 # New BUG s:
@@ -26,8 +26,6 @@ Version="0.7.8-beta"
 # --gamma?
 # check --kirsch
 # drop --unsharp?
-# drop --denoise?
-# --denoise after merge?
 # drop --halo?
 # find halo solution
 # check exiftransfer / damaged one Beerenwanze or Spinne image
@@ -99,24 +97,24 @@ Most of interest: --morphology, --statistic, --wavelet
  --blur [=ARG]        Blur edge detection. 
                       Similar to --gaussian, but faster and less accurate.
                       ARG additionally takes argument: 
-                        s       sigma                Default: 0.75
+                        s       sigma               Default: 0.75
  --comet [=ARG]       Comet edge detection. Compares rotated mean areas.
                       ARG additionally takes arguments: 
-                        s       sigma                Default: 5
-                        (word)  MODE                 Default: Lighten
+                        s       sigma               Default: 5
+                        (word)  MODE                Default: Lighten
                       MODE can be one of 'magick -list compose'
                       Recommended: Lighten, Darken.
  --compass [=ARG]     Compass edge detection. 
  --dog [=ARG]         Difference of Gaussian. 
                       ARG additionally takes arguments: 
-                        s       sigma                Default: 0.4
-                        S       sigma2               Default: 1.6*sigma1
+                        s       sigma               Default: 0.4
+                        S       sigma2              Default: 1.6*sigma1
  --diffstat [=ARG]    Compares two local statistics of source images. 
                       Uses ImageMagick option -statistic. Compare --statistic.
                       ARG additionally takes arguments: 
-                        r       radius               Default: 3
-                        (word)  STAT1                Default: median
-                        (word)  STAT2                Default: mean
+                        r       radius              Default: 3
+                        (word)  STAT1               Default: median
+                        (word)  STAT2               Default: mean
                       Possible STAT1 and STAT2:
                         0|none|source
                         1|gradient|grad
@@ -131,7 +129,7 @@ Most of interest: --morphology, --statistic, --wavelet
                       Most interesting alternative is a max,min difference.
  --free [=ARG]        Custom ImageMagick option for mask generation.
                       ARG is an arbitrary ImageMagick command, but must not
-                      contain a comma.               Default: '-sharpen 0x3'
+                      contain a comma.              Default: '-sharpen 0x3'
  --freediff [=ARG]    Custom ImageMagick option for mask generation.
                       The resulting mask  will be a '-compose Difference' 
                       comparision with the source image.
@@ -146,20 +144,20 @@ Most of interest: --morphology, --statistic, --wavelet
  --gaussian [=ARG]    Gaussian blur edge detection. 
                       Similar to --blur, but slower and more accurate.
                       ARG additionally takes argument: 
-                        s       sigma                Default: 0.3
+                        s       sigma               Default: 0.3
  --kirsch [=ARG]      Kirsch edge detection. 
  --laplacian [=ARG]   Laplacian edge detection.
                       ARG additionally takes arguments: 
-                        (word)  MODENUMBER           Default: 3
+                        (word)  MODENUMBER          Default: 3
                       Possible MODENUMBERs at:
                       http://www.imagemagick.org/Usage/convolve/#laplacian
  --log [=ARG]         Laplacian of Gaussian.
                       ARG additionally takes argument: 
-                        s       sigma                Default: 0.2
+                        s       sigma               Default: 0.2
  --morphology [=ARG]  Morphology edge detection.
                       ARG additionally takes arguments: 
-                        r       radius               Default: 2
-                        (word)  MODE                 Default: edge
+                        r       radius              Default: 2
+                        (word)  MODE                Default: edge
                       MODE can be one of 'magick -list morphology'
                       Some MODEs of interest:
                         edge, dilateintensity, smooth
@@ -168,8 +166,8 @@ Most of interest: --morphology, --statistic, --wavelet
  --sobel [=ARG]       Sobel edge detection. 
  --statistic [=ARG]   ImageMagick option -statistic.
                       ARG additionally takes arguments: 
-                        r       radius               Default: 2
-                        (word)  STAT                 Default: standarddeviation
+                        r       radius              Default: 2
+                        (word)  STAT                Default: standarddeviation
                       Argument STAT is one of (number or name):
                         1|gradient|grad
                         2|maximum|max
@@ -183,16 +181,16 @@ Most of interest: --morphology, --statistic, --wavelet
                       Get an impressive strong contrast with a high radius.
  --unsharp [=ARG]     Difference of -unsharp.
                       ARG additionally takes argument: 
-                        s       sigma                Default: 2
+                        s       sigma               Default: 2
  --wavelet [=ARG]     Based on ImageMagick option -wavelet-denoise.
                       ARG additionally takes arguments:
-                        p       percent               Default: 10
+                        p       percent             Default: 10
 
 Image comparision mask options:
 Most of interest: --enfuse
  --compose [=ARG]     Composes evaluated min,max of source images with MODE.
                       ARG additionally takes arguments:
-                        (word)   MODE                Default: overlay
+                        (word)   MODE               Default: overlay
                       Adding a '2', e.g. '--compose=overlay2' swaps min,max
                       to max,min and can give a different result.
                       MODE can be one of 'magick -list compose'
@@ -203,14 +201,14 @@ Most of interest: --enfuse
  --evaluate [=ARG]    Evaluates from all source images with mode MODE and
                       compares the result with each source image.
                       ARG additionally takes arguments:
-                        (word)   MODE                Default: max
+                        (word)   MODE               Default: max
                       MODE can be one of 'magick -list evaluate'
                       Compare --max, --min, --mean, --median.
  --halo [=ARG]        Remove light halo of white background (overexposure).
                       ARG additionally takes arguments:
-                        p        percent             Default: 25
-                        r        radius              Default: 2
-                        s        sigma               Default: 5
+                        p        percent            Default: 25
+                        r        radius             Default: 2
+                        s        sigma              Default: 5
                       Greater percent removes more light.
                       sigma is a -blur sigma for a soft cut.
                       radius is a kernel radius.
@@ -232,8 +230,8 @@ Most of interest: --saturation
 (All are variations of --channel, most of interest is --saturation)
  --channel [=ARG]     Use a colorspace channel as mask.
                       ARG additionally takes arguments:
-                        (word)   Colorspace           Default: HSL
-                        (word)   Color channel        Default: 1
+                        (word)   Colorspace         Default: HSL
+                        (word)   Color channel      Default: 1
                       Colorspace can be one of 'magick -list colorspace'
                       The color channel is a number from 0..31.
  --chroma [=ARG]      Chroma channel from HCL colorspace.
@@ -246,23 +244,24 @@ Most of interest: --saturation
                       can soften the image so it looks more natural.
 
 Mask merging options:
-Most of interest: --maskstat, --maskblur, --close
+Most of interest: --denoise, --maskstat, --maskblur, --close
  --close [=ARG]       Closes gaps between nearby contrast lines to mark the 
                       area in between as strong contrast, too.
                       Can reduce artefacts in partial transparent objects.
                       Helps e.g. to strengthen thin shiny objects like hairs.
                       Takes arguments similar to contrast mask ARG:
-                        r        kernel iteration    Default: 2
-                        R        radius              Default: 2
-                        p        threshold           Default: 25
+                        r        kernel iteration   Default: 2
+                        R        radius             Default: 2
+                        p        threshold          Default: 25
                       Multiplying r and R results in the real radius applied.
                       A multiplied value like 3x4 (r3,R4) is faster than 
                       setting one of r oder R to 12.
                       Percent p is a threshold value; --close is only applied
                       to contrast areas stronger than percent p.
- --denoise [=%]       Experimental option to remove noise in low contrast areas.
-                      The percent value is a threshold. 
-                      Rather use --alpha or --finalblur.
+ --denoise [=pTHRESHOLD]  Remove noise in masks. Can close gaps, but can also
+                      create artefacts in very low contrast areas.
+                      The percent value is a threshold for a wavelet-denoise.
+                                                    Default THRESHOLD: 30
  --grayscale=MODE     Grayscale converting method before mask generation.
                       Compare ImageMagick option -grayscale. Default: RMS
                       MODE is one of: (number or name)
@@ -282,8 +281,8 @@ Most of interest: --maskstat, --maskblur, --close
                       to adjust it according to its neighborhood.
                       METHOD can be one of 'magick -list statistic'.
                       METHODs of interest: mean, median, gradient.
-                                                       Default RADIUS: 6
-                                                       Default METHOD: mean
+                                                    Default RADIUS: 6
+                                                    Default METHOD: mean
  --merge [=COMPOSE]   Compose mode to merge multiple masks. Default: Screen
                       Of interest: Plus Interpolate Multiply Exclusion Blend
  --prefertop [=%]     Prefer top layer images up to %. Default %: 20
@@ -311,7 +310,7 @@ Most of interest: --less, --slab, --soft
                       MIDPOINT is the inflection point of the curve in percent.
                       Compare IM option -sigmoidal-contrast.
                       Default CONTRAST: 10, default MIDPOINT: 50%
- --slab [=NUM1,NUM2,rOVERLAP] Split stack into different stacks (called slabs)
+ --slab [=NUM1,NUM2,rOVERLAP] Split stack into mdifferent stacks (called slabs)
                       and fuse them separately. 
                       Use --threshold or --alpha to make layers transparent.
                       The layers will be composed over each other onto
@@ -320,9 +319,9 @@ Most of interest: --less, --slab, --soft
                       NUM1,NUM2 generates a single slab beginning with image
                       number NUM1 and ending with image number NUM2
                       OVERLAP specifies how many images neighbored slabs share.
-                                              Default NUM1:      10
-                                              Default NUM2:      <empty>
-                                              Default OVERLAP:   5
+                                                    Default NUM1:      10
+                                                    Default NUM2:      <empty>
+                                                    Default OVERLAP:   5
                       See also --layered to store the single layers.
                       That allows manual rework of the results in gimp.
  --soft [=CONTRASTxMIDPOINT]   Enable soft fusion mode. Different concept than 
@@ -361,9 +360,9 @@ Post processing options:
  --finalblur [=pPERCENT,rRADIUS,sSIGMA]  Soft blur of bokeh. 
                       Blurs along a sigmoidal curve from low contrast (much blur)
                       to high contrast (less blur). 
-                        r        radius of blur      Default: 2
-                        s        sigma of curve      Default: 5
-                        p        mid-point of curve  Default: 40%
+                        r        radius of blur     Default: 2
+                        s        sigma of curve     Default: 5
+                        p        mid-point of curve Default: 40%
                       The curve looks like:
                                 xxxx
                               xx
@@ -376,8 +375,8 @@ Post processing options:
                       A bigger radius causes a stronger blur.
  --threshold [=pPERCENT,sSIGMA] Make low contrast area transparent. 
                       Set SIGMA to blur the cut mask border. 
-                                                     Default PERCENT: 50
-                                                     Default SIGMA: 2
+                                                    Default PERCENT: 50
+                                                    Default SIGMA: 2
 
 Basics:
 Fusing a focus stack aims to generate an overall sharp image of several single
@@ -627,10 +626,6 @@ check_outputname() {
   done <<< "$Maskmethodlist"
 
   # step merge
-  case $Globaldenoise in
-    "") ;;
-    *) Resultbasename="${Resultbasename}_denoise=$Globaldenoise" ;;
-  esac
   case $Globalclose in
     "") ;;
     *) Resultbasename="${Resultbasename}_close=$Globalclose" ;;
@@ -641,6 +636,10 @@ check_outputname() {
   [ "$Globalmaskblur" ] && {
     Resultbasename="${Resultbasename}_maskblur=s$Globalmaskblur"
   }
+  case $Globaldenoise in
+    "") ;;
+    *) Resultbasename="${Resultbasename}_denoise=$Globaldenoise" ;;
+  esac
   [ "$Globalsigmoidal" ] && {
     Resultbasename="${Resultbasename}_sigmoidal=$Globalsigmoidal"
   }
@@ -1035,27 +1034,6 @@ clut_gaussian() {
   cmd "$Command"
   cmd_waitforready
 }
-denoisecode() {
-  echo "
-    -write mpr:denoisemask
-    -delete 0
-  mpr:denoisemask
-    -threshold ${1:-10}%
-    -negate
-    -transparent white
-    -write mpr:cutmask
-    -delete 0
-  mpr:denoisemask
-    -wavelet-denoise 50%
-  mpr:cutmask
-    -alpha off -compose CopyOpacity -composite
-    -write mpr:blurlowcontrast
-    -delete 0
-  mpr:denoisemask
-  mpr:blurlowcontrast
-    -compose over -composite
-"
-}
 enfuse_split() {
   local Mem_free Mem_needed Outputimage Enfuseoptions Sourceimage Sourceimagelist
 
@@ -1293,7 +1271,6 @@ generate_image() {
   canvas:$Mode
     -colorspace sRGB
     -type TrueColorAlpha
-    $(showimagecode "$Imagename")
     -write $Imagename
     -delete 0"
       cmd "$Command"
@@ -1987,6 +1964,8 @@ focus_merge_masks() {
   sendmagickmessage "NOTE:Merging masks"
   Mergemaskbasename="mergemask"
 
+  [ "$Force" = "merge" ] && forcemerge
+
   while read Line; do
     maskarg_parse "$Line"
     #[ "${Argweight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Argweight:-100}"
@@ -2018,11 +1997,11 @@ focus_merge_masks() {
   $Methodmask"
 
     [ "$Argdenoise" ] && Mergecode="$Mergecode
-  # =denoise
-  $(denoisecode "$Argdenoise")"
+    # =denoise
+    -wavelet-denoise ${Argdenoise:-30}%"
 
     Mergecode="$Mergecode
-  # =w (weight)
+    # =w (weight)
     +level 0%,$(calc "(100 * ${Argweight:-100}) / ( $Weightmax * $Methodnumber )" )% 
   )
     -compose $Mergemethod -composite"
@@ -2031,14 +2010,6 @@ focus_merge_masks() {
 #  +set registry:$(cut -d: -f2- <<< "$Methodmask")"
   done <<< "$Maskmethodlist"
   Mergecode="$(sed "0,/-compose $Mergemethod -composite/{/-compose $Mergemethod -composite/d;}" <<< "$Mergecode")" # delete first -compose
-
-  [ "$Globaldenoise" ] && {
-    Mergecode="$Mergecode
-  # --denoise
-  $(denoisecode "$Globaldenoise")"
-    Mergemaskbasename="$Mergemaskbasename-denoise$Globaldenoise"
-  }
-
   Mergecode="$Mergecode
     -write mpr:mergemask
     -delete 0"
@@ -2088,6 +2059,16 @@ focus_merge_masks() {
     -write mpr:mergemask
     -delete 0"
     Mergemaskbasename="$Mergemaskbasename-maskblur$Globalmaskblur"
+  }
+
+  [ "$Globaldenoise" ] && {
+    Mergecode="$Mergecode
+  # --denoise
+  mpr:mergemask
+    -wavelet-denoise ${Globaldenoise:-30}%
+    -write mpr:mergemask
+    -delete 0"
+    Mergemaskbasename="$Mergemaskbasename-denoise$Globaldenoise"
   }
 
   [ "$Globalsigmoidal" ] && {
@@ -2177,6 +2158,7 @@ focus_hard() {
   Focusimagefile="$Cachedir/$Focusimagebasename.tif"
   Focusimagemaskfile="$Cachedir/$Focusimagebasename.mask.tif"
 
+  [ "$Force" = "focus" ] && forcefocus
   [ -e "$Focusimagefile" ] && {
     sendmagickmessage "NOTE:Skipping focus_hard(), image already exists."
     Command="
@@ -2456,6 +2438,7 @@ focus_soft() {
   Focusimagefile="$Cachedir/$Focusimagebasename.tif"
   Focusimagemaskfile="$Cachedir/$Focusimagebasename.mask.tif"
 
+  [ "$Force" = "focus" ] && forcefocus
   [ -e "$Focusimagefile" ] && {
     sendmagickmessage "NOTE:Skipping focus_soft(), image already exists."
     Command="
@@ -2793,7 +2776,7 @@ maskarg_parse() {
       "S")                Argsigma2="${Value}" ;;
       "p"|"%")            Argpercent1="$(percentrm "$Value")" ;;
       "P")                Argpercent2="$(percentrm "$Value")" ;;
-      "denoise")          Argdenoise="${Value:-$(maskarg_defaultvalue   "$Argmethod" noise)}" ;;
+      "denoise")          Argdenoise="${Value:-$(maskarg_defaultvalue   "$Argmethod" denoise)}" ;;
       "d"|"diff")         Argdiff="s" ;;
       "blur"|"maskblur")  Argmaskblur="${Value:-$(maskarg_defaultvalue  "$Argmethod" maskblur)}" ;;
       "n"|"neg"|"negate") Argnegate="neg" ;;
@@ -2953,30 +2936,8 @@ maskarg_defaultvalue() {
         *)          echo "" ;;
       esac
     ;;
-    noise)
-      echo "50"
-      false && case "${1:-}" in
-        #blur)       echo "15" ;;
-        #comet
-        compass)    echo "25" ;;
-        diffstat)   echo "15" ;;
-        #dog
-        freichen)   echo "15" ;;
-        #gaussian)   echo "15" ;;
-        image|evaluate|compose|enfuse)
-                    echo "100" ;;
-        #kirsch)     echo "2" ;;
-        #laplacian
-        log)        echo "10" ;;
-        morphology) echo "10" ;;
-        prewitt)    echo "15" ;;
-        #roberts
-        sobel)      echo "1" ;;
-        statistic)  echo "10" ;;
-        #unsharp
-        wavelet)    echo "10" ;;
-        *)          echo "15" ;;
-      esac
+    denoise)
+      echo "30"
     ;;
     percent1)
       case "${1:-}" in
@@ -3457,7 +3418,7 @@ declare_variables() {
   Finalblursigma=""
   Firstimage=""
   Firstmaskmethod=""
-  Forceoverwrite=""
+  Force=""
   Freemem=""
   Globalalpha=""
   Globalclose=""
@@ -3575,7 +3536,7 @@ parse_options() {
          --denoise)           Globaldenoise="${2:-auto}"      ; shift ;;
          --exif)              Exifsourceimage="${2:-auto}"    ; shift ;;
          --finalblur)         Finalblur="${2:-auto}"          ; shift ;;
-         --force)             Forceoverwrite="${2:-yes}"      ; shift ;;
+         --force)             Force="${2:-yes}"      ; shift ;;
          --grayscale)         Grayscale="${2:-auto}"          ; shift ;;
       -h|--help)              usage                           ; exit 0 ;;
          --layered)           Storelayered="yes"              ;;
@@ -3817,7 +3778,7 @@ $Argmethod"
 
   # --denoise
   case $Globaldenoise in
-    auto) Globaldenoise="10" ;;
+    auto) Globaldenoise="30" ;;
   esac
 
   # --finalblur
@@ -4153,7 +4114,7 @@ main_setup() {
   ) & Magickmessagepid="$!"
 
   # --force
-  [ -f "$Outputimage" ] && [ -z "$Forceoverwrite" ] && {
+  [ -f "$Outputimage" ] && [ -z "$Force" ] && {
     showimage "$Outputimage"
     [ "$Viewnior" ] && viewnior "$Outputimage" &
     note "Output image already exists with matching md5sum.
