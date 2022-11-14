@@ -304,24 +304,25 @@ Most of interest: --less, --slab, --soft
                       Compare IM option -sigmoidal-contrast.
                       Default CONTRAST: 10, default MIDPOINT: 50%
  --slab [=NUM1,NUM2,rOVERLAP] Split stack into mdifferent stacks (called slabs)
-                      and fuse them separately. 
+                      and fuse them separately. Can be specified multiple times.
                       Use --threshold or --alpha to make layers transparent.
                       The layers will be composed over each other onto
                       a background (to specify with --background).
-                      NUM1 without NUM2 generates NUM1 slabs.
-                      NUM1,NUM2 generates a single slab beginning with image
-                      number NUM1 and ending with image number NUM2
+                      Automated: NUM1 without NUM2 generates NUM1 slabs.
+                      Manual:    Specifiying NUM1,NUM2 generates a single slab
+                      beginning with image number NUM1 and ending with NUM2.
                       OVERLAP specifies how many images neighbored slabs share.
                                                     Default NUM1:      10
                                                     Default NUM2:      <empty>
                                                     Default OVERLAP:   5
+                      Allowed values are image numbers or percent% values.
                       See also --layered to store the single layers.
                       That allows manual rework of the results in gimp.
- --soft [=CONTRASTxMIDPOINT]   Enable soft fusion mode. Different concept than 
+ --soft [=CONTRASTxMIDPOINT]  Enable soft fusion mode. Different concept than 
                       default maximum contrast montage. Images are multiplied 
                       with their contrast masks and added altogether as a whole.
                       For arguments compare --sigmoidalclut.
-                      Does not support --less and --cutblur.
+                      Does not support --less, --cutblur, --cutsoft.
 
 Post processing options:
  --alpha [=LEVEL]     Generate transparent image using the contrast mask as 
@@ -573,17 +574,25 @@ unspecialstring() {
 
 ### Debugging helpers
 
-forcefocus() {
-  rm $Cachedir/focus*
-  rm $Cachedir/imfuse*
+forcemask() {
+  note "Forcing mask generation"
+  rm $Cachedir/mask.${1:-}*
+  forcelevel
 }
 forcelevel() {
+  note "Forcing leveling"
   rm $Cachedir/level.${1:-}*
   forcemerge
 }
 forcemerge() {
+  note "Forcing merge"
   rm $Cachedir/*merge*
   forcefocus
+}
+forcefocus() {
+  note "forcing focus"
+  rm $Cachedir/focus*
+  rm $Cachedir/imfuse*
 }
 
 ### Files
@@ -767,8 +776,7 @@ load_sourceimages() {
       ;;
     esac
   done
-
-  sendmagickmessage "/PROGRESS"
+  [ "$Loadsourceimages" = "yes" ] && sendmagickmessage "/PROGRESS"
   cmd_waitforready
 
   return 0
@@ -1309,7 +1317,6 @@ level_masks() {
   Clutimage="mpr:clut"
 
   sendmagickmessage "NOTE:Leveling $Maskbasename"
-  [ "$Force" = "level" ] && forcelevel "$Maskbasename"
   [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/level.$Maskbasename" ] && { ### FIXME
     sendmagickmessage "NOTE:level_masks(): Skipping, mask is already leveled."
     return 0
@@ -1852,6 +1859,7 @@ focus_generate_masks() {
     Maskgenerator="$(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
 
     [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
+  # =diff
   mpr:sourcegray
     -compose Difference -composite"
 
@@ -1860,10 +1868,12 @@ focus_generate_masks() {
     -negate"
 
     [ "${Argclose1}" ] && Maskgenerator="$Maskgenerator
+    # =close
     -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-3}"
 
     [ "$Argmaskblur" ] && {
       Maskgenerator="$Maskgenerator
+    # =maskblur
     -blur 0x$Argmaskblur"
     }
 
@@ -1922,6 +1932,7 @@ $Maskgenerator
 
       # --grayscale
       [ "$Grayscaleconverter" ] && Command="$Command
+      # --grayscale
       $Grayscaleconverter"
       Command="$Command
     -write mpr:sourcegray
@@ -1948,7 +1959,7 @@ ${Maskgenerator_all//NUMBER/$Number}"
     grep -q "$Argtype" <<< "$Masktype" && [ "$Arglevel" = "yes" ] && level_masks "$Argbasename" "$Firstimage" "$Lastimage"
   done <<< "$Maskmethodlist"
 
-  return ${Error:-0}
+  return 0
 }
 focus_merge_masks() {
   # Merge different masks.
@@ -1970,8 +1981,6 @@ focus_merge_masks() {
 
   sendmagickmessage "NOTE:Merging masks"
   Mergemaskbasename="mergemask"
-
-  [ "$Force" = "merge" ] && forcemerge
 
   while read Line; do
     maskarg_parse "$Line"
@@ -2129,7 +2138,7 @@ $(sed "s/NUMBER/$Number/g" <<< "$Mergecode" )
 focus_hard() {
   # Finally: focus stacking
 
-  local Outputimage Maskmaxcopy= Cutblur= Cutsoft= Lessthanmax=
+  local Resultimage Maskmaxcopy= Cutblur= Cutsoft= Lessthanmax=
   local Firstimage Lastimage
   local Focusimagebasename Focusimagefile Focusimagemaskfile
   local Sourceimage Sourcemask Maskmax Lessthanmaxmask
@@ -2144,7 +2153,7 @@ focus_hard() {
 
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --output)       Outputimage="${2:-}" ; shift ;;
+      --output)       Resultimage="${2:-}" ; shift ;;
       --cutblur)      Cutblur="${2:-}" ; shift ;;
       --cutsoft)      Cutsoft="${2:-}" ; shift ;;
       --lessthanmax)  Lessthanmax="${2:-}" ; shift ;;
@@ -2165,14 +2174,13 @@ focus_hard() {
   Focusimagefile="$Cachedir/$Focusimagebasename.tif"
   Focusimagemaskfile="$Cachedir/$Focusimagebasename.mask.tif"
 
-  [ "$Force" = "focus" ] && forcefocus
   [ -e "$Focusimagefile" ] && {
     sendmagickmessage "NOTE:Skipping focus_hard(), image already exists."
     Command="
   $Focusimagefile
     $Tifstore
     -write mpr:resultimage
-    -write $Outputimage
+    -write $Resultimage
     -delete 0"
     [ -n "$Maskmaxcopy" ] && Command="$Command
   $Focusimagemaskfile
@@ -2371,7 +2379,7 @@ focus_hard() {
   # store result image and mask
   mpr:resultimage
     $Tifstore 
-    -write $Outputimage
+    -write $Resultimage
     -write $Focusimagefile
     -delete 0
   mpr:resultmask
@@ -2409,7 +2417,7 @@ focus_hard() {
   return 0
 }
 focus_soft() {
-  local Outputimage Alphalevel Maskmaxcopy
+  local Resultimage Alphalevel Maskmaxcopy
   local Count Command
   local Longoptions Parsedoptions
   local Sigmoidal=
@@ -2423,7 +2431,7 @@ focus_soft() {
 
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --output)       Outputimage="${2:-}" ; shift ;;
+      --output)       Resultimage="${2:-}" ; shift ;;
       --alpha)        Alphalevel="${2:-}" ; shift ;;
       --sigmoidal)    Sigmoidal="${2:-}" ; shift ;;
       --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
@@ -2452,7 +2460,7 @@ focus_soft() {
   $Focusimagefile
     $Tifstore
     -write mpr:resultimage
-    -write $Outputimage
+    -write $Resultimage
     -delete 0"
     [ -n "$Maskmaxcopy" ] && Command="$Command
   $Focusimagemaskfile
@@ -2578,7 +2586,7 @@ focus_soft() {
   mpr:resultimage
     $Tifstore 
     -write $Focusimagefile
-    -write $Outputimage
+    -write $Resultimage
     $(showimagecode "$Focusimagefile")
     -delete 0"
   cmd "$Command"
@@ -2606,19 +2614,22 @@ focus_main() {
     for Slabstep in $(seq $Slabnumber); do
       Slabresult[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep.mpc"
       Slabmask[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-mask.mpc"
-      [ "$Slabnumber" -gt "1" ] && sendmagickmessage "NOTE:Generating slab $Slabstep / $Slabnumber"
+      [ "$Slabnumber" -gt "1" ] && {
+        sendmagickmessage "NEWLINE"
+        sendmagickmessage "NOTE:Generating slab $Slabstep / $Slabnumber: ${Slabfirstimage[$Slabstep]}..${Slablastimage[$Slabstep]}"
+      }
 
       focus_generate_masks --type="image,channel" --first "${Slabfirstimage[$Slabstep]}" --last "${Slablastimage[$Slabstep]}"
       focus_merge_masks                                   "${Slabfirstimage[$Slabstep]}"        "${Slablastimage[$Slabstep]}"
 
       # focus
       case $Softmode in
-        "") 
+        "")
           focus_hard --maskmax "${Slabmask[$Slabstep]}" --output "${Slabresult[$Slabstep]}" \
                      --firstimage="${Slabfirstimage[$Slabstep]}" --lastimage="${Slablastimage[$Slabstep]}" \
                      --lessthanmax "$Globalless" --cutsoft "$Cutsoft" --cutblur "$Cutblur"
         ;;
-        *)  ### FIXME
+        *)
           focus_soft --maskmax "${Slabmask[$Slabstep]}" --output "${Slabresult[$Slabstep]}" \
                      --firstimage="${Slabfirstimage[$Slabstep]}" --lastimage="${Slablastimage[$Slabstep]}" \
                      --alpha "$Globalalpha" --sigmoidal "$Softmode"
@@ -2717,15 +2728,15 @@ ${Slabmask[$Slabstep]}
       Command="$Command
     $Tifstorealpha
     #-define tiff:write-layers=yes
-    -write $Outputimage
-    $(showimagecode "$Outputimage")
+    -write $Resultimage
+    $(showimagecode "$Resultimage")
     -delete 0"
     ;;
     no)
       Command="
   mpr:resultimage
     $Tifstorealpha
-    -write $Outputimage
+    -write $Resultimage
     -delete 0"
     ;;
   esac
@@ -3263,7 +3274,7 @@ readmagickmessage() {
       PROGRESS)
         printsameline "imfuse: $Content"
       ;;
-      /PROGRESS)
+      /PROGRESS|NEWLINE)
         echo "" >&2
       ;;
       NOTE)
@@ -3272,8 +3283,11 @@ readmagickmessage() {
       SHOW)
         showimage "$Content"
     esac
-    grep -q error <<< "$Line" && error "magick error:
+    grep -q error <<< "$Line" && {
+      note "magick ERROR:
 $Line"
+      break
+    }
   done < <(tail -F "$Magickfifolog" ||:)
 }
 sendmagickmessage() {
@@ -3913,6 +3927,8 @@ $Argmethod"
   }
   for Count in $(seq "$Slaboptcount"); do
     maskarg_parse "${Slaboptarg[$Count]}"
+    [ -z "$Argword1" ] && [ -n "$Argpercent1" ] && Argword1="$Argpercent1"
+    [ -z "$Argword2" ] && [ -n "$Argpercent2" ] && Argword2="$Argpercent2"
     case "$Argword2" in
       "")
         [ "$Argword1" = "auto" ] && Argword1="25%"
@@ -4096,6 +4112,7 @@ main_setup() {
   }
 
   note "
+  imfuse Version:                     $Version
   Imagemagick version:                $Magickversion
   Image number:                       $Imagenumber
   Image width:                        $Imagewidth px
@@ -4105,7 +4122,8 @@ main_setup() {
   Memory total (including zram):      $(($(printtotalmemory)/1000)) MB
   Memory currently free:              $((Freemem/1000)) MB
   Memory limit for imagemagick:       $((Limitmemory/1000)) MB
-  Loading source images to RAM:       $Loadsourceimages"
+  Loading source images to RAM:       $Loadsourceimages
+  Options: $Resultbasename"
 
   # start magick -script in background
   Magickfifo="$Cachedir/magickfifo"
@@ -4158,6 +4176,12 @@ trap - ERR"
   check_options
   [ "$Error" ] && return 1
   main_setup
+
+  # --force
+  [ "$Force" = "mask" ]  && forcemask
+  [ "$Force" = "merge" ] && forcemerge
+  [ "$Force" = "level" ] && forcelevel
+  [ "$Force" = "focus" ] && forcefocus
 
   # --align
   [ "$Align" = "yes" ] && {
