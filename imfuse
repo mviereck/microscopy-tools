@@ -594,6 +594,120 @@ forcefocus() {
   rm $Cachedir/focus*
   rm $Cachedir/imfuse*
 }
+#### run commands on all CPUs
+
+multicore() {
+  # Run multiple processes in parallel, but not more than $Multicore_maxprocesses
+  # $1 Command
+  # $2 Image to show if $1 is finished
+  # Run multicore_wait afterwards to wait for the last processes to finish.
+
+  local Process Command
+  local Mem_needed Zram
+
+  [ "${1:-}" = "-t1" ] && {
+    shift
+    [ "$Multicore_processcount" -gt 0 ] && {
+      multicore_wait || return 1
+    }
+  }
+
+  [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
+    multicore_wait || return 1
+  }
+  [ "$Multicore_processcount" = "0" ] && Multicore_memorymax="$(printfreememory)"  
+  Mem_needed=0
+  for Process in $(seq $Multicore_maxprocesses); do
+    Mem_needed="$(awk "BEGIN {print $Mem_needed + ${Multicore_memory[$Process]:-0} }" )"
+  done
+  Mem_needed="$((Mem_needed+${3:-0}))"
+  [ "$Mem_needed" -gt "$Multicore_memorymax" ] && {
+    note "multicore: Low memory. Waiting for $Multicore_processcount running processes to finish. Need: $((Mem_needed/1000)) MB, Available: $((Multicore_memorymax/1000)) MB"
+    [ "$Mem_needed" -gt "$Multicore_memorymax" ] && [ "$Multicore_processcount" = "0" ] && note "multicore: Likely hard disk cache will be used and slow down the calculation."
+    multicore_wait || return 1
+  }
+
+  ifcmdbreak && return 1
+
+  Multicore_processcount=$((Multicore_processcount +1))
+
+  Command="$(cut -d ' ' -f1 <<< "${1:-}")"
+  case $(type -t "$Command") in
+    file) Command="nice ${1:-}" ;;
+    *)    Command="${1:-}" ;;
+  esac
+
+  #verbose "multicore: ${1:-}"
+  eval "$Command &"
+
+  Multicore_process[Multicore_processcount]=$!
+  Multicore_image[Multicore_processcount]="${2:-}"
+  Multicore_memory[Multicore_processcount]="${3:-0}"
+
+  return 0
+}
+multicore_wait() {
+  local Process Error=
+  for Process in $(seq $Multicore_maxprocesses); do
+    [ "${Multicore_process[$Process]}" ] && {
+      multicore_waitprocess "${Multicore_process[$Process]}" || {
+        multicore_break
+        Error=1
+      }
+      [ "$Error" ] && break
+      [ "${Multicore_image[$Process]}" ] && showimage "${Multicore_image[$Process]}"
+    }
+    Multicore_process[$Process]=""
+    Multicore_image[$Process]=""
+    Multicore_memory[$Process]="0"
+  done
+  [ "$Error" ] && return 1
+  Multicore_processcount=0
+  return 0
+}
+multicore_waitprocess() {
+  local Error=
+  while sleep 0.2 ; do
+    ps -p "${1:-}" >/dev/null || break
+    ifcmdbreak && Error=1
+    [ "$Error" ] && break
+  done
+  [ "$Error" ] && return 1
+  wait "${1:-}"
+  return $?
+}
+multicore_break() {
+  local Process
+  for Process in $(seq $Multicore_maxprocesses); do
+    [ "${Multicore_process[$Process]}" ] && {
+      verbose "multicore_break: Sending SIGINT to $(ps -p ${Multicore_process[$Process]})"
+      kill "${Multicore_process[$Process]}"
+      wait "${Multicore_process[$Process]}"
+      Multicore_process[$Process]=""
+      Multicore_image[$Process]=""
+      Multicore_memory[$Process]="0"
+    }
+  done
+}
+multicore_init() {
+  # declare global variables
+  local Process
+  Multicore_maxprocesses="$(nproc)"
+  Multicore_maxprocesses="${Multicore_maxprocesses:-1}"
+  Multicore_maxprocesses="$((Multicore_maxprocesses * 2))"
+  for Process in $(seq $Multicore_maxprocesses); do
+    Multicore_process[$Process]=""
+    Multicore_image[$Process]=""
+    Multicore_memory[$Process]="0"
+  done
+  Multicore_processcount=0
+  Multicore_minram=250000
+  Multicore_maxprocesses=$Multicore_maxprocesses
+}
+ifcmdbreak() {
+  [ -e "$Cachedir/exit" ]
+  #return 1
+}
 
 ### Files
 
@@ -752,7 +866,6 @@ load_sourceimages() {
 
   for Count in $(seq $Firstimage $Lastimage); do
     Number="$(printnum "$Count")"
-    Sourceimage="$(sed "${Count}q;d" <<< "$Sourceimagelist")"
 
     Command=""
     case "$Loadsourceimages" in
@@ -762,7 +875,7 @@ load_sourceimages() {
 
           sendmagickmessage "PROGRESS:Loading source image $Count / $Imagenumber"
           Command="$Command
-  '$Sourceimage'
+  ${Sourceimagelist[$Count]}
     -alpha off
     -depth 16
     -write $(sourceimagename $Count)
@@ -772,7 +885,7 @@ load_sourceimages() {
         }
       ;;
       no)
-        Imsourceimagelist[$Count]="$Sourceimage"
+        Imsourceimagelist[$Count]="${Sourceimagelist[$Count]}"
       ;;
     esac
   done
@@ -800,11 +913,10 @@ sourceimagename() {
   echo "${Imsourceimagelist[${1:-}]}"
 }
 sourceimagelist() {
-  local Basename List=
+  local Count
   local Firstimage Lastimage
   Firstimage="${1:-1}"
   Lastimage="${2:-$Imagenumber}"
-  Basename="${1:-}"
   case "${3:-}" in
     --nompr)
       for Count in $(seq $Firstimage $Lastimage); do
@@ -1048,46 +1160,94 @@ clut_gaussian() {
   cmd_waitforready
 }
 enfuse_split() {
-  local Mem_free Mem_needed Outputimage Enfuseoptions Sourceimage Sourceimagelist
+  local Resultimage Enfuseoptions
+  local Command Count
+  local Firstimage Lastimage
+  local Mem_free Mem_needed
+  local Splitimagelist= Splitimagename Splitresult= Splitcache Split Splits Splitwidth
 
-  Outputimage="${1:-}" ; shift
-  Sourceimagelist=""
-  while [ $# -gt 0 ]; do
-    Sourceimagelist="$Sourceimagelist
-${1:-}"
-    shift
-  done
-  Sourceimagelist="$(grep . <<< "$Sourceimagelist")"
+  Resultimage="${1:-}"
+  Firstimage="${2:-1}"
+  Lastimage="${3:-$Imagenumber}"
 
   Mem_free="$(printfreememory)"
-  Mem_needed="$((Imagewidth * Imageheight * 2 * 32 / 8))"
+  Mem_needed="$(( (Lastimage-Firstimage+1) * Imagewidth*Imageheight * 2 * 32 / (8*1024)))"
   Enfuseoptions="--contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask"
 
-  false && [ "$Mem_needed" -ge "$Mem_free" ] && error "Not enough free memory to run enfuse.
-  Free memory:             $Mem_free
-  Estimated needed memory: $Mem_needed"
+  sendmagickmessage "NOTE:Generating image with external tool enfuse"
 
- # [ "$Mem_needed" -lt "$Mem_free" ] && {
-    sendmagickmessage "[ generating image with external tool enfuse ]"
-    nice enfuse $Enfuseoptions -o "$Outputimage" $Sourceimagelist 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
+  ### Single run attempt
+  [ "$Mem_needed" -lt "$Mem_free" ] && {
+    nice enfuse $Enfuseoptions -o "$Resultimage" $(sourceimagelist $Firstimage $Lastimage --nompr) 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
     return "${Error:-0}"
- # }
-
-  ##################
-  [ "$Mem_needed" -ge "$Mem_free" ] && {
-    note "enfuse needs more memory than available for this stack. Splitting source images."
-    Splits=3
-    Splitcache="$Cachedir/enfuse.split"
-    Splitwidth=$((Imagewidth/Splits))
-    mkdir -p $Splitcache
-    for Split in $(seq $Splits); do
-      Splitgeometry[$Split]="$((Splitwidth + 20))x${Imageheight}+$(( (Split -1) * Splitwidth ))+0"
-    done
-    for Sourceimage in $Sourceimagelist; do
-      $Magickbin $Sourceimage -crop 
-    done
-    return
   }
+
+  ### Splitting attempt
+  note "enfuse: Splitting source images due to low memory."
+
+  Splits="$((Mem_needed / Mem_free +1))"
+  Splitwidth=$((Imagewidth/Splits))
+  Splitcache="$Cachedir/enfuse.split"
+  mkdir -p "$Splitcache"
+
+  for Split in $(seq $Splits); do
+    Splitgeometry[$Split]="$((Splitwidth + $([ "$Split" -lt "$Splits" ] && echo 20 || echo 0) ))x${Imageheight}+$(( (Split -1) * Splitwidth ))+0"
+  done
+
+  load_sourceimages $Firstimage $Lastimage
+  for Count in $(seq $Firstimage $Lastimage); do
+    sendmagickmessage "PROGRESS:enfuse: Splitting source images into $Splits parts step $Count / $Lastimage"
+    Command="
+  ${Sourceimagelist[$Count]}
+    -write mpr:sourceimage
+    -delete 0"
+    for Split in $(seq $Splits); do
+      Splitimagename="split.$(printnum $Count).${Split}.png"
+      Command="$Command
+  mpr:sourceimage
+    -crop ${Splitgeometry[$Split]}
+    -write ${Splitimagename}
+    -delete 0"
+      Splitimagelist[$Split]="${Splitimagelist[$Split]:-} $Splitimagename"
+    done
+    #cmd "$Command"
+    multicore "$Magickbin $(tr -d "\n" <<< "$Command") -exit"
+  done
+  multicore_wait
+  sendmagickmessage "/PROGRESS"
+  #cmd_waitforready
+
+  for Split in $(seq $Splits); do
+    note "Running enfuse step $Split / $Splits"
+    Splitresult[$Split]="$Splitcache/splitresult${Split}.png"
+    nice enfuse $Enfuseoptions -o "${Splitresult[$Split]}" ${Splitimagelist[$Split]} 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
+    showimage "$Splitresult[$Split]"
+  done
+
+  sendmagickmessage "NOTE:enfuse: Appending splits to result"
+  Command="
+  mpr:black
+    -write mpr:resultimage
+    -delete 0"
+  for Split in $(seq $Splits); do
+    Command="$Command
+  mpr:resultimage
+    ${Splitresult[$Split]}
+    -geometry +$(( (Split -1) * Splitwidth ))+0
+    -composite
+    -write mpr:resultimage
+    -delete 0"
+  done
+  Command="$Command
+  mpr:resultimage
+    -write $Resultimage
+    -delete 0"
+  cmd "$Command"
+  cmd_waitforready
+
+  rm -r "$Splitcache"
+
+  return 0
 }
 evaluate() {
   local Sourceimagelist Resultimage Mode
@@ -1252,8 +1412,7 @@ generate_image() {
 
   case "$Imagetype" in
     enfuse) ### FIXME first..last
-      #enfuse_split "$Imagename" $(sourceimagelist $Firstimage $Lastimage --nompr)
-      enfuse_split "$Imagename" $(sed -n "${Firstimage},${Lastimage}p" <<< "$Sourceimagelist")
+      enfuse_split "$Imagename" ${Firstimage} ${Lastimage}
     ;;
     evaluate)
       load_sourceimages ### FIXME first..last
@@ -2728,15 +2887,15 @@ ${Slabmask[$Slabstep]}
       Command="$Command
     $Tifstorealpha
     #-define tiff:write-layers=yes
-    -write $Resultimage
-    $(showimagecode "$Resultimage")
+    -write $Outputimage
+    $(showimagecode "$Outputimage")
     -delete 0"
     ;;
     no)
       Command="
   mpr:resultimage
     $Tifstorealpha
-    -write $Resultimage
+    -write $Outputimage
     -delete 0"
     ;;
   esac
@@ -3365,6 +3524,8 @@ trap_sigint() {
   set +x
   note "Received SIGINT"
   kill "$Magickscriptpid"
+  :> "$Exitnotefile"
+  multicore_break
   finish 130
 }
 finish() {
@@ -3373,6 +3534,9 @@ finish() {
   set +x
 
   cmd "-exit"
+  :> "$Exitnotefile"
+  multicore_wait
+
   while ps -p "$Magickscriptpid" >/dev/null 2>&1; do
     sleep 1
     Count="$((Count+1))"
@@ -3432,6 +3596,7 @@ declare_variables() {
   Cutsoft=""
   Difference_needlist=""
   Error=""
+  Exitnotefile=""
   Exifsourceimage=""
   Finalblur=""
   Finalblurpercent=""
@@ -3995,10 +4160,7 @@ $Argmethod"
 
   # --background
   [ "$Background" = "auto" ] && Background="enfuse"
-  [ -z "$Maskmethodlist" ] && {
-    Background="${Background:-enfuse}"
-    note "No mask option specified, generating background only: $Background"
-  }
+  [ -z "$Maskmethodlist" ] && Background="${Background:-enfuse}"
   [ "$Background" ] && {
     checkmagicklist color                     "$Background"   && Backgroundtype="color"
     checkmagicklist evaluate                  "$Background"   && Backgroundtype="evaluate"
@@ -4010,6 +4172,11 @@ $Argmethod"
     esac
     [ "$Backgroundtype" ] || error "--background: Unknown background: '$Background'"
   }
+
+  # read source file names in array
+  for Count in $(seq 1 $Imagenumber); do
+    Sourceimagelist[$Count]="$(sed "${Count}q;d" <<< "$Sourceimagelist")"
+  done
 
   return ${Error:-0}
 }
@@ -4054,6 +4221,11 @@ main_setup() {
 
   # check magick version
   Magickbin="$(command -v magick)"
+  [ -e "/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4.5.6" ] && {
+    # https://imagemagick.org/script/openmp.php
+    # https://goog-perftools.sourceforge.net/doc/tcmalloc.html
+    Magickbin="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4.5.6 $Magickbin"
+  }
   [ -z "$Magickbin" ] && error "Command 'magick' not found. Please install ImageMagick version 7."
   Magickversion="$($Magickbin -version)"
   grep -q " Q8 "   <<< "$Magickversion" && Magickpixelmemory="4"
@@ -4102,6 +4274,8 @@ main_setup() {
     }
   }
   echo "$Sourcemd5" > "$Cachedir/md5"
+  Exitnotefile="$Cachedir/exit"
+  rm -f "$Exitnotefile"
 
   # --output, --basename
   check_outputname
@@ -4124,6 +4298,7 @@ main_setup() {
   Memory limit for imagemagick:       $((Limitmemory/1000)) MB
   Loading source images to RAM:       $Loadsourceimages
   Options: $Resultbasename"
+  [ -z "$Maskmethodlist" ] && note "No mask option specified, generating background only: $Background"
 
   # start magick -script in background
   Magickfifo="$Cachedir/magickfifo"
@@ -4176,6 +4351,7 @@ trap - ERR"
   check_options
   [ "$Error" ] && return 1
   main_setup
+  multicore_init
 
   # --force
   [ "$Force" = "mask" ]  && forcemask
