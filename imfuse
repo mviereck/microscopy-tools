@@ -5,29 +5,22 @@ Version="0.7.9-beta"
 
 # ToDo:
 # New BUG s:
+# --slabs %
 # --soft --alpha
-
-# =alpha,less: wrong result
 # --soft: preview of montage is grey
 # enfuse_split() not ready
-# --slabs
 #
 # imfuse:
 # split enfuse with crops having ~10px overlap
-# --slab
-# BUG: levelU kills data near 0% (--test pyramid)
 # add w to each mask if n>1
 # --level for --soft?
 # mkclut_uniform() fails with b&w masks -> clut and result black
 # --revert: broken
 # ARG close: how to match --close ARG?
 # whitespace in file names -> file names into array
-# --maskblur altogether?
-# --gamma?
 # check --kirsch
 # drop --unsharp?
 # drop --halo?
-# find halo solution
 # check exiftransfer / damaged one Beerenwanze or Spinne image
 
 usage() {
@@ -513,6 +506,14 @@ md5cut() {
   # print last 6 digits
   tr "\n" " " <<< "${1:-}" | md5sum | cut -c27-32
 }
+numberofpercent() {
+  Number="${1:-}"
+  Number="${Number//%}"
+  Number="$((Number*100/Imagenumber))"
+  [ "$Number" -lt "1" ]            && Number=1
+  [ "$Number" -gt "$Imagenumber" ] && Number="$Imagenumber"
+  echo "$Number"
+}
 parse_percent() {
   local Percent
   Percent="${1:-}"
@@ -546,7 +547,7 @@ printfreememory() {
   while read Line; do
     Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print ($3 - $4)}' <<< "$Line")"
     Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
-    Memory="$((Memory + Zram))"
+    #Memory="$((Memory + Zram))"
   done < <(/sbin/swapon --bytes | grep zram)
   echo $Memory
 }
@@ -575,6 +576,10 @@ unspecialstring() {
 forcefocus() {
   rm $Cachedir/focus*
   rm $Cachedir/imfuse*
+}
+forcelevel() {
+  rm $Cachedir/level.${1:-}*
+  forcemerge
 }
 forcemerge() {
   rm $Cachedir/*merge*
@@ -1304,6 +1309,7 @@ level_masks() {
   Clutimage="mpr:clut"
 
   sendmagickmessage "NOTE:Leveling $Maskbasename"
+  [ "$Force" = "level" ] && forcelevel "$Maskbasename"
   [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/level.$Maskbasename" ] && { ### FIXME
     sendmagickmessage "NOTE:level_masks(): Skipping, mask is already leveled."
     return 0
@@ -1893,47 +1899,48 @@ $Maskgenerator
     }
   done <<< "$Maskmethodlist"
 
-  [ -z "$Maskgenerator_all" ] && return 0
 
 #  verbose "mask generator kernels:
 #$(magick xc:white -define morphology:showkernel=1 $(grep -E -- '-define|-morphology' <<< "$Maskgenerator_all" | grep -v "Close") null: 2>&1)"
 
   # Generate masks
-  sendmagickmessage "NOTE:Generating masks"
-  grep -q "NUMBER" <<< "$Maskgenerator_all" && load_sourceimages $Firstimage $Lastimage
+  [ -n "$Maskgenerator_all" ] && {
+    sendmagickmessage "NOTE:Generating masks"
+    grep -q "NUMBER" <<< "$Maskgenerator_all" && load_sourceimages $Firstimage $Lastimage
 
-  for Count in $(seq $Firstimage $Lastimage); do
-    Number="$(printnum $Count)"
-    Command=""
+    for Count in $(seq $Firstimage $Lastimage); do
+      Number="$(printnum $Count)"
+      Command=""
 
-    # Generate command to generate masks
-    sendmagickmessage "PROGRESS:Mask generation step $Count / $Imagenumber"
-    Command="$Command
+      # Generate command to generate masks
+      sendmagickmessage "PROGRESS:Mask generation step $Count / $Imagenumber"
+      Command="$Command
   $(sourceimagename $Count)
     -write mpr:sourceimage
     -delete 0
   mpr:sourceimage"
 
-    # --grayscale
-    [ "$Grayscaleconverter" ] && Command="$Command
-    $Grayscaleconverter"
-    Command="$Command
+      # --grayscale
+      [ "$Grayscaleconverter" ] && Command="$Command
+      $Grayscaleconverter"
+      Command="$Command
     -write mpr:sourcegray
     -delete 0"
 
-    Command="$Command
+      Command="$Command
 ${Maskgenerator_all//NUMBER/$Number}"
 
-    cmd "$Command"
-  done
+      cmd "$Command"
+    done
 
-  sendmagickmessage "/PROGRESS"
-  cmd_waitforready
-  Command="
-  +set registry:sourceimage
-  +set registry:sourcegray"
-  cmd "$Command"
-  cmd_waitforready
+    sendmagickmessage "/PROGRESS"
+    cmd_waitforready
+    Command="
+    +set registry:sourceimage
+    +set registry:sourcegray"
+    cmd "$Command"
+    cmd_waitforready
+  }
 
   # level and uniform masks
   while read Line; do
@@ -2127,7 +2134,7 @@ focus_hard() {
   local Focusimagebasename Focusimagefile Focusimagemaskfile
   local Sourceimage Sourcemask Maskmax Lessthanmaxmask
   local Command Count
-  local Levelmax Levelmin
+  local Levelmax= Levelmin=
   local Longoptions Parsedoptions
 
   Longoptions="lessthanmax:,maskmax:,output:,cutblur:,cutsoft:,firstimage:,lastimage:"
@@ -2183,10 +2190,10 @@ focus_hard() {
   generate_image --mode transparent --name "$Focusimagefile"
   #Maskmax="${Maskmax:-mpr:resultmask}"
 
-  Maskmax="mpr:mergemax"
-  evaluate max "$Maskmax" $(masklist "$Mergemaskbasename" $Firstimage $Lastimage)
-  Levelmax="$(getmagickinfo "$Maskmax" '%[fx:maxima*100]')"
-  Levelmin="$(getmagickinfo "$Maskmax" '%[fx:minima*100]')"
+  #Maskmax="mpr:mergemax"
+  #evaluate max "$Maskmax" $(masklist "$Mergemaskbasename" $Firstimage $Lastimage)
+  #Levelmax="$(getmagickinfo "$Maskmax" '%[fx:maxima*100]')"
+  #Levelmin="$(getmagickinfo "$Maskmax" '%[fx:minima*100]')"
 
   [ "$Lessthanmax" ] && generate_image --mode transparent --name "mpr:lessthanmax"
 
@@ -2218,7 +2225,7 @@ focus_hard() {
     -delete 0
   $Sourcemask
     -alpha off
-    -level $Levelmin%,$Levelmax%
+    #-level $Levelmin%,$Levelmax%
     -write mpr:sourcemask
     -delete 0"
 
@@ -3908,9 +3915,12 @@ $Argmethod"
     maskarg_parse "${Slaboptarg[$Count]}"
     case "$Argword2" in
       "")
-        [ "$Argword1" = "auto" ] && Argword1=""
-        Slabnumber="${Argword1:-10}"
-        Slaboverlap="${Argradius1:-5}"
+        [ "$Argword1" = "auto" ] && Argword1="25%"
+        Slabnumber="${Argword1:-5}"
+        grep -q "%" <<< "$Slabnumber" && Slabnumber="$(numberofpercent "$Slabnumber")" && Slabnumber="$((100/Slabnumber))"
+        Slaboverlap="${Argradius1:-"7%"}"
+        grep -q "%" <<< "$Slaboverlap" && Slaboverlap="$(numberofpercent "$Slaboverlap")"
+
         Slabsize="$((Imagenumber / Slabnumber))"
         for Slabstep in $(seq $Slabnumber); do
           Slabfirstimage[$Slabstep]="$((Slabsize*(Slabstep-1) +1))"
@@ -3919,9 +3929,12 @@ $Argmethod"
         done
       ;;
       *)
-        Firstimage="${Argword1:-1}"
-        Lastimage="${Argword2:-$Imagenumber}"
+        Firstimage="${Argword1:-}"
+        Lastimage="${Argword2:-}"
         Argradius1=${Argradius1:-0}
+        grep -q "%" <<< "$Firstimage" && Firstimage="$(numberofpercent "$Firstimage")"
+        grep -q "%" <<< "$Lastimage"  && Lastimage="$(numberofpercent  "$Lastimage")"
+        grep -q "%" <<< "$Argradius1" && Argradius1="$(numberofpercent "$Argradius1")"
         Firstimage="$((Firstimage-Argradius1))"
         Lastimage="$((Lastimage+Argradius1))"
         [ "$Firstimage" -lt "1" ] && Firstimage="1"
