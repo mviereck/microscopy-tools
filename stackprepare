@@ -3,6 +3,7 @@
 
 # Notes:
 # add --meanbalance?
+# add --align?
 
 usage() {
   echo "
@@ -52,22 +53,153 @@ Depends on:
  - geeqie (optional)
 "
 }
-error() {
-  echo "preparestack ERROR: ${1:-}" >&2
-  exit 1
-}
-digitonly() {
-  echo "${1//[^0-9.]/}"
-}
+
+### messages
 showimage() {
   [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"${1:-}" 2>/dev/null &
   #viewnior ${1:-} &
   return 0
 }
+error() {
+  echo "preparestack ERROR: ${1:-}" >&2
+  exit 1
+}
+
+### misc
+digitonly() {
+  echo "${1//[^0-9.]/}"
+}
 printsameline() {
   # print $1 without newline at begin of current line
   echo -ne "${1:-}\033[0K\r" >&2
 }
+
+### run commands on all CPUs
+multicore() {
+  # Run multiple processes in parallel, but not more than $Multicore_maxprocesses
+  # $1 Command
+  # $2 Image to show if $1 is finished
+  # Run multicore_wait afterwards to wait for the last processes to finish.
+
+  local Process Command
+  local Mem_needed Zram
+
+  [ "${1:-}" = "-t1" ] && {
+    shift
+    [ "$Multicore_processcount" -gt 0 ] && {
+      multicore_wait || return 1
+    }
+  }
+
+  [ "$Multicore_processcount" = "$Multicore_maxprocesses" ] && {
+    multicore_wait || return 1
+  }
+  [ "$Multicore_processcount" = "0" ] && Multicore_memorymax="$(printfreememory)"  
+  Mem_needed=0
+  for Process in $(seq $Multicore_maxprocesses); do
+    Mem_needed="$(awk "BEGIN {print $Mem_needed + ${Multicore_memory[$Process]:-0} }" )"
+  done
+  Mem_needed="$((Mem_needed+${3:-0}))"
+  [ "$Mem_needed" -gt "$Multicore_memorymax" ] && {
+    note "multicore: Low memory. Waiting for $Multicore_processcount running processes to finish. Need: $((Mem_needed/1000)) MB, Available: $((Multicore_memorymax/1000)) MB"
+    [ "$Mem_needed" -gt "$Multicore_memorymax" ] && [ "$Multicore_processcount" = "0" ] && note "multicore: Likely hard disk cache will be used and slow down the calculation."
+    multicore_wait || return 1
+  }
+
+  ifcmdbreak && return 1
+
+  Multicore_processcount=$((Multicore_processcount +1))
+
+  Command="$(cut -d ' ' -f1 <<< "${1:-}")"
+  case $(type -t "$Command") in
+    file) Command="nice ${1:-}" ;;
+    *)    Command="${1:-}" ;;
+  esac
+
+  #verbose "multicore: ${1:-}"
+  eval "$Command &"
+
+  Multicore_process[Multicore_processcount]=$!
+  Multicore_image[Multicore_processcount]="${2:-}"
+  Multicore_memory[Multicore_processcount]="${3:-0}"
+
+  return 0
+}
+multicore_wait() {
+  local Process Error=
+  for Process in $(seq $Multicore_maxprocesses); do
+    [ "${Multicore_process[$Process]}" ] && {
+      multicore_waitprocess "${Multicore_process[$Process]}" || {
+        multicore_break
+        Error=1
+      }
+      [ "$Error" ] && break
+      [ "${Multicore_image[$Process]}" ] && showimage "${Multicore_image[$Process]}"
+    }
+    Multicore_process[$Process]=""
+    Multicore_image[$Process]=""
+    Multicore_memory[$Process]="0"
+  done
+  [ "$Error" ] && return 1
+  Multicore_processcount=0
+  return 0
+}
+multicore_waitprocess() {
+  local Error=
+  while sleep 0.2 ; do
+    ps -p "${1:-}" >/dev/null || break
+    ifcmdbreak && Error=1
+    [ "$Error" ] && break
+  done
+  [ "$Error" ] && return 1
+  wait "${1:-}"
+  return $?
+}
+multicore_break() {
+  local Process
+  for Process in $(seq $Multicore_maxprocesses); do
+    [ "${Multicore_process[$Process]}" ] && {
+      verbose "multicore_break: Sending SIGINT to $(ps -p ${Multicore_process[$Process]})"
+      kill "${Multicore_process[$Process]}"
+      wait "${Multicore_process[$Process]}"
+      Multicore_process[$Process]=""
+      Multicore_image[$Process]=""
+      Multicore_memory[$Process]="0"
+    }
+  done
+}
+multicore_init() {
+  # declare global variables
+  local Process
+  Multicore_maxprocesses="$(nproc)"
+  Multicore_maxprocesses="${Multicore_maxprocesses:-1}"
+  Multicore_maxprocesses="$((Multicore_maxprocesses * 2))"
+  for Process in $(seq $Multicore_maxprocesses); do
+    Multicore_process[$Process]=""
+    Multicore_image[$Process]=""
+    Multicore_memory[$Process]="0"
+  done
+  Multicore_processcount=0
+  Multicore_minram=250000
+  Multicore_maxprocesses=$Multicore_maxprocesses
+}
+printfreememory() {
+  # print current free memory including zram
+  local Memory Line Zram
+  Memory="$(LC_ALL=C free | grep "Mem:" | LC_ALL=C awk '{print $7}')"
+  while read Line; do
+    Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print ($3 - $4)}' <<< "$Line")"
+    Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
+    #Memory="$((Memory + Zram))"
+  done < <(/sbin/swapon --bytes | grep zram)
+  echo $Memory
+}
+ifcmdbreak() {
+  #[ -e "$Cachedir/exit" ]
+  return 1
+}
+
+### image processing
 meanproperties() {
   Imageproperties="$($Magickbin $Sourceimagelist -evaluate-sequence mean -format '
 Imageautogamma=%[fx:log(mean)/log(0.5)]
@@ -81,13 +213,22 @@ Imageheight=%[h]
   -exit)"
   eval $Imageproperties
 }
+check_imagesize() {
+  Imageproperties="$($Magickbin $(head -n1 <<< "$Sourceimagelist") -format '
+Imagewidth=%[w]
+Imageheight=%[h]
+' -write info: \
+  -delete 0 \
+  -exit)"
+  eval $Imageproperties
+}
 prepare_focusstack() {
   local Image Outputimage Command Count
 
   Count=0
   while read Image; do
     Count="$((Count+1))"
-    Outputimage="$(rev <<< "$Image" | cut -d. -f2- | rev).png"
+    Outputimage="$(rev <<< "$Image" | cut -d. -f2- | rev).tif"
     Outputimage="$(basename "$Outputimage")"
     Outputimage="$Destinationdir/$Outputimage"
 
@@ -101,12 +242,14 @@ $Magickbin
     -write $Outputimage
     -delete 0
   -exit"
-    $Command
+    #$Command
+    multicore "$(tr -d "\n" <<< "$Command")" "$Outputimage"
 
     Error="$?"
     [ "$Error" != "0" ] && break
     showimage "$Outputimage"
   done <<< "$Sourceimagelist"
+  multicore_wait
   echo ""
 
   [ "$Oneimageonly" = "yes" ] && echo "$Command"
@@ -114,6 +257,8 @@ $Magickbin
 
   return 0
 }
+
+### main
 declare_variables() {
   # Global variables with default values
   Cropgeometry=""
@@ -164,7 +309,7 @@ parse_options() {
         Oneimageonly="yes"
       ;;
       --output)
-        Destinationdir="${2:-$Destinationdir}"
+        Destinationdir="${2:-}"
         shift
       ;;
       -f|--force)
@@ -352,10 +497,22 @@ ${1:-}"
   [ "$Terminate" ] && exit 1
   return 0
 }
+finish() {
+  trap - SIGINT
+  trap - EXIT
+  trap - ERR
+  multicore_break
+  exit 0
+}
 main() {
   set -Eu
+  trap finish SIGINT
+  trap finish EXIT
+  trap finish ERR
+
   declare_variables
   parse_options "$@"
+  multicore_init
 
   # -1, --one
   [ "$Oneimageonly" = "yes" ] && {
@@ -378,7 +535,8 @@ main() {
 
   # get and insert some image stack properties if needed
   grep -q IMAGE <<< "$Prepareoptions" && {
-    meanproperties
+    grep -q -E 'LEVEL|GAMMA' <<< "$Prepareoptions" && meanproperties
+    [ -z "$Imagewidth" ] && check_imagesize
 
     [ "$Imagewidth"  -gt 640 ] && W="640" || W="$((Imagewidth/2))"
     [ "$Imageheight" -gt 480 ] && H="480" || H="$((Imageheight/2))"
@@ -421,4 +579,4 @@ main() {
   return 0
 }
 main "$@"
-exit
+finish
