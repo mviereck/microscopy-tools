@@ -541,17 +541,6 @@ printsameline() {
   # print $1 without newline at begin of current line
   echo -ne "${1:-}\033[0K\r" >&2
 }
-printfreememory() {
-  # print current free memory including zram
-  local Memory Line Zram
-  Memory="$(LC_ALL=C free | grep "Mem:" | LC_ALL=C awk '{print $7}')"
-  while read Line; do
-    Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print ($3 - $4)}' <<< "$Line")"
-    Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
-    #Memory="$((Memory + Zram))"
-  done < <(/sbin/swapon --bytes | grep zram)
-  echo $Memory
-}
 printtotalmemory() {
   # print total memory including zram
   local Memory Line Zram
@@ -594,6 +583,7 @@ forcefocus() {
   rm $Cachedir/focus*
   rm $Cachedir/imfuse*
 }
+
 #### run commands on all CPUs
 
 multicore() {
@@ -678,7 +668,7 @@ multicore_waitprocess() {
 }
 multicore_break() {
   local Process
-  for Process in $(seq $Multicore_maxprocesses); do
+  for Process in $(seq ${Multicore_maxprocesses:-0}); do
     [ "${Multicore_process[$Process]}" ] && {
       verbose "multicore_break: Sending SIGINT to $(ps -p ${Multicore_process[$Process]})"
       kill "${Multicore_process[$Process]}"
@@ -707,6 +697,17 @@ multicore_init() {
 ifcmdbreak() {
   [ -e "$Cachedir/exit" ]
   #return 1
+}
+printfreememory() {
+  # print current free memory including zram
+  local Memory Line Zram
+  Memory="$(LC_ALL=C free | grep "Mem:" | LC_ALL=C awk '{print $7}')"
+  while read Line; do
+    Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print ($3 - $4)}' <<< "$Line")"
+    Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
+    #Memory="$((Memory + Zram))"
+  done < <(/sbin/swapon --bytes | grep zram)
+  echo $Memory
 }
 
 ### Files
@@ -4088,7 +4089,7 @@ $Argmethod"
   #[ "$Slabcount" -gt "0" ] && {
   [ -n "$Maskmethodlist" ] && [ "$Slaboptcount" = "0" ] && {
     Slaboptcount="1"
-    Slaboptarg[1]="$Imagenumber"
+    Slaboptarg[1]="1,$Imagenumber"
   }
   for Count in $(seq "$Slaboptcount"); do
     maskarg_parse "${Slaboptarg[$Count]}"
