@@ -638,7 +638,7 @@ multicore() {
 }
 multicore_wait() {
   local Process Error=
-  for Process in $(seq $Multicore_maxprocesses); do
+  for Process in $(seq ${Multicore_maxprocesses:-0}); do
     [ "${Multicore_process[$Process]}" ] && {
       multicore_waitprocess "${Multicore_process[$Process]}" || {
         multicore_break
@@ -2952,7 +2952,7 @@ maskarg_parse() {
       "R")                Argradius2="${Value}" ;;
       "s")                Argsigma1="$Value" ;;
       "S")                Argsigma2="${Value}" ;;
-      "p"|"%")            Argpercent1="$(percentrm "$Value")" ;;
+      "p"|"%")            [ -z "$Argpercent1" ] && Argpercent1="$(percentrm "$Value")" || Argpercent2="$(percentrm "$Value")" ;;
       "P")                Argpercent2="$(percentrm "$Value")" ;;
       "denoise")          Argdenoise="${Value:-$(maskarg_defaultvalue   "$Argmethod" denoise)}" ;;
       "d"|"diff")         Argdiff="s" ;;
@@ -4093,8 +4093,8 @@ $Argmethod"
   }
   for Count in $(seq "$Slaboptcount"); do
     maskarg_parse "${Slaboptarg[$Count]}"
-    [ -z "$Argword1" ] && [ -n "$Argpercent1" ] && Argword1="$Argpercent1"
-    [ -z "$Argword2" ] && [ -n "$Argpercent2" ] && Argword2="$Argpercent2"
+    [ -z "$Argword1" ] && [ -n "$Argpercent1" ] && Argword1="${Argpercent1}%"
+    [ -z "$Argword2" ] && [ -n "$Argpercent2" ] && Argword2="${Argpercent2}%"
     case "$Argword2" in
       "")
         [ "$Argword1" = "auto" ] && Argword1="25%"
