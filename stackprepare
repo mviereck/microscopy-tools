@@ -127,7 +127,7 @@ multicore() {
 }
 multicore_wait() {
   local Process Error=
-  for Process in $(seq $Multicore_maxprocesses); do
+  for Process in $(seq ${Multicore_maxprocesses:-0}); do
     [ "${Multicore_process[$Process]}" ] && {
       multicore_waitprocess "${Multicore_process[$Process]}" || {
         multicore_break
@@ -157,7 +157,7 @@ multicore_waitprocess() {
 }
 multicore_break() {
   local Process
-  for Process in $(seq $Multicore_maxprocesses); do
+  for Process in $(seq ${Multicore_maxprocesses:-0}); do
     [ "${Multicore_process[$Process]}" ] && {
       verbose "multicore_break: Sending SIGINT to $(ps -p ${Multicore_process[$Process]})"
       kill "${Multicore_process[$Process]}"
