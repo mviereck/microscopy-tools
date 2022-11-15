@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.7.9-beta"
+Version="0.7.10-beta"
 
 # ToDo:
 # New BUG s:
@@ -581,7 +581,7 @@ forcemerge() {
 forcefocus() {
   note "forcing focus"
   rm $Cachedir/focus*
-  rm $Cachedir/imfuse*
+  rm $Cachedir/slabresult*
 }
 
 #### run commands on all CPUs
@@ -719,7 +719,7 @@ checkmagicklist() {
 check_outputname() {
   # Generate a unique output name showing options
 
-  Resultbasename="imfuse."
+  Resultbasename=""
   [ "$Align" = "yes" ] && Resultbasename="${Resultbasename}align_"
 
   # step mask generation
@@ -846,8 +846,8 @@ $Grayscale $Mergemethod $Prefertop $Revertimagelist $Softmode $Testsetup" )"
   Resultbasename="${Resultbasename}_md${Fusemd5sum}"
   [ -z "$Outputdir" ] && Outputdir="$(pwd)"
   case $Outputimage in
-    "") Outputimage="$Outputdir/$Basename$Resultbasename.${Imageformat}" ;;
-    *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="$Outputdir/$Outputimage" ;;
+    "") Outputimage="$Outputdir/${Outputbasename:-"imfuse."}${Resultbasename}.${Imageformat}" ;;
+    *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="${Outputdir}/{$Outputimage}" ;;
   esac
   Outputimage="$(realpath -m "$Outputimage")"
   [ "$Video" ] && Video="$Outputimage.webm"
@@ -2023,23 +2023,23 @@ focus_generate_masks() {
   mpr:sourcegray
     -compose Difference -composite"
 
-    [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
-    # =negate
-    -negate"
+#    [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
+#    # =negate
+#    -negate"
 
-    [ "${Argclose1}" ] && Maskgenerator="$Maskgenerator
-    # =close
-    -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-3}"
+#    [ "${Argclose1}" ] && Maskgenerator="$Maskgenerator
+#    # =close
+#    -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-3}"
 
-    [ "$Argmaskblur" ] && {
-      Maskgenerator="$Maskgenerator
-    # =maskblur
-    -blur 0x$Argmaskblur"
-    }
+#    [ "$Argmaskblur" ] && {
+#      Maskgenerator="$Maskgenerator
+#    # =maskblur
+#    -blur 0x$Argmaskblur"
+#    }
 
     grep -q "$Argtype" <<< "$Masktype" && {
       Maskmd5="$(md5cut "$Sourcemd5 $Maskgenerator")"
-      Argbasename="$Argmethod$Argoptions.$Maskmd5"
+      Argbasename="$Argmethod.$Maskmd5"
       maskarg_store
 
       ## avoid [double] creating of existing masks
@@ -2171,6 +2171,18 @@ focus_merge_masks() {
     Mergecode="$Mergecode
   (
   $Methodmask"
+
+    [ "$Argnegate" ] && Mergecode="$Mergecode
+    # =negate
+    -negate"
+
+    [ "${Argclose1}" ] && Mergecode="$Mergecode
+    # =close
+    -morphology Close:${Argclose2:-1} Octagon:${Argclose1:-3}"
+
+    [ "$Argmaskblur" ] && Mergecode="$Mergecode
+    # =maskblur
+    -blur 0x$Argmaskblur"
 
     [ "$Argdenoise" ] && Mergecode="$Mergecode
     # =denoise
@@ -2772,8 +2784,8 @@ focus_main() {
   focus_generate_masks --type="contrast,unknown"
   [ -n "$Maskmethodlist" ] && { 
     for Slabstep in $(seq $Slabnumber); do
-      Slabresult[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep.mpc"
-      Slabmask[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-mask.mpc"
+      Slabresult[$Slabstep]="$Cachedir/slabresult.$Resultbasename.slab$Slabstep.mpc"
+      Slabmask[$Slabstep]="$Cachedir/slabresult.$Resultbasename.slab$Slabstep-mask.mpc"
       [ "$Slabnumber" -gt "1" ] && {
         sendmagickmessage "NEWLINE"
         sendmagickmessage "NOTE:Generating slab $Slabstep / $Slabnumber: ${Slabfirstimage[$Slabstep]}..${Slablastimage[$Slabstep]}"
@@ -2796,8 +2808,8 @@ focus_main() {
         ;;
       esac
 
-      Slabresultpost[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-post.mpc"
-      Slabmaskpost[$Slabstep]="$Cachedir/$Resultbasename.slab$Slabstep-post-mask.mpc"
+      Slabresultpost[$Slabstep]="$Cachedir/slabresult.$Resultbasename.slab$Slabstep-post.mpc"
+      Slabmaskpost[$Slabstep]="$Cachedir/slabresult.$Resultbasename.slab$Slabstep-post-mask.mpc"
       [ -e "${Slabresultpost[$Slabstep]}" ] && {
         sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
       } || {
@@ -3588,7 +3600,6 @@ declare_variables() {
   Background=""
   Backgroundimage=""
   Backgroundtype=""
-  Basename=""
   Cachedir=""
   Caseeval=""
   Casecompose=""
@@ -3655,6 +3666,7 @@ white"
   Masktocache="no"
   Mergemaskbasename=""
   Mergemethod=""
+  Outputbasename=""
   Outputimage=""
   Parsedoptions=""
   Prefertop=""
@@ -3715,7 +3727,7 @@ parse_options() {
          --align)             Align="yes"                     ;;
          --alpha)             Globalalpha="${2:-auto}"        ; shift ;;
          --bg|--background)   Background="${2:-auto}"         ; shift ;;
-         --basename)          Basename="${2:-auto}"           ; shift ;;
+         --basename)          Outputbasename="${2:-auto}"           ; shift ;;
          --cache)             Cachedir="${2:-auto}"           ; shift ;;
          --close)             Globalclose="${2:-auto}"        ; shift ;;
          --cutblur)           Cutblur="${2:-auto}"            ; shift ;;
@@ -3882,16 +3894,16 @@ $Argmethod"
   esac
 
   # --basename
-  case $Basename in
-    #"")   Basename="imfuse" ;;
-    auto) Basename="$(basename "$(pwd)")" ;;
+  case $Outputbasename in
+    #"")   Outputbasename="imfuse" ;;
+    auto) Outputbasename="$(basename "$(pwd)")" ;;
   esac
-  [ -d "$Basename" ] && {
-    Outputdir="$Basename"
-    Basename=""
+  [ -d "$Outputbasename" ] && {
+    Outputdir="$Outputbasename"
+    Outputbasename=""
   } || {
-    Outputdir="$(dirname "$Basename")"
-    Basename="$(basename "$Basename")"
+    Outputdir="$(dirname "$Outputbasename")"
+    Outputbasename="$(basename "$Outputbasename")"
   }
 
   # --cachedir
@@ -4080,13 +4092,6 @@ $Argmethod"
   }
 
   # --slabs
-  #[ "$Slabnumber" = "auto" ] && Slabnumber="5,r5"
-  #[ -n "$Maskmethodlist" ] && {
-  #  Slabnumber="${Slabnumber:-1}"
-  #} || {
-  #  Slabnumber=0
-  #}
-  #[ "$Slabcount" -gt "0" ] && {
   [ -n "$Maskmethodlist" ] && [ "$Slaboptcount" = "0" ] && {
     Slaboptcount="1"
     Slaboptarg[1]="1,$Imagenumber"
@@ -4268,12 +4273,12 @@ main_setup() {
   Resultmask="$Cachedir/result.max.tif"
   Showimage="${XDG_RUNTIME_DIR:-$Cachedir}/imfuse.showimage.tif"
   Sourcemd5="$(md5cut "$(ls -l --full-time $Sourceimagelist)" )"
-  [ -e "$Cachedir/md5" ] && {
-    [ "$(cat "$Cachedir/md5")" = "$Sourcemd5" ] || {
-      note "Source images have changed, cleaning cache."
-      rm $Cachedir/*
-    }
-  }
+#  [ -e "$Cachedir/md5" ] && {
+#    [ "$(cat "$Cachedir/md5")" = "$Sourcemd5" ] || {
+#      note "Source images have changed, cleaning cache."
+#      rm $Cachedir/*
+#    }
+#  }
   echo "$Sourcemd5" > "$Cachedir/md5"
   Exitnotefile="$Cachedir/exit"
   rm -f "$Exitnotefile"
@@ -4298,7 +4303,7 @@ main_setup() {
   Memory currently free:              $((Freemem/1000)) MB
   Memory limit for imagemagick:       $((Limitmemory/1000)) MB
   Loading source images to RAM:       $Loadsourceimages
-  Options: $Resultbasename"
+  Option summary: $Resultbasename"
   [ -z "$Maskmethodlist" ] && note "No mask option specified, generating background only: $Background"
 
   # start magick -script in background
