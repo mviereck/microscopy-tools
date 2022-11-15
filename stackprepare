@@ -284,11 +284,14 @@ declare_variables() {
     -define png:compression-filter=2
     -define png:compression-level=4
     -define png:compression-strategy=1"
+  X=""
+  Y=""
+  W=""
+  H=""
   return 0
 }
 parse_options() {
   local Shortoptions Longoptions Parsedoptions Terminate= Arg=
-  local X Y W H Cropgeometry
 
   Shortoptions="1fV"
   Longoptions="force,help,one,output:,showimage"
@@ -334,6 +337,7 @@ parse_options() {
         shift
       ;;
       --contrast-stretch)
+        Arg="${2:-auto}"
         [ "$Arg" = "auto" ] && Arg=""
         Arg="${2:-"IMAGEMINLEVELxIMAGEMAXLEVEL"}"
         Prepareoptions="$Prepareoptions
@@ -341,12 +345,14 @@ parse_options() {
         shift
       ;;
       --crop)
-        Cropgeometry="${Arg:-"M"}"
+        Arg="${2:-M}"
+        Cropgeometry="${Arg:-}"
         Prepareoptions="$Prepareoptions
     -crop IMAGECROPGEOMETRY"
         shift
       ;;
       --gamma)
+        Arg="${2:-auto}"
         [ "$Arg" = "auto" ] && Arg=""
         Arg="${2:-"IMAGEAUTOGAMMA"}"
         Prepareoptions="$Prepareoptions
@@ -359,6 +365,7 @@ parse_options() {
         shift
       ;;
       --level)
+        Arg="${2:-auto}"
         [ "$Arg" = "auto" ] && Arg=""
         Arg="${2:-"IMAGEMINLEVEL%xIMAGEMAXLEVEL%"}"
         Prepareoptions="$Prepareoptions
@@ -372,9 +379,10 @@ parse_options() {
         shift
       ;;
       --rotate)
+        Arg="${2:-0}"
         Prepareoptions="$Prepareoptions
     -background transparent
-    -rotate ${2:-0}"
+    -rotate ${2:-}"
         shift
       ;;
       --set)
@@ -534,20 +542,20 @@ main() {
   }
 
   # get and insert some image stack properties if needed
-  grep -q IMAGE <<< "$Prepareoptions" && {
+  grep -q -E 'IMAGE|CROPGEOMETRY' <<< "$Prepareoptions" && {
     grep -q -E 'LEVEL|GAMMA' <<< "$Prepareoptions" && meanproperties
     [ -z "$Imagewidth" ] && check_imagesize
 
+    # --crop
     [ "$Imagewidth"  -gt 640 ] && W="640" || W="$((Imagewidth/2))"
     [ "$Imageheight" -gt 480 ] && H="480" || H="$((Imageheight/2))"
     Cropgeometry="${Cropgeometry:-"M"}"
-    grep -q M <<< "$Cropgeometry" && X="$(( Imagewidth/2    -W/2 ))" && Y="$(( Imageheight/4   -H/2 ))"
+    grep -q M <<< "$Cropgeometry" && X="$(( Imagewidth/2    -W/2 ))" && Y="$(( Imageheight/2   -H/2 ))"
     grep -q T <<< "$Cropgeometry" && Y="$(( Imageheight/4   -H/2 ))"
     grep -q B <<< "$Cropgeometry" && Y="$(( Imageheight*3/4 -H/2 ))"
     grep -q L <<< "$Cropgeometry" && X="$(( Imagewidth/4    -W/2 ))"
     grep -q R <<< "$Cropgeometry" && X="$(( Imagewidth*3/4  -W/2 ))"
     Cropgeometry="$(tr -d "MTBLR" <<< "$Cropgeometry")"
-
     [ -z "$Cropgeometry" ] && Cropgeometry="${W}x${H}+${X}+${Y}"
 
     Prepareoptions="$(sed "s/IMAGEMINLEVEL/$Imageminlevel/g ; s/IMAGEMAXLEVEL/$Imagemaxlevel/g ; s/IMAGEAUTOGAMMA/$Imageautogamma/g ; s/IMAGECROPGEOMETRY/$Cropgeometry/g" <<< "$Prepareoptions")"
