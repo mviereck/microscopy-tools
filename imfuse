@@ -736,7 +736,7 @@ check_outputname() {
     9) ;;
     *) Resultbasename="${Resultbasename}_gray=$Grayscalenumber" ;;
   esac
-  while read Line; do
+  false && while read Line; do
     [ -z "$Line" ] && break
     maskarg_parse "$Line"
     Resultbasename="${Resultbasename}_${Argmethod}="
@@ -761,6 +761,11 @@ check_outputname() {
       saturation|chroma|darkness|lightness) ;;
       *) [ "$Argword2" ]         && Resultbasename="$Resultbasename-$(unspecialstring "$Argword2")" ;;
     esac
+  done <<< "$Maskmethodlist"
+  while read Line; do
+    [ -z "$Line" ] && break
+    maskarg_parse "$Line"
+    Resultbasename="${Resultbasename}_${Argmethod}=${Argoptions_all}"
   done <<< "$Maskmethodlist"
 
   # step merge
@@ -2297,9 +2302,7 @@ focus_generate_masks() {
   # Generate Code for mask generation
   [ -n "$Maskmethodlist" ] && while read Line; do
     maskarg_parse "$Line"
-  echo "$Line"
-    echo "$Argoptions"
-    echo ""
+
     Maskgenerator="$(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
 
     [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
@@ -2357,10 +2360,6 @@ $Maskgenerator
       }
     }
   done <<< "$Maskmethodlist"
-
-
-#  verbose "mask generator kernels:
-#$(magick xc:white -define morphology:showkernel=1 $(grep -E -- '-define|-morphology' <<< "$Maskgenerator_all" | grep -v "Close") null: 2>&1)"
 
   # Generate masks
   [ -n "$Maskgenerator_all" ] && {
@@ -2450,7 +2449,9 @@ focus_merge_masks() {
 
   Mergecode="
   mpr:black"
+
   ### code for contrast masks
+
   Mergemethod="${Mergemethod:-Screen}"
   while read Line; do
     maskarg_parse "$Line"
@@ -2460,8 +2461,11 @@ focus_merge_masks() {
         Mergecode="$Mergecode
   (
   $(maskname "$Argbasename" NUMBER)
+    # =t (threshold)
+    -black-threshold ${Argthreshold1:-0}%
+    -white-threshold ${Argthreshold2:-100}%
     # =w (weight)
-    +level 0%,$(calc "(100 * ${Argweight:-100}) / ( $Weightmax * $Methodnumber )" )% 
+    +level 0%,$(calc "(100 * ${Argweight:-100}) / ( $Weightmax * $Methodnumber )" )%
   )
     -compose $Mergemethod -composite"
       ;;
@@ -2471,6 +2475,8 @@ focus_merge_masks() {
   Mergecode="$Mergecode
     -write mpr:mergemask
     -delete 0"
+
+  ### code for contrast mask postprocessing
 
   [ "$Globalmaskstat" ] && {
     Mergecode="$Mergecode
@@ -2541,16 +2547,20 @@ focus_merge_masks() {
   }
 
   ### code for channel and comparsion masks
+
   Mergecode="$Mergecode
   mpr:mergemask"
   while read Line; do
     maskarg_parse "$Line"
     case "$Argtype" in
-      channel|image)
+      channel|comparision)
         Mergemaskbasename="$Mergemaskbasename-$Argmethod"
         Mergecode="$Mergecode
   (
   $(maskname "$Argbasename" NUMBER)
+    # =t (threshold)
+    -black-threshold ${Argthreshold1:-0}%
+    -white-threshold ${Argthreshold2:-100}%
     # =w (weight)
     +level 0%,$(calc "(100 * ${Argweight:-100}) / ( $Weightmax * $Methodnumber )" )% 
   )
@@ -2561,6 +2571,8 @@ focus_merge_masks() {
   Mergecode="$Mergecode
     -write mpr:mergemask
     -delete 0"
+
+  ### run
 
   # --prefertop
   [ "$Prefertop" ] && Mergemaskbasename="$Mergemaskbasename-prefertop$Prefertop"
@@ -3245,13 +3257,15 @@ maskarg_parse() {
   #Argmethod=""
   Argnegate=""
   Argoptions=""
+  Argoptions_all=""
   Argpercent1=""
   Argpercent2=""
   Argradius1=""
   Argradius2=""
   Argsigma1=""
   Argsigma2=""
-  Argthreshold=""
+  Argthreshold1=""
+  Argthreshold2=""
   Argtype=""
   Argweight=""
   Argword1=""
@@ -3275,7 +3289,8 @@ maskarg_parse() {
       "S")                Argsigma2="${Value}" ;;
       "p"|"%")            [ -z "$Argpercent1" ] && Argpercent1="$(percentrm "$Value")" || Argpercent2="$(percentrm "$Value")" ;;
       "P")                Argpercent2="$(percentrm "$Value")" ;;
-      "t")                Argthreshold="$(percentrm "$Value")" ;;
+      "t")                Argthreshold1="$(percentrm "$Value")" ;;
+      "T")                Argthreshold2="$(percentrm "$Value")" ;;
       "denoise")          Argdenoise="${Value:-$(maskarg_defaultvalue   "$Argmethod" denoise)}" ;;
       "d"|"diff")         Argdiff="s" ;;
       "blur"|"maskblur")  Argmaskblur="${Value:-$(maskarg_defaultvalue  "$Argmethod" maskblur)}" ;;
@@ -3296,6 +3311,7 @@ maskarg_parse() {
       "METHOD")           Argmethod="$Value" ;;
       "TYPE")             Argtype="$Value" ;;
       "OPTIONS")          Argoptions="$Value" ;;
+      "OPTIONSALL")       Argoptions_all="$Value" ;;
       "BASENAME")         Argbasename="$Value" ;;
       *|WORD1|WORD2) ### FIXME
         [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
@@ -3310,6 +3326,7 @@ maskarg_store() {
   Maskmethodcount="${1:-$Maskmethodcount}"
   Newoption="METHOD=$Argmethod"
   Argoptions=
+  Argoptions_all=
   [ "$Argweight" ]             && Newoption="$Newoption,w=$Argweight"
   [ "$Argradius1" ]            && Newoption="$Newoption,r=$Argradius1"         && Argoptions="$Argoptions-r$Argradius1"
   maskarg_checkallowed "$Argmethod" radius1  "$Argradius1" --silent
@@ -3323,7 +3340,8 @@ maskarg_store() {
   maskarg_checkallowed "$Argmethod" percent1 "$Argpercent1" --silent
   [ "$Argpercent2" ]           && Newoption="$Newoption,P=$Argpercent2"        && Argoptions="$Argoptions-P$Argpercent2"
   maskarg_checkallowed "$Argmethod" percent2 "$Argpercent2" --silent
-  [ "$Argthreshold" ]          && Newoption="$Newoption,t=$Argthreshold"
+  [ "$Argthreshold1" ]         && Newoption="$Newoption,t=$Argthreshold1"      && Argoptions_all="$Argoptions_all-t$Argthreshold1"
+  [ "$Argthreshold2" ]         && Newoption="$Newoption,T=$Argthreshold2"      && Argoptions_all="$Argoptions_all-T$Argthreshold2"
   [ "$Argclose1" ]             && Newoption="$Newoption,CLOSE1=$Argclose1"     && Argoptions="$Argoptions-c$Argclose1"
   [ "$Argclose2" ]             && Newoption="$Newoption,CLOSE2=$Argclose2"     && Argoptions="${Argoptions}x${Argclose2}"
   [ "$Argword1" ]              && Newoption="$Newoption,WORD1=$Argword1"       && Argoptions="$Argoptions-$Argword1"
@@ -3338,11 +3356,8 @@ maskarg_store() {
   [ "$Argtype" ]               && Newoption="$Newoption,TYPE=$Argtype"
   [ "$Argbasename" ]           && Newoption="$Newoption,BASENAME=$Argbasename"
   Newoption="$Newoption,OPTIONS=$Argoptions"
+  Newoption="$Newoption,OPTIONSALL=$Argoptions$Argoptions_all"
   Newoption="$Newoption,NUM=$Maskmethodcount"
-echo "OPTIONS:$Argoptions"
-echo "BASENAME:$Argbasename"
-echo "NEWOPTION:$Newoption"
-echo
   grep -q "NUM=$Maskmethodcount" <<< "$Maskmethodlist" \
     && Maskmethodlist="$(sed "s&.*NUM=$Maskmethodcount.*&$Newoption&" <<< "$Maskmethodlist")" \
     || Maskmethodlist="$Maskmethodlist
@@ -3523,7 +3538,7 @@ maskarg_defaultvalue() {
           echo "channel"
         ;;
         image|enfuse|compose|evaluate|min|max|mean|median)
-          echo "image"
+          echo "comparision"
         ;;
         *)
           echo "unknown"
@@ -3898,12 +3913,15 @@ declare_variables() {
   Argmethod=""
   Argnegate=""
   Argoptions=""
+  Argoptions_all=""
   Argpercent1=""
   Argpercent2=""
   Argradius1=""
   Argradius2=""
   Argsigma1=""
   Argsigma2=""
+  Argthreshold1=""
+  Argthreshold2=""
   Argtype=""
   Argweight=""
   Argword1=""
