@@ -2297,6 +2297,9 @@ focus_generate_masks() {
   # Generate Code for mask generation
   [ -n "$Maskmethodlist" ] && while read Line; do
     maskarg_parse "$Line"
+  echo "$Line"
+    echo "$Argoptions"
+    echo ""
     Maskgenerator="$(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
 
     [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
@@ -3301,41 +3304,45 @@ maskarg_parse() {
       ;;
     esac
   done <<< "${1:-},"
+
 }
 maskarg_store() {
   Maskmethodcount="${1:-$Maskmethodcount}"
   Newoption="METHOD=$Argmethod"
   Argoptions=
   [ "$Argweight" ]             && Newoption="$Newoption,w=$Argweight"
-  [ "$Argradius1" ]            && Newoption="$Newoption,r=$Argradius1"         && Argoptions="$Argoptions,r$Argradius1"
+  [ "$Argradius1" ]            && Newoption="$Newoption,r=$Argradius1"         && Argoptions="$Argoptions-r$Argradius1"
   maskarg_checkallowed "$Argmethod" radius1  "$Argradius1" --silent
-  [ "$Argradius2" ]            && Newoption="$Newoption,R=$Argradius2"         && Argoptions="$Argoptions,R$Argradius2"
+  [ "$Argradius2" ]            && Newoption="$Newoption,R=$Argradius2"         && Argoptions="$Argoptions-R$Argradius2"
   maskarg_checkallowed "$Argmethod" radius2  "$Argradius2" --silent
-  [ "$Argsigma1" ]             && Newoption="$Newoption,s=$Argsigma1"          && Argoptions="$Argoptions,s$Argsigma1"
+  [ "$Argsigma1" ]             && Newoption="$Newoption,s=$Argsigma1"          && Argoptions="$Argoptions-s$Argsigma1"
   maskarg_checkallowed "$Argmethod" sigma1   "$Argsigma1" --silent
-  [ "$Argsigma2" ]             && Newoption="$Newoption,S=$Argsigma2"          && Argoptions="$Argoptions,S$Argsigma2"
+  [ "$Argsigma2" ]             && Newoption="$Newoption,S=$Argsigma2"          && Argoptions="$Argoptions-S$Argsigma2"
   maskarg_checkallowed "$Argmethod" sigma2   "$Argsigma2" --silent
-  [ "$Argpercent1" ]           && Newoption="$Newoption,p=$Argpercent1"        && Argoptions="$Argoptions,p$Argpercent1"
+  [ "$Argpercent1" ]           && Newoption="$Newoption,p=$Argpercent1"        && Argoptions="$Argoptions-p$Argpercent1"
   maskarg_checkallowed "$Argmethod" percent1 "$Argpercent1" --silent
-  [ "$Argpercent2" ]           && Newoption="$Newoption,P=$Argpercent2"        && Argoptions="$Argoptions,P$Argpercent2"
+  [ "$Argpercent2" ]           && Newoption="$Newoption,P=$Argpercent2"        && Argoptions="$Argoptions-P$Argpercent2"
   maskarg_checkallowed "$Argmethod" percent2 "$Argpercent2" --silent
   [ "$Argthreshold" ]          && Newoption="$Newoption,t=$Argthreshold"
-  [ "$Argclose1" ]             && Newoption="$Newoption,CLOSE1=$Argclose1"     && Argoptions="$Argoptions,c$Argclose1"
+  [ "$Argclose1" ]             && Newoption="$Newoption,CLOSE1=$Argclose1"     && Argoptions="$Argoptions-c$Argclose1"
   [ "$Argclose2" ]             && Newoption="$Newoption,CLOSE2=$Argclose2"     && Argoptions="${Argoptions}x${Argclose2}"
-  [ "$Argword1" ]              && Newoption="$Newoption,WORD1=$Argword1"       && Argoptions="$Argoptions,$Argword1"
+  [ "$Argword1" ]              && Newoption="$Newoption,WORD1=$Argword1"       && Argoptions="$Argoptions-$Argword1"
   maskarg_checkallowed "$Argmethod" word1    "$Argword1" --silent
-  [ "$Argword2" ]              && Newoption="$Newoption,WORD2=$Argword2"       && Argoptions="$Argoptions,$Argword2"
+  [ "$Argword2" ]              && Newoption="$Newoption,WORD2=$Argword2"       && Argoptions="$Argoptions-$Argword2"
   maskarg_checkallowed "$Argmethod" word2    "$Argword2" --silent
-  [ "$Argdenoise" ]            && Newoption="$Newoption,denoise=$Argdenoise"   && Argoptions="$Argoptions,denoise$Argdenoise"
+  [ "$Argdenoise" ]            && Newoption="$Newoption,denoise=$Argdenoise"   && Argoptions="$Argoptions-denoise$Argdenoise"
   [ "$Argdiff" ]               && Newoption="$Newoption,diff"
-  [ "$Argmaskblur" ]           && Newoption="$Newoption,maskblur=$Argmaskblur" && Argoptions="$Argoptions,blur$Argmaskblur"
-  [ "$Argnegate" ]             && Newoption="$Newoption,negate"                && Argoptions="$Argoptions,neg"
+  [ "$Argmaskblur" ]           && Newoption="$Newoption,maskblur=$Argmaskblur" && Argoptions="$Argoptions-blur$Argmaskblur"
+  [ "$Argnegate" ]             && Newoption="$Newoption,negate"                && Argoptions="$Argoptions-neg"
   [ "$Arglevel" ]              && Newoption="$Newoption,LEVEL"
   [ "$Argtype" ]               && Newoption="$Newoption,TYPE=$Argtype"
   [ "$Argbasename" ]           && Newoption="$Newoption,BASENAME=$Argbasename"
   Newoption="$Newoption,OPTIONS=$Argoptions"
   Newoption="$Newoption,NUM=$Maskmethodcount"
-
+echo "OPTIONS:$Argoptions"
+echo "BASENAME:$Argbasename"
+echo "NEWOPTION:$Newoption"
+echo
   grep -q "NUM=$Maskmethodcount" <<< "$Maskmethodlist" \
     && Maskmethodlist="$(sed "s&.*NUM=$Maskmethodcount.*&$Newoption&" <<< "$Maskmethodlist")" \
     || Maskmethodlist="$Maskmethodlist
