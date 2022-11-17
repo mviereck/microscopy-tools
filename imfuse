@@ -729,44 +729,23 @@ check_outputname() {
   # Generate a unique output name showing options
 
   Resultbasename=""
-  [ "$Align" = "yes" ] && Resultbasename="${Resultbasename}align_"
+  [ "$Align" = "yes" ] && Resultbasename="${Resultbasename}_align"
 
   # step mask generation
   case $Grayscalenumber in
     9) ;;
     *) Resultbasename="${Resultbasename}_gray=$Grayscalenumber" ;;
   esac
-  false && while read Line; do
-    [ -z "$Line" ] && break
-    maskarg_parse "$Line"
-    Resultbasename="${Resultbasename}_${Argmethod}="
-    [ "$Argweight" != "100" ]    && Resultbasename="$Resultbasename-w$(LC_ALL=C awk 'BEGIN {printf "%0.0f",'$Argweight'}')"
-    [ "$Argradius1" ]            && Resultbasename="$Resultbasename-r$Argradius1"
-    [ "$Argsigma1" ]             && Resultbasename="$Resultbasename-s$Argsigma1"
-    [ "$Argradius2" ]            && Resultbasename="$Resultbasename-R$Argradius2"
-    [ "$Argsigma2" ]             && Resultbasename="$Resultbasename-S$Argsigma2"
-    [ "$Argpercent1" ]           && Resultbasename="$Resultbasename-p$Argpercent1"
-    [ "$Argpercent2" ]           && Resultbasename="$Resultbasename-P$Argpercent2"
-    [ "$Argclose1" ]             && Resultbasename="$Resultbasename-close$Argclose1"
-    [ "$Argclose2" ]             && Resultbasename="${Resultbasename}x$Argclose2"
-    [ "$Argmaskblur" ]           && Resultbasename="$Resultbasename-maskblur$Argmaskblur"
-    [ "$Argdenoise" ]            && Resultbasename="$Resultbasename-denoise$Argdenoise"
-    [ "$Argnegate" ]             && Resultbasename="$Resultbasename-neg"
-    case $Argmethod in
-      image) ;;
-      saturation|chroma|darkness|lightness) ;;
-      *) [ "$Argword1" ]         && Resultbasename="$Resultbasename-$(unspecialstring "$Argword1")" ;;
+
+  for Count in $(seq "$Imoptionsnumber"); do
+    Argmethod="${Imoptions[$Count]}"
+    maskarg_parse "${Imarguments[$Count]}"
+    case "$Argtype" in
+      contrast|channel|comparsion)
+        Resultbasename="${Resultbasename}_${Argmethod}=${Imarguments[$Count]%TYPE*}"
+      ;;
     esac
-    case $Argmethod in
-      saturation|chroma|darkness|lightness) ;;
-      *) [ "$Argword2" ]         && Resultbasename="$Resultbasename-$(unspecialstring "$Argword2")" ;;
-    esac
-  done <<< "$Maskmethodlist"
-  while read Line; do
-    [ -z "$Line" ] && break
-    maskarg_parse "$Line"
-    Resultbasename="${Resultbasename}_${Argmethod}=${Argoptions_all}"
-  done <<< "$Maskmethodlist"
+  done
 
   # step merge
   [ "$Globalmaskstat" ] && {
@@ -850,17 +829,18 @@ check_outputname() {
     "") ;;
     *) Resultbasename="${Resultbasename}_test$Testarg" ;;
   esac
-  Resultbasename="$(sed "s/__/_/g ; s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultbasename")"
 
-  Fusemd5sum="$(md5cut "$Sourcemd5 $Maskmethodlist \
+  Fusemd5sum="$(md5cut "$Sourcemd5 ${Imoptions[@]} ${Imarguments[@]} \
 $Background $Cutblur $Cutsoft $Finalblur \
 $Globalalpha $Globalclose $Globaldenoise $Globalless $Globalmaskstat $Globalmaskblur $Globalthreshold $Globalthresholdblur \
 $Grayscale $Mergemethod $Prefertop $Revertimagelist $Softmode $Testsetup" )"
 
-  Resultbasename="${Resultbasename}_md${Fusemd5sum}"
+  Resultbasename="${Resultbasename#,}_md${Fusemd5sum}"
+  Resultbasename="$(sed "s/,_/_/g ; s/__/_/g ; s/=-/=/g ; s/=_/_/g  ; s/\.\./\./g ; s/\._/\./g ; s/\._/\./g ; s/=$//g ; s/=\./=/g" <<< "$Resultbasename")"
+
   [ -z "$Outputdir" ] && Outputdir="./"
   case $Outputimage in
-    "") Outputimage="$Outputdir/${Outputbasename:-"imfuse."}${Resultbasename}.${Imageformat}" ;;
+    "") Outputimage="$Outputdir/${Outputbasename:-"imfuse"}${Resultbasename}.${Imageformat}" ;;
     *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="${Outputdir}/{$Outputimage}" ;;
   esac
   [ "$Video" ] && Video="$Outputimage.webm"
@@ -2295,13 +2275,12 @@ focus_generate_masks() {
 
   Firstimage="${Firstimage:-1}"
   Lastimage="${Lastimage:-$Sourceimagenumber}"
-  Masktype="${Masktype:-"contrast,image,channel,unkown"}"
-
-  Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
+  Masktype="${Masktype:-"contrast,image,channel"}"
 
   # Generate Code for mask generation
-  [ -n "$Maskmethodlist" ] && while read Line; do
-    maskarg_parse "$Line"
+  for Count in $(seq "$Imoptionsnumber"); do
+    Argmethod="${Imoptions[$Count]}"
+    maskarg_parse "${Imarguments[$Count]}"
 
     Maskgenerator="$(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
 
@@ -2329,10 +2308,10 @@ focus_generate_masks() {
     -wavelet-denoise ${Argdenoise:-30}%"
 
     grep -q "$Argtype" <<< "$Masktype" && {
-      #Maskmd5="$(md5cut "$Sourcemd5 $Maskgenerator")"
-      #Argbasename="$Argmethod.$Maskmd5"
-      Argbasename="${Argmethod}${Argoptions}.$Sourcemd5"
-      maskarg_store
+      Maskmd5="$(md5cut "$Sourcemd5 $Maskgenerator")"
+      Argbasename="$Argmethod.$Maskmd5"
+      #Argbasename="${Argmethod}${Argoptions}.$Sourcemd5"
+      maskarg_store "$Count"
 
       ## avoid [double] creating of existing masks
       Maskready="no"
@@ -2359,7 +2338,7 @@ $Maskgenerator
     -delete 0"
       }
     }
-  done <<< "$Maskmethodlist"
+  done
 
   # Generate masks
   [ -n "$Maskgenerator_all" ] && {
@@ -2402,10 +2381,10 @@ ${Maskgenerator_all//NUMBER/$Number}"
   }
 
   # level and uniform masks
-  while read Line; do
-    maskarg_parse "$Line"
+  for Count in $(set "$Imoptionsnumber"); do
+    maskarg_parse "${Imarguments[$Count]}"
     grep -q "$Argtype" <<< "$Masktype" && [ "$Arglevel" = "yes" ] && level_masks "$Argbasename" "$Firstimage" "$Lastimage"
-  done <<< "$Maskmethodlist"
+  done
 
   return 0
 }
@@ -2417,7 +2396,7 @@ focus_merge_masks() {
   local Command Count
   local Firstimage Lastimage
 
-  [ -z "$Maskmethodlist" ] && {
+  [ "$Maskmethodnumber" = "0" ] && {
     note "Skipping merge, no mask options are specified."
     return 0
   }
@@ -2428,13 +2407,15 @@ focus_merge_masks() {
   sendmagickmessage "NOTE:Merging masks"
   Mergemaskbasename="mergemask"
 
-  while read Line; do
-    maskarg_parse "$Line"
-    #[ "${Argweight:-100}" -gt "${Weightmax:-0}" ] && Weightmax="${Argweight:-100}"
-    LC_ALL=C awk 'BEGIN {exit !('${Argweight:-100}' >= '${Weightmax:-0}')}' && Weightmax="${Argweight:-100}"
-    Methodnumber="$((Methodnumber+1))"
-  done <<< "$Maskmethodlist"
-  Methodnumber=1 # overwritten for mean instead of Screen
+  for Count in $(seq "$Imoptionsnumber"); do
+    maskarg_parse "${Imarguments[$Count]}"
+    case "$Argtype" in
+      contrast|channel|comparision)
+        LC_ALL=C awk 'BEGIN {exit !('${Argweight:-100}' >= '${Weightmax:-0}')}' && Weightmax="${Argweight:-100}"
+        Methodnumber="$((Methodnumber+1))"
+      ;;
+    esac
+  done
   Weightmax=100
 
   [ "$Globalsigmoidal" ] && Mergecode="$Mergecode
@@ -2453,8 +2434,9 @@ focus_merge_masks() {
   ### code for contrast masks
 
   Mergemethod="${Mergemethod:-Screen}"
-  while read Line; do
-    maskarg_parse "$Line"
+  for Count in $(seq "$Imoptionsnumber"); do
+    Argmethod="${Imoptions[$Count]}"
+    maskarg_parse "${Imarguments[$Count]}"
     case "$Argtype" in
       contrast|unknown)
         Mergemaskbasename="$Mergemaskbasename-$Argmethod"
@@ -2470,8 +2452,7 @@ focus_merge_masks() {
     -compose $Mergemethod -composite"
       ;;
     esac
-  done <<< "$Maskmethodlist"
-  #Mergecode="$(sed "0,/-compose $Mergemethod -composite/{/-compose $Mergemethod -composite/d;}" <<< "$Mergecode")" # delete first -compose
+  done
   Mergecode="$Mergecode
     -write mpr:mergemask
     -delete 0"
@@ -2550,8 +2531,10 @@ focus_merge_masks() {
 
   Mergecode="$Mergecode
   mpr:mergemask"
-  while read Line; do
-    maskarg_parse "$Line"
+
+  for Count in $(seq "$Imoptionsnumber"); do
+    Argmethod="${Imoptions[$Count]}"
+    maskarg_parse "${Imarguments[$Count]}"
     case "$Argtype" in
       channel|comparision)
         Mergemaskbasename="$Mergemaskbasename-$Argmethod"
@@ -2567,7 +2550,7 @@ focus_merge_masks() {
     -compose $Mergemethod -composite"
       ;;
     esac
-  done <<< "$Maskmethodlist"
+  done
   Mergecode="$Mergecode
     -write mpr:mergemask
     -delete 0"
@@ -3086,7 +3069,7 @@ focus_main() {
   local Slabmaskmax Slabmaskmin
 
   focus_generate_masks --type="contrast,unknown"
-  [ -n "$Maskmethodlist" ] && { 
+  [ "$Maskmethodnumber" -gt "0" ] && { 
     for Slabstep in $(seq $Slabnumber); do
       Slabresult[$Slabstep]="$Cachedir/slabresult.$Resultbasename.slab$Slabstep.mpc"
       Slabmask[$Slabstep]="$Cachedir/slabresult.$Resultbasename.slab$Slabstep-mask.mpc"
@@ -3257,7 +3240,6 @@ maskarg_parse() {
   #Argmethod=""
   Argnegate=""
   Argoptions=""
-  Argoptions_all=""
   Argpercent1=""
   Argpercent2=""
   Argradius1=""
@@ -3307,11 +3289,7 @@ maskarg_parse() {
       "CLOSE1")           Argclose1="$Value" ;;
       "CLOSE2")           Argclose2="$Value" ;;
       "LEVEL")            Arglevel="yes" ;;
-      "NUM")              Maskmethodcount="$Value" ;;
-      "METHOD")           Argmethod="$Value" ;;
       "TYPE")             Argtype="$Value" ;;
-      "OPTIONS")          Argoptions="$Value" ;;
-      "OPTIONSALL")       Argoptions_all="$Value" ;;
       "BASENAME")         Argbasename="$Value" ;;
       *|WORD1|WORD2) ### FIXME
         [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
@@ -3320,49 +3298,39 @@ maskarg_parse() {
       ;;
     esac
   done <<< "${1:-},"
-
 }
 maskarg_store() {
-  Maskmethodcount="${1:-$Maskmethodcount}"
-  Newoption="METHOD=$Argmethod"
-  Argoptions=
-  Argoptions_all=
-  [ "$Argweight" ]             && Newoption="$Newoption,w=$Argweight"
-  [ "$Argradius1" ]            && Newoption="$Newoption,r=$Argradius1"         && Argoptions="$Argoptions-r$Argradius1"
+  local Argoptions=
+  [ "$Argweight" ]             && Argoptions="$Argoptions,w$Argweight"
+  [ "$Argradius1" ]            && Argoptions="$Argoptions,r$Argradius1"
   maskarg_checkallowed "$Argmethod" radius1  "$Argradius1" --silent
-  [ "$Argradius2" ]            && Newoption="$Newoption,R=$Argradius2"         && Argoptions="$Argoptions-R$Argradius2"
+  [ "$Argradius2" ]            && Argoptions="$Argoptions,R$Argradius2"
   maskarg_checkallowed "$Argmethod" radius2  "$Argradius2" --silent
-  [ "$Argsigma1" ]             && Newoption="$Newoption,s=$Argsigma1"          && Argoptions="$Argoptions-s$Argsigma1"
+  [ "$Argsigma1" ]             && Argoptions="$Argoptions,s$Argsigma1"
   maskarg_checkallowed "$Argmethod" sigma1   "$Argsigma1" --silent
-  [ "$Argsigma2" ]             && Newoption="$Newoption,S=$Argsigma2"          && Argoptions="$Argoptions-S$Argsigma2"
+  [ "$Argsigma2" ]             && Argoptions="$Argoptions,S$Argsigma2"
   maskarg_checkallowed "$Argmethod" sigma2   "$Argsigma2" --silent
-  [ "$Argpercent1" ]           && Newoption="$Newoption,p=$Argpercent1"        && Argoptions="$Argoptions-p$Argpercent1"
+  [ "$Argpercent1" ]           && Argoptions="$Argoptions,p$Argpercent1"
   maskarg_checkallowed "$Argmethod" percent1 "$Argpercent1" --silent
-  [ "$Argpercent2" ]           && Newoption="$Newoption,P=$Argpercent2"        && Argoptions="$Argoptions-P$Argpercent2"
+  [ "$Argpercent2" ]           && Argoptions="$Argoptions,P$Argpercent2"
   maskarg_checkallowed "$Argmethod" percent2 "$Argpercent2" --silent
-  [ "$Argthreshold1" ]         && Newoption="$Newoption,t=$Argthreshold1"      && Argoptions_all="$Argoptions_all-t$Argthreshold1"
-  [ "$Argthreshold2" ]         && Newoption="$Newoption,T=$Argthreshold2"      && Argoptions_all="$Argoptions_all-T$Argthreshold2"
-  [ "$Argclose1" ]             && Newoption="$Newoption,CLOSE1=$Argclose1"     && Argoptions="$Argoptions-c$Argclose1"
-  [ "$Argclose2" ]             && Newoption="$Newoption,CLOSE2=$Argclose2"     && Argoptions="${Argoptions}x${Argclose2}"
-  [ "$Argword1" ]              && Newoption="$Newoption,WORD1=$Argword1"       && Argoptions="$Argoptions-$Argword1"
+  [ "$Argthreshold1" ]         && Argoptions="$Argoptions,t$Argthreshold1"
+  [ "$Argthreshold2" ]         && Argoptions="$Argoptions,T$Argthreshold2"
+  [ "$Argclose1" ]             && Argoptions="$Argoptions,c$Argclose1"
+  [ "$Argclose2" ]             && Argoptions="${Argoptions}x${Argclose2}"
+  [ "$Argword1" ]              && Argoptions="$Argoptions,$Argword1"
   maskarg_checkallowed "$Argmethod" word1    "$Argword1" --silent
-  [ "$Argword2" ]              && Newoption="$Newoption,WORD2=$Argword2"       && Argoptions="$Argoptions-$Argword2"
+  [ "$Argword2" ]              && Argoptions="$Argoptions,$Argword2"
   maskarg_checkallowed "$Argmethod" word2    "$Argword2" --silent
-  [ "$Argdenoise" ]            && Newoption="$Newoption,denoise=$Argdenoise"   && Argoptions="$Argoptions-denoise$Argdenoise"
+  [ "$Argdenoise" ]            && Argoptions="$Argoptions,denoise$Argdenoise"
   [ "$Argdiff" ]               && Newoption="$Newoption,diff"
-  [ "$Argmaskblur" ]           && Newoption="$Newoption,maskblur=$Argmaskblur" && Argoptions="$Argoptions-blur$Argmaskblur"
-  [ "$Argnegate" ]             && Newoption="$Newoption,negate"                && Argoptions="$Argoptions-neg"
-  [ "$Arglevel" ]              && Newoption="$Newoption,LEVEL"
-  [ "$Argtype" ]               && Newoption="$Newoption,TYPE=$Argtype"
-  [ "$Argbasename" ]           && Newoption="$Newoption,BASENAME=$Argbasename"
-  Newoption="$Newoption,OPTIONS=$Argoptions"
-  Newoption="$Newoption,OPTIONSALL=$Argoptions$Argoptions_all"
-  Newoption="$Newoption,NUM=$Maskmethodcount"
-  grep -q "NUM=$Maskmethodcount" <<< "$Maskmethodlist" \
-    && Maskmethodlist="$(sed "s&.*NUM=$Maskmethodcount.*&$Newoption&" <<< "$Maskmethodlist")" \
-    || Maskmethodlist="$Maskmethodlist
-$Newoption"
-  Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
+  [ "$Argmaskblur" ]           && Argoptions="$Argoptions,blur$Argmaskblur"
+  [ "$Argnegate" ]             && Argoptions="$Argoptions,neg"
+  [ "$Argtype" ]               && Argoptions="$Argoptions,TYPE=$Argtype"
+  [ "$Arglevel" ]              && Argoptions="$Argoptions,LEVEL"
+  [ "$Argbasename" ]           && Argoptions="$Argoptions,BASENAME=$Argbasename"
+  Argoptions="${Argoptions#,}"
+  Imarguments[${1:-}]="$Argoptions"
 }
 maskarg_defaultvalue() {
   case "${2:-}" in
@@ -3913,7 +3881,6 @@ declare_variables() {
   Argmethod=""
   Argnegate=""
   Argoptions=""
-  Argoptions_all=""
   Argpercent1=""
   Argpercent2=""
   Argradius1=""
@@ -3983,6 +3950,9 @@ declare_variables() {
 black
 transparent
 white"
+  Imarguments=""
+  Imoptions=""
+  Imoptionsnumber=""
   Imsourceimagelist=""
   Keepcache="no"
   Limitmemory=""
@@ -3998,7 +3968,7 @@ white"
   Magickversion=""
   Maskmethodcount=""
   Maskmethodlist=""
-  Maskmethodnumber=""
+  Maskmethodnumber="0"
   Masksuffix="mpc"
   Masktocache="no"
   Mergemaskbasename=""
@@ -4106,11 +4076,16 @@ parse_options() {
 --max|--mean|--median|--min|\
 --none|--prewitt|--roberts|--saturation|--sobel|--statistic|--unsharp|--wavelet)
         Argmethod="${1#--}"
-        Maskgeneratorargument="${2:-}" && shift
-        Maskmethodnumber="$((Maskmethodnumber+1))"
-        Maskmethodcount="$Maskmethodnumber"
-        maskarg_parse "$Maskgeneratorargument"
-        maskarg_store "$Maskmethodcount"
+        Imoptionsnumber="$((Imoptionsnumber+1))"
+        maskarg_parse "${2:-}"
+        maskarg_store "$Imoptionsnumber"
+        Imoptions[$Imoptionsnumber]="$Argmethod"
+        case "$Argtype" in
+          contrast|channel|comparision)
+            Maskmethodnumber="$((Maskmethodnumber+1))"
+          ;;
+        esac
+        shift
       ;;
       --) ;;
       *)
@@ -4136,10 +4111,9 @@ check_options() {
 $(grep -m1 ' ' <<< "$Sourceimagelist")"
   Sourceimagenumber="$(grep -c "." <<< "$Sourceimagelist")"
 
-  #Maskmethodlist="$(sort -V   <<< "$Maskmethodlist")"
-  Maskmethodlist="$(grep "\S" <<< "$Maskmethodlist")"
-  [ -n "$Maskmethodlist" ] && while read Line; do
-    maskarg_parse "$Line"
+  for Count in $(seq "$Imoptionsnumber"); do
+    Argmethod="${Imoptions[$Count]}"
+    maskarg_parse "${Imarguments[$Count]}"
     [ -z "$Argradius1" ]  && Argradius1="$(maskarg_defaultvalue            "$Argmethod" radius1)"
     [ -z "$Argradius2" ]  && Argradius2="$(maskarg_defaultvalue            "$Argmethod" radius2)"
     [ -z "$Argsigma1" ]   && Argsigma1="$(maskarg_defaultvalue             "$Argmethod" sigma1)"
@@ -4156,17 +4130,16 @@ $(grep -m1 ' ' <<< "$Sourceimagelist")"
     [ -n "$Argsigma2" ]   && { Argsigma2="$(maskarg_checkallowed   "$Argmethod" sigma2   "$Argsigma2")"   || Error=1 ; }
     [ -n "$Argword1" ]    && { Argword1="$(maskarg_checkallowed    "$Argmethod" word1    "$Argword1")"    || Error=1 ; }
     [ -n "$Argword2" ]    && { Argword2="$(maskarg_checkallowed    "$Argmethod" word2    "$Argword2")"    || Error=1 ; }
-    #[ -z "$Argweight" ]   && Argweight="100"
-    Weightsum="$((Weightsum + Argweight))"
-    [ -z "$Argweight" ]   && Masknoweightcount="$((Masknoweightcount+1))"
-    case $Argmethod in
-      blur|comet|compass|diffstat|dog|free|freediff|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
+    #case $Argmethod in
+    #  blur|comet|compass|diffstat|dog|free|freediff|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
+    case "$Argtype" in
+      contrast)
         Arglevel="yes"
       ;;
     esac
 
     Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
-    [ "$Maskmethodcount" = "1" ] && Firstmaskmethod="$Argmethod"
+    [ "$Count" = "1" ] && Firstmaskmethod="$Argmethod"
 
     case $Argmethod in
       compose)
@@ -4205,22 +4178,33 @@ $Argmethod"
       ;;
     esac
 
-    maskarg_store "$Maskmethodcount"
-  done <<< "$Maskmethodlist"
-  [ "$Error" ] && return 1
+    maskarg_store "$Count"
+  done
 
   # w, weight
+  for Count in $(seq $Imoptionsnumber); do
+    maskarg_parse "${Imarguments[$Count]}"
+    case $Argtype in
+      contrast|channel|comparision)
+        Weightsum="$((Weightsum + Argweight))"
+        [ -z "$Argweight" ]   && Masknoweightcount="$((Masknoweightcount+1))"
+      ;;
+    esac
+  done
   Weightrest="$((100-Weightsum))"
   LC_ALL=C awk 'BEGIN {exit !('${Weightsum:-100}' > 100)}' && error "Sum of weight arguments exceed 100%."
-  [ -n "$Maskmethodlist" ] && while read Line; do
-    maskarg_parse "$Line"
-    #Argweight="$(calc "$Argweight * 100 / $Weightsum")"
-    [ -z "$Argweight" ] && {
-      LC_ALL=C awk 'BEGIN {exit !('${Weightrest:-0}' <= 0)}' && error "Sum of weight arguments exceed 100%, nothing left for --$Argmethod."
-      Argweight="$(calc "$Weightrest / $Masknoweightcount")"
-    }
-    maskarg_store
-  done <<< "$Maskmethodlist"
+  for Count in $(seq $Imoptionsnumber); do
+    maskarg_parse "${Imarguments[$Count]}"
+    case $Argtype in
+      contrast|channel|comparision)
+        [ -z "$Argweight" ] && {
+          LC_ALL=C awk 'BEGIN {exit !('${Weightrest:-0}' <= 0)}' && error "Sum of weight arguments exceed 100%, nothing left for --$Argmethod."
+          Argweight="$(calc "$Weightrest / $Masknoweightcount ")"
+        }
+        maskarg_store $Count
+      ;;
+    esac
+  done
 
   # --alpha
   case $Globalalpha in
@@ -4269,15 +4253,6 @@ $Argmethod"
       Globalclose1="${Globalclose1:-1}"
       Globalclose2="${Globalclose2:-1}"
       Globalclose="${Globalclose1}x${Globalclose2}"
-      false && [ "$Maskmethodnumber" = "1" ] && {
-        maskarg_parse "$Maskmethodlist"
-        Argclose1="$Globalclose1"
-        Argclose2="$Globalclose2"
-        maskarg_store
-        Globalclose=""
-        Globalclose1=""
-        Globalclose2=""
-      }
     ;;
   esac
   case $Globalclose in
@@ -4442,7 +4417,7 @@ $Argmethod"
   }
 
   # --slabs
-  [ -n "$Maskmethodlist" ] && [ "$Slaboptcount" = "0" ] && {
+  [ "$Maskmethodnumber" -gt "0" ] && [ "$Slaboptcount" = "0" ] && {
     Slaboptcount="1"
     Slaboptarg[1]="1,$Sourceimagenumber"
   }
@@ -4516,7 +4491,7 @@ $Argmethod"
 
   # --background
   [ "$Background" = "auto" ] && Background="enfuse"
-  [ -z "$Maskmethodlist" ] && Background="${Background:-enfuse}"
+  [ "$Maskmethodnumber" = "0" ] && Background="${Background:-enfuse}"
   [ "$Background" ] && {
     checkmagicklist color                     "$Background"   && Backgroundtype="color"
     checkmagicklist evaluate                  "$Background"   && Backgroundtype="evaluate"
@@ -4659,7 +4634,7 @@ main_setup() {
   Memory limit for imagemagick:       $((Limitmemory/1000)) MB
   Loading source images to RAM:       $Loadsourceimages
   Option summary: $Resultbasename"
-  [ -z "$Maskmethodlist" ] && note "No mask option specified, generating background only: $Background"
+  [ "$Maskmethodnumber" = "0" ] && note "No mask option specified, generating background only: $Background"
 
   # start magick -script in background
   Magickfifo="$Cachedir/magickfifo"
