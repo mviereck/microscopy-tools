@@ -825,9 +825,9 @@ check_outputname() {
 
   Resultbasename="${Resultbasename#,}_md${Fusemd5sum}"
   Resultbasename="$(unspecialstring "$Resultbasename")"
-  Resultbasename="$(sed "s/w100,//g ; s/w100//g ; s/,--/--/g ; s/,_/_/g" <<< "$Resultbasename")"
+  Resultbasename="$(sed "s/w100,//g ; s/w100//g ; s/,--/--/g ; s/,_/_/g ; s/=--/--/g ; s/=,/,/g ; s/=_/_/g ; s/=\./\./g" <<< "$Resultbasename")"
 
-  [ -z "$Outputdir" ] && Outputdir="./"
+  [ -z "${Outputdir:-}" ] && Outputdir="./"
   case $Outputimage in
     "") Outputimage="$Outputdir/${Outputbasename:-"imfuse"}${Resultbasename}.${Imageformat}" ;;
     *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="${Outputdir}/{$Outputimage}" ;;
@@ -2478,7 +2478,7 @@ focus_merge_masks() {
     esac
   done
 
-  ### code for channel and comparsion masks
+  ### code for channel and comparision masks
 
   Mergecode="$Mergecode
   mpr:mergemask"
@@ -3582,21 +3582,31 @@ maskarg_checkallowed() {
         enfuse) ;;
         comet|freichen|freediff|laplacian) ;;
         channel|chroma|darkness|lightness|saturation) ;;
-        compose|evaluate|morphology)
+        compose|merge|soft)
           Arg="$(lowercase "${Arg}")"
-          checkmagicklist "$Method" "$(tr -d '2' <<< "$Arg")" || {
+          checkmagicklist "compose" "$(tr -d '2' <<< "$Arg")" || {
             Errormessage="--$Method=$Arg: unknown argument.
   Please choose one out of 'magick -list $Method'"
           }
         ;;
-        diffstat)
+        evaluate)
           Arg="$(lowercase "${Arg}")"
-          Arg="$(maskarg_checkstatistic "$Arg")"
+          checkmagicklist "evaluate" "$(tr -d '2' <<< "$Arg")" || {
+            Errormessage="--$Method=$Arg: unknown argument.
+  Please choose one out of 'magick -list $Method'"
+          }
+        ;;
+        morphology)
+          Arg="$(lowercase "${Arg}")"
+          checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || {
+            Errormessage="--$Method=$Arg: unknown argument.
+  Please choose one out of 'magick -list $Method'"
+          }
         ;;
         image) 
           [ -f "${Arg}" ] || Errormessage="--image: File not found: $Arg"
         ;;
-        statistic|maskstat)
+        statistic|diffstat|maskstat)
           Arg="$(lowercase "${Arg}")"
           Arg="$(maskarg_checkstatistic "$Arg")"
           [ "$Arg" = "source" ] && Errormessage="--$Method does not take argument $Arg
@@ -3605,9 +3615,12 @@ maskarg_checkallowed() {
         close) ;;
         bg) ;;
         grayscale) ;;
-        merge) ;;
-        slabs) ;;
-        soft) ;;
+        slabs) 
+          case "$Arg" in
+            kurt) ;;
+            *) Errormessage="--$Method does not know mode $Arg" ;;
+          esac
+        ;;
         *) Errormessage="$Method does not take argument word1 $Arg" ;;
       esac
     ;;
@@ -3944,6 +3957,7 @@ white"
   Masktocache="no"
   Mergemaskbasename=""
   Outputbasename=""
+  Outputdir=""
   Outputimage=""
   Parsedoptions=""
   Revertimagelist=""
@@ -4304,7 +4318,7 @@ $Argmethod"
   done
 
   # --soft
-  [ "$Softmode" ] && {
+  [ "$Softmode" = "yes" ] && {
     maskarg_single "cutblur" && Softmode="error"
     maskarg_single "cutsoft" && Softmode="error"
     maskarg_single "less"    && Softmode="error"
