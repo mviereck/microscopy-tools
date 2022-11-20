@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.8.1-beta"
+Version="0.8.2-beta"
 
 # ToDo:
 # mkclut_uniform() fails with b&w masks -> clut and result black
@@ -24,6 +24,7 @@ Dependencies:
   exiftool            Optional, needed for option --exif to transfer metadata.
   focus-stack         Optional, needed for option --align.
                         https://github.com/PetteriAimonen/focus-stack
+  xclip               Optional, to send result file name to clipboard.
 
 Usage:
   imfuse [OPTIONS] -- image1 image2 image3 ...
@@ -249,7 +250,7 @@ Colorspace channel mask options:
                       can soften the image so it looks more natural.
 
 Mask merging options:
-  Can be specified multiple times, but that barely makes sense.
+  Can be specified multiple times, but that rarely makes sense.
   The order matters, prefer to use in the order shown here.
   Most of interest: --maskstat, --maskblur, --maskwave, --close
  --maskstat [=ARG]    Apply a statistic method for each mask pixel
@@ -268,7 +269,7 @@ Mask merging options:
                       create artefacts in very low contrast areas.
                       Applied to contrast masks only.
                       ARG takes arguments:
-                        p        percent            Default: 30%
+                        p        percent            Default: 100%
                       For percent value compare option -wavelet-denoise.
  --close [=ARG]       Closes gaps between nearby contrast lines setting the 
                       area in between to the same contrast weight.
@@ -1848,21 +1849,23 @@ $Netpbmdata
   return 0
 }
 threshold() {
-  local Mask Blackthreshold Whitethreshold Thresholdblur
+  local Mask Image= Blackthreshold Whitethreshold Thresholdblur Cutmask= Cutimage=
   local Command
   local Longoptions Parsedoptions
 
-  Longoptions="mask:,percent1:,percent2:,blur:"
+  Longoptions="image:,mask:,percent1:,percent2:,blur:,cutmask::,cutimage::"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --blur)     Thresholdblur="${2:-}" ;;
-      --mask)     Mask="${2:-}" ;;
-      --percent1) Blackthreshold="${2:-}" ;;
-      --percent2) Whitethreshold="${2:-}" ;;
+      --blur)     Thresholdblur="${2:-}" ; shift ;;
+      --mask)     Mask="${2:-}" ; shift ;;
+      --image)    Image="${2:-}" ; shift ;;
+      --percent1) Blackthreshold="${2:-}" ; shift ;;
+      --percent2) Whitethreshold="${2:-}" ; shift ;;
+      --cutmask)  Cutmask="${2:-"soft"}" ; shift ;;
+      --cutimage) Cutimage="${2:-"soft"}" ; shift ;;
     esac
-    shift
     shift
   done
 
@@ -1888,11 +1891,15 @@ threshold() {
   mpr:whitethreshold
     -compose Darken -composite
     -write mpr:threshold
-    -delete 0
+    -delete 0"
+  [ "$Thresholdblur" -gt "0" ] && Command="$Command
   mpr:threshold
     -blur 0x$Thresholdblur
     -write mpr:threshold
-    -delete 0
+    -delete 0"
+  case "$Cutmask" in
+    soft)
+      Command="$Command
   mpr:mask
   mpr:threshold
     -compose Lighten -composite
@@ -1900,7 +1907,41 @@ threshold() {
     -delete 0
   mpr:mask
     -write $Mask
+    -delete 0"
+    ;;
+    hard)
+      Command="$Command
+  mpr:threshold
+    -write $Mask
+    -delete 0"
+    ;;
+  esac
+  case "$Cutimage" in
+    soft)
+      Command="$Command
+  mpr:mask
+  mpr:threshold
+    -compose Lighten -composite
+    -write mpr:mask
     -delete 0
+  $Image
+  mpr:mask
+    -alpha off
+    -compose CopyOpacity -composite
+    -write $Image
+    -delete 0"
+    ;;
+    hard)
+      Command="$Command
+  $Image
+  mpr:threshold
+    -alpha off
+    -compose CopyOpacity -composite
+    -write $Image
+    -delete 0"
+    ;;
+  esac
+  Command="$Command
   +set registry:mask
   +set registry:threshold
   +set registry:whitethreshold
@@ -2993,10 +3034,8 @@ focus_main() {
     for Slabstep in $(seq $Slabnumber -1 1); do
       Slabresult[$Slabstep]="$Cachedir/slabresult.$Resultbasename.slab$Slabstep.mpc"
       Slabmask[$Slabstep]="$Cachedir/slabresult.$Resultbasename.slab$Slabstep-mask.mpc"
-      [ "$Slabnumber" -gt "1" ] && {
-        sendmagickmessage "NEWLINE"
-        sendmagickmessage "NOTE:Generating slab $Slabstep / $Slabnumber: ${Slabfirstimage[$Slabstep]}..${Slablastimage[$Slabstep]}"
-      }
+      sendmagickmessage "NEWLINE"
+      sendmagickmessage "NOTE:Generating slab $Slabstep / $Slabnumber: ${Slabfirstimage[$Slabstep]}..${Slablastimage[$Slabstep]}"
 
       focus_generate_masks --type="comparision,channel" --first "${Slabfirstimage[$Slabstep]}" --last "${Slablastimage[$Slabstep]}"
       focus_merge_masks                                         "${Slabfirstimage[$Slabstep]}"        "${Slablastimage[$Slabstep]}"
@@ -3021,6 +3060,7 @@ focus_main() {
     done
 
     for Slabstep in $(seq $Slabnumber -1 1); do
+      sendmagickmessage "NOTE:Postprocessing slab $Slabstep / $Slabnumber: ${Slabfirstimage[$Slabstep]}..${Slablastimage[$Slabstep]}"
       Slabresultpost[$Slabstep]="$Cachedir/slabresult.$Resultbasename.slab$Slabstep-post.mpc"
       Slabmaskpost[$Slabstep]="$Cachedir/slabresult.$Resultbasename.slab$Slabstep-post-mask.mpc"
       [ -e "${Slabresultpost[$Slabstep]}" ] && {
@@ -3053,16 +3093,21 @@ ${Slabmask[$Slabstep]}
               sendmagickmessage "NOTE:Applying --${Imoptions[$Count]}=${Imarguments["$Count"]%,TYPE*}"
               case "$Option" in
                 alpha)
-                  alphalevel --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --level "${Argpercent1}%x${Argpercent2}%"
+                  alphalevel --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" \
+                             --level "${Argpercent1}%x${Argpercent2}%"
                 ;;
                 finalblur)
-                  finalblur  --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Argthreshold1" --sigma1 "$Argsigma1" --sigma2 "$Argsigma2"
+                  finalblur  --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" \
+                             --percent "$Argthreshold1" --sigma1 "$Argsigma1" --sigma2 "$Argsigma2"
                 ;;
                 finalblur2)
-                  finalblur2 --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" --percent "$Argthreshold1" --blur "$Argradius1"
+                  finalblur2 --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" \
+                             --percent "$Argthreshold1" --blur "$Argradius1"
                 ;;
                 threshold)
-                  threshold --mask "${Slabmaskpost[$Slabstep]}" --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" --blur "$Argsigma1"
+                  threshold  --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" \
+                             --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" --blur "$Argsigma1" \
+                             --cutimage="hard"
                   Command="
   ${Slabresultpost[$Slabstep]}
   ${Slabmaskpost[$Slabstep]}
@@ -3070,8 +3115,8 @@ ${Slabmask[$Slabstep]}
     -compose CopyOpacity -composite
     -write ${Slabresultpost[$Slabstep]}
     -delete 0"
-                  cmd "$Command"
-                  cmd_waitforready
+#                  cmd "$Command"
+#                  cmd_waitforready
                 ;;
               esac
             ;;
@@ -3327,7 +3372,7 @@ maskarg_defaultvalue() {
         wavelet)    echo "10" ;;
 
         less)       echo "50" ;;
-        maskwave)   echo "30" ;;
+        maskwave)   echo "100" ;;
         soft)       echo "4" ;;
         *)          echo "" ;;
       esac
@@ -3351,7 +3396,7 @@ maskarg_defaultvalue() {
         kirsch)     echo "" ;;
         laplacian)  echo "" ;;
         #log)        echo "" ;; # 0
-        morphology) echo "2" ;;
+        morphology) echo "1" ;;
         prewitt)    echo "" ;;
         roberts)    echo "" ;;
         sobel)      echo "" ;;
@@ -4447,8 +4492,10 @@ main_setup() {
   }
 
   # start geeqie
-  generate_image --mode transparent --name "$Cachedir/transparent.tif"
-  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Cachedir/transparent.tif" 2>/dev/null
+#  generate_image --mode transparent --name "$Cachedir/transparent.tif"
+#  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Cachedir/transparent.tif" 2>/dev/null
+  $Magickbin wizard: -statistic standard_deviation 2 -auto-level "$Cachedir/wizard.jpg"
+  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Cachedir/wizard.jpg" 2>/dev/null
 
   return 0
 }
@@ -4482,7 +4529,6 @@ trap - ERR"
   }
 
   # Generate backgrounds etc.
-  #check_background
   Image_needlist="$(grep . <<< "$Image_needlist" | sort -V | uniq)"
   for Mode in $Image_needlist; do
     generate_image --mode "$Mode"
@@ -4491,7 +4537,7 @@ trap - ERR"
   # run
   focus_main
 
-  # Transfer EXIF metadata from first image to result
+  # --exif: transfer EXIF metadata from first image to result
   [ "$Exifsourceimage" ] && {
     [ "$Exifsourceimage" = "auto" ] && Exifsourceimage="${Sourceimagelist[1]}"
     exiftransfer "$Exifsourceimage" "$Outputimage"
@@ -4500,9 +4546,12 @@ trap - ERR"
   showimage "$Outputimage"
   note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   echo "$Outputimage"
+  command -v xclip >/dev/null && echo "$Outputimage" | xclip -i -selection clipboard
 
+  # -W
   [ "$Viewnior" ] && viewnior "$Outputimage" &
-  [ "$Video" ] && generate_video
+  # --video
+  [ "$Video" ]    && generate_video
 
   return "${Error:-0}"
 }
