@@ -284,16 +284,19 @@ Mask merging options:
                       ARG takes arguments:
                         p        percent            Default: 50%
                       For percent value compare option -wavelet-denoise.
- --close [=ARG]       Closes gaps between nearby contrast lines setting the 
+ --maskmorph [=ARG]   Closes gaps between nearby contrast lines setting the 
                       area in between to the same contrast weight.
                       Applied to contrast masks only.
                       ARG takes arguments:
                         r        radius             Default: 2
                         R        kernel iteration   Default: 2
                         t        threshold          Default: 0%
-                        (word)   kernel shape       Default: Octagon
+                        (word1)  mode               Default: close
+                        (word2)  kernel shape       Default: Octagon
                       radius is the kernel radius.
                       kernel iteration multiplies the kernel radius.
+                      mode can be one of open, close, erode, dilate, smooth.
+                      See: https://imagemagick.org/Usage/morphology/#basic
                       threshold excludes low contrast areas.
                       For possible kernel shapes see:
                       https://imagemagick.org/Usage/morphology/#kernel
@@ -323,7 +326,7 @@ Fusion options:
                       difference between background and foreground object.
                       If unsharp areas appear, use a greater percent value.
                       If the foreground object still has holes, use a lower 
-                      percent value or try --maskstat, --maskblur or --close.
+                      percent value or try --maskstat, --maskblur or --maskmorph.
  --slabs [=ARG]       Split stack into different stacks (called slabs)
                       and fuse them separately. Can be specified multiple times.
                       ARG takes arguments:
@@ -444,7 +447,7 @@ has some weaknesses and can lead to artefacts.
  - Objects in foreground with background artefacts:
   Sometimes objects in background result in a stronger contrast mask than
   objects in foreground. The foreground object will be incomplete.
-  This can be fixed with option --less, additionally --cutblur or --close.
+  This can be fixed with option --less, additionally --cutblur or --maskmorph.
 
 Examples:
 Have a folder 'stackshot' containing all but nothing than stack source images.
@@ -2496,24 +2499,24 @@ focus_merge_masks() {
   mpr:mergemask"
         case "${Imoptions[$Count]}" in
 
-          close)
+          maskblur)
+            Mergecode="$Mergecode
+    # --maskblur
+    -blur 0x$Argsigma1"
+          ;;
+
+          maskmorph)
     Mergecode="$Mergecode
-    # --close
+    # --maskmorph
     -threshold ${Argthreshold1:-0}%
     -write mpr:cutmask
     -delete 0
   mpr:mergemask
   mpr:cutmask
     -compose Darken -composite
-    -morphology Close:${Argradius2:-2} ${Argword1}:${Argradius1:-2}
+    -morphology $Argword1:$Argradius2 $Argword2:$Argradius1
   mpr:mergemask
     -compose Lighten -composite"
-          ;;
-
-          maskblur)
-            Mergecode="$Mergecode
-    # --maskblur
-    -blur 0x$Argsigma1"
           ;;
 
           maskstat)
@@ -3429,15 +3432,15 @@ maskarg_defaultvalue() {
         statistic)  echo "2" ;;
         #unsharp)    echo "" ;; # 0
 
-        close)      echo "2" ;;
         finalblur2) echo "4" ;;
+        maskmorph)  echo "2" ;;
         maskstat)   echo "6" ;;
         *)          echo "" ;;
       esac
     ;;
     radius2)
       case "${1:-}" in
-        close)      echo "2" ;;
+        maskmorph)  echo "2" ;;
         morphology) echo "1" ;;
         *)          echo "" ;;
       esac
@@ -3483,7 +3486,6 @@ maskarg_defaultvalue() {
     ;;
     threshold1)
       case "${1:-}" in
-        close)      echo "0" ;;
         finalblur)  echo "50" ;;
         finalblur2) echo "50" ;;
         threshold)  echo "50" ;;
@@ -3507,7 +3509,7 @@ maskarg_defaultvalue() {
         image|enfuse|compose|evaluate|min|max|mean|median)
           echo "comparision"
         ;;
-        close|maskblur|maskstat|maskwave)
+        maskblur|maskmorph|maskstat|maskwave)
           echo "merge"
         ;;
         alpha|finalblur|finalblur2|threshold)
@@ -3553,9 +3555,9 @@ maskarg_defaultvalue() {
         statistic)  echo "standarddeviation" ;;
 
         bg)         echo "enfuse" ;;
-        close)      echo "Octagon" ;;
         colorspace) echo "SRGB" ;;
         grayscale)  echo "Rec709Luma" ;;
+        maskmorph)  echo "close" ;;
         maskstat)   echo "mean" ;;
         merge)      echo "screen" ;;
         soft)       echo "plus" ;;
@@ -3569,6 +3571,7 @@ maskarg_defaultvalue() {
         darkness)   echo "2" ;;
         diffstat)   echo "mean" ;;
         lightness)  echo "2" ;;
+        maskmorph)  echo "Octagon" ;;
         saturation) echo "1" ;;
         *)          echo "" ;;
       esac
@@ -3586,23 +3589,24 @@ maskarg_checkallowed() {
   case "$Option" in
     blur)
       case "$Method" in
-        close|maskblur|maskstat|maskwave) Errormessage="$Method does not take argument blur" ;;
+        maskblur|maskstat|maskwave) Errormessage="$Method does not take argument blur" ;;
       esac
     ;;
     radius1)
       case "$Method" in
         halo|morphology) ;;
+        maskmorph) ;;
         diffstat|statistic|maskstat)
           [ "${Arg:-0}" -lt "2" ] && Errormessage="--$Method needs a radius of at least 2"
         ;;
-        close|finalblur2) ;;
+        finalblur2) ;;
         slabs) ;;
         *) Errormessage="$Method does not take argument radius" ;;
       esac
     ;;
     radius2)
       case "$Method" in
-        close|morphology) ;;
+        morphology|maskmorph) ;;
         *) Errormessage="$Method does not take argument radius2" ;;
       esac
     ;;
@@ -3637,19 +3641,19 @@ maskarg_checkallowed() {
     ;;
     threshold1)
       case "$Method" in
-        close|finalblur|finalblur2|threshold) ;;
-        maskblur|maskstat|maskwave) Errormessage="$Method does not take argument threshold1" ;;
+        maskmorph|finalblur|finalblur2|threshold) ;;
+        maskblur|maskmorph|maskstat|maskwave) Errormessage="$Method does not take argument threshold1" ;;
       esac
     ;;
     threshold2)
       case "$Method" in
         threshold) ;;
-        close|maskblur|maskstat|maskwave) Errormessage="$Method does not take argument threshold2" ;;
+        maskblur|maskmorph|maskstat|maskwave) Errormessage="$Method does not take argument threshold2" ;;
       esac
     ;;
     wave)
       case "$Method" in
-        close|maskblur|maskstat|maskwave) Errormessage="$Method does not take argument threshold2" ;;
+        maskblur|maskmorph|maskstat|maskwave) Errormessage="$Method does not take argument threshold2" ;;
       esac
     ;;
     word1)
@@ -3687,7 +3691,7 @@ maskarg_checkallowed() {
           [ "$Arg" = "source" ] && Errormessage="--$Method does not take argument $Arg
   Please choose one out of 'magick -list statistic'"
         ;;
-        close) ;;
+        maskmorph) ;;
         colorspace) ;;
         bg) ;;
         grayscale) ;;
@@ -3709,6 +3713,7 @@ maskarg_checkallowed() {
         ;;
         channel|chroma|darkness|lightness|saturation) ;;
         slabs) ;;
+        maskmorph) ;;
         *) Errormessage="$Method does not take argument word2 $Arg" ;;
       esac
     ;;
@@ -4089,7 +4094,7 @@ parse_options() {
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,halo::,image::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,experimental::,free::,freediff::"
-  Longoptions="$Longoptions,close::,maskwave::,maskblur::,maskstat::,merge::"
+  Longoptions="$Longoptions,maskblur::,maskmorph::,maskstat::,maskwave::,merge::"
   Longoptions="$Longoptions,cutblur::,cutsoft::,less::,slabs::,soft::"
   Longoptions="$Longoptions,alpha::,finalblur::,finalblur2::,threshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
@@ -4128,7 +4133,7 @@ parse_options() {
 --freichen|--gaussian|--halo|--image|--kirsch|--laplacian|--lightness|--log|--morphology|\
 --max|--mean|--median|--min|\
 --none|--prewitt|--roberts|--saturation|--sobel|--statistic|--unsharp|--wavelet|\
---close|--maskblur|--maskstat|--maskwave|\
+--maskblur|--maskmorph|--maskstat|--maskwave|\
 --alpha|--finalblur|--finalblur2|--threshold|\
 --bg|--background|\
 --colorspace|--cutblur|--cutsoft|--grayscale|--less|--merge|--soft|\
