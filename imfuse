@@ -80,9 +80,12 @@ Colorspace and grayscale options:
 
      --colorspace [=ARG]  Define the colorspace from where to generate the
                       masks. Experimental option, less useful yet.
-                      ARG takes argument:
-                        (word)  colorspace          Default: sRGB
-                      Of interest: sRGB, RGB. For other possibilities see:
+                      ARG takes arguments:
+                        (word1) colorspace          Default: sRGB
+                        (word2) channel
+                      Of interest (all channels together): sRGB, RGB
+                      Single channels of interest:   LAB,0 HSL,1  HCL,1
+                      For further colorspaces and their channels see:
                       https://legacy.imagemagick.org/Usage/color_basics
      --grayscale [=ARG]  Convert images to grayscale before mask generation.
                       Compare ImageMagick options -grayscale and -intensity. 
@@ -2367,9 +2370,16 @@ $Maskgenerator
 
       # Generate command to generate masks
       sendmagickmessage "PROGRESS:Mask generation step $Count / $Sourceimagenumber"
+      maskarg_single "colorspace"
       Command="$Command
-  $(sourceimagename $Count)
-    -colorspace $Colorspace
+  ( $(sourceimagename $Count)
+      -colorspace ${Colorspace:-$Argword1}"
+      [ -n "$Argword2" ] && Command="$Command
+      -channel $Argword2
+      -separate
+      +channel"
+      Command="$Command
+  )
     -alpha off
     -write mpr:sourceimage
     -delete 0
@@ -3692,6 +3702,7 @@ maskarg_checkallowed() {
     ;;
     word2)
       case "$Method" in
+        colorspace) ;;
         diffstat)
           Arg="$(lowercase "${Arg}")"
           Arg="$(maskarg_checkstatistic "$Arg")"
@@ -4150,7 +4161,7 @@ check_options() {
   local Arg Part1 Part2 Weightsum= Weightrest Masknoweightcount= Singleoptionlist=
   local Firstimage Lastimage Slabsize Position
   local Error=
-  
+
   [ "$Sourceimagenumber" = "0" ] && error "No source images provided."
 
   for Count in $(seq "$Imoptionsnumber"); do
@@ -4404,9 +4415,6 @@ $Argmethod"
   --cutblur, --cutsoft, --less."
   }
 
-  # --test
-  [ "$Testsetup" ] && Colorspace="$Testarg"
-
   return ${Error:-0}
 }
 main_setup() {
@@ -4528,13 +4536,19 @@ main_setup() {
   }
 
   # start geeqie
-#  generate_image --mode transparent --name "$Cachedir/transparent.tif"
-#  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Cachedir/transparent.tif" 2>/dev/null
+  maskarg_single "colorspace"
   Command="
 # $Resultbasename
 # $(date)
-  wizard:
-    -colorspace $Colorspace
+  ( wizard:
+      -colorspace ${Colorspace:-$Argword1}"
+      [ -n "$Argword2" ] && Command="$Command
+      -channel $Argword2
+      -separate
+      +channel"
+      Command="$Command
+  )
+    $Grayscaleconverter
     -statistic standard_deviation 2
     -auto-level
     -write $Showimage
