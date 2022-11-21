@@ -76,10 +76,14 @@ Arguments additionally taken by some options:
   N         Second integer value.
   (word)    Some options take one or two word arguments.
 
-Grayscale conversion options:
-  Converting to grayscale for mask generation speeds up image processing,
-  but the result might be less accurate.
+Colorspace and grayscale options:
 
+     --colorspace [=ARG]  Define the colorspace from where to generate the
+                      masks. Experimental option, less useful yet.
+                      ARG takes argument:
+                        (word)  colorspace          Default: sRGB
+                      Of interest: sRGB, RGB. For other possibilities see:
+                      https://legacy.imagemagick.org/Usage/color_basics
      --grayscale [=ARG]  Convert images to grayscale before mask generation.
                       Compare ImageMagick options -grayscale and -intensity. 
                       ARG takes argument:
@@ -95,6 +99,8 @@ Grayscale conversion options:
                         7 Average
                         8 MS
                         9 RMS
+                      Converting to grayscale for mask generation speeds up
+                      image processing, but the result might be less accurate.
 
 Contrast mask options:
   Can be specified multiple times. The order does not matter.
@@ -764,6 +770,8 @@ check_outputname() {
   Resultbasename=""
   [ "$Align" = "yes" ] && Resultbasename="${Resultbasename}--align"
 
+  # step colorspace
+  maskarg_single "colorspace" && Resultbasename="${Resultbasename}--col=${Imarguments[$Argcount]%TYPE*}"
   # step grayscale
   maskarg_single "grayscale" && Resultbasename="${Resultbasename}--gray=${Imarguments[$Argcount]%TYPE*}"
 
@@ -3498,7 +3506,7 @@ maskarg_defaultvalue() {
         bg)
           echo "background"
         ;;
-        cutblur|cutsoft|grayscale|less|merge|soft)
+        colorspace|cutblur|cutsoft|grayscale|less|merge|soft)
           echo "single"
         ;;
         slabs)
@@ -3536,6 +3544,7 @@ maskarg_defaultvalue() {
 
         bg)         echo "enfuse" ;;
         close)      echo "Octagon" ;;
+        colorspace) echo "SRGB" ;;
         grayscale)  echo "Rec709Luma" ;;
         maskstat)   echo "mean" ;;
         merge)      echo "screen" ;;
@@ -3669,6 +3678,7 @@ maskarg_checkallowed() {
   Please choose one out of 'magick -list statistic'"
         ;;
         close) ;;
+        colorspace) ;;
         bg) ;;
         grayscale) ;;
         slabs) 
@@ -4061,11 +4071,17 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
   Shortoptions="ho:vVW"
-  Longoptions="align,basename:,cache::,exif::,force::,help,limit-memory::,mask2cache,output:,savemask::,showimage,showname,test::,verbose,version,video"
-  Longoptions="$Longoptions,alpha::,background::,bg::,close::,cutblur::,cutsoft::,maskwave::,finalblur::,finalblur2::,grayscale::,layered,less::,maskblur::,maskstat::,merge::,revert,slabs::,soft::,threshold::"
-  Longoptions="$Longoptions,channel::,chroma::,compose::,darkness::,enfuse::,evaluate::,halo::,image::,lightness::,max::,mean::,median::,min::,saturation::"
+  Longoptions="basename:,cache::,exif::,force::,help,limit-memory::,mask2cache,output:,savemask::,showimage,showname,test::,verbose,version,video"
+  Longoptions="$Longoptions,align,revert"
+  Longoptions="$Longoptions,colorspace::,grayscale::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
+  Longoptions="$Longoptions,compose::,enfuse::,evaluate::,halo::,image::,max::,mean::,median::,min::"
+  Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,experimental::,free::,freediff::"
+  Longoptions="$Longoptions,close::,maskwave::,maskblur::,maskstat::,merge::"
+  Longoptions="$Longoptions,cutblur::,cutsoft::,less::,slabs::,soft::"
+  Longoptions="$Longoptions,alpha::,finalblur::,finalblur2::,threshold::"
+  Longoptions="$Longoptions,background::,bg::,layered"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error while parsing options."
   eval set -- "$Parsedoptions"
@@ -4104,7 +4120,7 @@ parse_options() {
 --close|--maskblur|--maskstat|--maskwave|\
 --alpha|--finalblur|--finalblur2|--threshold|\
 --bg|--background|\
---cutblur|--cutsoft|--grayscale|--less|--merge|--soft|\
+--colorspace|--cutblur|--cutsoft|--grayscale|--less|--merge|--soft|\
 --slabs)
         Imoptionsnumber="$((Imoptionsnumber+1))"
         Argmethod="${1#--}"
@@ -4274,6 +4290,9 @@ $Argmethod"
     yes) [ -z "$Cachedir" ] && Cachedir="./cache.imfuse" ;;
     no)  [ -z "$Cachedir" ] && Cachedir="./cache.imfuse.$$" ;;
   esac
+
+  # --colorspace
+  maskarg_single "colorspace" && Colorspace="${Argword1^^}"
 
   # --grayscale
   maskarg_single "grayscale" && {
