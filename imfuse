@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.8.2-beta"
+Version="0.8.3-beta"
 
 # ToDo:
 # mkclut_uniform() fails with b&w masks -> clut and result black
@@ -61,7 +61,7 @@ Arguments taken by all mask generating options:
   neg       Negate/invert the mask. Rarely needed.
   t         Threshold (removal) of low contrast areas.
   T         Threshold (removal) of high contrast areas.
-Arguments additionally taken by few options:
+Arguments additionally taken by some options:
   r         Radius. Must be an integer value.
             Increased radius mostly causes less noise, less details and
             more contrast. Smaller radius causes more details and more noise.
@@ -79,6 +79,7 @@ Arguments additionally taken by few options:
 Grayscale conversion options:
   Converting to grayscale for mask generation speeds up image processing,
   but the result might be less accurate.
+
      --grayscale [=ARG]  Convert images to grayscale before mask generation.
                       Compare ImageMagick options -grayscale and -intensity. 
                       ARG takes argument:
@@ -96,8 +97,9 @@ Grayscale conversion options:
                         9 RMS
 
 Contrast mask options:
-  Can be specified multiple times.
+  Can be specified multiple times. The order does not matter.
   Most of interest: --morphology, --statistic, --wavelet
+
  --blur [=ARG]        Blur edge detection. 
                       Similar to --gaussian, but faster and less accurate.
                       ARG additionally takes argument: 
@@ -162,10 +164,10 @@ Contrast mask options:
                       ARG additionally takes arguments: 
                         r       radius              Default: 2
                         R       kernel iteration    Default: 1
-                        (word)  mode                Default: edge
+                        (word)  mode                Default: edgeout
                       mode can be one of 'magick -list morphology'
                       Some modes of interest:
-                        edge, dilateintensity, smooth, tophat
+                        tophat, edge, dilateintensity, smooth
  --prewitt [=ARG]     Prewitt edge detection. 
  --roberts [=ARG]     Roberts edge detection. 
  --sobel [=ARG]       Sobel edge detection. 
@@ -192,8 +194,9 @@ Contrast mask options:
                         p       percent             Default: 10
 
 Image comparision mask options:
-  Can be specified multiple times.
+  Can be specified multiple times. The order does not matter.
   Most of interest: --enfuse
+
  --compose [=ARG]     Composes evaluated min,max of source images with MODE.
                       ARG additionally takes argument:
                         (word)   mode               Default: overlay
@@ -232,8 +235,9 @@ Image comparision mask options:
                       Result is similar to --darkness.
 
 Colorspace channel mask options:
-  Can be specified multiple times. (All are variations of --channel).
-  Most of interest: --saturation
+  Can be specified multiple times. The order does not matter.
+  All options are variations of --channel. Most of interest: --saturation
+
  --channel [=ARG]     Use a colorspace channel as mask.
                       ARG additionally takes arguments:
                         (word)   colorspace         Default: HSL
@@ -250,9 +254,9 @@ Colorspace channel mask options:
                       can soften the image so it looks more natural.
 
 Mask merging options:
-  Can be specified multiple times, but that rarely makes sense.
+  Options can be specified multiple times.
   The order matters, prefer to use in the order shown here.
-  Most of interest: --maskstat, --maskblur, --maskwave, --close
+
  --maskstat [=ARG]    Apply a statistic method for each mask pixel
                       to adjust it according to its neighborhood.
                       Option is applied to contrast masks only.
@@ -269,7 +273,7 @@ Mask merging options:
                       create artefacts in very low contrast areas.
                       Applied to contrast masks only.
                       ARG takes arguments:
-                        p        percent            Default: 100%
+                        p        percent            Default: 50%
                       For percent value compare option -wavelet-denoise.
  --close [=ARG]       Closes gaps between nearby contrast lines setting the 
                       area in between to the same contrast weight.
@@ -291,10 +295,10 @@ Mask merging options:
                         (word)   mode               Default: Screen
                       mode can be one of 'magick -list compose'.
                       Of interest: Plus Interpolate Multiply Exclusion Blend
-                      Can be specified only once.
+                      Can be specified only once, order does not matter.
 
 Fusion options:
-  Most of interest: --less, --slab, --soft
+
  --cutblur [=ARG]     Blur cut masks in final focus montage.
                       ARG takes argument:
                         s        sigma              Default: 2
@@ -348,8 +352,10 @@ Fusion options:
                       Does not support --less, --cutblur, --cutsoft.
 
 Post processing options:
-  The order of --threshold, --finalblur, --alpha matters.
+  The order of the options on cli matters. Noteably --alpha with percent values
+  diferent from =0%,100% 
   All options can be specified multiple times if that makes sense.
+
  --alpha [=ARG]       Generate transparent image using the contrast mask as 
                       alpha channel (=transparency channel).
                       Good method to reduce noise in low contrast areas.
@@ -389,6 +395,7 @@ Post processing options:
 
 Background options:
   Can be specified multiple times (of interest for --layered).
+
  --bg, --background [=ARG]  Specify a background to paint on.
                       ARG takes argument:
                         (word)   background        Default: enfuse
@@ -842,6 +849,7 @@ check_outputname() {
 }
 load_sourceimages() {
   # Load source images into imagemagick registry
+  # (Can also happen in align())
   local Sourceimage Count Number Command
   local Firstimage Lastimage
 
@@ -1219,6 +1227,7 @@ enfuse_split() {
   done
   Command="$Command
   mpr:resultimage
+    $Tifstore
     -write $Resultimage
     -delete 0"
   cmd "$Command"
@@ -1666,8 +1675,7 @@ generate_image() {
       Command="
   -size $Size
   canvas:$Mode
-    -colorspace sRGB
-    -type TrueColorAlpha
+    $Tifstorealpha
     -write $Imagename
     -delete 0"
       cmd "$Command"
@@ -2082,11 +2090,9 @@ Maskgenerator="$Maskgenerator
     ;;
     experimental)
       Maskgenerator="
-  mpr:sourcegray
-    -threshold 80%
-    -blur 0x5
-    -auto-level
-    -negate"
+  # --experimental
+  ( mpr:sourcegray -colorspace HSB -channel 1 -separate +channel )
+    -statistic standarddeviation ${Argradius1:-2}x${Argradius1:-2}"
     ;;
     free)
       Maskgenerator="
@@ -2310,7 +2316,7 @@ focus_generate_masks() {
     -wavelet-denoise ${Argwave:-30}%"
 
     grep -q "$Argtype" <<< "$Masktype" && {
-      Maskmd5="$(md5cut "$Sourcemd5 $Grayscaleconverter $Maskgenerator")"
+      Maskmd5="$(md5cut "$Sourcemd5 $Grayscaleconverter $Colorspace $Maskgenerator")"
       Argbasename="$Argmethod.$Maskmd5"
       #Argbasename="${Argmethod}${Argoptions}.$Sourcemd5"
       maskarg_store "$Count"
@@ -2355,6 +2361,7 @@ $Maskgenerator
       sendmagickmessage "PROGRESS:Mask generation step $Count / $Sourceimagenumber"
       Command="$Command
   $(sourceimagename $Count)
+    -colorspace $Colorspace
     -alpha off
     -write mpr:sourceimage
     -delete 0
@@ -3067,14 +3074,15 @@ focus_main() {
         sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
       } || {
 
-        [ "$Testsetup" ] && {
-        Slabmaskmax="$Cachedir/slabmask.max.$Resultbasename.mpc"
-        Slabmaskmin="$Cachedir/slabmask.min.$Resultbasename.mpc"
-        evaluate max $Slabmaskmax ${Slabmask[@]}
-        #evaluate min $Slabmaskmin ${Slabmask[@]}
-        Levelmax="$(getmagickinfo "$Slabmaskmax" '%[fx:maxima*100]')"
-        Levelmin="$(getmagickinfo "$Slabmaskmax" '%[fx:minima*100]')"
+        false && [ "$Testsetup" ] && {
+          Slabmaskmax="$Cachedir/slabmask.max.$Resultbasename.mpc"
+          Slabmaskmin="$Cachedir/slabmask.min.$Resultbasename.mpc"
+          evaluate max $Slabmaskmax ${Slabmask[@]}
+          #evaluate min $Slabmaskmin ${Slabmask[@]}
+          Levelmax="$(getmagickinfo "$Slabmaskmax" '%[fx:maxima*100]')"
+          Levelmin="$(getmagickinfo "$Slabmaskmax" '%[fx:minima*100]')"
         }
+
         Command="
 ${Slabresult[$Slabstep]}
   -write ${Slabresultpost[$Slabstep]}
@@ -3372,7 +3380,7 @@ maskarg_defaultvalue() {
         wavelet)    echo "10" ;;
 
         less)       echo "50" ;;
-        maskwave)   echo "100" ;;
+        maskwave)   echo "50" ;;
         soft)       echo "4" ;;
         *)          echo "" ;;
       esac
@@ -3496,6 +3504,9 @@ maskarg_defaultvalue() {
         slabs)
           echo "slab"
         ;;
+        experimental)
+          echo "contrast"
+        ;;
         *)
           echo "UNKNOWN"
           error "maskarg_defaultvalue(): Unknown type for method ${1:-}"
@@ -3519,7 +3530,7 @@ maskarg_defaultvalue() {
         freediff)   echo "-sharpen 0x3" ;;
         laplacian)  echo "3" ;;
         lightness)  echo "HSL" ;;
-        morphology) echo "edge" ;;
+        morphology) echo "edgeout" ;;
         saturation) echo "HSL" ;;
         statistic)  echo "standarddeviation" ;;
 
@@ -3961,6 +3972,7 @@ declare_variables() {
 
   Align=""
   Cachedir=""
+  Colorspace="sRGB"
   Error=""
   Exitnotefile=""
   Exifsourceimage=""
@@ -4122,29 +4134,31 @@ check_options() {
   local Arg Part1 Part2 Weightsum= Weightrest Masknoweightcount= Singleoptionlist=
   local Firstimage Lastimage Slabsize Position
   local Error=
+  
+  [ "$Sourceimagenumber" = "0" ] && error "No source images provided."
 
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
-    [ -z "$Argradius1" ]    && Argradius1="$(maskarg_defaultvalue      "$Argmethod" radius1)"
-    [ -z "$Argradius2" ]    && Argradius2="$(maskarg_defaultvalue      "$Argmethod" radius2)"
-    [ -z "$Argsigma1" ]     && Argsigma1="$(maskarg_defaultvalue       "$Argmethod" sigma1)"
-    [ -z "$Argsigma2" ]     && Argsigma2="$(maskarg_defaultvalue       "$Argmethod" sigma2)"
-    [ -z "$Argpercent1" ]   && Argpercent1="$(maskarg_defaultvalue     "$Argmethod" percent1)"
-    [ -z "$Argpercent2" ]   && Argpercent2="$(maskarg_defaultvalue     "$Argmethod" percent2)"
-    [ -z "$Argthreshold1" ] && Argthreshold1="$(maskarg_defaultvalue   "$Argmethod" threshold1)"
-    [ -z "$Argthreshold2" ] && Argthreshold2="$(maskarg_defaultvalue   "$Argmethod" threshold2)"
-    [ -z "$Argword1" ]      && Argword1="$(maskarg_defaultvalue        "$Argmethod" word1)"
-    [ -z "$Argword2" ]      && Argword2="$(maskarg_defaultvalue        "$Argmethod" word2)"
-    [ -n "$Argradius1" ]    && { Argradius1="$(maskarg_checkallowed    "$Argmethod" radius1      "$Argradius1")"    || Error=1 ; }
-    [ -n "$Argradius2" ]    && { Argradius2="$(maskarg_checkallowed    "$Argmethod" radius2      "$Argradius2")"    || Error=1 ; }
-    [ -n "$Argsigma1" ]     && { Argsigma1="$(maskarg_checkallowed     "$Argmethod" sigma1       "$Argsigma1")"     || Error=1 ; }
-    [ -n "$Argsigma2" ]     && { Argsigma2="$(maskarg_checkallowed     "$Argmethod" sigma2       "$Argsigma2")"     || Error=1 ; }
-    [ -n "$Argpercent1" ]   && { Argpercent1="$(maskarg_checkallowed   "$Argmethod" percent1     "$Argpercent1")"   || Error=1 ; }
-    [ -n "$Argpercent2" ]   && { Argpercent2="$(maskarg_checkallowed   "$Argmethod" percent2     "$Argpercent2")"   || Error=1 ; }
-    [ -n "$Argthreshold1" ] && { Argthreshold1="$(maskarg_checkallowed "$Argmethod" threshold1   "$Argthreshold1")" || Error=1 ; }
-    [ -n "$Argthreshold2" ] && { Argthreshold2="$(maskarg_checkallowed "$Argmethod" threshold2   "$Argthreshold2")" || Error=1 ; }
-    [ -n "$Argword1" ]      && { Argword1="$(maskarg_checkallowed      "$Argmethod" word1        "$Argword1")"      || Error=1 ; }
-    [ -n "$Argword2" ]      && { Argword2="$(maskarg_checkallowed      "$Argmethod" word2        "$Argword2")"      || Error=1 ; }
+    [ -z "$Argradius1" ]    && Argradius1="$(maskarg_defaultvalue    "$Argmethod" radius1)"
+    [ -z "$Argradius2" ]    && Argradius2="$(maskarg_defaultvalue    "$Argmethod" radius2)"
+    [ -z "$Argsigma1" ]     && Argsigma1="$(maskarg_defaultvalue     "$Argmethod" sigma1)"
+    [ -z "$Argsigma2" ]     && Argsigma2="$(maskarg_defaultvalue     "$Argmethod" sigma2)"
+    [ -z "$Argpercent1" ]   && Argpercent1="$(maskarg_defaultvalue   "$Argmethod" percent1)"
+    [ -z "$Argpercent2" ]   && Argpercent2="$(maskarg_defaultvalue   "$Argmethod" percent2)"
+    [ -z "$Argthreshold1" ] && Argthreshold1="$(maskarg_defaultvalue "$Argmethod" threshold1)"
+    [ -z "$Argthreshold2" ] && Argthreshold2="$(maskarg_defaultvalue "$Argmethod" threshold2)"
+    [ -z "$Argword1" ]      && Argword1="$(maskarg_defaultvalue      "$Argmethod" word1)"
+    [ -z "$Argword2" ]      && Argword2="$(maskarg_defaultvalue      "$Argmethod" word2)"
+    [ -n "$Argradius1" ]    && Argradius1="$(maskarg_checkallowed    "$Argmethod" radius1    "$Argradius1")"
+    [ -n "$Argradius2" ]    && Argradius2="$(maskarg_checkallowed    "$Argmethod" radius2    "$Argradius2")"
+    [ -n "$Argsigma1" ]     && Argsigma1="$(maskarg_checkallowed     "$Argmethod" sigma1     "$Argsigma1")"
+    [ -n "$Argsigma2" ]     && Argsigma2="$(maskarg_checkallowed     "$Argmethod" sigma2     "$Argsigma2")"
+    [ -n "$Argpercent1" ]   && Argpercent1="$(maskarg_checkallowed   "$Argmethod" percent1   "$Argpercent1")"
+    [ -n "$Argpercent2" ]   && Argpercent2="$(maskarg_checkallowed   "$Argmethod" percent2   "$Argpercent2")"
+    [ -n "$Argthreshold1" ] && Argthreshold1="$(maskarg_checkallowed "$Argmethod" threshold1 "$Argthreshold1")"
+    [ -n "$Argthreshold2" ] && Argthreshold2="$(maskarg_checkallowed "$Argmethod" threshold2 "$Argthreshold2")"
+    [ -n "$Argword1" ]      && Argword1="$(maskarg_checkallowed      "$Argmethod" word1      "$Argword1")"
+    [ -n "$Argword2" ]      && Argword2="$(maskarg_checkallowed      "$Argmethod" word2      "$Argword2")"
     #case $Argmethod in
     #  blur|comet|compass|diffstat|dog|free|freediff|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
     Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
@@ -4371,6 +4385,9 @@ $Argmethod"
   --cutblur, --cutsoft, --less."
   }
 
+  # --test
+  [ "$Testsetup" ] && Colorspace="$Testarg"
+
   return ${Error:-0}
 }
 main_setup() {
@@ -4494,13 +4511,24 @@ main_setup() {
   # start geeqie
 #  generate_image --mode transparent --name "$Cachedir/transparent.tif"
 #  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Cachedir/transparent.tif" 2>/dev/null
-  $Magickbin wizard: -statistic standard_deviation 2 -auto-level "$Cachedir/wizard.jpg"
-  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Cachedir/wizard.jpg" 2>/dev/null
+  Command="
+# $Resultbasename
+# $(date)
+  wizard:
+    -colorspace $Colorspace
+    -statistic standard_deviation 2
+    -auto-level
+    -write $Showimage
+    -delete 0"
+  cmd "$Command"
+  cmd_waitforready
+  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Showimage" 2>/dev/null
 
   return 0
 }
 main() {
-  set -Eu
+  shopt -s inherit_errexit
+  set -Eeu
   trap trap_sigint SIGINT
   trap finish      EXIT
   trap finish      ERR
