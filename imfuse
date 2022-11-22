@@ -4,6 +4,9 @@
 Version="0.8.3-beta"
 
 # ToDo:
+# improve error&sigint handling
+# check if --level is set
+# merge: do not separate channel,comparision? ->level
 # mkclut_uniform() fails with b&w masks -> clut and result black
 # check --kirsch
 # drop --unsharp?
@@ -263,7 +266,7 @@ Colorspace channel mask options:
                       can soften the image so it looks more natural.
 
 Mask merging options:
-  Options can be specified multiple times.
+  Options beginning with --mask* can be specified multiple times.
   The order matters, prefer to use in the order shown here.
 
  --maskstat [=ARG]    Apply a statistic method for each mask pixel
@@ -308,6 +311,12 @@ Mask merging options:
                       mode can be one of 'magick -list compose'.
                       Of interest: Plus Interpolate Multiply Exclusion Blend
                       Can be specified only once, order does not matter.
+ --level [=ARG]       Levels merged masks into visible spectrum from 0%..100%.
+                      ARG takes argument:
+                        (word1)  mode               Default: all
+                      Leveling the merged masks before the follwing focus
+                      and postprocessing steps helps to provide option percent
+                      arguments a full range from 0%..100%.
 
 Fusion options:
 
@@ -474,11 +483,11 @@ Go to the folder above 'stackshot'.
 ### Messages
 
 error() {
-  [ -z "${Error:-}" ] && echo "
+  echo "
 imfuse ERROR: $*
 " >&2
+  [ -d "$Cachedir" ] && :> "$Exitnotefile"
   Error=1
-  finish 1
 }
 note() {
   [ -z "${Error:-}" ] && echo "imfuse: $*" >&2
@@ -514,6 +523,19 @@ calc() {
 comma2whitespace() {
   #sed "s/,/ /g" <<< "${1:-}"
   echo "${1//,/ /}"
+}
+compare() {
+  # compare floating number with < > =
+  local Arg1 Arg2 Operator
+  Arg1="${1:-}"
+  Operator="${2}"
+  Arg2="${3:-}"
+  case "$Operator" in
+    "<"|"lt"|"-lt") Operator="<" ;;
+    ">"|"gt"|"-gt") Operator=">" ;;
+    "="|"eq"|"-eq") Operator="=" ;;
+  esac
+  (( $(echo "$Arg1 $Operator $Arg2" | bc -l) ))
 }
 digitonly() {
   #sed "s/[^0-9.]//g" <<< "${1:-}"
@@ -801,6 +823,7 @@ check_outputname() {
     esac
   done
   maskarg_single "merge"   && Resultbasename="${Resultbasename}--merge=${Imarguments[$Argcount]%TYPE*}"
+  maskarg_single "level"   && Resultbasename="${Resultbasename}--level=${Imarguments[$Argcount]%TYPE*}"
 
   # step focus
   maskarg_single "soft"    && Resultbasename="${Resultbasename}--soft=${Imarguments[$Argcount]%TYPE*}"
@@ -843,7 +866,7 @@ check_outputname() {
   [ "$Storelayered" = "yes" ] && Resultbasename="${Resultbasename}--layered"
   [ -n "$Testsetup" ]         && Resultbasename="${Resultbasename}--test$Testarg"
 
-  Fusemd5sum="$(md5cut "$Sourcemd5 ${Imoptions[@]} ${Imarguments[@]} $Grayscale $Revertimagelist $Testsetup" )"
+  Fusemd5sum="$(md5cut "$Sourcemd5 ${Imoptions[@]} ${Imarguments[@]} $Testsetup$Testarg" )"
 
   Resultbasename="${Resultbasename#,}_md${Fusemd5sum}"
   Resultbasename="$(unspecialstring "$Resultbasename")"
@@ -1711,11 +1734,26 @@ generate_video() {
 level_masks() {
   local Maskbasename Maskmax Maskmin Maskmd5 Clutimage Resultmask
   local Count Mask Masklist Levelmin Levelmax
-
+  local Longoptions Parsedoptions
   local Firstimage Lastimage
-  Maskbasename="${1:-NO_MASK_SPECIFIED}"
-  Firstimage="${2:-1}"
-  Lastimage="${3:-$Sourceimagenumber}"
+
+  Longoptions="first:,last:,name:,output:"
+  Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
+  eval set -- "$Parsedoptions"
+  while [ $# -gt 0 ]; do
+    case "${1:-}" in
+      --first)    Firstimage="${2:-}" ; shift ;;
+      --last)     Lastimage="${2:-}" ; shift ;;
+      --name)     Maskbasename="${2:-}" ; shift ;;
+      --output)   Outputbasename="${2:-}" ; shift ;;
+    esac
+    shift
+  done
+
+  Maskbasename="${Maskbasename:-NO_MASK_SPECIFIED}"
+  Firstimage="${Firstimage:-1}"
+  Lastimage="${Lastimage:-$Sourceimagenumber}"
+  Outputbasename="${Outputbasename:-"$Maskbasename"}"
 
   Masklist="$(masklist "$Maskbasename" "$Firstimage" "$Lastimage")"
   Maskmax="mpr:maskmax"
@@ -1723,10 +1761,7 @@ level_masks() {
   Clutimage="mpr:clut"
 
   sendmagickmessage "NOTE:Leveling $Maskbasename"
-  [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/level.$Maskbasename" ] && { ### FIXME
-    sendmagickmessage "NOTE:level_masks(): Skipping, mask is already leveled."
-    return 0
-  }
+
   evaluate max $Maskmax $Masklist
   Levelmax="$(getmagickinfo "$Maskmax" '%[fx:maxima*100]')"
   Levelmin="$(maskarg_defaultvalue $Argmethod levelmin)"
@@ -1735,6 +1770,11 @@ level_masks() {
     evaluate min $Maskmin $Masklist
     Levelmin="$(getmagickinfo "$Maskmin" '%[fx:minima*100]')"
     echo "min:$Argmethod:$Levelmin" >> ~/imfuse.statistic.level
+  }
+
+  compare "$Levelmin" lt "1" && compare "$Levelmax" gt "99" && [ "$Maskbasename" = "$Outputbasename" ] && {
+    sendmagickmessage "Skipping level, range is greater than 1%..99%"
+    return 0
   }
 
   Command="
@@ -1746,28 +1786,22 @@ level_masks() {
   cmd_waitforready
   mkclut_uniform "$Maskmax" "$Clutimage"
 
-  Count=0
-  for Mask in $Masklist ; do
-    Command=""
-    Count="$((Count+1))"
+  for Count in $(seq $Lastimage -1 $Firstimage); do
+    sendmagickmessage "PROGRESS:Mask leveling $Maskbasename ${Levelmin}%,${Levelmax}% step $Count / $Sourceimagenumber"
 
-    Command="$Command
-  $(sendmagickmessage "PROGRESS:Mask leveling $Maskbasename ${Levelmin}%,${Levelmax}% step $Count / $Sourceimagenumber")"
-
-    Command="$Command
-  $Mask
+    Command="
+  $(maskname "$Maskbasename" "$Count")
     -level ${Levelmin}%,${Levelmax}%
   $Clutimage
     -clut
-    -write $Mask
-    $(showimagecode "$Mask")
+    -write $(maskname "$Outputbasename" "$Count")
+    $(showimagecode "$(maskname "$Outputbasename" "$Count")")
     -delete 0"
 
     cmd "$Command"
   done
   sendmagickmessage "/PROGRESS"
   cmd_waitforready
-  [ "$Masktocache" = "yes" ] && echo "${Levelmin}%,${Levelmax}%" > "$Cachedir/level.$Maskbasename"
 
   return "${Error:-0}"
 }
@@ -2330,7 +2364,7 @@ focus_generate_masks() {
     -wavelet-denoise ${Argwave:-30}%"
 
     grep -q "$Argtype" <<< "$Masktype" && {
-      Maskmd5="$(md5cut "$Sourcemd5 $Grayscaleconverter $Colorspace $Maskgenerator")"
+      Maskmd5="$(md5cut "$Sourcemd5 $Colorspace $Grayscaleconverter $Maskgenerator")"
       Argbasename="$Argmethod.$Maskmd5"
       #Argbasename="${Argmethod}${Argoptions}.$Sourcemd5"
       maskarg_store "$Count"
@@ -2414,7 +2448,14 @@ ${Maskgenerator_all//NUMBER/$Number}"
   # level and uniform masks
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
-    grep -q "$Argtype" <<< "$Masktype" && [ "$Arglevel" = "yes" ] && level_masks "$Argbasename" "$Firstimage" "$Lastimage"
+    grep -q "$Argtype" <<< "$Masktype" && [ "$Arglevel" = "yes" ] && {
+      [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/level.$Argbasename" ] && { ### FIXME
+        sendmagickmessage "NOTE:level_masks(): Skipping, mask is already leveled."
+      } || {
+        level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage"
+        [ "$Masktocache" = "yes" ] && :> "$Cachedir/level.$Argbasename"
+      }
+    }
   done
 
   return 0
@@ -2434,6 +2475,20 @@ focus_merge_masks() {
 
   Firstimage="${1:-1}"
   Lastimage="${2:-$Sourceimagenumber}"
+
+  # --level
+  maskarg_single "level" && {
+    case "$Argword1" in
+      all)
+        Firstimage="1"
+        Lastimage="$Sourceimagenumber"
+      ;;
+      slab)
+      ;;
+      off)
+      ;;
+    esac
+  }
 
   sendmagickmessage "NOTE:Merging masks"
   Mergemaskbasename="mergemask"
@@ -2598,6 +2653,26 @@ $(sed "s/NUMBER/$(printnum $Count)/g" <<< "$Mergecode" )
   done
   sendmagickmessage "/PROGRESS"
   cmd_waitforready
+
+  # --level
+  maskarg_single "level" && {
+    case "$Argword1" in
+      off) ;;
+      slab)
+        level_masks --name="$Mergemaskbasename" --output="level${Firstimage}..${Lastimage}_$Mergemaskbasename" --first="$Firstimage" --last="$Lastimage"
+        Mergemaskbasename="level${Firstimage}..${Lastimage}_$Mergemaskbasename"
+      ;;
+      all)
+        [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/$Mergemaskbasename" ] && {
+          sendmagickmessage "NOTE:--level: Skipping, mask is already leveled."
+        } || {
+          level_masks --name="$Mergemaskbasename" --output="levelall_$Mergemaskbasename" --first="$Firstimage" --last="$Lastimage"
+          Mergemaskbasename="levelall_$Mergemaskbasename"
+          [ "$Masktocache" = "yes" ] && :> "$Cachedir/$Mergemaskbasename"
+        }
+      ;;
+    esac
+  }
 
   return ${Error:-0}
 }
@@ -3518,7 +3593,7 @@ maskarg_defaultvalue() {
         bg)
           echo "background"
         ;;
-        colorspace|cutblur|cutsoft|grayscale|less|merge|soft)
+        colorspace|cutblur|cutsoft|grayscale|less|level|merge|soft)
           echo "single"
         ;;
         slabs)
@@ -3557,6 +3632,7 @@ maskarg_defaultvalue() {
         bg)         echo "enfuse" ;;
         colorspace) echo "SRGB" ;;
         grayscale)  echo "Rec709Luma" ;;
+        level)      echo "all" ;;
         maskmorph)  echo "close" ;;
         maskstat)   echo "mean" ;;
         merge)      echo "screen" ;;
@@ -3579,12 +3655,11 @@ maskarg_defaultvalue() {
   esac
 }
 maskarg_checkallowed() {
-  local Method Option Arg Silent
+  local Method Option Arg
   local Errormessage=
   Method="${1:-}"
   Option="${2:-}"
   Arg="${3:-}"
-  Silent="${4:-}"
 
   case "$Option" in
     blur)
@@ -3691,6 +3766,12 @@ maskarg_checkallowed() {
           [ "$Arg" = "source" ] && Errormessage="--$Method does not take argument $Arg
   Please choose one out of 'magick -list statistic'"
         ;;
+        level)
+          case "$Arg" in
+            all|slab|off) ;;
+            *) Errormessage="$Method does not take argument word1 $Arg" ;;
+          esac
+        ;;
         maskmorph) ;;
         colorspace) ;;
         bg) ;;
@@ -3719,18 +3800,11 @@ maskarg_checkallowed() {
     ;;
   esac
 
-  case "$Silent" in
-    "")
-      [ "$Errormessage" ] && {
-        error "$Errormessage"
-        return 1
-      }
-      echo "$Arg"
-    ;;
-    *)
-      [ "$Errormessage" ] && return 1
-    ;;
-  esac
+  [ "$Errormessage" ] && {
+    error "$Errormessage"
+    return 1
+  }
+  echo "$Arg"
   return 0
 }
 maskarg_checkstatistic() {
@@ -3894,7 +3968,7 @@ showimagecode() {
     case "$Imageformat" in
       ""|"mpr"|"mpc"|"miff")
         echo "# show image
-    -write $Showimage
+    -write '$Showimage'
     -format 'SHOW:$Showimage\n'
     -write info:"
       ;;
@@ -3950,11 +4024,12 @@ finish() {
   while ps -p "$Magickscriptpid" >/dev/null 2>&1; do
     sleep 1
     Count="$((Count+1))"
-    [ "$Count" -gt "5" ] && printsameline "Waiting infinitely since $Count seconds for magick $Magickscriptpid to terminate"
+    [ "$Count" -gt "3" ] && printsameline "Waiting infinitely since $Count seconds for magick pid $Magickscriptpid to terminate"
   done
   echo "" >&2
 
-  ps -p "$Magickmessagepid" >/dev/null 2>&1 && kill "$Magickmessagepid"
+  [ -n "$Magickmessagepid" ] && kill "$Magickmessagepid"
+  #ps -p "$Magickmessagepid" >/dev/null 2>&1 && kill "$Magickmessagepid"
   exec 3>&-
 
   #[ -f "$Magickfifolog" ]   && cp "$Magickfifolog" .
@@ -3967,6 +4042,9 @@ finish() {
   trap - SIGINT
   trap - EXIT
   exit "${1:-0}"
+}
+checkexit() {
+  [ -e "$Exitnotefile" ] && finish
 }
 declare_variables() {
   Arglist='
@@ -3998,7 +4076,7 @@ declare_variables() {
 
   Align=""
   Cachedir=""
-  Colorspace="sRGB"
+  Colorspace=""
   Error=""
   Exitnotefile=""
   Exifsourceimage=""
@@ -4094,7 +4172,7 @@ parse_options() {
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,halo::,image::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,experimental::,free::,freediff::"
-  Longoptions="$Longoptions,maskblur::,maskmorph::,maskstat::,maskwave::,merge::"
+  Longoptions="$Longoptions,level::,maskblur::,maskmorph::,maskstat::,maskwave::,merge::"
   Longoptions="$Longoptions,cutblur::,cutsoft::,less::,slabs::,soft::"
   Longoptions="$Longoptions,alpha::,finalblur::,finalblur2::,threshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
@@ -4110,7 +4188,6 @@ parse_options() {
       --cache)             Cachedir="${2:-auto}"           ; shift ;;
       --exif)              Exifsourceimage="${2:-auto}"    ; shift ;;
       --force)             Force="${2:-yes}"               ; shift ;;
-#      --grayscale)         Grayscale="${2:-auto}"          ; shift ;;
       -h|--help)           usage                           ; finish 0 ;;
       --layered)           Storelayered="yes"              ;;
       --limit-memory)      Limitmemory="${2:-"80%"}"       ; shift ;;
@@ -4120,8 +4197,6 @@ parse_options() {
       --savemask)          Savemask="${2:-auto}"           ; shift ;;
       -V|--showimage)      Showimageprocessing="yes"       ;;
       --showname)          Showname="yes"                  ;;
-#      --slabs)             Slaboptcount="$((Slaboptcount+1))"
-#                           Slaboptarg[$Slaboptcount]="${2:-auto}" ; shift ;;
       --test)              Testsetup="test" ; Testarg="${2:-}" ; shift ;;
       -v|--verbose)        Verbose="yes"                   ;;
       --version)           echo "imfuse v$Version"         ; finish 0 ;;
@@ -4136,7 +4211,7 @@ parse_options() {
 --maskblur|--maskmorph|--maskstat|--maskwave|\
 --alpha|--finalblur|--finalblur2|--threshold|\
 --bg|--background|\
---colorspace|--cutblur|--cutsoft|--grayscale|--less|--merge|--soft|\
+--colorspace|--cutblur|--cutsoft|--grayscale|--less|--level|--merge|--soft|\
 --slabs)
         Imoptionsnumber="$((Imoptionsnumber+1))"
         Argmethod="${1#--}"
@@ -4169,6 +4244,24 @@ check_options() {
 
   [ "$Sourceimagenumber" = "0" ] && error "No source images provided."
 
+  # --cache
+  [ -n "$Cachedir" ] && {
+    Masktocache="yes"
+    Keepcache="yes"
+    [ "$Cachedir" = "auto" ] && Cachedir=""
+  }
+  Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
+  case "$Masktocache" in
+    yes) [ -z "$Cachedir" ] && Cachedir="./cache.imfuse" ;;
+    no)  [ -z "$Cachedir" ] && Cachedir="./cache.imfuse.$$" ;;
+  esac
+  mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
+  Testimage="$Cachedir/test.png"
+  Resultmask="$Cachedir/result.max.tif"
+  Exitnotefile="$Cachedir/exit"
+  rm -f "$Exitnotefile"
+
+  # mask options
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     [ -z "$Argradius1" ]    && Argradius1="$(maskarg_defaultvalue    "$Argmethod" radius1)"
@@ -4191,8 +4284,7 @@ check_options() {
     [ -n "$Argthreshold2" ] && Argthreshold2="$(maskarg_checkallowed "$Argmethod" threshold2 "$Argthreshold2")"
     [ -n "$Argword1" ]      && Argword1="$(maskarg_checkallowed      "$Argmethod" word1      "$Argword1")"
     [ -n "$Argword2" ]      && Argword2="$(maskarg_checkallowed      "$Argmethod" word2      "$Argword2")"
-    #case $Argmethod in
-    #  blur|comet|compass|diffstat|dog|free|freediff|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
+
     Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
     case "$Argtype" in
       single)
@@ -4255,7 +4347,7 @@ $Argmethod"
 
     maskarg_store "$Count"
   done
-  [ "$Error" ] && return 1
+  checkexit
 
   # w, weight
   for Count in $(seq $Imoptionsnumber); do
@@ -4282,6 +4374,15 @@ $Argmethod"
     esac
   done
 
+  # --align
+  [ "$Align" = "yes" ] && {
+    command -v focus-stack >/dev/null || {
+      error "--align: focus-stack not found.
+  Please install focus-stack.
+  https://github.com/PetteriAimonen/focus-stack"
+    }
+  }
+
   # --basename
   case $Outputbasename in
     #"")   Outputbasename="imfuse" ;;
@@ -4295,20 +4396,9 @@ $Argmethod"
     Outputbasename="$(basename "$Outputbasename")"
   }
 
-  # --cachedir
-  [ -n "$Cachedir" ] && {
-    Masktocache="yes"
-    Keepcache="yes"
-    [ "$Cachedir" = "auto" ] && Cachedir=""
-  }
-  Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
-  case "$Masktocache" in
-    yes) [ -z "$Cachedir" ] && Cachedir="./cache.imfuse" ;;
-    no)  [ -z "$Cachedir" ] && Cachedir="./cache.imfuse.$$" ;;
-  esac
-
   # --colorspace
   maskarg_single "colorspace" && Colorspace="${Argword1^^}"
+  Colorspace="${Colorspace:-"SRGB"}"
 
   # --grayscale
   maskarg_single "grayscale" && {
@@ -4340,13 +4430,11 @@ $Argmethod"
     esac
   }
 
-  # --align
-  [ "$Align" = "yes" ] && {
-    command -v focus-stack >/dev/null || {
-      error "--align: focus-stack not found.
-  Please install focus-stack.
-  https://github.com/PetteriAimonen/focus-stack"
-    }
+  maskarg_single "level" || {
+    note "You did not specify option --level.
+  It almost always makes sense to specify it.
+  Consider to use it if you use any of
+  --alpha, --less, --finalblur, --soft."
   }
 
   # --showimage
@@ -4467,25 +4555,12 @@ main_setup() {
   Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
   Imagelistmemsize="$((Sourceimagenumber*Imagememsize))"
 
+  Sourcemd5="$(md5cut "$(ls -l --full-time ${Sourceimagelist[@]})" )"
+  echo "$Sourcemd5" > "$Cachedir/md5"
+  Showimage="${XDG_RUNTIME_DIR:-$Cachedir}/imfuse.showimage.tif"
+
   # check if source images should be loaded to RAM
   [ "$((Imagelistmemsize))" -lt "$((Limitmemory/2))" ] && Loadsourceimages="yes" || Loadsourceimages="no"
-
-  # --cache
-  mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
-  #rm -rf $Cachedir/*
-  Testimage="$Cachedir/test.png"
-  Resultmask="$Cachedir/result.max.tif"
-  Showimage="${XDG_RUNTIME_DIR:-$Cachedir}/imfuse.showimage.tif"
-  Sourcemd5="$(md5cut "$(ls -l --full-time ${Sourceimagelist[@]})" )"
-#  [ -e "$Cachedir/md5" ] && {
-#    [ "$(cat "$Cachedir/md5")" = "$Sourcemd5" ] || {
-#      note "Source images have changed, cleaning cache."
-#      rm $Cachedir/*
-#    }
-#  }
-  echo "$Sourcemd5" > "$Cachedir/md5"
-  Exitnotefile="$Cachedir/exit"
-  rm -f "$Exitnotefile"
 
   # --output, --basename
   check_outputname
@@ -4565,8 +4640,8 @@ main_setup() {
   return 0
 }
 main() {
-  shopt -s inherit_errexit
-  set -Eeu
+#  shopt -s inherit_errexit
+  set -Eu
   trap trap_sigint SIGINT
   trap finish      EXIT
   trap finish      ERR
