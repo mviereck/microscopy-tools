@@ -137,18 +137,7 @@ Step 2a: Mask generation - contrast masks
                         r       radius              Default: 3
                         (word)  mode1               Default: median
                         (word)  mode2               Default: mean
-                      Possible mode1 and mode2:
-                        0|none|source
-                        1|gradient|grad
-                        2|maximum|max
-                        3|mean
-                        4|median
-                        5|minimum|min
-                        6|mode
-                        7|nonpeak
-                        8|9|rms|rootmeansquare
-                        10|standarddeviation|dev
-                      Most interesting alternative is a max,min difference.
+                      mode1 and mode2 can be out of 'magick -list evaluate'.
  --free [=ARG]        Custom ImageMagick option for mask generation.
                       ARG is an arbitrary ImageMagick command, but must not
                       contain a comma.              Default: '-sharpen 0x3'
@@ -180,10 +169,12 @@ Step 2a: Mask generation - contrast masks
                       ARG additionally takes arguments: 
                         r       radius              Default: 2
                         R       kernel iteration    Default: 1
-                        (word)  mode                Default: edgeout
-                      mode can be one of 'magick -list morphology'
-                      Some modes of interest:
-                        tophat, edge, dilateintensity, smooth
+                        (word1) mode                Default: edgeout
+                        (word2) kernel              Default: octagon
+                      mode can be one of 'magick -list morphology'.
+                        try: tophat, edge, dilate, smooth.
+                      kernel can be one of 'magick -list kernel'.
+                        https://imagemagick.org/Usage/morphology/#kernel
  --prewitt [=ARG]     Prewitt edge detection. 
  --roberts [=ARG]     Roberts edge detection. 
  --sobel [=ARG]       Sobel edge detection. 
@@ -301,15 +292,15 @@ Step 3: Mask merging
                         R        kernel iteration   Default: 2
                         t        threshold          Default: 0%
                         (word1)  mode               Default: close
-                        (word2)  kernel shape       Default: Octagon
+                        (word2)  kernel             Default: Octagon
                       radius is the kernel radius.
                       kernel iteration multiplies the kernel radius.
-                      mode can be one of open, close, erode, dilate, smooth.
-                      See: https://imagemagick.org/Usage/morphology/#basic
+                      mode can be one of 'magick -list morphology'.
+                        try: open, close, erode, dilate, smooth.
+                      kernel can be one of 'magick -list kernel'.
+                        https://imagemagick.org/Usage/morphology/#kernel
                       threshold excludes low contrast areas.
-                      For possible kernel shapes see:
-                      https://imagemagick.org/Usage/morphology/#kernel
-                      CPU costly option. Iterating the kernel is cheaper
+                      CPU expensive option. Iterating the kernel is cheaper
                       than using a greater radius.
  --merge [=ARG]       Compose mode to merge multiple masks.
                       ARG takes arguments:
@@ -319,12 +310,12 @@ Step 3: Mask merging
  --level [=ARG]       Levels merged masks into visible spectrum from 0%..100%
                       to provide the following focus and postprocessing
                       option arguments a full range from 0%..100%.
-                      This option is enabled by default.
+                      This option is enabled by default if needed.
                       ARG takes argument:
                         (word)   mode               Default: all
                       mode can be one of:
-                        all:  Level all masks
-                        slab: Level only merged masks in current slab
+                        all:  Level all masks.
+                        slab: Level only merged masks in current slab.
                         off:  Do not level merged masks.
                       mode 'slab' should only be used to speed up test runs
                       with different mask merging options within one single
@@ -804,8 +795,7 @@ printfreememory() {
 ### Files
 
 checkmagicklist() {
-  ### FIXME
-  magick -list "${1:-}" | grep -q -w -i "^${2:-XXX}"
+  $Magickbin -list "${1:-}" | grep -q -w -i "^${2:-XXX}"
 }
 check_outputname() {
   # Generate a unique output name showing options
@@ -2273,7 +2263,7 @@ Maskgenerator="$Maskgenerator
       Maskgenerator="
   # --morphology
   mpr:sourcegray
-    -morphology ${Argword1:-edge}:${Argradius2:-1} Octagon:${Argradius1:-1}"
+    -morphology ${Argword1:-edge}:${Argradius2:-1} ${Argword2:-Octagon}:${Argradius1:-1}"
     ;;
     none)
       Maskgenerator="
@@ -3724,8 +3714,11 @@ maskarg_checkallowed() {
     ;;
     C)
       case "$Argtype" in
-        contrast|comparision|channel) ;;
-        *) Errormessage="$Method does not take argument blur" ;;
+        contrast|comparision|channel)
+          checkmagicklist colorspace "$(cut -d '-' -f1 <<< "$Arg")" || Errormessage="--$Method=$Arg: unknown colorspace 
+  Please choose one out of 'magick -list colorspace'"
+        ;;
+        *) Errormessage="$Method does not take argument C=" ;;
       esac
     ;;
     percent1)
@@ -3733,7 +3726,7 @@ maskarg_checkallowed() {
         wavelet|halo) ;;
         alpha|less|maskwave|soft) ;;
         slabs) ;;
-        *) Errormessage="$Method does not take argument percent" ;;
+        *) Errormessage="$Method does not take argument percent1" ;;
       esac
     ;;
     percent2)
@@ -3753,7 +3746,7 @@ maskarg_checkallowed() {
         ;;
         finalblur2) ;;
         slabs) ;;
-        *) Errormessage="$Method does not take argument radius" ;;
+        *) Errormessage="$Method does not take argument radius1" ;;
       esac
     ;;
     radius2)
@@ -3766,7 +3759,7 @@ maskarg_checkallowed() {
       case "$Method" in
         blur|comet|dog|gaussian|halo|log|unsharp) ;;
         cutblur|cutsoft|finalblur|maskblur|threshold) ;;
-        *) Errormessage="$Method does not take argument sigma" ;;
+        *) Errormessage="$Method does not take argument sigma1" ;;
       esac
     ;;
     sigma2)
@@ -3792,7 +3785,7 @@ maskarg_checkallowed() {
         *)
           case "$Method" in
             threshold) ;;
-            *) Errormessage="$Method does not take argument threshold1" ;;
+            *) Errormessage="$Method does not take argument threshold2" ;;
           esac
         ;;
       esac
@@ -3805,38 +3798,33 @@ maskarg_checkallowed() {
     ;;
     word1)
       case "$Method" in
+        bg) ;;
         enfuse) ;;
+        grayscale) ;;
         comet|freichen|freediff|laplacian) ;;
         channel|chroma|darkness|lightness|saturation) ;;
         compose|merge|soft)
-          Arg="$(lowercase "${Arg}")"
-          checkmagicklist "compose" "$(tr -d '2' <<< "$Arg")" || {
-            Errormessage="--$Method=$Arg: unknown argument.
-  Please choose one out of 'magick -list $Method'"
-          }
+          checkmagicklist compose "${Arg,,}" || Errormessage="--$Method=$Arg: unknown argument for word1.
+  Please choose one out of 'magick -list compose'"
         ;;
         evaluate)
-          Arg="$(lowercase "${Arg}")"
           checkmagicklist "evaluate" "$(tr -d '2' <<< "$Arg")" || {
             Errormessage="--$Method=$Arg: unknown argument.
-  Please choose one out of 'magick -list $Method'"
+  Please choose one out of 'magick -list evaluate'"
           }
         ;;
-        morphology)
-          Arg="$(lowercase "${Arg}")"
+        morphology|maskmorph)
           checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || {
             Errormessage="--$Method=$Arg: unknown argument.
-  Please choose one out of 'magick -list $Method'"
+  Please choose one out of 'magick -list morphology'"
           }
         ;;
         image) 
-          [ -f "${Arg}" ] || Errormessage="--image: File not found: $Arg"
+          [ -f "${Arg}" ] || Errormessage="--image: File not found: $Arg" ### FIXME
         ;;
         statistic|diffstat|maskstat)
-          Arg="$(lowercase "${Arg}")"
-          Arg="$(maskarg_checkstatistic "$Arg")"
-          [ "$Arg" = "source" ] && Errormessage="--$Method does not take argument $Arg
-  Please choose one out of 'magick -list statistic'"
+          checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown mode '$Arg'.
+  Please choose out of 'magick -list statistic'"
         ;;
         level)
           case "$Arg" in
@@ -3844,10 +3832,10 @@ maskarg_checkallowed() {
             *) Errormessage="$Method does not take argument word1 $Arg" ;;
           esac
         ;;
-        maskmorph) ;;
-        colorspace) ;;
-        bg) ;;
-        grayscale) ;;
+        colorspace) 
+          checkmagicklist colorspace "$Arg" || Errormessage="--$Method=$Arg: unknown colorspace.
+  Please choose one out of 'magick -list colorspace'"
+        ;;
         slabs) 
           case "$Arg" in
             kurt) ;;
@@ -3861,12 +3849,14 @@ maskarg_checkallowed() {
       case "$Method" in
         colorspace) ;;
         diffstat)
-          Arg="$(lowercase "${Arg}")"
-          Arg="$(maskarg_checkstatistic "$Arg")"
+          checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown mode '$Arg'.
+  Please choose out of 'magick -list statistic'"
         ;;
         channel|chroma|darkness|lightness|saturation) ;;
         slabs) ;;
-        maskmorph) ;;
+        morphology|maskmorph)
+          checkmagicklist kernel "$Arg" || Errormessage="--$Method: unknown kernel '$Arg'.
+  Please choose out of 'magick -list kernel'" ;;
         *) Errormessage="$Method does not take argument word2 $Arg" ;;
       esac
     ;;
@@ -3877,29 +3867,6 @@ maskarg_checkallowed() {
     return 1
   }
   echo "$Arg"
-  return 0
-}
-maskarg_checkstatistic() {
-  local Mode
-
-  Mode="${1:-}"
-  case ${Mode,,} in
-    0|source|none)          Mode="source" ;;
-    1|gradient|grad)        Mode="gradient" ;;
-    2|maximum|max)          Mode="maximum" ;;
-    3|mean)                 Mode="mean" ;;
-    4|median)               Mode="median" ;;
-    5|minimum|min)          Mode="minimum" ;;
-    6|mode)                 Mode="mode" ;;
-    7|nonpeak)              Mode="nonpeak" ;;
-    8|9|rms|rootmeansquare) Mode="rms" ;;
-    10|standarddeviation|standard_deviation|standard-deviation|dev) 
-                            Mode="standarddeviation" ;;
-    #*) error "Unknown statistic mode '$Mode'" ; return 1;;
-    *) return 1 ;;
-  esac
-  [ "$Error" ] && return 1
-  echo "$Mode"
   return 0
 }
 maskarg_checkpercent() {
@@ -4511,12 +4478,14 @@ note "${Imoptions[$Count]}=${Imarguments[$Count]}"
 
   # --level
   maskarg_single "level" || {
-    Argmethod="level"
-    Argtype="single"
-    Argword1="all"
-    Imoptionsnumber="$((Imoptionsnumber+1))"
-    Imoptions[$Imoptionsnumber]="$Argmethod"
-    maskarg_store "$Imoptionsnumber"
+    { maskarg_single maskblur || maskarg_single maskmorph || maskarg_single maskstat || maskarg_single maskwave ;} && {
+      Argmethod="level"
+      Argtype="single"
+      Argword1="all"
+      Imoptionsnumber="$((Imoptionsnumber+1))"
+      Imoptions[$Imoptionsnumber]="$Argmethod"
+      maskarg_store "$Imoptionsnumber"
+    }
   }
 
   # --showimage
