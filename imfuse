@@ -310,13 +310,19 @@ Mask merging options:
                         (word)   mode               Default: Screen
                       mode can be one of 'magick -list compose'.
                       Of interest: Plus Interpolate Multiply Exclusion Blend
-                      Can be specified only once, order does not matter.
  --level [=ARG]       Levels merged masks into visible spectrum from 0%..100%.
                       ARG takes argument:
-                        (word1)  mode               Default: all
-                      Leveling the merged masks before the follwing focus
-                      and postprocessing steps helps to provide option percent
-                      arguments a full range from 0%..100%.
+                        (word)   mode               Default: all
+                      Leveling the merged masks before the follwing focus and
+                      postprocessing steps provides percent arguments
+                      a full range from 0%..100%.
+                      mode can be one of:
+                        all:  Level all masks
+                        slab: Level only merged masks in current slab
+                        off:  Do not level merged masks.
+                      mode 'slab' should only be used to speed up test runs
+                      with different mask merging options within one single
+                      slab. Only mode 'all' reliably provides valid values.
 
 Fusion options:
 
@@ -4430,11 +4436,13 @@ $Argmethod"
     esac
   }
 
+  # --level
   maskarg_single "level" || {
-    note "You did not specify option --level.
-  It almost always makes sense to specify it.
-  Consider to use it if you use any of
-  --alpha, --less, --finalblur, --soft."
+    Imoptionsnumber="$((Imoptionsnumber+1))"
+    Argmethod="level"
+    Argtype="single"
+    Argword1="all"
+    maskarg_store "$Imoptionsnumber"
   }
 
   # --showimage
