@@ -94,6 +94,7 @@ Step 1: Color conversion
                       Single channels of interest:   LAB,0 HSL,1  HCL,1
                       For further colorspaces and their channels see:
                       https://legacy.imagemagick.org/Usage/color_basics
+                      and 'magick -list colorspace'.
      --grayscale [=ARG]  Convert images to grayscale before mask generation.
                       Compare ImageMagick options -grayscale and -intensity. 
                       ARG takes argument:
@@ -493,10 +494,10 @@ error() {
 imfuse ERROR: $*
 " >&2
   [ -d "$Cachedir" ] && :> "$Exitnotefile"
-  Error=1
+  kill -s SIGINT $Imfusepid
 }
 note() {
-  [ -z "${Error:-}" ] && echo "imfuse: $*" >&2
+  echo "imfuse: $*" >&2
   return 0
 }
 verbose() {
@@ -520,15 +521,16 @@ showimage() {
   }
   return 0
 }
+traperror() {
+  error "traperror(): Command at Line ${2:-} returned with error code ${1:-}:
+  ${4:-}
+  ${3:-} - ${5:-}"
+}
 
 ### Misc
 
 calc() {
   LC_ALL=C awk "BEGIN {print $* }"
-}
-comma2whitespace() {
-  #sed "s/,/ /g" <<< "${1:-}"
-  echo "${1//,/ /}"
 }
 compare() {
   # compare floating number with < > =
@@ -555,28 +557,6 @@ generate_key() {
   # generate a unique key value from current time and nanoseconds
   date +%s.%N
 }
-levelparse() {
-  local String Part1 Part2
-  String="${1:-}"
-  String="$(tr -d '%' <<< "$String")"
-  grep -q "x" <<< "$String" && {
-    Part1="$(cut -dx    -f1 <<< "$String")"
-    Part2="$(cut -dx -s -f2 <<< "$String")"
-    :
-  } || {
-    Part1="$((0-String))"
-    Part2="$((100-String))"
-  }
-  echo "${Part1}x${Part2}"
-}
-levelpercent() {
-  local String Part1 Part2
-  String="${1:-}"
-  String="$(tr -d '%' <<< "$String")"
-  Part1="$(cut -dx    -f1 <<< "$String")"
-  Part2="$(cut -dx -s -f2 <<< "$String")"
-  echo "${Part1}%x${Part2}%"
-}
 lowercase() {
     # Usage: lowercase "string"
     printf '%s\n' "${1,,}"
@@ -592,16 +572,6 @@ numberofpercent() {
   [ "$Number" -lt "1" ]            && Number=1
   [ "$Number" -gt "$Sourceimagenumber" ] && Number="$Sourceimagenumber"
   echo "$Number"
-}
-parse_percent() {
-  local Percent
-  Percent="${1:-}"
-  Percent="$(tr -d 'p%' <<< "$Percent")"
-  [ "$Percent" = "$(digitonly "$Percent")" ] || {
-    error "Invalid percent value: ${1:}"
-    return 1
-  }
-  echo "$Percent"
 }
 percentrm() {
   # remove % from string
@@ -653,12 +623,12 @@ forcemerge() {
   forcefocus
 }
 forcefocus() {
-  note "forcing focus"
+  note "Forcing focus"
   rm $Cachedir/focus*
   rm $Cachedir/slabresult*
 }
 forcepost() {
-  note "forcing focus postprocessing"
+  note "Forcing focus postprocessing"
   rm $Cachedir/slabresult*-post*
 }
 
@@ -887,7 +857,7 @@ check_outputname() {
   # --savemask
   [ "$Savemask" = "auto" ] && Savemask="$Outputimage.mask.tif"
 
-  return ${Error:-0}
+  return 0
 }
 load_sourceimages() {
   # Load source images into imagemagick registry
@@ -898,7 +868,7 @@ load_sourceimages() {
   Firstimage="${1:-1}"
   Lastimage="${2:-$Sourceimagenumber}"
 
-  for Count in $(seq $Firstimage $Lastimage); do
+  for Count in $(seq $Lastimage -1 $Firstimage); do
     Number="$(printnum "$Count")"
 
     Command=""
@@ -907,7 +877,7 @@ load_sourceimages() {
         [ -z "${Imsourceimagelist[$Count]:-}" ] && {
           Imsourceimagelist[$Count]="mpr:sourceimage.$(printnum $Count)"
 
-          sendmagickmessage "PROGRESS:Loading source image $Count / $Sourceimagenumber"
+          sendmagickmessage "PROGRESS:Loading source image $Count / $Sourceimagenumber: ${Sourceimagelist[$Count]}"
           Command="$Command
   ${Sourceimagelist[$Count]}
     -alpha off
@@ -1047,7 +1017,7 @@ align() {
       ;;
     esac
     Command="$Command
-  $(sendmagickmessage "PROGRESS:Cropping aligned images ${W}x${H}+${X}+${Y} $Count / $Sourceimagenumber")"
+  $(sendmagickmessage "PROGRESS:Cropping aligned images ${W}x${H}+${X}+${Y} $Count / $Sourceimagenumber: $Image")"
     Command="$Command
   $Image
     -crop ${W}x${H}+${X}+${Y}
@@ -1071,10 +1041,10 @@ align() {
   return 0
 }
 alphalevel() {
-  local Command Image Mask Level Clut= Clutimage
+  local Command Image Mask Percent1 Percent2
   local Longoptions Parsedoptions
 
-  Longoptions="image:,mask:,level:,clut:"
+  Longoptions="image:,mask:,percent1:,percent2:"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
 
@@ -1082,21 +1052,20 @@ alphalevel() {
     case "${1:-}" in
       --image)        Image="${2:-}" ; shift ;;
       --mask)         Mask="${2:-}"  ; shift ;;
-      --level)        Level="${2:-}" ; shift ;;
-      --clut)         Clut="${2:-}"  ; shift ;;
+      --percent1)     Percent1="${2:-}" ; shift ;;
+      --percent2)     Percent2="${2:-}" ; shift ;;
     esac
     shift
   done
 
   [ -z "$Image" ] && return 1
-  Level="${Level:-0x100}"
-  Level="$(levelparse "$Level")"
-  Level="$(levelpercent "$Level")"
+  Percent1="${Percent1:-0}"
+  Percent2="${Percent2:-100}"
 
   Command="
   ## alphalevel()
   '$Image'
-    -write mpr:al_image
+    -write mpr:image
     -delete 0"
   case "$Mask" in
     "")
@@ -1104,52 +1073,36 @@ alphalevel() {
   mpr:al_image
     -channel alpha
     -separate
-    -write mpr:al_mask
+    -write mpr:mask
     -delete 0"
     ;;
     *)
       Command="$Command
   $Mask
-    -write mpr:al_mask
+    -write mpr:mask
     -delete 0"
     ;;
   esac
 
-  [ "$Clut" ] && {
-    Command="$Command
-  -size 256x256
-  gradient:
-    -rotate 90
-    -depth 16
-    -sigmoidal-contrast ${Clut}%
-    -write mpr:al_clut
-    -delete 0
-  mpr:al_mask
-  mpr:al_clut
-    -clut
-    -write mpr:al_mask
-    -delete 0"
-  }
-
   Command="$Command
-  mpr:al_mask
-    +level $Level
-    -write mpr:al_mask
+  mpr:mask
+    +level ${Percent1}%x${Percent2}%
+    -write mpr:mask
     -delete 0"
 
   case "$Mask" in
     "") ;;
     *)
       Command="$Command
-  mpr:al_mask
+  mpr:mask
     -write $Mask
     -delete 0"
     ;;
   esac
 
   Command="$Command
-  mpr:al_image
-  mpr:al_mask
+  mpr:image
+  mpr:mask
     -alpha off
     -compose CopyOpacity -composite
     $Tifstorealpha
@@ -1157,9 +1110,8 @@ alphalevel() {
     -delete 0"
 
   Command="$Command
-  +set registry:al_clut
-  +set registry:al_image
-  +set registry:al_mask"
+  +set registry:image
+  +set registry:mask"
 
   Command="$Command
   ## /alphalevel()"
@@ -1193,6 +1145,100 @@ enfuse_split() {
   local Command Count
   local Firstimage Lastimage
   local Mem_free Mem_needed
+  local Splitimagelist= Splitimagename Splitresult= Splitcache Split Splits Splitheight
+
+  Resultimage="${1:-}"
+  Firstimage="${2:-1}"
+  Lastimage="${3:-$Sourceimagenumber}"
+
+  Mem_free="$(printfreememory)"
+  Mem_needed="$(( (Lastimage-Firstimage+1) * Imagewidth*Imageheight * 2 * 32 / (8*1024)))"
+  Enfuseoptions="--contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask"
+
+  sendmagickmessage "NOTE:Generating image with external tool enfuse"
+
+  ### Single run attempt
+  [ "$Mem_needed" -lt "$Mem_free" ] && {
+    nice enfuse $Enfuseoptions -o "$Resultimage" $(sourceimagelist $Firstimage $Lastimage --nompr) 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
+    return 0
+  }
+
+  ### Splitting attempt
+  note "enfuse: Splitting source images due to low memory."
+
+  Splits="$((Mem_needed / Mem_free +1))"
+  Splitheight=$((Imageheight/Splits))
+  Splitcache="$Cachedir/enfuse.split"
+  mkdir -p "$Splitcache"
+
+#  for Split in $(seq $Splits); do
+#    Splitgeometry[$Split]="$((Splitwidth + $([ "$Split" -lt "$Splits" ] && echo 20 || echo 0) ))x${Imageheight}+$(( (Split -1) * Splitwidth ))+0"
+#  done
+  for Split in $(seq $Splits); do
+    Splitgeometry[$Split]="${Imagewidth}x$((Splitheight + $([ "$Split" -lt "$Splits" ] && echo 20 || echo 0) ))+0+$(( (Split-1) * Splitheight ))"
+  done
+
+  load_sourceimages $Firstimage $Lastimage
+  for Count in $(seq $Firstimage $Lastimage); do
+    sendmagickmessage "PROGRESS:enfuse: Splitting source images into $Splits parts step $Count / $Lastimage: ${Sourceimagelist[$Count]}"
+    Command="
+  ${Sourceimagelist[$Count]}
+    -write mpr:sourceimage
+    -delete 0"
+    for Split in $(seq $Splits); do
+      Splitimagename="$Splitcache/split.$(printnum $Count).${Split}.png"
+      Command="$Command
+  mpr:sourceimage
+    -crop ${Splitgeometry[$Split]}
+    -write ${Splitimagename}
+    -delete 0"
+      Splitimagelist[$Split]="${Splitimagelist[$Split]:-} $Splitimagename"
+    done
+    #cmd "$Command"
+    multicore "$Magickbin $(tr -d "\n" <<< "$Command") -exit"
+  done
+  multicore_wait
+  sendmagickmessage "/PROGRESS"
+  #cmd_waitforready
+
+  for Split in $(seq $Splits); do
+    note "Running enfuse step $Split / $Splits"
+    Splitresult[$Split]="$Splitcache/splitresult${Split}.png"
+    nice enfuse $Enfuseoptions -o "${Splitresult[$Split]}" ${Splitimagelist[$Split]} 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
+    showimage "$Splitresult[$Split]"
+  done
+
+  sendmagickmessage "NOTE:enfuse: Appending splits to result"
+  Command="
+  mpr:black
+    -write mpr:resultimage
+    -delete 0"
+  for Split in $(seq $Splits); do
+    Command="$Command
+  mpr:resultimage
+    ${Splitresult[$Split]}
+    -geometry 0+$(( (Split -1) * Splitheight ))
+    -composite
+    -write mpr:resultimage
+    -delete 0"
+  done
+  Command="$Command
+  mpr:resultimage
+    $Tifstore
+    -write $Resultimage
+    -delete 0"
+  cmd "$Command"
+  cmd_waitforready
+
+  rm -r "$Splitcache"
+
+  return 0
+}
+enfuse_splitX() {
+  local Resultimage Enfuseoptions
+  local Command Count
+  local Firstimage Lastimage
+  local Mem_free Mem_needed
   local Splitimagelist= Splitimagename Splitresult= Splitcache Split Splits Splitwidth
 
   Resultimage="${1:-}"
@@ -1208,7 +1254,7 @@ enfuse_split() {
   ### Single run attempt
   [ "$Mem_needed" -lt "$Mem_free" ] && {
     nice enfuse $Enfuseoptions -o "$Resultimage" $(sourceimagelist $Firstimage $Lastimage --nompr) 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
-    return "${Error:-0}"
+    return 0
   }
 
   ### Splitting attempt
@@ -1225,7 +1271,7 @@ enfuse_split() {
 
   load_sourceimages $Firstimage $Lastimage
   for Count in $(seq $Firstimage $Lastimage); do
-    sendmagickmessage "PROGRESS:enfuse: Splitting source images into $Splits parts step $Count / $Lastimage"
+    sendmagickmessage "PROGRESS:enfuse: Splitting source images into $Splits parts step $Count / $Lastimage: ${Sourceimagelist[$Count]}"
     Command="
   ${Sourceimagelist[$Count]}
     -write mpr:sourceimage
@@ -1343,7 +1389,7 @@ evaluate_iterative() {
       for Count in $(seq 2 $Imagenumber); do
         Command="$Command
   ${Imagelist[$Count]}
-    -format 'PROGRESS:Composing $Count / $Imagenumber\n'
+    -format 'PROGRESS:Evaluating $Count / $Imagenumber: ${Imagelist[$Count]}\n'
     -write info:
     -compose $Mode -composite
     $(showimagecode)"
@@ -1354,7 +1400,7 @@ evaluate_iterative() {
         Command="$Command
   ${Imagelist[$Count]}
     -alpha off
-    -format 'PROGRESS:Composing $Count / $Imagenumber\n'
+    -format 'PROGRESS:Evaluating $Count / $Imagenumber: ${Imagelist[$Count]}\n'
     -write info:
     -compose blend
     -set option:compose:args $(calc 100/$Count)
@@ -1374,79 +1420,6 @@ evaluate_iterative() {
   sendmagickmessage "/PROGRESS"
 
   return 0
-}
-evaluate_stepwise() {
-  # same as evaluate-sequence max or min,
-  # but loads images one by one into ram instead of altogether.
-  # $1 mode. Supported: max min 
-  # $2 result image
-  # $@ source images
-  
-  local Mode Composemode Resultimage Sourceimagelist Command Line Firstimage Count
-  local Startzeit Dauer
-
-  Mode="${1:-}" ; shift
-  Resultimage="${1:-}" ; shift
-  Firstimage="${1:-}" ; shift
-  Sourceimagelist=""
-  while [ $# -gt 0 ]; do
-    Sourceimagelist="$Sourceimagelist
-${1:-}"
-    shift
-  done
-  Sourceimagelist="$(grep . <<< "$Sourceimagelist")"
-  
-  case $Mode in
-    max) Composemode="Lighten" ;;
-    min) Composemode="Darken" ;;
-    mean) ;;
-    *) 
-      error "evaluate_stepwise(): Unsupported mode: $Mode"
-      return 1
-    ;;
-  esac
-  
-  case $Mode in
-    min|max)
-      Command="$Magickbin
-  $Firstimage"
-      while read Line; do
-        Command="$Command
-  $Line
-    -alpha off
-    -compose $Composemode -composite"
-      done <<< "$Sourceimagelist"
-      Command="$Command 
-  $Resultimage"
-    ;;
-    mean)
-      Command="$Magickbin
-  $Firstimage"
-      Count=1
-      while read Line; do
-        Count="$((Count+1))"
-        Command="$Command
-  $Line
-    -alpha off
-    -compose blend
-    -set option:compose:args $(calc 100/$Count)
-    -composite"
-      done <<< "$Sourceimagelist"
-      Command="$Command
-  $Resultimage"
-    ;;
-  esac
-
-  Startzeit="$(date +%s)"
-  verbose "evaluate_stepwise(): $Mode $Resultimage"
-  $Command || {
-    error "Error in evaluate_stepwise():
-$Command"
-  return 1
-  }
-  Dauer="$(( $(date +%s)-Startzeit))"
-  verbose "Duration: $(date -u -d @$Dauer +"%T")"
-  showimage "$Resultimage"
 }
 evaluate_splitlist() {
 
@@ -1520,7 +1493,7 @@ exiftransfer() {
   eval exiftool -ignoreMinorErrors -overwrite_original_in_place $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
 }
 finalblur() {
-  local Image Mask Percent Sigma1 Sigma2 Command Error
+  local Image Mask Percent Sigma1 Sigma2 Command
   local Longoptions Parsedoptions
 
   Longoptions="image:,mask:,percent:,sigma1:,sigma2:"
@@ -1737,12 +1710,12 @@ generate_video() {
   ffplay "$Video"
 }
 level_masks() {
-  local Maskbasename Maskmax Maskmin Maskmd5 Clutimage Resultmask
+  local Maskbasename Maskmax Maskmin Maskmd5 Clutimage Resultmask Clut=
   local Count Mask Masklist Levelmin Levelmax
   local Longoptions Parsedoptions
   local Firstimage Lastimage
 
-  Longoptions="first:,last:,name:,output:"
+  Longoptions="first:,last:,name:,output:,clut"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
   while [ $# -gt 0 ]; do
@@ -1751,6 +1724,7 @@ level_masks() {
       --last)     Lastimage="${2:-}" ; shift ;;
       --name)     Maskbasename="${2:-}" ; shift ;;
       --output)   Outputbasename="${2:-}" ; shift ;;
+      --clut)     Clut="yes" ;;
     esac
     shift
   done
@@ -1792,13 +1766,15 @@ level_masks() {
   mkclut_uniform "$Maskmax" "$Clutimage"
 
   for Count in $(seq $Lastimage -1 $Firstimage); do
-    sendmagickmessage "PROGRESS:Mask leveling $Maskbasename ${Levelmin}%,${Levelmax}% step $Count / $Sourceimagenumber"
+    sendmagickmessage "PROGRESS:Mask leveling ${Levelmin}%,${Levelmax}% step $Count / $Sourceimagenumber: $Maskbasename"
 
     Command="
   $(maskname "$Maskbasename" "$Count")
-    -level ${Levelmin}%,${Levelmax}%
+    -level ${Levelmin}%,${Levelmax}%"
+    [ "$Clut" = "yes" ] && Command="$Command
   $Clutimage
-    -clut
+    -clut"
+    Command="$Command
     -write $(maskname "$Outputbasename" "$Count")
     $(showimagecode "$(maskname "$Outputbasename" "$Count")")
     -delete 0"
@@ -1808,7 +1784,7 @@ level_masks() {
   sendmagickmessage "/PROGRESS"
   cmd_waitforready
 
-  return "${Error:-0}"
+  return 0
 }
 maskfromimage() {
   # Generate masks with basename $2 based on comparision with a single image $1
@@ -1824,7 +1800,7 @@ maskfromimage() {
     Sourceimage="$(sourceimagename $Count)"
 
     Command="$Command
-  $(sendmagickmessage "PROGRESS:image comparision mask step $Count / $Sourceimagenumber")"
+  $(sendmagickmessage "PROGRESS:image comparision mask step $Count / $Sourceimagenumber: $Imagename")"
 
     Command="
   '$Imagename' 
@@ -2445,7 +2421,7 @@ $Maskgenerator
       Command=""
 
       # Generate command to generate masks
-      sendmagickmessage "PROGRESS:Mask generation step $Count / $Sourceimagenumber"
+      sendmagickmessage "PROGRESS:Mask generation step $Count / $Sourceimagenumber: $(sourceimagename $Count)"
       maskarg_single "colorspace"
       Command="$Command
   ( $(sourceimagename $Count)
@@ -2491,7 +2467,7 @@ ${Maskgenerator_all//NUMBER/$Number}"
       [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/level.$Argbasename" ] && { ### FIXME
         sendmagickmessage "NOTE:level_masks(): Skipping, mask is already leveled."
       } || {
-        level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage"
+        level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage" --clut
         [ "$Masktocache" = "yes" ] && :> "$Cachedir/level.$Argbasename"
       }
     }
@@ -2588,7 +2564,7 @@ focus_merge_masks() {
     maskarg_parse "$Count"
     case "$Argtype" in
       merge)
-        Mergemaskbasename="$Mergemaskbasename-${Imoptions[$Count]}${Imarguments[$Count]}"
+        Mergemaskbasename="$Mergemaskbasename-${Imoptions[$Count]}${Imarguments[$Count]%,TYPE*}"
         Mergecode="$Mergecode
   mpr:mergemask"
         case "${Imoptions[$Count]}" in
@@ -2672,15 +2648,17 @@ focus_merge_masks() {
 
   Mergemaskbasename="$Mergemaskbasename.$(md5cut "$Sourcemd5 $Mergecode" )"
 
-  maskexist "$Mergemaskbasename" "$Firstimage" "$Lastimage"  && note "Skipping merge, $Mergemaskbasename $Firstimage..$Lastimage already exists" && return 0
-  # merge masks
-  for Count in $(seq $Lastimage -1 $Firstimage); do
-    Command=""
-    Mergemask="$(maskname "$Mergemaskbasename" $Count)"
+  maskexist "$Mergemaskbasename" "$Firstimage" "$Lastimage"  && {
+    note "Skipping merge, $Mergemaskbasename $Firstimage..$Lastimage already exists"
+  } || {
+    # merge masks
+    for Count in $(seq $Lastimage -1 $Firstimage); do
+      Command=""
+      Mergemask="$(maskname "$Mergemaskbasename" $Count)"
 
-    Command="$Command
-  $(sendmagickmessage "PROGRESS:Mask merging step $Count / $Sourceimagenumber")"
-    Command="$Command
+      Command="$Command
+  $(sendmagickmessage "PROGRESS:Mask merging step $Count / $Sourceimagenumber: $Mergemaskbasename")"
+      Command="$Command
 $(sed "s/NUMBER/$(printnum $Count)/g" <<< "$Mergecode" )
   mpr:mergemask
     $Tifstore 
@@ -2688,32 +2666,34 @@ $(sed "s/NUMBER/$(printnum $Count)/g" <<< "$Mergecode" )
     $(showimagecode "$Mergemask")
     -delete 0"
 
-    maskexist "$Mergemaskbasename" "$Count" || cmd "$Command"
-  done
-  sendmagickmessage "/PROGRESS"
-  cmd_waitforready
+      maskexist "$Mergemaskbasename" "$Count" || cmd "$Command"
+    done
+    sendmagickmessage "/PROGRESS"
+    cmd_waitforready
+  }
 
   # --level
   maskarg_single "level" && {
     case "$Argword1" in
+      off)  Newbasename="$Mergemaskbasename" ;;
+      slab) Newbasename="level${Firstimage}..${Lastimage}_$Mergemaskbasename" ;;
+      all)  Newbasename="levelall_$Mergemaskbasename" ;;
+    esac
+    case "$Argword1" in
       off) ;;
-      slab)
-        level_masks --name="$Mergemaskbasename" --output="level${Firstimage}..${Lastimage}_$Mergemaskbasename" --first="$Firstimage" --last="$Lastimage"
-        Mergemaskbasename="level${Firstimage}..${Lastimage}_$Mergemaskbasename"
-      ;;
-      all)
-        [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/$Mergemaskbasename" ] && {
-          sendmagickmessage "NOTE:--level: Skipping, mask is already leveled."
+      slab|all)
+        [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/$Newbasename" ] && {
+          sendmagickmessage "NOTE:--level=$Argword1: Skipping, mask is already leveled."
         } || {
-          level_masks --name="$Mergemaskbasename" --output="levelall_$Mergemaskbasename" --first="$Firstimage" --last="$Lastimage"
-          Mergemaskbasename="levelall_$Mergemaskbasename"
-          [ "$Masktocache" = "yes" ] && :> "$Cachedir/$Mergemaskbasename"
+          level_masks --name="$Mergemaskbasename" --output="$Newbasename" --first="$Firstimage" --last="$Lastimage"
+          [ "$Masktocache" = "yes" ] && :> "$Cachedir/$Newbasename"
         }
+        Mergemaskbasename="$Newbasename"
       ;;
     esac
   }
 
-  return ${Error:-0}
+  return 0
 }
 focus_hard() {
   # Finally: focus stacking
@@ -2804,7 +2784,7 @@ focus_hard() {
     Sourceimage="$(sourceimagename $Count)"
 
     Command="$Command
-  $(sendmagickmessage "PROGRESS:Focus montage step $Count / $Sourceimagenumber")"
+  $(sendmagickmessage "PROGRESS:Focus montage step $Count / $Sourceimagenumber: $Sourceimage")"
     # Load images
     Command="$Command
   $Sourceimage
@@ -3067,7 +3047,7 @@ focus_soft() {
     Sourcemask="$(maskname "$Mergemaskbasename" "$Count")"
     Sourceimage="$(sourceimagename $Count)"
 
-    sendmagickmessage "PROGRESS:Focus montage soft step $Count / $Sourceimagenumber"
+    sendmagickmessage "PROGRESS:Focus montage soft step $Count / $Sourceimagenumber: $Sourceimage"
 
     Command="$Command
   $Sourceimage
@@ -3161,7 +3141,7 @@ focus_soft() {
   cmd_waitforready
   #+set registry:resultimage
 
-  return ${Error:-0}
+  return 0
 }
 focus_main() {
   local Slabstep
@@ -3237,7 +3217,7 @@ ${Slabmask[$Slabstep]}
               case "$Option" in
                 alpha)
                   alphalevel --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" \
-                             --level "${Argpercent1}%x${Argpercent2}%"
+                             --percent1 "${Argpercent1}" --percent2 "{Argpercent2}%"
                 ;;
                 finalblur)
                   finalblur  --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" \
@@ -3953,7 +3933,7 @@ readmagickmessage() {
     Content="$(cut -d: -f2- <<< "$Line")"
     case "$Code" in
       PROGRESS)
-        printsameline "imfuse: $Content"
+        printsameline "$(cut -c1-${COLUMNS:-80} <<< "imfuse: $Content")"
       ;;
       /PROGRESS|NEWLINE)
         echo "" >&2
@@ -4045,7 +4025,7 @@ trap_sigint() {
   trap - ERR
   set +x
   note "Received SIGINT"
-  kill "$Magickscriptpid"
+  [ -n "$Magickscriptpid" ] && kill "$Magickscriptpid"
   :> "$Exitnotefile"
   multicore_break
   finish 130
@@ -4072,7 +4052,7 @@ finish() {
   exec 3>&-
 
   #[ -f "$Magickfifolog" ]   && cp "$Magickfifolog" .
-  [ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" .
+  #[ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" .
 
   [ -f "${Showimage:-}" ] && rm "$Showimage"
   [ "$Keepcache" = "no" ] && [ -d "$Cachedir" ] && rm -R "$Cachedir"
@@ -4081,9 +4061,6 @@ finish() {
   trap - SIGINT
   trap - EXIT
   exit "${1:-0}"
-}
-checkexit() {
-  [ -e "$Exitnotefile" ] && finish
 }
 declare_variables() {
   Arglist='
@@ -4119,7 +4096,6 @@ declare_variables() {
   Align=""
   Cachedir=""
   Colorspace=""
-  Error=""
   Exitnotefile=""
   Exifsourceimage=""
   Firstimage=""
@@ -4140,6 +4116,7 @@ black
 transparent
 white"
   Imarguments=""
+  Imfusepid="$$"
   Imoptions=""
   Imoptionsnumber="0"
   Imsourceimagelist=""
@@ -4223,7 +4200,6 @@ parse_options() {
   eval set -- "$Parsedoptions"
 
   while [ $# -gt 0 ]; do
-    [ "$Error" ] && break
     case "${1:-}" in
       --align)             Align="yes"                     ;;
       --basename)          Outputbasename="${2:-auto}"     ; shift ;;
@@ -4275,16 +4251,25 @@ parse_options() {
     shift
   done
   Sourceimagelist="$(IFS=$'\n' sort -V $Revertimagelist <<< "${Sourceimagelist[@]:-}")"
-  return ${Error:-0}
+  return 0
 }
 check_options() {
   # parse arguments, check validity, set defaults
 
   local Arg Part1 Part2 Weightsum= Weightrest Masknoweightcount= Singleoptionlist=
   local Firstimage Lastimage Slabsize Position
-  local Error=
 
   [ "$Sourceimagenumber" = "0" ] && error "No source images provided."
+
+  # magick
+  Magickbin="$(command -v magick)"
+  [ -e "/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4.5.6" ] && {
+    # https://imagemagick.org/script/openmp.php
+    # https://goog-perftools.sourceforge.net/doc/tcmalloc.html
+    #Magickbin="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4.5.6 $Magickbin"
+    :
+  }
+  [ -z "$Magickbin" ] && error "Command 'magick' not found. Please install ImageMagick version 7."
 
   # --cache
   [ -n "$Cachedir" ] && {
@@ -4295,7 +4280,7 @@ check_options() {
   Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
   case "$Masktocache" in
     yes) [ -z "$Cachedir" ] && Cachedir="./cache.imfuse" ;;
-    no)  [ -z "$Cachedir" ] && Cachedir="./cache.imfuse.$$" ;;
+    no)  [ -z "$Cachedir" ] && Cachedir="./cache.imfuse.$Imfusepid" ;;
   esac
   mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
   Testimage="$Cachedir/test.png"
@@ -4389,10 +4374,11 @@ $Argmethod"
 
     maskarg_store "$Count"
   done
-  checkexit
-    for Count in $(seq "$Imoptionsnumber"); do
-note "${Imoptions[$Count]}=${Imarguments[$Count]}"
-    done
+
+  for Count in $(seq "$Imoptionsnumber"); do
+    verbose "${Imoptions[$Count]}=${Imarguments[$Count]}"
+  done
+
   # w, weight
   for Count in $(seq $Imoptionsnumber); do
     maskarg_parse "$Count"
@@ -4424,7 +4410,6 @@ note "${Imoptions[$Count]}=${Imarguments[$Count]}"
       error "--align: focus-stack not found.
   Please install focus-stack.
   https://github.com/PetteriAimonen/focus-stack"
-      checkexit
     }
   }
 
@@ -4459,10 +4444,7 @@ note "${Imoptions[$Count]}=${Imarguments[$Count]}"
       7|average)         Grayscalenumber=7 ; Grayscale="Average" ;;
       8|ms)              Grayscalenumber=8 ; Grayscale="MS" ;;
       9|rms)             Grayscalenumber=9 ; Grayscale="RMS" ;;
-      *)
-        error "--grayscale: Unknown argument: $Grayscale"
-        checkexit
-      ;;
+      *) error "--grayscale: Unknown argument: $Grayscale" ;;
     esac
     case $Grayscale in
       ""|none)
@@ -4479,6 +4461,7 @@ note "${Imoptions[$Count]}=${Imarguments[$Count]}"
   # --level
   maskarg_single "level" || {
     { maskarg_single maskblur || maskarg_single maskmorph || maskarg_single maskstat || maskarg_single maskwave ;} && {
+      eval $Arglist
       Argmethod="level"
       Argtype="single"
       Argword1="all"
@@ -4552,37 +4535,27 @@ note "${Imoptions[$Count]}=${Imarguments[$Count]}"
 
   # --soft
   [ "$Softmode" = "yes" ] && {
-    maskarg_single "cutblur" && Softmode="error"
-    maskarg_single "cutsoft" && Softmode="error"
-    maskarg_single "less"    && Softmode="error"
-    [ "$Softmode" = "error" ] && {
-      error "Option --soft does not support options
+    maskarg_single "cutblur"  && Softmode="error"
+    maskarg_single "cutsoft"  && Softmode="error"
+    maskarg_single "less"     && Softmode="error"
+    [ "$Softmode" = "error" ] && error "Option --soft does not support options
   --cutblur, --cutsoft, --less."
-      checkexit
-    }
   }
 
-  return ${Error:-0}
+  return 0
 }
 main_setup() {
 
   # check magick version
-  Magickbin="$(command -v magick)"
-  [ -e "/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4.5.6" ] && {
-    # https://imagemagick.org/script/openmp.php
-    # https://goog-perftools.sourceforge.net/doc/tcmalloc.html
-    #Magickbin="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4.5.6 $Magickbin"
-    :
-  }
-  [ -z "$Magickbin" ] && error "Command 'magick' not found. Please install ImageMagick version 7."
   Magickversion="$($Magickbin -version)"
+
   # Bytesperpixel*(channels)*unknownfactor
-  grep -q " Q8 "        <<< "$Magickversion" && Magickpixelmemory="$(( 1*(5) *3 ))"
-  grep -q " Q8-HDRI "   <<< "$Magickversion" && Magickpixelmemory="$(( 2*(5) *3 ))"
-  grep -q " Q16 "       <<< "$Magickversion" && Magickpixelmemory="$(( 2*(5) *3 ))"
-  grep -q " Q16-HDRI "  <<< "$Magickversion" && Magickpixelmemory="$(( 4*(5) *3 ))"
-  grep -q " Q32 "       <<< "$Magickversion" && Magickpixelmemory="$(( 4*(5) *3 ))"
-  grep -q " Q32-HDRI "  <<< "$Magickversion" && Magickpixelmemory="$(( 8*(5) *3 ))"
+  grep -q " Q8 "        <<< "$Magickversion" && Magickpixelmemory="$(calc "1*(5) *1.2")"
+  grep -q " Q8-HDRI "   <<< "$Magickversion" && Magickpixelmemory="$(calc "2*(5) *1.2")"
+  grep -q " Q16 "       <<< "$Magickversion" && Magickpixelmemory="$(calc "2*(5) *1.2")"
+  grep -q " Q16-HDRI "  <<< "$Magickversion" && Magickpixelmemory="$(calc "4*(5) *1.2")"
+  grep -q " Q32 "       <<< "$Magickversion" && Magickpixelmemory="$(calc "4*(5) *1.2")"
+  grep -q " Q32-HDRI "  <<< "$Magickversion" && Magickpixelmemory="$(calc "8*(5) *1.2")"
   Magickversion="$(head -n1 <<< "$Magickversion" | cut -d' ' -f3)"
 
   # check RAM
@@ -4618,13 +4591,14 @@ main_setup() {
 
   # --output, --basename
   check_outputname
+
   # --showname
   [ "$Showname" = "yes" ] && {
     echo "$Outputimage"
     finish
   }
 
-  note "
+  verbose "
   imfuse Version:                     $Version
   Imagemagick version:                $Magickversion
   Image number:                       $Sourceimagenumber
@@ -4635,16 +4609,15 @@ main_setup() {
   Memory total (including zram):      $(($(printtotalmemory)/1000)) MB
   Memory currently free:              $((Freemem/1000)) MB
   Memory limit for imagemagick:       $((Limitmemory/1000)) MB
-  Loading source images to RAM:       $Loadsourceimages
-  Option summary: $Resultbasename"
-  #[ "$Maskmethodnumber" = "0" ] && note "No mask option specified, generating background only: $Background"
+  Loading source images to RAM:       $Loadsourceimages"
+  note "$Resultbasename"
 
   # start magick -script in background
   Magickfifo="$Cachedir/magickfifo"
   Magickfifolog="$Cachedir/magickmessage.log"
   Magickscriptlog="$Cachedir/magickscript.log"
-  Magickfifolog="./magickmessage.log"
-  Magickscriptlog="./magickscript.log"
+  Magickfifolog="$Cachedir/magickmessage.log"
+  Magickscriptlog="$Cachedir/magickscript.log"
   :> $Magickscriptlog
   rm -f "$Magickfifo" 2>/dev/null ||:
   mkfifo $Magickfifo
@@ -4698,7 +4671,7 @@ main() {
   set -Eu
   trap trap_sigint SIGINT
   trap finish      EXIT
-  trap finish      ERR
+  trap 'traperror $? $LINENO $BASH_LINENO "$BASH_COMMAND" $(printf "::%s" ${FUNCNAME[@]})'  ERR
   Untrap="
 trap - SIGINT
 trap - EXIT
@@ -4707,7 +4680,6 @@ trap - ERR"
   declare_variables
   parse_options "$@"
   check_options
-  [ "$Error" ] && return 1
   main_setup
   multicore_init
 
@@ -4748,7 +4720,7 @@ trap - ERR"
   # --video
   [ "$Video" ]    && generate_video
 
-  return "${Error:-0}"
+  return 0
 }
-main "$@" || Error=1
-finish "${Error:-0}"
+main "$@" || finish 1
+finish 0
