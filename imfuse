@@ -16,7 +16,10 @@ usage() {
   echo "imfuse v$Version
 Combines focus stackshot images to one overall sharp image.
 
-It assumes that the alphanumerical order of the input images goes
+Usage:
+  imfuse [OPTIONS] -- image1 image2 image3 ...
+
+imfuse assumes that the alphanumerical order of the input images goes
 from front to back; for the other way around use option --revert.
 
 Dependencies:
@@ -28,9 +31,6 @@ Dependencies:
   focus-stack         Optional, needed for option --align.
                         https://github.com/PetteriAimonen/focus-stack
   xclip               Optional, to send result file name to clipboard.
-
-Usage:
-  imfuse [OPTIONS] -- image1 image2 image3 ...
 
 General options:
      --align              Align images.
@@ -81,7 +81,7 @@ Arguments additionally taken by some options:
 
 Step 1: Color conversion
   By default imfuse uses colorspace sRGB and does not convert to grayscale.
-  Normally you don't need these options.
+  Normally you don't need to adjust these options.
 
      --colorspace [=ARG]  Define the colorspace from where to generate the
                       masks. Experimental option, less useful yet.
@@ -107,7 +107,7 @@ Step 1: Color conversion
                         7 Average
                         8 MS
                         9 RMS
-                      Converting to grayscale for mask generation speeds up
+                      Converting to grayscale for mask generation can speed up
                       image processing, but the result might be less accurate.
 
 Step 2a: Mask generation - contrast masks
@@ -347,7 +347,7 @@ Step 4: Stack fusion
                       difference between background and foreground object.
                       If unsharp areas appear, use a greater percent value.
                       If the foreground object still has holes, use a lower 
-                      percent value or try --maskstat, --maskblur or --maskmorph.
+                      percent value or try some of the --mask* options.
  --slabs [=ARG]       Split stack into different stacks (called slabs)
                       and fuse them separately. Can be specified multiple times.
                       ARG takes arguments:
@@ -375,8 +375,8 @@ Step 4: Stack fusion
                       default maximum contrast montage. Images are multiplied 
                       with their contrast masks and added altogether as a whole.
                       ARG takes arguments:
-                        p        percent1          Default: 4%
-                        P        percent2          Default: 400%
+                        p        percent1          Default: 2%
+                        P        percent2          Default: 100%
                         (word)   mode              Default: Plus
                       Increasing percent1 increases softness of low contrast.
                       Increasing percent2 increases sharpness of high contrast.
@@ -3489,14 +3489,14 @@ maskarg_defaultvalue() {
 
         less)       echo "50" ;;
         maskwave)   echo "50" ;;
-        soft)       echo "4" ;;
+        soft)       echo "2" ;;
         *)          echo "" ;;
       esac
     ;;
     percent2)
       case "${1:-}" in
         alpha)      echo "100" ;;
-        soft)       echo "400" ;;
+        soft)       echo "100" ;;
         *)          echo "" ;;
       esac
     ;;
