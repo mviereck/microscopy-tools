@@ -79,7 +79,9 @@ Arguments additionally taken by some options:
   N         Second integer value.
   (word)    Some options take one or two word arguments.
 
-Colorspace and grayscale options:
+Step 1: Color conversion
+  By default imfuse uses colorspace sRGB and does not convert to grayscale.
+  Normally you don't need these options.
 
      --colorspace [=ARG]  Define the colorspace from where to generate the
                       masks. Experimental option, less useful yet.
@@ -108,8 +110,8 @@ Colorspace and grayscale options:
                       Converting to grayscale for mask generation speeds up
                       image processing, but the result might be less accurate.
 
-Contrast mask options:
-  Can be specified multiple times. The order does not matter.
+Step 2a: Mask generation - contrast masks
+  Options can be specified multiple times. The order does not matter.
   Most of interest: --morphology, --statistic, --wavelet
 
  --blur [=ARG]        Blur edge detection. 
@@ -205,8 +207,8 @@ Contrast mask options:
                       ARG additionally takes argument:
                         p       percent             Default: 10
 
-Image comparision mask options:
-  Can be specified multiple times. The order does not matter.
+Step 2b: Mask generation - image comparision masks
+  Options can be specified multiple times. The order does not matter.
   Most of interest: --enfuse
 
  --compose [=ARG]     Composes evaluated min,max of source images with MODE.
@@ -246,8 +248,8 @@ Image comparision mask options:
  --min [=ARG]         Same as --evaluate=min. Darkest pixels of stack.
                       Result is similar to --darkness.
 
-Colorspace channel mask options:
-  Can be specified multiple times. The order does not matter.
+Step 2c: Mask generation - colorspace channel masks
+  Options can be specified multiple times. The order does not matter.
   All options are variations of --channel. Most of interest: --saturation
 
  --channel [=ARG]     Use a colorspace channel as mask.
@@ -265,7 +267,9 @@ Colorspace channel mask options:
                       Adding this with low weight, e.g. --saturation=w5,
                       can soften the image so it looks more natural.
 
-Mask merging options:
+Step 3: Mask merging
+  The contrast masks generated in step 2 are merged into one per image.
+  Furthermore they can be adjusted with --mask* options.
   Options beginning with --mask* can be specified multiple times.
   The order matters, prefer to use in the order shown here.
 
@@ -324,7 +328,9 @@ Mask merging options:
                       with different mask merging options within one single
                       slab. Only mode 'all' reliably provides valid values.
 
-Fusion options:
+Step 4: Stack fusion
+  The source images are processed with the merged masks,
+  the overall sharp image will be generated.
 
  --cutblur [=ARG]     Blur cut masks in final focus montage.
                       ARG takes argument:
@@ -378,9 +384,9 @@ Fusion options:
                         Plus Screen
                       Does not support --less, --cutblur, --cutsoft.
 
-Post processing options:
+Step 5: Post processing
   The order of the options on cli matters. Noteably --alpha with percent values
-  diferent from =0%,100% 
+  different from =0%,100% affects the following percent arguments.
   All options can be specified multiple times if that makes sense.
 
  --alpha [=ARG]       Generate transparent image using the contrast mask as 
@@ -420,8 +426,9 @@ Post processing options:
                       threshold2 removes high contrast areas above a percent.
                       sigma blurs the cut border.
 
-Background options:
-  Can be specified multiple times (of interest for --layered).
+Step 6: Background
+  Background for transparent images.
+  Can be specified multiple times for option --layered.
 
  --bg, --background [=ARG]  Specify a background to paint on.
                       ARG takes argument:
@@ -435,7 +442,6 @@ Background options:
                       Recommendations: enfuse mean max min
                                        colorize colorize2 pinlight pinlight2
                       Interesting: interpolate overlay pegtoplight reflect
-                      Useful for options --alpha, --threshold and --layered.
 
 Basics:
 Fusing a focus stack aims to generate an overall sharp image of several single
