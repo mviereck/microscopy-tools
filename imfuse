@@ -4,8 +4,8 @@
 Version="0.8.3-beta"
 
 # ToDo:
-# improve error&sigint handling
-# check if --level is set
+# --cache: allow whitespace in path
+# --image, --bg=image: fix name storage or drop
 # merge: do not separate channel,comparision? ->level
 # mkclut_uniform() fails with b&w masks -> clut and result black
 # check --kirsch
@@ -510,7 +510,7 @@ showimage() {
   #[ "$Showimageprocessing" ] && bash imgview "${1:-}"
   [ "$Video" ] && {
 #    Videoframecount="$((Videoframecount+1))"
-    Videoframecount="$(ls $Cachedir/videoframe????.* | sort -V | tail -n1)"
+    Videoframecount="$(ls "$Cachedir"/videoframe????.* | sort -V | tail -n1)"
     Videoframecount="$(basename "$Videoframecount")"
     Videoframecount="${Videoframecount//[^0-9]/}"
     Videoframecount="$(sed "s/^0*//" <<< "$Videoframecount")"
@@ -563,7 +563,7 @@ lowercase() {
 }
 md5cut() {
   # print last 6 digits
-  tr "\n" " " <<< "${1:-}" | md5sum | cut -c27-32
+  tr "\n" " " <<< "$*" | md5sum | cut -c27-32
 }
 numberofpercent() {
   Number="${1:-}"
@@ -609,27 +609,27 @@ unspecialstring() {
 
 forcemask() {
   note "Forcing mask generation"
-  rm $Cachedir/mask.${1:-}*
+  rm "$Cachedir"/mask.${1:-}*
   forcelevel
 }
 forcelevel() {
   note "Forcing leveling"
-  rm $Cachedir/level.${1:-}*
+  rm "$Cachedir"/level.${1:-}*
   forcemerge
 }
 forcemerge() {
   note "Forcing merge"
-  rm $Cachedir/*merge*
+  rm "$Cachedir"/*merge*
   forcefocus
 }
 forcefocus() {
   note "Forcing focus"
-  rm $Cachedir/focus*
-  rm $Cachedir/slabresult*
+  rm "$Cachedir"/focus*
+  rm "$Cachedir"/slabresult*
 }
 forcepost() {
   note "Forcing focus postprocessing"
-  rm $Cachedir/slabresult*-post*
+  rm "$Cachedir"/slabresult*-post*
 }
 
 #### run commands on all CPUs
@@ -871,18 +871,17 @@ load_sourceimages() {
   for Count in $(seq $Lastimage -1 $Firstimage); do
     Number="$(printnum "$Count")"
 
-    Command=""
     case "$Loadsourceimages" in
       yes)
         [ -z "${Imsourceimagelist[$Count]:-}" ] && {
           Imsourceimagelist[$Count]="mpr:sourceimage.$(printnum $Count)"
 
           sendmagickmessage "PROGRESS:Loading source image $Count / $Sourceimagenumber: ${Sourceimagelist[$Count]}"
-          Command="$Command
-  ${Sourceimagelist[$Count]}
+          Command="
+  '${Sourceimagelist[$Count]}'
     -alpha off
     -depth 16
-    -write $(sourceimagename $Count)
+    -write '$(sourceimagename $Count)'
     $(showimagecode "$(sourceimagename $Count)")
     -delete 0"
           cmd "$Command"
@@ -898,41 +897,32 @@ load_sourceimages() {
 
   return 0
 }
-masklist() {
-  local Basename List=
+maskarray() {
+  local Basename
+  local -n List="${4:-}"
   local Firstimage Lastimage
   Firstimage="${2:-1}"
   Lastimage="${3:-$Sourceimagenumber}"
   Basename="${1:-}"
   for Count in $(seq $Sourceimagenumber); do
-    List="$List
-$(maskname "$Basename" $Count)"
+    List[$Count]="$(maskname "$Basename" $Count)"
   done
-  grep . <<< "$List" | sed -n "${Firstimage},${Lastimage}p" | tac
+}
+masklist() {
+  local Basename List=
+  local Firstimage Lastimage
+  Basename="${1:-}"
+  Firstimage="${2:-1}"
+  Lastimage="${3:-$Sourceimagenumber}"
+  for Count in $(seq "$Firstimage" "$Lastimage"); do
+    List="$List '$(maskname "$Basename" "$Count")'"
+  done
+  echo "$List"
 }
 sourceimagename() {
   # print source image name number $1.
   # might be an mpr: or a file depending on $Loadsourceimages.
-  #sed "${1:-}q;d" <<< "$Imsourceimagelist"
   echo "${Imsourceimagelist[${1:-}]}"
-}
-sourceimagelist() {
-  local Count
-  local Firstimage Lastimage
-  Firstimage="${1:-1}"
-  Lastimage="${2:-$Sourceimagenumber}"
-  case "${3:-}" in
-    --nompr)
-      for Count in $(seq $Firstimage $Lastimage); do
-        echo "${Sourceimagelist[$Count]}"
-      done
-    ;;
-    "")
-      for Count in $(seq $Firstimage $Lastimage); do
-        sourceimagename $Count
-      done
-    ;;
-  esac
 }
 maskexist() {
   local Count
@@ -945,7 +935,7 @@ maskexist() {
   case "$Masktocache" in
     yes)
       for Count in $(seq $Firstimage $Lastimage); do
-        [ -e $Cachedir/mask.${1:-}.$(printnum "$Count").${Masksuffix} ] || return 1
+        [ -e "$Cachedir/mask.${1:-}.$(printnum "$Count").${Masksuffix}" ] || return 1
       done
       return 0
     ;;
@@ -1004,7 +994,6 @@ align() {
   # crop aligned images to valid area, store as mpr source images
   for Count in $(seq $Sourceimagenumber); do
     Image="${Sourceimagelist[$Count]}"
-    Command=""
     Number="$(printnum "$Count")"
     Image="$Aligndir/$(basename "$Image")"
     Sourceimagelist[$Count]="$Image"
@@ -1016,12 +1005,13 @@ align() {
         Imsourceimagelist[$Count]="$Image"
       ;;
     esac
-    Command="$Command
-  $(sendmagickmessage "PROGRESS:Cropping aligned images ${W}x${H}+${X}+${Y} $Count / $Sourceimagenumber: $Image")"
-    Command="$Command
-  $Image
+
+    sendmagickmessage "PROGRESS:Cropping aligned images ${W}x${H}+${X}+${Y} $Count / $Sourceimagenumber: $Image"
+
+    Command="
+  '$Image'
     -crop ${W}x${H}+${X}+${Y}
-    -write $(sourceimagename $Count)
+    -write '$(sourceimagename $Count)'
     $(showimagecode "$(sourceimagename $Count)")
     -delete 0"
     cmd "$Command"
@@ -1070,7 +1060,7 @@ alphalevel() {
   case "$Mask" in
     "")
       Command="$Command
-  mpr:al_image
+  mpr:image
     -channel alpha
     -separate
     -write mpr:mask
@@ -1078,7 +1068,7 @@ alphalevel() {
     ;;
     *)
       Command="$Command
-  $Mask
+  '$Mask'
     -write mpr:mask
     -delete 0"
     ;;
@@ -1095,7 +1085,7 @@ alphalevel() {
     *)
       Command="$Command
   mpr:mask
-    -write $Mask
+    -write '$Mask'
     -delete 0"
     ;;
   esac
@@ -1106,7 +1096,7 @@ alphalevel() {
     -alpha off
     -compose CopyOpacity -composite
     $Tifstorealpha
-    -write $Image
+    -write '$Image'
     -delete 0"
 
   Command="$Command
@@ -1135,7 +1125,7 @@ clut_gaussian() {
     -resize 512x256!
     -crop 50%x100%+0+0
     -auto-level
-    -write $Clutimage
+    -write '$Clutimage'
     -delete -1"
   cmd "$Command"
   cmd_waitforready
@@ -1146,6 +1136,7 @@ enfuse_split() {
   local Firstimage Lastimage
   local Mem_free Mem_needed
   local Splitimagelist= Splitimagename Splitresult= Splitcache Split Splits Splitheight
+  local Startzeit
 
   Resultimage="${1:-}"
   Firstimage="${2:-1}"
@@ -1156,173 +1147,93 @@ enfuse_split() {
   Enfuseoptions="--contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask"
 
   sendmagickmessage "NOTE:Generating image with external tool enfuse"
-
-  ### Single run attempt
-  [ "$Mem_needed" -lt "$Mem_free" ] && {
-    nice enfuse $Enfuseoptions -o "$Resultimage" $(sourceimagelist $Firstimage $Lastimage --nompr) 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
-    return 0
-  }
-
-  ### Splitting attempt
-  note "enfuse: Splitting source images due to low memory."
-
+  Startzeit="$(date +%s)"
   Splits="$((Mem_needed / Mem_free +1))"
-  Splitheight=$((Imageheight/Splits))
-  Splitcache="$Cachedir/enfuse.split"
-  mkdir -p "$Splitcache"
 
-#  for Split in $(seq $Splits); do
-#    Splitgeometry[$Split]="$((Splitwidth + $([ "$Split" -lt "$Splits" ] && echo 20 || echo 0) ))x${Imageheight}+$(( (Split -1) * Splitwidth ))+0"
-#  done
-  for Split in $(seq $Splits); do
-    Splitgeometry[$Split]="${Imagewidth}x$((Splitheight + $([ "$Split" -lt "$Splits" ] && echo 20 || echo 0) ))+0+$(( (Split-1) * Splitheight ))"
-  done
+  case "$Splits" in
+    1)
+      ### Single run attempt
+      nice enfuse $Enfuseoptions -o "$Resultimage" "${Sourceimagelist[@]:$Firstimage:$Lastimage}" 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
+    ;;
+    *)
+      ### Splitting attempt
+      note "enfuse: Splitting source images due to low memory."
+      load_sourceimages "$Firstimage" "$Lastimage"
 
-  load_sourceimages $Firstimage $Lastimage
-  for Count in $(seq $Firstimage $Lastimage); do
-    sendmagickmessage "PROGRESS:enfuse: Splitting source images into $Splits parts step $Count / $Lastimage: ${Sourceimagelist[$Count]}"
-    Command="
-  ${Sourceimagelist[$Count]}
+      Splitheight=$((Imageheight/Splits))
+      Splitcache="$Cachedir/enfuse.split"
+      mkdir -p "$Splitcache"
+
+      for Split in $(seq $Splits); do
+        Splitgeometry[$Split]="${Imagewidth}x$((Splitheight + $([ "$Split" -lt "$Splits" ] && echo 20 || echo 0) ))+0+$(( (Split-1) * Splitheight ))"
+      done
+
+
+      for Count in $(seq "$Firstimage" "$Lastimage"); do
+
+        sendmagickmessage "PROGRESS:enfuse: Splitting source images into $Splits parts step $Count / $Lastimage: ${Sourceimagelist[$Count]}"
+
+        Command="
+  '${Sourceimagelist[$Count]}'
     -write mpr:sourceimage
     -delete 0"
-    for Split in $(seq $Splits); do
-      Splitimagename="$Splitcache/split.$(printnum $Count).${Split}.png"
-      Command="$Command
+        for Split in $(seq $Splits); do
+          Splitimagename="$Splitcache/split.$(printnum $Count).${Split}.png"
+          Command="$Command
   mpr:sourceimage
     -crop ${Splitgeometry[$Split]}
-    -write ${Splitimagename}
+    +repage
+    -write '${Splitimagename}'
     -delete 0"
-      Splitimagelist[$Split]="${Splitimagelist[$Split]:-} $Splitimagename"
-    done
-    #cmd "$Command"
-    multicore "$Magickbin $(tr -d "\n" <<< "$Command") -exit"
-  done
-  multicore_wait
-  sendmagickmessage "/PROGRESS"
-  #cmd_waitforready
+          Splitimagelist[$Split]="${Splitimagelist[$Split]:-} $Splitimagename"
+        done
+        #cmd "$Command"
+        multicore "$Magickbin $(tr -d "\n" <<< "$Command") -exit"
+      done
+      multicore_wait
+      sendmagickmessage "/PROGRESS"
+      #cmd_waitforready
 
-  for Split in $(seq $Splits); do
-    note "Running enfuse step $Split / $Splits"
-    Splitresult[$Split]="$Splitcache/splitresult${Split}.png"
-    nice enfuse $Enfuseoptions -o "${Splitresult[$Split]}" ${Splitimagelist[$Split]} 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
-    showimage "$Splitresult[$Split]"
-  done
+      for Split in $(seq $Splits); do
+        note "Running enfuse step $Split / $Splits"
+        Splitresult[$Split]="$Splitcache/splitresult${Split}.png"
+        nice enfuse $Enfuseoptions -o "${Splitresult[$Split]}" ${Splitimagelist[$Split]} 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
+        showimage "${Splitresult[$Split]}"
+      done
 
-  sendmagickmessage "NOTE:enfuse: Appending splits to result"
-  Command="
+      sendmagickmessage "NOTE:enfuse: Appending splits to result"
+      Command="
   mpr:black
-    -write mpr:resultimage
+    -write mpr:append
     -delete 0"
-  for Split in $(seq $Splits); do
-    Command="$Command
-  mpr:resultimage
-    ${Splitresult[$Split]}
-    -geometry 0+$(( (Split -1) * Splitheight ))
-    -composite
-    -write mpr:resultimage
+      for Split in $(seq $Splits); do
+        Command="$Command
+  mpr:append
+    +repage
+    -gravity NorthWest
+  '${Splitresult[$Split]}'
+    +repage
+    -gravity NorthWest
+    -geometry +0+$(( (Split -1) * Splitheight ))
+    -compose Over -composite
+    -write mpr:append
     -delete 0"
-  done
-  Command="$Command
-  mpr:resultimage
-    $Tifstore
-    -write $Resultimage
-    -delete 0"
-  cmd "$Command"
-  cmd_waitforready
-
-  rm -r "$Splitcache"
-
-  return 0
-}
-enfuse_splitX() {
-  local Resultimage Enfuseoptions
-  local Command Count
-  local Firstimage Lastimage
-  local Mem_free Mem_needed
-  local Splitimagelist= Splitimagename Splitresult= Splitcache Split Splits Splitwidth
-
-  Resultimage="${1:-}"
-  Firstimage="${2:-1}"
-  Lastimage="${3:-$Sourceimagenumber}"
-
-  Mem_free="$(printfreememory)"
-  Mem_needed="$(( (Lastimage-Firstimage+1) * Imagewidth*Imageheight * 2 * 32 / (8*1024)))"
-  Enfuseoptions="--contrast-weight=1 --saturation-weight=0 --exposure-weight=0 --hard-mask"
-
-  sendmagickmessage "NOTE:Generating image with external tool enfuse"
-
-  ### Single run attempt
-  [ "$Mem_needed" -lt "$Mem_free" ] && {
-    nice enfuse $Enfuseoptions -o "$Resultimage" $(sourceimagelist $Firstimage $Lastimage --nompr) 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
-    return 0
-  }
-
-  ### Splitting attempt
-  note "enfuse: Splitting source images due to low memory."
-
-  Splits="$((Mem_needed / Mem_free +1))"
-  Splitwidth=$((Imagewidth/Splits))
-  Splitcache="$Cachedir/enfuse.split"
-  mkdir -p "$Splitcache"
-
-  for Split in $(seq $Splits); do
-    Splitgeometry[$Split]="$((Splitwidth + $([ "$Split" -lt "$Splits" ] && echo 20 || echo 0) ))x${Imageheight}+$(( (Split -1) * Splitwidth ))+0"
-  done
-
-  load_sourceimages $Firstimage $Lastimage
-  for Count in $(seq $Firstimage $Lastimage); do
-    sendmagickmessage "PROGRESS:enfuse: Splitting source images into $Splits parts step $Count / $Lastimage: ${Sourceimagelist[$Count]}"
-    Command="
-  ${Sourceimagelist[$Count]}
-    -write mpr:sourceimage
-    -delete 0"
-    for Split in $(seq $Splits); do
-      Splitimagename="$Splitcache/split.$(printnum $Count).${Split}.png"
+      done
       Command="$Command
-  mpr:sourceimage
-    -crop ${Splitgeometry[$Split]}
-    -write ${Splitimagename}
-    -delete 0"
-      Splitimagelist[$Split]="${Splitimagelist[$Split]:-} $Splitimagename"
-    done
-    #cmd "$Command"
-    multicore "$Magickbin $(tr -d "\n" <<< "$Command") -exit"
-  done
-  multicore_wait
-  sendmagickmessage "/PROGRESS"
-  #cmd_waitforready
-
-  for Split in $(seq $Splits); do
-    note "Running enfuse step $Split / $Splits"
-    Splitresult[$Split]="$Splitcache/splitresult${Split}.png"
-    nice enfuse $Enfuseoptions -o "${Splitresult[$Split]}" ${Splitimagelist[$Split]} 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
-    showimage "$Splitresult[$Split]"
-  done
-
-  sendmagickmessage "NOTE:enfuse: Appending splits to result"
-  Command="
-  mpr:black
-    -write mpr:resultimage
-    -delete 0"
-  for Split in $(seq $Splits); do
-    Command="$Command
-  mpr:resultimage
-    ${Splitresult[$Split]}
-    -geometry +$(( (Split -1) * Splitwidth ))+0
-    -composite
-    -write mpr:resultimage
-    -delete 0"
-  done
-  Command="$Command
-  mpr:resultimage
+  mpr:append
     $Tifstore
-    -write $Resultimage
-    -delete 0"
-  cmd "$Command"
-  cmd_waitforready
+    -write '$Resultimage'
+    $(showimagecode "$Resultimage")
+    -delete 0
+  +set registry:append"
+      cmd "$Command"
+      cmd_waitforready
 
-  rm -r "$Splitcache"
+      rm -r "$Splitcache"
+    ;;
+  esac
 
+  note "enfuse_split()[$Splits] ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   return 0
 }
 evaluate() {
@@ -1351,11 +1262,11 @@ evaluate() {
 
   Command="
   # evaluate() $Mode: $Resultimage
-  ${Imagelist[@]}
+  $(printf "'%s' " "${Imagelist[@]}")
     -alpha off
     -evaluate-sequence $Mode
     $Tifstore
-    -write $Resultimage
+    -write '$Resultimage'
     $(showimagecode "$Resultimage")
     -delete 0"
   cmd "$Command"
@@ -1383,12 +1294,12 @@ evaluate_iterative() {
   esac
 
   Command="
-  ${Imagelist[1]}"
+  '${Imagelist[1]}'"
   case "$Mode" in
     darken|lighten)
       for Count in $(seq 2 $Imagenumber); do
         Command="$Command
-  ${Imagelist[$Count]}
+  '${Imagelist[$Count]}'
     -format 'PROGRESS:Evaluating $Count / $Imagenumber: ${Imagelist[$Count]}\n'
     -write info:
     -compose $Mode -composite
@@ -1398,7 +1309,7 @@ evaluate_iterative() {
     mean)
       for Count in $(seq 2 $Imagenumber); do
         Command="$Command
-  ${Imagelist[$Count]}
+  '${Imagelist[$Count]}'
     -alpha off
     -format 'PROGRESS:Evaluating $Count / $Imagenumber: ${Imagelist[$Count]}\n'
     -write info:
@@ -1413,7 +1324,7 @@ evaluate_iterative() {
     ;;
   esac
   Command="$Command
-    -write $Resultimage
+    -write '$Resultimage'
     -delete 0"
   cmd "$Command"
   cmd_waitforready
@@ -1458,11 +1369,11 @@ evaluate_splitlist() {
 
   for Split in $(seq $Splits); do
 #  -limit memory ${Mem_free}KB
-#  -define registry:temporary-path=$Cachedir
+#  -define registry:temporary-path='$Cachedir'
     Command="$Magickbin
-  ${Imagelist[@]:${Splitfirstimage[$Split]}:${Splitlastimage[$Split]}}
+  $(printf "'%s' " "${Imagelist[@]:${Splitfirstimage[$Split]}:${Splitlastimage[$Split]}}")
     -evaluate-sequence $Mode
-    -write ${Splitresult[$Split]}
+    -write '${Splitresult[$Split]}'
     -delete 0
     -exit"
     multicore "$(tr -d "\n" <<< "$Command")" "${Splitresult[$Split]}" "$(( Imagememsize * (${Splitlastimage[$Split]}-${Splitfirstimage[$Split]}+1) ))"
@@ -1470,9 +1381,9 @@ evaluate_splitlist() {
   multicore_wait
 
   Command="
-  ${Splitresult[@]}
+  '${Splitresult[@]}'
     -evaluate-sequence $Mode
-    -write $Resultimage
+    -write '$Resultimage'
     -delete 0"
   cmd "$Command"
   cmd_waitforready
@@ -1517,10 +1428,10 @@ finalblur() {
 
   Command="
   # --finalblur
-  $Image
+  '$Image'
     -write mpr:image
     -delete 0
-  $Mask
+  '$Mask'
     -write mpr:maxmask
     -delete 0
   mpr:maxmask
@@ -1543,7 +1454,7 @@ finalblur() {
   mpr:image
   mpr:partsource_blurred
     -compose Over -composite
-    -write $Image
+    -write '$Image'
     $(showimagecode)
     -delete 0
   +set registry:bokeh
@@ -1579,10 +1490,10 @@ finalblur2() {
 
   Command="
   # --finalblur
-  $Image
+  '$Image'
     -write mpr:image
     -delete 0
-  $Mask
+  '$Mask'
     -write mpr:mask
     -delete 0
   mpr:mask
@@ -1595,7 +1506,7 @@ finalblur2() {
     -compose Blur
     -set option:compose:args ${Blur}x${Blur}
     -composite
-    -write $Image
+    -write '$Image'
     $(showimagecode "$Image")
     -delete 0
 "
@@ -1603,7 +1514,7 @@ finalblur2() {
   cmd_waitforready
 }
 generate_image() {
-  local Mode Imagename= Swap Imagetype Showname= Command Size 
+  local Mode Imagename= Swap Imagetype= Showname= Command Size 
   local Generalimage= Skip=
   local Longoptions Parsedoptions
   local Firstimage Lastimage
@@ -1660,12 +1571,12 @@ generate_image() {
   }
 
   case "$Imagetype" in
-    enfuse) ### FIXME first..last
+    enfuse)
       enfuse_split "$Imagename" ${Firstimage} ${Lastimage}
     ;;
     evaluate)
-      load_sourceimages ### FIXME first..last
-      evaluate "$Mode" "$Imagename" $(sourceimagelist $Firstimage $Lastimage)
+      load_sourceimages
+      evaluate "$Mode" "$Imagename" "${Imsourceimagelist[@]:$Firstimage:$Lastimage}"
     ;;
     compose)
       grep -q "2" <<< "$Mode" && Swap="-swap 0,1" || Swap=""
@@ -1674,12 +1585,12 @@ generate_image() {
       generate_image --mode max --last $Lastimage
 
       Command="
-  $(generate_image --showname --mode min --first $Firstimage --last $Lastimage)
-  $(generate_image --showname --mode max --first $Firstimage --last $Lastimage)
+  '$(generate_image --showname --mode min --first $Firstimage --last $Lastimage)'
+  '$(generate_image --showname --mode max --first $Firstimage --last $Lastimage)'
     -alpha off
     $Swap
     -compose $Mode -composite
-    -write $Imagename
+    -write '$Imagename'
     $(showimagecode "$Imagename")
     -delete 0"
 
@@ -1691,7 +1602,7 @@ generate_image() {
   -size $Size
   canvas:$Mode
     $Tifstorealpha
-    -write $Imagename
+    -write '$Imagename'
     -delete 0"
       cmd "$Command"
       cmd_waitforready
@@ -1706,14 +1617,15 @@ generate_video() {
   #nice ffmpeg -y -hide_banner -nostdin  -r $Videoframerate -f image2 -start_number 1 -i $Framedir/frame%04d.$Imageformat $Destinationfile || note "ERROR in video generation"
   [ -f "$Video" ] && rm "$Video"
   nice ffmpeg -y -hide_banner -nostdin  -r $Videoframerate -f image2 -start_number 1 -i "$Cachedir/videoframe%04d.$Imageformat" "$Video" || note "ERROR in video generation"
-  rm $Cachedir/videoframe*
+  rm "$Cachedir"/videoframe*
   ffplay "$Video"
 }
 level_masks() {
   local Maskbasename Maskmax Maskmin Maskmd5 Clutimage Resultmask Clut=
-  local Count Mask Masklist Levelmin Levelmax
+  local Count Mask Levelmin Levelmax
   local Longoptions Parsedoptions
   local Firstimage Lastimage
+  local Masklist
 
   Longoptions="first:,last:,name:,output:,clut"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
@@ -1733,20 +1645,19 @@ level_masks() {
   Firstimage="${Firstimage:-1}"
   Lastimage="${Lastimage:-$Sourceimagenumber}"
   Outputbasename="${Outputbasename:-"$Maskbasename"}"
-
-  Masklist="$(masklist "$Maskbasename" "$Firstimage" "$Lastimage")"
+  maskarray "$Maskbasename" "$Firstimage" "$Lastimage" Masklist
   Maskmax="mpr:maskmax"
   Maskmin="mpr:maskmin"
   Clutimage="mpr:clut"
 
   sendmagickmessage "NOTE:Leveling $Maskbasename"
 
-  evaluate max $Maskmax $Masklist
+  evaluate max "$Maskmax" "${Masklist[@]}"
   Levelmax="$(getmagickinfo "$Maskmax" '%[fx:maxima*100]')"
   Levelmin="$(maskarg_defaultvalue $Argmethod levelmin)"
   echo "max:$Argmethod:$Levelmax" >> ~/imfuse.statistic.level
   [ -z "$Levelmin" ] && {
-    evaluate min $Maskmin $Masklist
+    evaluate min $Maskmin "${Masklist[@]}"
     Levelmin="$(getmagickinfo "$Maskmin" '%[fx:minima*100]')"
     echo "min:$Argmethod:$Levelmin" >> ~/imfuse.statistic.level
   }
@@ -1757,9 +1668,9 @@ level_masks() {
   }
 
   Command="
-  $Maskmax
+  '$Maskmax'
     -level ${Levelmin}%,${Levelmax}%
-    -write $Maskmax
+    -write '$Maskmax'
     -delete 0"
   cmd "$Command"
   cmd_waitforready
@@ -1769,13 +1680,13 @@ level_masks() {
     sendmagickmessage "PROGRESS:Mask leveling ${Levelmin}%,${Levelmax}% step $Count / $Sourceimagenumber: $Maskbasename"
 
     Command="
-  $(maskname "$Maskbasename" "$Count")
+  '$(maskname "$Maskbasename" "$Count")'
     -level ${Levelmin}%,${Levelmax}%"
     [ "$Clut" = "yes" ] && Command="$Command
-  $Clutimage
+  '$Clutimage'
     -clut"
     Command="$Command
-    -write $(maskname "$Outputbasename" "$Count")
+    -write '$(maskname "$Outputbasename" "$Count")'
     $(showimagecode "$(maskname "$Outputbasename" "$Count")")
     -delete 0"
 
@@ -1799,8 +1710,7 @@ maskfromimage() {
     Maskname="$(maskname "$Maskbasename" "$Count")"
     Sourceimage="$(sourceimagename $Count)"
 
-    Command="$Command
-  $(sendmagickmessage "PROGRESS:image comparision mask step $Count / $Sourceimagenumber: $Imagename")"
+    sendmagickmessage "PROGRESS:image comparision mask step $Count / $Sourceimagenumber: $Imagename"
 
     Command="
   '$Imagename' 
@@ -1847,11 +1757,10 @@ mkclut_uniform() {
   Quantumrange="$(getmagickinfo $Referenceimage "%[fx:quantumrange]")"
   Expo="$(getmagickinfo rose: "%[fx:e]")" 
 
-  # FIXME use 16 bit depth?
   Key1="$(generate_key)"
   Key2="$(generate_key)"
   Command="
-  $Referenceimage
+  '$Referenceimage'
     -colorspace gray
     -depth 8
     -format '\n$Key1\n%c$Key2\n'
@@ -1859,7 +1768,7 @@ mkclut_uniform() {
     -delete 0"
   cmd "$Command"
   cmd_waitforready
-  Histogramarray="$(sed -n "/$Key1/,/$Key2/p" $Magickfifolog | sed '1d ; $d')"
+  Histogramarray="$(sed -n "/$Key1/,/$Key2/p" "$Magickfifolog" | sed '1d ; $d')"
   Histogramarray=($(echo "$Histogramarray" | sed -n  's/[ ]*\([0-9]*\).*gray[(]\([0-9]*\).*$/\1 \2/p' \
                                            | LC_ALL=C awk     '{ bin[int($2)] += $1; } 
                                                       END { for (i=0;i<256;i++) {hist = bin[i]+0; print hist; } } ' ) )
@@ -1879,7 +1788,7 @@ mkclut_uniform() {
 $Netpbmdata
 '
     -scale 256x1\!
-    -write $Clutimage
+    -write '$Clutimage'
     -delete 0"
   cmd "$Command"
   cmd_waitforready
@@ -1911,7 +1820,7 @@ threshold() {
   Thresholdblur="${Thresholdblur:-0}"
 
   Command="
-  $Mask
+  '$Mask'
     -alpha off
     -write mpr:mask
     -delete 0
@@ -1943,13 +1852,13 @@ threshold() {
     -write mpr:mask
     -delete 0
   mpr:mask
-    -write $Mask
+    -write '$Mask'
     -delete 0"
     ;;
     hard)
       Command="$Command
   mpr:threshold
-    -write $Mask
+    -write '$Mask'
     -delete 0"
     ;;
   esac
@@ -1961,20 +1870,20 @@ threshold() {
     -compose Lighten -composite
     -write mpr:mask
     -delete 0
-  $Image
+  '$Image'
   mpr:mask
     -alpha off
     -compose CopyOpacity -composite
-    -write $Image
+    -write '$Image'
     -delete 0"
     ;;
     hard)
       Command="$Command
-  $Image
+  '$Image'
   mpr:threshold
     -alpha off
     -compose CopyOpacity -composite
-    -write $Image
+    -write '$Image'
     -delete 0"
     ;;
   esac
@@ -2021,7 +1930,7 @@ focus_maskmethod() {
       [ "$Method" = "darkness" ] && Maskgenerator="$Maskgenerator
     -negate"
     ;;
-    comet) ### FIXME saturate drops some angles
+    comet)
       Maskgenerator="
   # --comet
   mpr:sourcegray 
@@ -2392,7 +2301,7 @@ $Argbasename"
         esac
         Maskgenerator_all="$Maskgenerator_all
 $Maskgenerator
-    -write $(maskname "$Argbasename" NUMBER)
+    -write '$(maskname "$Argbasename" NUMBER)'
     $(showimagecode "$(maskname "$Argbasename" NUMBER)")
     -delete 0"
     [ -n "$Argchannel" ] && {
@@ -2416,15 +2325,14 @@ $Maskgenerator
     sendmagickmessage "NOTE:Generating masks"
     grep -q "NUMBER" <<< "$Maskgenerator_all" && load_sourceimages $Firstimage $Lastimage
 
+    # Generate command to generate masks
     for Count in $(seq $Lastimage -1 $Firstimage); do
-      Number="$(printnum $Count)"
-      Command=""
 
-      # Generate command to generate masks
       sendmagickmessage "PROGRESS:Mask generation step $Count / $Sourceimagenumber: $(sourceimagename $Count)"
+
       maskarg_single "colorspace"
-      Command="$Command
-  ( $(sourceimagename $Count)
+      Command="
+  ( '$(sourceimagename $Count)'
       -colorspace ${Colorspace:-$Argword1}"
       [ -n "$Argword2" ] && Command="$Command
       -channel $Argword2
@@ -2446,7 +2354,7 @@ $Maskgenerator
     -delete 0"
 
       Command="$Command
-${Maskgenerator_all//NUMBER/$Number}"
+${Maskgenerator_all//NUMBER/$(printnum $Count)}"
 
       cmd "$Command"
     done
@@ -2464,8 +2372,8 @@ ${Maskgenerator_all//NUMBER/$Number}"
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     grep -q "$Argtype" <<< "$Masktype" && [ "$Arglevel" = "yes" ] && {
-      [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/level.$Argbasename" ] && { ### FIXME
-        sendmagickmessage "NOTE:level_masks(): Skipping, mask is already leveled."
+      [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/level.$Argbasename" ] && {
+        sendmagickmessage "NOTE:Skipping mask leveling, already done: $Argbasename"
       } || {
         level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage" --clut
         [ "$Masktocache" = "yes" ] && :> "$Cachedir/level.$Argbasename"
@@ -2575,6 +2483,12 @@ focus_merge_masks() {
     -blur 0x$Argsigma1"
           ;;
 
+          maskfree)
+            Mergecode="$Mergecode
+    # --maskfree
+    $Argword1"
+          ;;
+
           maskmorph)
     Mergecode="$Mergecode
     # --maskmorph
@@ -2647,22 +2561,22 @@ focus_merge_masks() {
   ### run
 
   Mergemaskbasename="$Mergemaskbasename.$(md5cut "$Sourcemd5 $Mergecode" )"
+  #Mergemaskbasename="$(unspecialstring "$Mergemaskbasename")"
 
   maskexist "$Mergemaskbasename" "$Firstimage" "$Lastimage"  && {
     note "Skipping merge, $Mergemaskbasename $Firstimage..$Lastimage already exists"
   } || {
     # merge masks
     for Count in $(seq $Lastimage -1 $Firstimage); do
-      Command=""
       Mergemask="$(maskname "$Mergemaskbasename" $Count)"
 
-      Command="$Command
-  $(sendmagickmessage "PROGRESS:Mask merging step $Count / $Sourceimagenumber: $Mergemaskbasename")"
-      Command="$Command
+      sendmagickmessage "PROGRESS:Mask merging step $Count / $Sourceimagenumber: $Mergemaskbasename"
+
+      Command="
 $(sed "s/NUMBER/$(printnum $Count)/g" <<< "$Mergecode" )
   mpr:mergemask
     $Tifstore 
-    -write $Mergemask
+    -write '$Mergemask'
     $(showimagecode "$Mergemask")
     -delete 0"
 
@@ -2737,16 +2651,16 @@ focus_hard() {
   [ -e "$Focusimagefile" ] && {
     sendmagickmessage "NOTE:Skipping focus_hard(), image already exists."
     Command="
-  $Focusimagefile
+  '$Focusimagefile'
     $Tifstore
     -write mpr:resultimage
-    -write $Resultimage
+    -write '$Resultimage'
     -delete 0"
     [ -n "$Maskmaxcopy" ] && Command="$Command
-  $Focusimagemaskfile
+  '$Focusimagemaskfile'
     $Tifstore
     -write mpr:resultmask
-    -write $Maskmaxcopy
+    -write '$Maskmaxcopy'
     -delete 0"
     cmd "$Command"
     cmd_waitforready
@@ -2759,7 +2673,7 @@ focus_hard() {
   #Maskmax="${Maskmax:-mpr:resultmask}"
 
   #Maskmax="mpr:mergemax"
-  #evaluate max "$Maskmax" $(masklist "$Mergemaskbasename" $Firstimage $Lastimage)
+  #evaluate max "$Maskmax" $(masklist FIXME "$Mergemaskbasename" $Firstimage $Lastimage)
   #Levelmax="$(getmagickinfo "$Maskmax" '%[fx:maxima*100]')"
   #Levelmin="$(getmagickinfo "$Maskmax" '%[fx:minima*100]')"
 
@@ -2767,7 +2681,7 @@ focus_hard() {
 
 
   Command="
-  $Focusimagefile
+  '$Focusimagefile'
     -alpha Opaque
     -alpha off
     -write mpr:resultimage
@@ -2779,19 +2693,18 @@ focus_hard() {
   cmd "$Command"
 
   for Count in $(seq $Lastimage -1 $Firstimage); do
-    Command=""
     Sourcemask="$(maskname "$Mergemaskbasename" "$Count")"
     Sourceimage="$(sourceimagename $Count)"
 
-    Command="$Command
-  $(sendmagickmessage "PROGRESS:Focus montage step $Count / $Sourceimagenumber: $Sourceimage")"
+    sendmagickmessage "PROGRESS:Focus montage step $Count / $Sourceimagenumber: $Sourceimage"
+
     # Load images
-    Command="$Command
-  $Sourceimage
+    Command="
+  '$Sourceimage'
     -alpha off
     -write mpr:sourceimage
     -delete 0
-  $Sourcemask
+  '$Sourcemask'
     -alpha off
     #-level $Levelmin%,$Levelmax%
     -write mpr:sourcemask
@@ -2931,12 +2844,12 @@ focus_hard() {
   # store result image and mask
   mpr:resultimage
     $Tifstore 
-    -write $Resultimage
-    -write $Focusimagefile
+    -write '$Resultimage'
+    -write '$Focusimagefile'
     -delete 0
   mpr:resultmask
     $Tifstore
-    -write $Focusimagemaskfile
+    -write '$Focusimagemaskfile'
     -delete 0"
   cmd "$Command"
   cmd_waitforready
@@ -2945,7 +2858,7 @@ focus_hard() {
     Command="
   # copy max mask
   mpr:resultmask
-    -write $Maskmaxcopy
+    -write '$Maskmaxcopy'
     -delete 0"
     cmd "$Command"
     cmd_waitforready
@@ -3003,7 +2916,7 @@ focus_soft() {
 
   Addsource="mpr:addsource"
 
-  Focusimagebasename="focus-soft.$(percentrm "$Level").$Firstimage..$Lastimage.$(md5cut "$(masklist $Mergemaskbasename)")"
+  Focusimagebasename="focus-soft.$(percentrm "$Level").$Firstimage..$Lastimage.$(md5cut "$(masklist "$Mergemaskbasename") $Level $Composemode")"
   Focusimagefile="$Cachedir/$Focusimagebasename.tif"
   Focusimagemaskfile="$Cachedir/$Focusimagebasename.mask.tif"
 
@@ -3011,16 +2924,16 @@ focus_soft() {
   [ -e "$Focusimagefile" ] && {
     sendmagickmessage "NOTE:Skipping focus_soft(), image already exists."
     Command="
-  $Focusimagefile
+  '$Focusimagefile'
     $Tifstore
     -write mpr:resultimage
-    -write $Resultimage
+    -write '$Resultimage'
     -delete 0"
     [ -n "$Maskmaxcopy" ] && Command="$Command
-  $Focusimagemaskfile
+  '$Focusimagemaskfile'
     $Tifstore
     -write mpr:resultmask
-    -write $Maskmaxcopy
+    -write '$Maskmaxcopy'
     -delete 0"
     cmd "$Command"
     cmd_waitforready
@@ -3043,13 +2956,12 @@ focus_soft() {
   cmd "$Command"
 
   for Count in $(seq $Lastimage -1 $Firstimage); do
-    Command=""
     Sourcemask="$(maskname "$Mergemaskbasename" "$Count")"
     Sourceimage="$(sourceimagename $Count)"
 
     sendmagickmessage "PROGRESS:Focus montage soft step $Count / $Sourceimagenumber: $Sourceimage"
 
-    Command="$Command
+    Command="
   $Sourceimage
     -depth 16
     -alpha off
@@ -3100,7 +3012,6 @@ focus_soft() {
   mpr:addsource
   mpr:addmask
     -compose DivideSrc -composite
-    $Tifstorealpha
     -write mpr:resultimage
     -delete 0"
   cmd "$Command"
@@ -3111,7 +3022,7 @@ focus_soft() {
   mpr:addmask
   mpr:clut
     -clut
-    -write $Focusimagemaskfile
+    -write '$Focusimagemaskfile'
     -delete 0"
   cmd "$Command"
   cmd_waitforready
@@ -3123,8 +3034,8 @@ focus_soft() {
   Command="
   mpr:resultimage
     $Tifstore 
-    -write $Focusimagefile
-    -write $Resultimage
+    -write '$Focusimagefile'
+    -write '$Resultimage'
     $(showimagecode "$Focusimagefile")
     -delete 0"
   cmd "$Command"
@@ -3199,12 +3110,12 @@ focus_main() {
         }
 
         Command="
-${Slabresult[$Slabstep]}
-  -write ${Slabresultpost[$Slabstep]}
+'${Slabresult[$Slabstep]}'
+  -write '${Slabresultpost[$Slabstep]}'
   -delete 0
-${Slabmask[$Slabstep]}
+'${Slabmask[$Slabstep]}'
   -level ${Levelmin:-0}%x${Levelmax:-100}%
-  -write ${Slabmaskpost[$Slabstep]}
+  -write '${Slabmaskpost[$Slabstep]}'
   -delete 0"
         cmd "$Command"
 
@@ -3232,11 +3143,11 @@ ${Slabmask[$Slabstep]}
                              --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" --blur "$Argsigma1" \
                              --cutimage="hard"
                   Command="
-  ${Slabresultpost[$Slabstep]}
-  ${Slabmaskpost[$Slabstep]}
+  '${Slabresultpost[$Slabstep]}'
+  '${Slabmaskpost[$Slabstep]}'
     -alpha off
     -compose CopyOpacity -composite
-    -write ${Slabresultpost[$Slabstep]}
+    -write '${Slabresultpost[$Slabstep]}'
     -delete 0"
 #                  cmd "$Command"
 #                  cmd_waitforready
@@ -3258,13 +3169,12 @@ ${Slabmask[$Slabstep]}
   mpr:resultimage"
   for Slabstep in $(seq $Slabnumber -1 1); do
     Command="$Command
-  ${Slabresultpost[$Slabstep]}
+  '${Slabresultpost[$Slabstep]}'
     -compose Over -composite
     $(showimagecode)"
   done
   Command="$Command
     -write mpr:resultimage
-    $Tifstorealpha
     $(showimagecode)
     -delete 0"
   cmd "$Command"
@@ -3318,18 +3228,18 @@ ${Slabmask[$Slabstep]}
   mpr:green"
       for Count in $(seq "$Backgroundnumber"); do
         Command="$Command
-  ${Backgroundimage[$Count]}"
+  '${Backgroundimage[$Count]}'"
       done
       for Slabstep in $(seq $Slabnumber -1 1); do
         [ "$Transparentlayers" = "yes" ] && Command="$Command
-  ${Slabresult[$Slabstep]}"
+  '${Slabresult[$Slabstep]}'"
         Command="$Command
-  ${Slabresultpost[$Slabstep]}"
+  '${Slabresultpost[$Slabstep]}'"
       done
       Command="$Command
     $Tifstorealpha
     #-define tiff:write-layers=yes
-    -write $Outputimage
+    -write '$Outputimage'
     $(showimagecode "$Outputimage")
     -delete 0"
     ;;
@@ -3339,7 +3249,7 @@ ${Slabmask[$Slabstep]}
   mpr:transparent"
       for Count in $(seq "$Backgroundnumber"); do
         Command="$Command
-  ${Backgroundimage[$Count]}
+  '${Backgroundimage[$Count]}'
     -compose Over -composite"
       done
       Command="$Command
@@ -3349,7 +3259,7 @@ ${Slabmask[$Slabstep]}
     -delete 0
   mpr:resultimage
     $Tifstorealpha
-    -write $Outputimage
+    -write '$Outputimage'
     -delete 0"
     ;;
   esac
@@ -3608,7 +3518,7 @@ maskarg_defaultvalue() {
         image|enfuse|compose|evaluate|min|max|mean|median)
           echo "comparision"
         ;;
-        maskblur|maskmorph|maskstat|maskwave)
+        maskblur|maskfree|maskmorph|maskstat|maskwave)
           echo "merge"
         ;;
         alpha|finalblur|finalblur2|threshold)
@@ -3783,6 +3693,10 @@ maskarg_checkallowed() {
         grayscale) ;;
         comet|freichen|freediff|laplacian) ;;
         channel|chroma|darkness|lightness|saturation) ;;
+        colorspace) 
+          checkmagicklist colorspace "$Arg" || Errormessage="--$Method=$Arg: unknown colorspace.
+  Please choose one out of 'magick -list colorspace'"
+        ;;
         compose|merge|soft)
           checkmagicklist compose "${Arg,,}" || Errormessage="--$Method=$Arg: unknown argument for word1.
   Please choose one out of 'magick -list compose'"
@@ -3793,18 +3707,8 @@ maskarg_checkallowed() {
   Please choose one out of 'magick -list evaluate'"
           }
         ;;
-        morphology|maskmorph)
-          checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || {
-            Errormessage="--$Method=$Arg: unknown argument.
-  Please choose one out of 'magick -list morphology'"
-          }
-        ;;
         image) 
           [ -f "${Arg}" ] || Errormessage="--image: File not found: $Arg" ### FIXME
-        ;;
-        statistic|diffstat|maskstat)
-          checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown mode '$Arg'.
-  Please choose out of 'magick -list statistic'"
         ;;
         level)
           case "$Arg" in
@@ -3812,15 +3716,22 @@ maskarg_checkallowed() {
             *) Errormessage="$Method does not take argument word1 $Arg" ;;
           esac
         ;;
-        colorspace) 
-          checkmagicklist colorspace "$Arg" || Errormessage="--$Method=$Arg: unknown colorspace.
-  Please choose one out of 'magick -list colorspace'"
+        maskfree) ;;
+        morphology|maskmorph)
+          checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || {
+            Errormessage="--$Method=$Arg: unknown argument.
+  Please choose one out of 'magick -list morphology'"
+          }
         ;;
         slabs) 
           case "$Arg" in
             kurt) ;;
             *) Errormessage="--$Method does not know mode $Arg" ;;
           esac
+        ;;
+        statistic|diffstat|maskstat)
+          checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown mode '$Arg'.
+  Please choose out of 'magick -list statistic'"
         ;;
         *) Errormessage="$Method does not take argument word1 $Arg" ;;
       esac
@@ -3915,12 +3826,6 @@ cmd_waitforready() {
   # wait for magick command toolchain to be ready
   local Command Count File Line Key
   Key="$(generate_key)"
-  #Command="
-  #rose:
-  #  -format '$Key\n'
-  #  -write info:
-  #  -delete -1"
-  #cmd "$Command"
   sendmagickmessage "$Key"
   cmd_waitforkeyvalue "$Key" >/dev/null
   return
@@ -4005,17 +3910,17 @@ getmagickinfo() {
   Key2="$(generate_key)"
   Command="
   # get info ${2:-} about image ${1:-}
-  ${1:-}
+  '${1:-}'
     -format '$Key1\n${2:-}\n$Key2\n'
     -write info:
     -delete -1"
   cmd "$Command"
   cmd_waitforready
   cmd_waitforkeyvalue "$Key2" >/dev/null
-  sed -n "/$Key1/,/$Key2/p" $Magickfifolog | sed '1d ; $d'
+  sed -n "/$Key1/,/$Key2/p" "$Magickfifolog" | sed '1d ; $d'
   # code for multiple line info. -format would need a leading \n.
   #cmd_waitforkeyvalue "$Key" >/dev/null
-  #sed -n "/$Key/,\$p" $Magickfifolog | sed '1d' | sed '$d' # FIXME might not be reliable; current solution to get multiple output lines
+  #sed -n "/$Key/,\$p" "$Magickfifolog" | sed '1d' | sed '$d' # FIXME might not be reliable; current solution to get multiple output lines
 }
 
 ### main
@@ -4111,10 +4016,6 @@ declare_variables() {
   Imagelistmemsize=""
   Imagememsize=""
   Imagewidth=""
-  Image_needlist="
-black
-transparent
-white"
   Imarguments=""
   Imfusepid="$$"
   Imoptions=""
@@ -4161,7 +4062,7 @@ white"
   Slabstep=""
   Softmode="no"
   Sourceimage=""
-  Sourceimagelist=""
+  #Sourceimagelist=""
   Sourceimagenumber="0"
   Sourceimagesalreadyloaded=""
   Sourcemd5=""
@@ -4191,7 +4092,7 @@ parse_options() {
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,halo::,image::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,experimental::,free::,freediff::"
-  Longoptions="$Longoptions,level::,maskblur::,maskmorph::,maskstat::,maskwave::,merge::"
+  Longoptions="$Longoptions,level::,maskblur::,maskfree::,maskmorph::,maskstat::,maskwave::,merge::"
   Longoptions="$Longoptions,cutblur::,cutsoft::,less::,slabs::,soft::"
   Longoptions="$Longoptions,alpha::,finalblur::,finalblur2::,threshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
@@ -4226,7 +4127,7 @@ parse_options() {
 --freichen|--gaussian|--halo|--image|--kirsch|--laplacian|--lightness|--log|--morphology|\
 --max|--mean|--median|--min|\
 --none|--prewitt|--roberts|--saturation|--sobel|--statistic|--unsharp|--wavelet|\
---maskblur|--maskmorph|--maskstat|--maskwave|\
+--maskblur|--maskfree|--maskmorph|--maskstat|--maskwave|\
 --alpha|--finalblur|--finalblur2|--threshold|\
 --bg|--background|\
 --colorspace|--cutblur|--cutsoft|--grayscale|--less|--level|--merge|--soft|\
@@ -4243,14 +4144,16 @@ parse_options() {
       --) ;;
       *)
         [ -f "${1:-}" ] || error "File not found: ${1:-}"
-        grep -q ' ' <<< "${1:-}" && error "imfuse does not accept whitespace ' ' in pathes or file names: ${1:-}"
+        #grep -q ' ' <<< "${1:-}" && error "imfuse does not accept whitespace ' ' in pathes or file names: ${1:-}"
         Sourceimagenumber="$((Sourceimagenumber+1))"
         Sourceimagelist[$Sourceimagenumber]="${1:-}"
       ;;
     esac
     shift
   done
-  Sourceimagelist="$(IFS=$'\n' sort -V $Revertimagelist <<< "${Sourceimagelist[@]:-}")"
+  #IFS=$'\n' Sourceimagelist=( '' $(sort -V $Revertimagelist <<< "${Sourceimagelist[@]:-}") ) ; unset IFS
+  IFS=$'\n' Sourceimagelist=( '' $(sort -V $Revertimagelist <<< "${Sourceimagelist[*]:-}")) ; unset IFS
+  unset Sourceimagelist[0]
   return 0
 }
 check_options() {
@@ -4282,7 +4185,7 @@ check_options() {
     yes) [ -z "$Cachedir" ] && Cachedir="./cache.imfuse" ;;
     no)  [ -z "$Cachedir" ] && Cachedir="./cache.imfuse.$Imfusepid" ;;
   esac
-  mkdir -p $Cachedir   || error "Error creating cache folder $Cachedir"
+  mkdir -p "$Cachedir"   || error "Error creating cache folder $Cachedir"
   Testimage="$Cachedir/test.png"
   Resultmask="$Cachedir/result.max.tif"
   Exitnotefile="$Cachedir/exit"
@@ -4332,16 +4235,6 @@ check_options() {
     esac
 
     case $Argmethod in
-      compose)
-        Image_needlist="$Image_needlist
-max
-min
-$Argword1"
-      ;;
-      evaluate)
-        Image_needlist="$Image_needlist
-$Argword1"
-      ;;
       freichen)
         case $Argword1 in
           10|12|19) Argdiff=yes ;;
@@ -4349,10 +4242,6 @@ $Argword1"
       ;;
       image)
         [ -f "$Argword1" ] || error "--image needs an image file name as argument. Not found: '$Argword1'"
-      ;;
-      max|mean|median|min)
-        Image_needlist="$Image_needlist
-$Argmethod"
       ;;
       morphology)
         case $Argword1 in
@@ -4460,7 +4349,7 @@ $Argmethod"
 
   # --level
   maskarg_single "level" || {
-    { maskarg_single maskblur || maskarg_single maskmorph || maskarg_single maskstat || maskarg_single maskwave ;} && {
+    { maskarg_single maskblur || maskarg_single maskfree || maskarg_single maskmorph || maskarg_single maskstat || maskarg_single maskwave ;} && {
       eval $Arglist
       Argmethod="level"
       Argtype="single"
@@ -4576,13 +4465,13 @@ main_setup() {
   # Image properties
   Sourceimagenumberlength="${#Sourceimagenumber}"
   Image="${Sourceimagelist[1]}"
-  Imagewidth="$($Magickbin  -format '%w' "$Image" info:)"
-  Imageheight="$($Magickbin -format '%h' "$Image" info:)"
+  Imagewidth="$($Magickbin identify -format '%w' "$Image")"
+  Imageheight="$($Magickbin identify -format '%h' "$Image")"
   Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
   Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
   Imagelistmemsize="$((Sourceimagenumber*Imagememsize))"
 
-  Sourcemd5="$(md5cut "$(ls -l --full-time ${Sourceimagelist[@]})" )"
+  Sourcemd5="$(md5cut "$( ls -l --full-time "${Sourceimagelist[@]}" )" )"
   echo "$Sourcemd5" > "$Cachedir/md5"
   Showimage="${XDG_RUNTIME_DIR:-$Cachedir}/imfuse.showimage.tif"
 
@@ -4618,16 +4507,16 @@ main_setup() {
   Magickscriptlog="$Cachedir/magickscript.log"
   Magickfifolog="$Cachedir/magickmessage.log"
   Magickscriptlog="$Cachedir/magickscript.log"
-  :> $Magickscriptlog
+  :> "$Magickscriptlog"
   rm -f "$Magickfifo" 2>/dev/null ||:
-  mkfifo $Magickfifo
-  exec 3<>$Magickfifo
+  mkfifo "$Magickfifo"
+  exec 3<>"$Magickfifo"
   (
-    $Untrap
-    nice magick -limit memory ${Limitmemory}KB -define registry:temporary-path=$Cachedir -script - <&3 >$Magickfifolog 2>&1
+    #$Untrap
+    nice magick -limit memory ${Limitmemory}KB -define registry:temporary-path="$Cachedir" -script - <&3 >"$Magickfifolog" 2>&1
   ) & Magickscriptpid="$!"
   (
-    $Untrap
+    #$Untrap
     readmagickmessage
   ) & Magickmessagepid="$!"
 
@@ -4658,7 +4547,7 @@ main_setup() {
     $Grayscaleconverter
     -statistic standard_deviation 2
     -auto-level
-    -write $Showimage
+    -write '$Showimage'
     -delete 0"
   cmd "$Command"
   cmd_waitforready
@@ -4695,11 +4584,10 @@ trap - ERR"
     align || error "Error in align()."
   }
 
-  # Generate backgrounds etc.
-  Image_needlist="$(grep . <<< "$Image_needlist" | sort -V | uniq)"
-  for Mode in $Image_needlist; do
-    generate_image --mode "$Mode"
-  done
+  # Generate helper images
+  generate_image --mode "black"
+  generate_image --mode "white"
+  generate_image --mode "transparent"
 
   # run
   focus_main
