@@ -121,14 +121,24 @@ Step 2a: Mask generation - contrast masks
                       Similar to --gaussian, but faster and less accurate.
                       ARG additionally takes argument: 
                         s       sigma               Default: 0.75
+ --cmd [=ARG]         Custom ImageMagick option to create a mask.
+                      ARG takes argument:
+                        (word)   string
+                      string can be e.g. '-edge 2'. Avoid comma , in string.
+ --cmddiff [=ARG]     Custom ImageMagick option to create a mask.
+                      ARG takes argument:
+                        (word)   string
+                      string can be e.g. '-blur 0x5'. Avoid comma , in string.
+                      The resulting mask  will be a '-compose Difference' 
+                      comparision from command result with source image.
  --comet [=ARG]       Comet edge detection. Compares rotated mean areas.
                       ARG additionally takes arguments: 
                         s       sigma               Default: 5
                         (word)  mode                Default: Lighten
                       mode can be one of 'magick -list compose'
                       Recommended: Lighten, Darken.
- --compass [=ARG]     Compass edge detection. 
- --dog [=ARG]         Difference of Gaussian. 
+ --compass [=ARG]     Compass edge detection.
+ --dog [=ARG]         Difference of Gaussian.
                       ARG additionally takes arguments: 
                         s       sigma               Default: 0.4
                         S       sigma2              Default: 1.6*sigma1
@@ -139,15 +149,7 @@ Step 2a: Mask generation - contrast masks
                         (word)  mode1               Default: median
                         (word)  mode2               Default: mean
                       mode1 and mode2 can be out of 'magick -list evaluate'.
- --free [=ARG]        Custom ImageMagick option for mask generation.
-                      ARG is an arbitrary ImageMagick command, but must not
-                      contain a comma.              Default: '-sharpen 0x3'
- --freediff [=ARG]    Custom ImageMagick option for mask generation.
-                      The resulting mask  will be a '-compose Difference' 
-                      comparision with the source image.
-                      ARG is an arbitrary ImageMagick command, but must not
-                      contain a , comma.
- --freichen [=ARG]    Frei-Chen edge detection. 
+ --freichen [=ARG]    Frei-Chen edge detection.
                       ARG additionally takes arguments: 
                         (word)  modenumber
                       Possible modenumbers at:
@@ -265,7 +267,7 @@ Step 3: Mask merging
   The contrast masks generated in step 2 are merged into one per image.
   Furthermore they can be adjusted with --mask* options.
   Options beginning with --mask* can be specified multiple times.
-  The order matters, prefer to use in the order shown here.
+  The order of --mask* options matters, prefer to use in the shown order.
 
  --maskstat [=ARG]    Apply a statistic method for each mask pixel
                       to adjust it according to its neighborhood.
@@ -279,12 +281,6 @@ Step 3: Mask merging
                       Applied to contrast masks only.
                       ARG takes arguments:
                         s        sigma              Default: 2
- --maskwave [=ARG]    Remove noise in masks. Can close gaps, but can also
-                      create artefacts in very low contrast areas.
-                      Applied to contrast masks only.
-                      ARG takes arguments:
-                        p        percent            Default: 50%
-                      For percent value compare option -wavelet-denoise.
  --maskmorph [=ARG]   Closes gaps between nearby contrast lines setting the 
                       area in between to the same contrast weight.
                       Applied to contrast masks only.
@@ -303,6 +299,16 @@ Step 3: Mask merging
                       threshold excludes low contrast areas.
                       CPU expensive option. Iterating the kernel is cheaper
                       than using a greater radius.
+ --maskwave [=ARG]    Remove noise in masks. Can close gaps, but can also
+                      create artefacts in very low contrast areas.
+                      Applied to contrast masks only.
+                      ARG takes arguments:
+                        p        percent            Default: 50%
+                      For percent value compare option -wavelet-denoise.
+ --maskcmd [=ARG]     Custom ImageMagick option to apply on merged masks.
+                      ARG takes argument:
+                        (word)   string
+                      string can be e.g. '-blur 0x5'. Avoid comma , in string.
  --merge [=ARG]       Compose mode to merge multiple masks.
                       ARG takes arguments:
                         (word)   mode               Default: Screen
@@ -326,15 +332,10 @@ Step 3: Mask merging
 Step 4: Stack fusion
   The source images are processed with the merged masks,
   the overall sharp image will be generated.
+  The order of --cut* options matters, prefer to use in the shown order.
+  The --cut* options except --cutless can be specified multiple times.
 
- --cutblur [=ARG]     Blur cut masks in final focus montage.
-                      ARG takes argument:
-                        s        sigma              Default: 2
- --cutsoft [=ARG]     Similar to --cutblur, but paint default sharp cut mask
-                      over blurred cut mask.
-                      ARG takes argument:
-                        s        sigma              Default: 2
- --less [=ARG]        Strenghtens less contrasted objects in front of strong
+ --cutless [=ARG]     Strenghtens less contrasted objects in front of strong
                       contrasted background objects.
                       ARG takes argument:
                         p        percent            Default: 50%
@@ -343,6 +344,32 @@ Step 4: Stack fusion
                       If unsharp areas appear, use a greater percent value.
                       If the foreground object still has holes, use a lower 
                       percent value or try some of the --mask* options.
+ --cutmorph [=ARG]    Change shape of cut mask. Default mode 'erode' shrinks
+                      the cut mask to eliminate undesired fringes.
+                      ARG takes arguments:
+                        r        radius             Default: 1
+                        R        kernel iteration   Default: 1
+                        (word1)  mode               Default: erode
+                        (word2)  kernel             Default: Octagon
+                      radius is the kernel radius.
+                      kernel iteration multiplies the kernel radius.
+                      mode can be one of 'magick -list morphology'.
+                        try: open, close, erode, dilate, smooth.
+                      kernel can be one of 'magick -list kernel'.
+                        https://imagemagick.org/Usage/morphology/#kernel
+                      CPU expensive option. Iterating the kernel is cheaper
+                      than using a greater radius.
+ --cutsoft [=ARG]     Similar to --cutblur, but paint default sharp cut mask
+                      over blurred cut mask.
+                      ARG takes argument:
+                        s        sigma              Default: 2
+ --cutblur [=ARG]     Blur cut masks in final focus montage.
+                      ARG takes argument:
+                        s        sigma              Default: 2
+ --cutcmd [=ARG]      Custom ImageMagick option to apply on cut mask.
+                      ARG takes argument:
+                        (word)   string
+                      string can be e.g. '-blur 0x5'. Avoid comma , in string.
  --slabs [=ARG]       Split stack into different stacks (called slabs)
                       and fuse them separately. Can be specified multiple times.
                       ARG takes arguments:
@@ -377,7 +404,7 @@ Step 4: Stack fusion
                       Increasing percent2 increases sharpness of high contrast.
                       mode can be one of 'magick -list compose'. Of interest:
                         Plus Screen
-                      Does not support --less, --cutblur, --cutsoft.
+                      Does not support --cutless, --cutblur, --cutsoft.
 
 Step 5: Post processing
   The order of the options on cli matters. Noteably --alpha with percent values
@@ -463,24 +490,24 @@ has some weaknesses and can lead to artefacts.
  - Objects in foreground with background artefacts:
   Sometimes objects in background result in a stronger contrast mask than
   objects in foreground. The foreground object will be incomplete.
-  This can be fixed with option --less, additionally --cutblur or --maskmorph.
+  This can be fixed with option --cutless, additionally --cutblur or --maskmorph.
 
 Examples:
 Have a folder 'stackshot' containing all but nothing than stack source images.
 Go to the folder above 'stackshot'.
   Run imfuse with:
-    imfuse -VW --align --diffstat                            stackshot/*
+    imfuse -VW --align --diffstat                               stackshot/*
   You might be unsatisfied with low contrast areas. Try:
-    imfuse -VW --align --diffstat --maskblur                 stackshot/*
-    imfuse -VW --align --diffstat --maskblur --soft          stackshot/*
-    imfuse -VW --align --diffstat --maskblur --alpha         stackshot/*
+    imfuse -VW --align --diffstat --maskblur                    stackshot/*
+    imfuse -VW --align --diffstat --maskblur --soft             stackshot/*
+    imfuse -VW --align --diffstat --maskblur --alpha            stackshot/*
   You might have incomplete foreground objects. Try:
-    imfuse -VW --align --diffstat --maskblur --alpha --less  stackshot/*
+    imfuse -VW --align --diffstat --maskblur --alpha --cutless  stackshot/*
 
   Try also other mask options instead of (or additionally to) --diffstat,
   e.g. --wavelet or --morphology. Play with radius/sigma of mask options,
-  e.g. --diffstat=r5. Try different percent values for --less,
-  e.g. --less=p30 or --less=p80.
+  e.g. --diffstat=r5. Try different percent values for --cutless,
+  e.g. --cutless=p30 or --cutless=p80.
   Think of radius or sigma like brush sizes.
   Small values create small brushes painting more details and more noise.
   Great values create big brushes painting less details and less noise.
@@ -493,7 +520,6 @@ error() {
   echo "
 imfuse ERROR: $*
 " >&2
-  [ -d "$Cachedir" ] && :> "$Exitnotefile"
   kill -s SIGINT $Imfusepid
 }
 note() {
@@ -802,9 +828,14 @@ check_outputname() {
 
   # step focus
   maskarg_single "soft"    && Resultbasename="${Resultbasename}--soft=${Imarguments[$Argcount]%TYPE*}"
-  maskarg_single "less"    && Resultbasename="${Resultbasename}--less=${Imarguments[$Argcount]%TYPE*}"
-  maskarg_single "cutsoft" && Resultbasename="${Resultbasename}_cutsoft=${Imarguments[$Argcount]%TYPE*}"
-  maskarg_single "cutblur" && Resultbasename="${Resultbasename}_cutblur=${Imarguments[$Argcount]%TYPE*}"
+  for Count in $(seq "$Imoptionsnumber"); do
+    maskarg_parse "$Count"
+    case "$Argtype" in
+      focus)
+        Resultbasename="${Resultbasename}--${Argmethod}=${Imarguments[$Count]%TYPE*}"
+      ;;
+    esac
+  done
 
   # step slabs
   [ "$Slabautoall" = "no" ] && for Count in $(seq "$Imoptionsnumber"); do
@@ -1930,6 +1961,20 @@ focus_maskmethod() {
       [ "$Method" = "darkness" ] && Maskgenerator="$Maskgenerator
     -negate"
     ;;
+    cmd)
+      Maskgenerator="
+  # --cmd='$Argword1'
+  mpr:sourcegray 
+    $Argword1"
+    ;;
+    cmddiff)
+      Maskgenerator="
+  # --cmddiff='$Argword1'
+  mpr:sourcegray 
+    $Argword1
+  mpr:sourcegray
+    -compose Difference -composite"
+    ;;
     comet)
       Maskgenerator="
   # --comet
@@ -2031,20 +2076,6 @@ Maskgenerator="$Maskgenerator
   # --experimental
   ( mpr:sourcegray -colorspace HSB -channel 1 -separate +channel )
     -statistic standarddeviation ${Argradius1:-2}x${Argradius1:-2}"
-    ;;
-    free)
-      Maskgenerator="
-  # --free='$Argword1'
-  mpr:sourcegray 
-    $Argword1"
-    ;;
-    freediff)
-      Maskgenerator="
-  # --freediff='$Argword1'
-  mpr:sourcegray 
-    $Argword1
-  mpr:sourcegray
-    -compose Difference -composite"
     ;;
     freichen)
       case $Argword1 in
@@ -2483,9 +2514,9 @@ focus_merge_masks() {
     -blur 0x$Argsigma1"
           ;;
 
-          maskfree)
+          maskcmd)
             Mergecode="$Mergecode
-    # --maskfree
+    # --maskcmd
     $Argword1"
           ;;
 
@@ -2612,15 +2643,16 @@ $(sed "s/NUMBER/$(printnum $Count)/g" <<< "$Mergecode" )
 focus_hard() {
   # Finally: focus stacking
 
-  local Resultimage Maskmaxcopy= Cutblur= Cutsoft= Lessthanmax=
+  local Resultimage Maskmaxcopy=
   local Firstimage Lastimage
   local Focusimagebasename Focusimagefile Focusimagemaskfile
   local Sourceimage Sourcemask Maskmax Lessthanmaxmask
   local Command Count
   local Levelmax= Levelmin=
   local Longoptions Parsedoptions
+  local Focuscode=
 
-  Longoptions="lessthanmax:,maskmax:,output:,cutblur:,cutsoft:,firstimage:,lastimage:"
+  Longoptions="maskmax:,output:,firstimage:,lastimage:"
 
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
@@ -2628,9 +2660,6 @@ focus_hard() {
   while [ $# -gt 0 ]; do
     case "${1:-}" in
       --output)       Resultimage="${2:-}" ; shift ;;
-      --cutblur)      Cutblur="${2:-}" ; shift ;;
-      --cutsoft)      Cutsoft="${2:-}" ; shift ;;
-      --lessthanmax)  Lessthanmax="${2:-}" ; shift ;;
       --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
       --firstimage)   Firstimage="${2:-}" ; shift ;;
       --lastimage)    Lastimage="${2:-}" ; shift ;;
@@ -2644,7 +2673,111 @@ focus_hard() {
 
   sendmagickmessage "NOTE:Focus montage hard"
 
-  Focusimagebasename="focus-hard.$Firstimage..$Lastimage.$(md5cut "$(masklist "$Mergemaskbasename") $Cutblur $Cutsoft $Lessthanmax")"
+  # Code for --cut* options
+  Focuscode="
+  mpr:cutmask
+    -alpha off"
+  for Count in $(seq $Imoptionsnumber); do
+    maskarg_parse "$Count"
+    case "$Argtype" in
+      focus)
+        case "$Argmethod" in
+
+          cutblur)
+            Focuscode="$Focuscode
+    # --cutblur: blur cut mask
+    -blur 0x${Cutblur:-1}"
+          ;;
+
+          cutcmd)
+            Focuscode="$Focuscode
+    # --cutcmd
+    $Argword1"
+          ;;
+
+          cutless)
+            Focuscode="$Focuscode
+  ##### --cutless
+    -write mpr:cutmask_max
+    -delete 0
+
+  # get part of actual maskmax
+  mpr:resultmask
+  mpr:cutmask_max
+    -alpha Off -compose CopyOpacity -composite
+    -write mpr:maskmax_part
+    -delete 0
+
+  # paint actual maskmax part into lessmask
+  mpr:lessthanmax
+  mpr:maskmax_part
+    -compose Over -composite
+    -write mpr:lessthanmax
+    -delete 0
+
+  # get area of source mask that is stronger (+offset) than lessmask)
+  mpr:sourcemask 
+  ( mpr:lessthanmax -evaluate Add ${Argpercent1}% )
+    -compose MinusSrc -composite
+    -fill white +opaque black 
+    -write mpr:cutmask_less
+    -delete 0
+
+  # reduce max in maskmax where --lessthanmax takes over
+  mpr:sourcemask
+  mpr:cutmask_less
+    -compose CopyOpacity -composite
+    -write mpr:sourcemask_part
+    -delete 0
+  mpr:resultmask
+  mpr:sourcemask_part
+    -compose Over -composite
+    -write mpr:resultmask
+    -delete 0
+
+  # darken lessmask with current source mask to get a mask with decreasing sharpness after a max peak
+  mpr:lessthanmax
+  mpr:sourcemask
+    -compose Darken -composite
+    -write mpr:lessthanmax
+    -delete 0
+
+  # get area of source mask equal or sharper than current max (same code as above, but now with less-adjusted maskmax.
+  mpr:sourcemask
+  mpr:resultmask
+    -compose MinusDst -composite -fill white +opaque black
+    -alpha off
+    -negate
+    -write mpr:cutmask
+    -delete 0
+
+  mpr:cutmask
+  ####/ --cutless"
+          ;;
+
+          cutmorph)
+            Focuscode="$Focuscode
+    # --cutmorph
+    -morphology ${Argword1}:${Argradius2} ${Argword2}:${Argradius1}"
+          ;;
+
+          cutsoft)
+            Focuscode="$Focuscode
+    # --cutsoft: add a blur around cut mask
+    -blur 0x$Argsigma1
+  mpr:cutmask
+    -compose Lighten -composite"
+          ;;
+
+        esac
+      ;;
+    esac
+  done
+  Focuscode="$Focuscode
+    -write mpr:cutmask
+    -delete 0"
+
+  Focusimagebasename="focus-hard.$Firstimage..$Lastimage.$(md5cut "$(masklist "$Mergemaskbasename") $Focuscode")"
   Focusimagefile="$Cachedir/$Focusimagebasename.tif"
   Focusimagemaskfile="$Cachedir/$Focusimagebasename.mask.tif"
 
@@ -2669,26 +2802,18 @@ focus_hard() {
 
   load_sourceimages $Firstimage $Lastimage
 
-  generate_image --mode transparent --name "$Focusimagefile"
-  #Maskmax="${Maskmax:-mpr:resultmask}"
-
-  #Maskmax="mpr:mergemax"
-  #evaluate max "$Maskmax" $(masklist FIXME "$Mergemaskbasename" $Firstimage $Lastimage)
-  #Levelmax="$(getmagickinfo "$Maskmax" '%[fx:maxima*100]')"
-  #Levelmin="$(getmagickinfo "$Maskmax" '%[fx:minima*100]')"
-
-  [ "$Lessthanmax" ] && generate_image --mode transparent --name "mpr:lessthanmax"
-
-
   Command="
-  '$Focusimagefile'
-    -alpha Opaque
+  mpr:white
     -alpha off
     -write mpr:resultimage
     -delete 0
   mpr:black
     -alpha off
     -write mpr:resultmask
+    -delete 0"
+  maskarg_single "cutless" && Command="$Command
+  mpr:transparent
+    -write mpr:lessthanmax
     -delete 0"
   cmd "$Command"
 
@@ -2698,22 +2823,21 @@ focus_hard() {
 
     sendmagickmessage "PROGRESS:Focus montage step $Count / $Sourceimagenumber: $Sourceimage"
 
-    # Load images
     Command="
+  # Load images
   '$Sourceimage'
     -alpha off
     -write mpr:sourceimage
     -delete 0
   '$Sourcemask'
     -alpha off
-    #-level $Levelmin%,$Levelmax%
     -write mpr:sourcemask
     -delete 0"
 
     Command="$Command
   # stepwise increase maskmax
-  mpr:sourcemask 
-  mpr:resultmask 
+  mpr:sourcemask
+  mpr:resultmask
     -compose Lighten -composite
     -write mpr:resultmask
     -delete 0"
@@ -2728,91 +2852,8 @@ focus_hard() {
     -write mpr:cutmask
     -delete 0"
 
-    # --lessthanmax, --less
-    [ "$Lessthanmax" ] && { 
-      Command="$Command
-  ## --lessthanmax, --less
-  mpr:cutmask
-    -write mpr:cutmask_max
-    -delete 0"
-
-      Command="$Command
-  # get part of actual maskmax
-  mpr:resultmask
-  mpr:cutmask_max
-    -alpha Off -compose CopyOpacity -composite
-    -write mpr:maskmax_part
-    -delete 0"
-
-      Command="$Command
-  # paint actual maskmax part into lessmask
-  mpr:lessthanmax
-  mpr:maskmax_part
-    -compose Over -composite
-    -write mpr:lessthanmax
-    -delete 0"
-
-      Command="$Command
-  # get area of source mask that is stronger (+offset) than lessmask)
-  mpr:sourcemask 
-  ( mpr:lessthanmax -evaluate Add ${Lessthanmax:-0}% )
-    -compose MinusSrc -composite
-    -fill white +opaque black 
-    -write mpr:cutmask_less
-    -delete 0"
-
-      Command="$Command
-  # reduce max in maskmax where --lessthanmax takes over
-  mpr:sourcemask
-  mpr:cutmask_less
-    -compose CopyOpacity -composite
-    -write mpr:sourcemask_part
-    -delete 0
-  mpr:resultmask
-  mpr:sourcemask_part
-    -compose Over -composite
-    -write mpr:resultmask
-    -delete 0"
-
-      Command="$Command
-  # darken lessmask with current source mask to get a mask with decreasing sharpness after a max peak
-  mpr:lessthanmax
-  mpr:sourcemask
-    -compose Darken -composite
-    -write mpr:lessthanmax
-    -delete 0"
-
-      Command="$Command
-  # get area of source mask equal or sharper than current max (same code as above, but now with less-adjusted maskmax.
-  mpr:sourcemask
-  mpr:resultmask
-    -compose MinusDst -composite -fill white +opaque black
-    -alpha off
-    -negate
-    -write mpr:cutmask
-    -delete 0"
-
-      Command="$Command
-    ##/--lessthanmax"
-    } 
-
-    [ "$Cutsoft" ] && Command="$Command
-  # --cutsoft: add a blur to cut mask
-  mpr:cutmask
-    -alpha off
-    -blur 0x${Cutsoft:-1}
-  mpr:cutmask
-    -compose Lighten -composite
-    -write mpr:cutmask
-    -delete 0"
-
-    [ "$Cutblur" ] && Command="$Command
-  # --cutblur: blur entire cut mask
-  mpr:cutmask
-    -alpha off
-    -blur 0x${Cutblur:-1}
-    -write mpr:cutmask
-    -delete 0"
+    # add --cut* options
+    Command="$Command $Focuscode"
 
     Command="$Command
   # get part of source image
@@ -2831,10 +2872,6 @@ focus_hard() {
     -write mpr:resultimage
     $(showimagecode "mpr:resultimage")
     -delete 0"
-
-#    [ "$Slabnumber" = "1" ] && Command="$Command
-#  +set registry:$Sourceimage
-#  +set registry:$Sourcemask"
 
     cmd "$Command"
   done
@@ -3076,12 +3113,8 @@ focus_main() {
       # focus
       case $Softmode in
         "no")
-          maskarg_single "cutblur" && Cutblur="$Argsigma1"
-          maskarg_single "cutsoft" && Cutsoft="$Argsigma1"
-          maskarg_single "less"    && Less="$Argpercent1"
           focus_hard --maskmax "${Slabmask[$Slabstep]}" --output "${Slabresult[$Slabstep]}" \
-                     --firstimage="${Slabfirstimage[$Slabstep]}" --lastimage="${Slablastimage[$Slabstep]}" \
-                     --cutsoft "$Cutsoft" --cutblur "$Cutblur" --lessthanmax "$Less"
+                     --firstimage="${Slabfirstimage[$Slabstep]}" --lastimage="${Slablastimage[$Slabstep]}"
         ;;
         "yes")
           maskarg_single "soft" ||:
@@ -3409,7 +3442,7 @@ maskarg_defaultvalue() {
         halo)       echo "25" ;;
         wavelet)    echo "10" ;;
 
-        less)       echo "50" ;;
+        cutless)    echo "50" ;;
         maskwave)   echo "50" ;;
         soft)       echo "2" ;;
         *)          echo "" ;;
@@ -3441,6 +3474,7 @@ maskarg_defaultvalue() {
         statistic)  echo "2" ;;
         #unsharp)    echo "" ;; # 0
 
+        cutmorph)   echo "1" ;;
         finalblur2) echo "4" ;;
         maskmorph)  echo "2" ;;
         maskstat)   echo "6" ;;
@@ -3449,6 +3483,7 @@ maskarg_defaultvalue() {
     ;;
     radius2)
       case "${1:-}" in
+        cutmorph)   echo "1" ;;
         maskmorph)  echo "2" ;;
         morphology) echo "1" ;;
         *)          echo "" ;;
@@ -3509,7 +3544,7 @@ maskarg_defaultvalue() {
     ;;
     type)
       case "${1:-}" in
-        blur|comet|compass|diffstat|dog|free|freediff|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
+        blur|cmd|cmddiff|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
           echo "contrast"
         ;;
         channel|chroma|darkness|lightness|saturation)
@@ -3518,7 +3553,7 @@ maskarg_defaultvalue() {
         image|enfuse|compose|evaluate|min|max|mean|median)
           echo "comparision"
         ;;
-        maskblur|maskfree|maskmorph|maskstat|maskwave)
+        maskblur|maskcmd|maskmorph|maskstat|maskwave)
           echo "merge"
         ;;
         alpha|finalblur|finalblur2|threshold)
@@ -3527,8 +3562,11 @@ maskarg_defaultvalue() {
         bg)
           echo "background"
         ;;
-        colorspace|cutblur|cutsoft|grayscale|less|level|merge|soft)
+        colorspace|grayscale|level|merge|soft)
           echo "single"
+        ;;
+        cutblur|cutcmd|cutless|cutmorph|cutsoft)
+          echo "focus"
         ;;
         slabs)
           echo "slab"
@@ -3556,7 +3594,6 @@ maskarg_defaultvalue() {
         diffstat)   echo "median" ;;
         evaluate)   echo "max" ;;
         freichen)   echo "" ;;
-        freediff)   echo "-sharpen 0x3" ;;
         laplacian)  echo "3" ;;
         lightness)  echo "HSL" ;;
         morphology) echo "edgeout" ;;
@@ -3564,6 +3601,7 @@ maskarg_defaultvalue() {
         statistic)  echo "standarddeviation" ;;
 
         bg)         echo "enfuse" ;;
+        cutmorph)   echo "erode" ;;
         colorspace) echo "SRGB" ;;
         grayscale)  echo "Rec709Luma" ;;
         level)      echo "all" ;;
@@ -3581,7 +3619,7 @@ maskarg_defaultvalue() {
         darkness)   echo "2" ;;
         diffstat)   echo "mean" ;;
         lightness)  echo "2" ;;
-        maskmorph)  echo "Octagon" ;;
+        maskmorph|cutmorph)  echo "Octagon" ;;
         saturation) echo "1" ;;
         *)          echo "" ;;
       esac
@@ -3614,7 +3652,7 @@ maskarg_checkallowed() {
     percent1)
       case "$Method" in
         wavelet|halo) ;;
-        alpha|less|maskwave|soft) ;;
+        alpha|cutless|maskwave|soft) ;;
         slabs) ;;
         *) Errormessage="$Method does not take argument percent1" ;;
       esac
@@ -3629,8 +3667,8 @@ maskarg_checkallowed() {
     ;;
     radius1)
       case "$Method" in
-        halo|morphology) ;;
-        maskmorph) ;;
+        halo) ;;
+        morphology|cutmorph|maskmorph) ;;
         diffstat|statistic|maskstat)
           [ "${Arg:-0}" -lt "2" ] && Errormessage="--$Method needs a radius of at least 2"
         ;;
@@ -3641,7 +3679,7 @@ maskarg_checkallowed() {
     ;;
     radius2)
       case "$Method" in
-        morphology|maskmorph) ;;
+        morphology|cutmorph|maskmorph) ;;
         *) Errormessage="$Method does not take argument radius2" ;;
       esac
     ;;
@@ -3691,7 +3729,7 @@ maskarg_checkallowed() {
         bg) ;;
         enfuse) ;;
         grayscale) ;;
-        comet|freichen|freediff|laplacian) ;;
+        comet|freichen|laplacian) ;;
         channel|chroma|darkness|lightness|saturation) ;;
         colorspace) 
           checkmagicklist colorspace "$Arg" || Errormessage="--$Method=$Arg: unknown colorspace.
@@ -3716,8 +3754,8 @@ maskarg_checkallowed() {
             *) Errormessage="$Method does not take argument word1 $Arg" ;;
           esac
         ;;
-        maskfree) ;;
-        morphology|maskmorph)
+        cmd|cmddiff|cutcmd|maskcmd) ;;
+        morphology|cutmorph|maskmorph)
           checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || {
             Errormessage="--$Method=$Arg: unknown argument.
   Please choose one out of 'magick -list morphology'"
@@ -3744,8 +3782,7 @@ maskarg_checkallowed() {
   Please choose out of 'magick -list statistic'"
         ;;
         channel|chroma|darkness|lightness|saturation) ;;
-        slabs) ;;
-        morphology|maskmorph)
+        morphology|cutmorph|maskmorph)
           checkmagicklist kernel "$Arg" || Errormessage="--$Method: unknown kernel '$Arg'.
   Please choose out of 'magick -list kernel'" ;;
         *) Errormessage="$Method does not take argument word2 $Arg" ;;
@@ -3931,7 +3968,6 @@ trap_sigint() {
   set +x
   note "Received SIGINT"
   [ -n "$Magickscriptpid" ] && kill "$Magickscriptpid"
-  :> "$Exitnotefile"
   multicore_break
   finish 130
 }
@@ -3941,7 +3977,6 @@ finish() {
   set +x
 
   cmd "-exit"
-  [ -d "$Cachedir" ] && :> "$Exitnotefile"
   multicore_wait
   break 2>/dev/null
 
@@ -4001,7 +4036,6 @@ declare_variables() {
   Align=""
   Cachedir=""
   Colorspace=""
-  Exitnotefile=""
   Exifsourceimage=""
   Firstimage=""
   Firstmaskmethod=""
@@ -4091,9 +4125,9 @@ parse_options() {
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,halo::,image::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
-  Longoptions="$Longoptions,experimental::,free::,freediff::"
-  Longoptions="$Longoptions,level::,maskblur::,maskfree::,maskmorph::,maskstat::,maskwave::,merge::"
-  Longoptions="$Longoptions,cutblur::,cutsoft::,less::,slabs::,soft::"
+  Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
+  Longoptions="$Longoptions,level::,maskblur::,maskcmd::,maskmorph::,maskstat::,maskwave::,merge::"
+  Longoptions="$Longoptions,cutblur::,cutcmd::,cutless::,cutmorph::,cutsoft::,slabs::,soft::"
   Longoptions="$Longoptions,alpha::,finalblur::,finalblur2::,threshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
@@ -4123,14 +4157,16 @@ parse_options() {
       -W)                  Viewnior="yes"                  ;;
 
 --blur|--channel|--chroma|--comet|--compass|--compose|--darkness|--diffstat|--dog|--enfuse|--evaluate|\
---experimental|--free|--freediff|\
+--cmd|--cmddiff|--experimental\
 --freichen|--gaussian|--halo|--image|--kirsch|--laplacian|--lightness|--log|--morphology|\
 --max|--mean|--median|--min|\
 --none|--prewitt|--roberts|--saturation|--sobel|--statistic|--unsharp|--wavelet|\
---maskblur|--maskfree|--maskmorph|--maskstat|--maskwave|\
+\
+--colorspace|--grayscale|\
+--maskblur|--maskcmd|--maskmorph|--maskstat|--maskwave|--level|--merge|\
+--cutblur|--cutcmd|--cutless|--cutmorph|--cutsoft|--soft|\
 --alpha|--finalblur|--finalblur2|--threshold|\
 --bg|--background|\
---colorspace|--cutblur|--cutsoft|--grayscale|--less|--level|--merge|--soft|\
 --slabs)
         Imoptionsnumber="$((Imoptionsnumber+1))"
         Argmethod="${1#--}"
@@ -4161,6 +4197,7 @@ check_options() {
 
   local Arg Part1 Part2 Weightsum= Weightrest Masknoweightcount= Singleoptionlist=
   local Firstimage Lastimage Slabsize Position
+  local Lessthanmaxoption
 
   [ "$Sourceimagenumber" = "0" ] && error "No source images provided."
 
@@ -4188,8 +4225,6 @@ check_options() {
   mkdir -p "$Cachedir"   || error "Error creating cache folder $Cachedir"
   Testimage="$Cachedir/test.png"
   Resultmask="$Cachedir/result.max.tif"
-  Exitnotefile="$Cachedir/exit"
-  rm -f "$Exitnotefile"
 
   # mask options
   for Count in $(seq "$Imoptionsnumber"); do
@@ -4235,6 +4270,10 @@ check_options() {
     esac
 
     case $Argmethod in
+      cutless)
+        [ -n "${Lessthanmaxoption:-}" ] && error "Option --cutless can be specified only once."
+        Lessthanmaxoption="yes"
+      ;;
       freichen)
         case $Argword1 in
           10|12|19) Argdiff=yes ;;
@@ -4349,7 +4388,7 @@ check_options() {
 
   # --level
   maskarg_single "level" || {
-    { maskarg_single maskblur || maskarg_single maskfree || maskarg_single maskmorph || maskarg_single maskstat || maskarg_single maskwave ;} && {
+    { maskarg_single maskblur || maskarg_single maskcmd || maskarg_single maskmorph || maskarg_single maskstat || maskarg_single maskwave ;} && {
       eval $Arglist
       Argmethod="level"
       Argtype="single"
@@ -4426,9 +4465,9 @@ check_options() {
   [ "$Softmode" = "yes" ] && {
     maskarg_single "cutblur"  && Softmode="error"
     maskarg_single "cutsoft"  && Softmode="error"
-    maskarg_single "less"     && Softmode="error"
+    maskarg_single "cutless"  && Softmode="error"
     [ "$Softmode" = "error" ] && error "Option --soft does not support options
-  --cutblur, --cutsoft, --less."
+  --cutblur, --cutsoft, --cutless."
   }
 
   return 0
