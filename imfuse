@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.8.3-beta"
+Version="0.8.4-beta"
 
 # ToDo:
 # --cache: allow whitespace in path
@@ -59,13 +59,11 @@ Arguments taken by all mask generating options:
             Example: --morphology --saturation=w25
             This will generate two masks. The saturation mask will only have
             noteable effect where the morphology mask strength is below 25%.
-  blur      Compare option --maskblur, here applied for single mask only.
-  wave      Compare option --maskwave, here applied for single mask only.
-  neg       Negate/invert the mask. Rarely needed.
   t         Threshold (removal) of low contrast areas.
   T         Threshold (removal) of high contrast areas.
   C=        Colorspace channel to use instead of full source image.
             Example: C=HSL-1 for saturation channel. Rarely needed.
+            C=HSL without channel nummber would use all channels.
 Arguments additionally taken by some options:
   r         Radius. Must be an integer value.
             Increased radius mostly causes less noise, less details and
@@ -623,7 +621,7 @@ printtotalmemory() {
     Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print $3}' <<< "$Line")"
     Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
     Memory="$((Memory + Zram))"
-  done < <(/sbin/swapon --bytes | grep zram)
+  done < <(/sbin/swapon --bytes | grep zram ||:)
   echo $Memory
 }
 unspecialstring() {
@@ -784,7 +782,7 @@ printfreememory() {
     Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print ($3 - $4)}' <<< "$Line")"
     Zram="$(LC_ALL=C awk 'BEGIN {OFMT = "%.0f"} {print $1 / 1000}' <<< "$Zram")"
     #Memory="$((Memory + Zram))"
-  done < <(/sbin/swapon --bytes | grep zram)
+  done < <(/sbin/swapon --bytes | grep zram ||:)
   echo $Memory
 }
 
@@ -1694,7 +1692,7 @@ level_masks() {
   }
 
   compare "$Levelmin" lt "1" && compare "$Levelmax" gt "99" && [ "$Maskbasename" = "$Outputbasename" ] && {
-    sendmagickmessage "Skipping level, range is greater than 1%..99%"
+    sendmagickmessage "NOTE:Skipping level, range is greater than 1%..99%"
     return 0
   }
 
@@ -2236,7 +2234,7 @@ Maskgenerator="$Maskgenerator
     ;;
   esac
 
-  grep . <<< "$Maskgenerator"
+  grep . <<< "$Maskgenerator" ||:
 }
 focus_generate_masks() {
   local Maskgenerator Maskgenerator_all= Basenamelist= Maskready= Maskmax Mode Line Imagename Command= Maskmd5 Count
@@ -2291,20 +2289,6 @@ $(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
   # =diff
   mpr:sourcegray
     -compose Difference -composite"
-
-    [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
-    # =negate
-    -negate"
-
-    [ "$Argblur" ] && {
-      Maskgenerator="$Maskgenerator
-    # =blur
-    -blur 0x$Argblur"
-    }
-
-    [ "$Argwave" ] && Maskgenerator="$Maskgenerator
-    # =wave
-    -wavelet-denoise ${Argwave:-30}%"
 
     grep -q "$Argtype" <<< "$Masktype" && {
       Maskmd5="$(md5cut "$Sourcemd5 $Colorspace $Grayscaleconverter $Maskgenerator")"
@@ -2361,7 +2345,7 @@ $Maskgenerator
 
       sendmagickmessage "PROGRESS:Mask generation step $Count / $Sourceimagenumber: $(sourceimagename $Count)"
 
-      maskarg_single "colorspace"
+      maskarg_single "colorspace" ||:
       Command="
   ( '$(sourceimagename $Count)'
       -colorspace ${Colorspace:-$Argword1}"
@@ -2803,8 +2787,7 @@ focus_hard() {
   load_sourceimages $Firstimage $Lastimage
 
   Command="
-  mpr:white
-    -alpha off
+  mpr:transparent
     -write mpr:resultimage
     -delete 0
   mpr:black
@@ -2832,17 +2815,15 @@ focus_hard() {
   '$Sourcemask'
     -alpha off
     -write mpr:sourcemask
-    -delete 0"
+    -delete 0
 
-    Command="$Command
   # stepwise increase maskmax
   mpr:sourcemask
   mpr:resultmask
     -compose Lighten -composite
     -write mpr:resultmask
-    -delete 0"
+    -delete 0
 
-    Command="$Command
   # get area of source mask equal or sharper than current max
   mpr:resultmask
   mpr:sourcemask
@@ -2853,7 +2834,8 @@ focus_hard() {
     -delete 0"
 
     # add --cut* options
-    Command="$Command $Focuscode"
+    Command="$Command
+  $Focuscode"
 
     Command="$Command
   # get part of source image
@@ -2861,14 +2843,12 @@ focus_hard() {
   mpr:cutmask
     -alpha off -compose CopyOpacity -composite
     -write mpr:sourcepart
-    -delete 0"
+    -delete 0
 
-    Command="$Command
   # add part of source to result
   mpr:resultimage
   mpr:sourcepart
     -compose Over -composite
-    -alpha off
     -write mpr:resultimage
     $(showimagecode "mpr:resultimage")
     -delete 0"
@@ -2880,7 +2860,7 @@ focus_hard() {
   Command="
   # store result image and mask
   mpr:resultimage
-    $Tifstore 
+    $Tifstorealpha
     -write '$Resultimage'
     -write '$Focusimagefile'
     -delete 0
@@ -3161,7 +3141,7 @@ focus_main() {
               case "$Option" in
                 alpha)
                   alphalevel --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" \
-                             --percent1 "${Argpercent1}" --percent2 "{Argpercent2}%"
+                             --percent1 "${Argpercent1}" --percent2 "${Argpercent2}%"
                 ;;
                 finalblur)
                   finalblur  --image "${Slabresultpost[$Slabstep]}" --mask "${Slabmaskpost[$Slabstep]}" \
@@ -3309,6 +3289,8 @@ focus_main() {
     cmd "  # --savemask"
     evaluate max "$Savemask" ${Slabmaskpost[$Slabstep]}
   }
+
+  return 0
 }
 
 ### mask args
@@ -3344,12 +3326,9 @@ maskarg_parse() {
       "C")                Argchannel="$Value"
                           Argcolorspace="$(cut -d'-' -f1 <<< "$Argchannel")"
                           Argchannelnumber="$(cut -d'-' -f2 <<< "$Argchannel")" ;;
-      "wave")             Argwave="${Value:-$(maskarg_defaultvalue   "$Argmethod" wave)}" ;;
-      "diff")             Argdiff="s" ;;
-      "blur")             Argblur="${Value:-$(maskarg_defaultvalue   "$Argmethod" blur)}" ;;
-      "neg"|"negate")     Argnegate="neg" ;;
-      "LEVEL")            Arglevel="yes" ;;
       "TYPE")             Argtype="$Value" ;;
+      "LEVEL")            Arglevel="yes" ;;
+      "DIFF")             Argdiff="yes" ;;
       "BASENAME")         Argbasename="$Value" ;;
       *|WORD1|WORD2) ### FIXME
         [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
@@ -3378,11 +3357,8 @@ maskarg_store() {
   [ "$Argchannel" ]            && Argoptions="$Argoptions,C=$Argchannel"
   [ "$Argword1" ]              && Argoptions="$Argoptions,$Argword1"
   [ "$Argword2" ]              && Argoptions="$Argoptions,$Argword2"
-  [ "$Argwave" ]               && Argoptions="$Argoptions,wave$Argwave"
-  [ "$Argdiff" ]               && Argoptions="$Argoptions,diff"
-  [ "$Argblur" ]               && Argoptions="$Argoptions,blur$Argblur"
-  [ "$Argnegate" ]             && Argoptions="$Argoptions,neg"
   [ "$Argtype" ]               && Argoptions="$Argoptions,TYPE=$Argtype"
+  [ "$Argdiff" ]               && Argoptions="$Argoptions,DIFF"
   [ "$Arglevel" ]              && Argoptions="$Argoptions,LEVEL"
   [ "$Argbasename" ]           && Argoptions="$Argoptions,BASENAME=$Argbasename"
   Argoptions="${Argoptions#,}"
@@ -3390,12 +3366,6 @@ maskarg_store() {
 }
 maskarg_defaultvalue() {
   case "${2:-}" in
-    blur)
-      echo "1"
-    ;;
-    less)
-      echo "50"
-    ;;
     levelmin)
       case "${1:-}" in
         blur)       echo "0" ;;
@@ -3634,27 +3604,27 @@ maskarg_checkallowed() {
   Arg="${3:-}"
 
   case "$Option" in
-    blur)
-      case "$Argtype" in
-        contrast|comparision|channel) ;;
-        *) Errormessage="$Method does not take argument blur" ;;
-      esac
-    ;;
-    C)
+    colorspace)
       case "$Argtype" in
         contrast|comparision|channel)
-          checkmagicklist colorspace "$(cut -d '-' -f1 <<< "$Arg")" || Errormessage="--$Method=$Arg: unknown colorspace 
+          checkmagicklist colorspace "$(cut -d '-' -f1 <<< "$Arg")" || Errormessage="--$Method: unknown colorspace for C=: $Arg 
   Please choose one out of 'magick -list colorspace'"
         ;;
-        *) Errormessage="$Method does not take argument C=" ;;
+        *) Errormessage="$Method does not take argument colorspace: C=$Arg" ;;
+      esac
+    ;;
+    number1|number2)
+      case "$Method" in
+        slabs) ;;
+        *) Errormessage="$Method does not take argument number: n$Arg" ;;
       esac
     ;;
     percent1)
       case "$Method" in
-        wavelet|halo) ;;
-        alpha|cutless|maskwave|soft) ;;
+        halo) ;;
+        alpha|cutless|maskwave|soft|wavelet) ;;
         slabs) ;;
-        *) Errormessage="$Method does not take argument percent1" ;;
+        *) Errormessage="$Method does not take argument percent1: p$Arg" ;;
       esac
     ;;
     percent2)
@@ -3662,38 +3632,36 @@ maskarg_checkallowed() {
         alpha) ;;
         soft) ;;
         slabs) ;;
-        *) Errormessage="$Method does not take argument percent2" ;;
+        *) Errormessage="$Method does not take argument percent2: P$Arg" ;;
       esac
     ;;
     radius1)
       case "$Method" in
         halo) ;;
         morphology|cutmorph|maskmorph) ;;
-        diffstat|statistic|maskstat)
-          [ "${Arg:-0}" -lt "2" ] && Errormessage="--$Method needs a radius of at least 2"
-        ;;
+        diffstat|statistic|maskstat) ;;
         finalblur2) ;;
         slabs) ;;
-        *) Errormessage="$Method does not take argument radius1" ;;
+        *) Errormessage="$Method does not take argument radius1: r$Arg" ;;
       esac
     ;;
     radius2)
       case "$Method" in
         morphology|cutmorph|maskmorph) ;;
-        *) Errormessage="$Method does not take argument radius2" ;;
+        *) Errormessage="$Method does not take argument radius2: R$Arg" ;;
       esac
     ;;
     sigma1)
       case "$Method" in
         blur|comet|dog|gaussian|halo|log|unsharp) ;;
         cutblur|cutsoft|finalblur|maskblur|threshold) ;;
-        *) Errormessage="$Method does not take argument sigma1" ;;
+        *) Errormessage="$Method does not take argument sigma1: s$Arg" ;;
       esac
     ;;
     sigma2)
       case "$Method" in
         dog|finalblur) ;;
-        *) Errormessage="$Method does not take argument sigma2" ;;
+        *) Errormessage="$Method does not take argument sigma2: S$Arg" ;;
       esac
     ;;
     threshold1)
@@ -3702,7 +3670,7 @@ maskarg_checkallowed() {
         *)
           case "$Method" in
             maskmorph|finalblur|finalblur2|threshold) ;;
-            *) Errormessage="$Method does not take argument threshold1" ;;
+            *) Errormessage="$Method does not take argument threshold1: t$Arg" ;;
           esac
         ;;
       esac
@@ -3713,15 +3681,9 @@ maskarg_checkallowed() {
         *)
           case "$Method" in
             threshold) ;;
-            *) Errormessage="$Method does not take argument threshold2" ;;
+            *) Errormessage="$Method does not take argument threshold2: T$Arg" ;;
           esac
         ;;
-      esac
-    ;;
-    wave)
-      case "$Argtype" in
-        contrast|comparision|channel) ;;
-        *) Errormessage="$Method does not take argument wave" ;;
       esac
     ;;
     word1)
@@ -3732,16 +3694,16 @@ maskarg_checkallowed() {
         comet|freichen|laplacian) ;;
         channel|chroma|darkness|lightness|saturation) ;;
         colorspace) 
-          checkmagicklist colorspace "$Arg" || Errormessage="--$Method=$Arg: unknown colorspace.
+          checkmagicklist colorspace "$Arg" || Errormessage="--$Method: unknown colorspace: $Arg
   Please choose one out of 'magick -list colorspace'"
         ;;
         compose|merge|soft)
-          checkmagicklist compose "${Arg,,}" || Errormessage="--$Method=$Arg: unknown argument for word1.
+          checkmagicklist compose "${Arg,,}" || Errormessage="--$Method: unknown argument for word1: $Arg
   Please choose one out of 'magick -list compose'"
         ;;
         evaluate)
           checkmagicklist "evaluate" "$(tr -d '2' <<< "$Arg")" || {
-            Errormessage="--$Method=$Arg: unknown argument.
+            Errormessage="--$Method: unknown argument for word1: $Arg
   Please choose one out of 'magick -list evaluate'"
           }
         ;;
@@ -3751,41 +3713,41 @@ maskarg_checkallowed() {
         level)
           case "$Arg" in
             all|slab|off) ;;
-            *) Errormessage="$Method does not take argument word1 $Arg" ;;
+            *) Errormessage="$Method does not take argument: $Arg" ;;
           esac
         ;;
         cmd|cmddiff|cutcmd|maskcmd) ;;
         morphology|cutmorph|maskmorph)
           checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || {
-            Errormessage="--$Method=$Arg: unknown argument.
+            Errormessage="--$Method:  unknown argument for word1: $Arg
   Please choose one out of 'magick -list morphology'"
           }
         ;;
         slabs) 
           case "$Arg" in
             kurt) ;;
-            *) Errormessage="--$Method does not know mode $Arg" ;;
+            *) Errormessage="--$Method does not take argument: $Arg" ;;
           esac
         ;;
         statistic|diffstat|maskstat)
-          checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown mode '$Arg'.
+          checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
         ;;
-        *) Errormessage="$Method does not take argument word1 $Arg" ;;
+        *) Errormessage="$Method does not take argument word1: $Arg" ;;
       esac
     ;;
     word2)
       case "$Method" in
         colorspace) ;;
         diffstat)
-          checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown mode '$Arg'.
+          checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
         ;;
         channel|chroma|darkness|lightness|saturation) ;;
         morphology|cutmorph|maskmorph)
-          checkmagicklist kernel "$Arg" || Errormessage="--$Method: unknown kernel '$Arg'.
+          checkmagicklist kernel "$Arg" || Errormessage="--$Method: unknown kernel: $Arg
   Please choose out of 'magick -list kernel'" ;;
-        *) Errormessage="$Method does not take argument word2 $Arg" ;;
+        *) Errormessage="$Method does not take argument word2: $Arg" ;;
       esac
     ;;
   esac
@@ -4009,12 +3971,9 @@ declare_variables() {
   Argchannelnumber=""
   Argcolorspace=""
   Argcount=""
-  Argwave=""
   Argdiff=""
   Arglevel=""
-  Argblur=""
   Argmethod=""
-  Argnegate=""
   Argnumber1=""
   Argnumber2=""
   Argoptions=""
@@ -4240,6 +4199,9 @@ check_options() {
     [ -z "$Argthreshold2" ] && Argthreshold2="$(maskarg_defaultvalue "$Argmethod" threshold2)"
     [ -z "$Argword1" ]      && Argword1="$(maskarg_defaultvalue      "$Argmethod" word1)"
     [ -z "$Argword2" ]      && Argword2="$(maskarg_defaultvalue      "$Argmethod" word2)"
+    [ -n "$Argcolorspace" ] && Argcolorspace="$(maskarg_checkallowed "$Argmethod" colorspace "$Argcolorspace")"
+    [ -n "$Argnumber1" ]    && Argnumber1="$(maskarg_checkallowed    "$Argmethod" number1    "$Argnumber1")"
+    [ -n "$Argnumber2" ]    && Argnumber2="$(maskarg_checkallowed    "$Argmethod" number2    "$Argnumber2")"
     [ -n "$Argradius1" ]    && Argradius1="$(maskarg_checkallowed    "$Argmethod" radius1    "$Argradius1")"
     [ -n "$Argradius2" ]    && Argradius2="$(maskarg_checkallowed    "$Argmethod" radius2    "$Argradius2")"
     [ -n "$Argsigma1" ]     && Argsigma1="$(maskarg_checkallowed     "$Argmethod" sigma1     "$Argsigma1")"
@@ -4571,7 +4533,7 @@ main_setup() {
   }
 
   # start geeqie
-  maskarg_single "colorspace"
+  maskarg_single "colorspace" ||:
   Command="
 # $Resultbasename
 # $(date)
@@ -4649,5 +4611,5 @@ trap - ERR"
 
   return 0
 }
-main "$@" || finish 1
-finish 0
+main "$@"
+finish
