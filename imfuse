@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.8.5-beta"
+Version="0.8.6-beta"
 
 # ToDo:
 # =C=: split into C=, c=
@@ -52,18 +52,19 @@ General options:
 The options below can take additionally arguments [=ARG].
 Multiple arguments are comma-separated. Example: --morphology=r3,blur
 Arguments taken by all mask generating options:
-  w         Mask weight. Percent value from 0 to 100.
+  w         Weight of mask. Percent value from 0 to 100.
             Of interest if specifying more than one mask generation method.
             Example: --morphology --saturation=w25
             This will generate two masks. The saturation mask will only have
             noteable effect where the morphology mask strength is below 25%.
   t         Threshold (removal) of low contrast areas.
   T         Threshold (removal) of high contrast areas.
-  C=        Colorspace channel to use instead of full source image.
-            Example: C=HSL-1 for saturation channel. Rarely needed.
-            C=HSL without channel nummber would use all channels.
-  level [=yes|no] Equalize histogram distribution. Default is yes except for
-            channel and image comparision options.
+  C=        Colorspace to use instead of full source image. Example: C=HSL.
+  c         Colorspace channel to use. Counting up from 0 for first channel.
+            Example: C=HSL,c2 will use the saturation channel from HSL.
+  neg       Negate / invert the mask. Most of interest for color channels.
+  level [=yes|no] Equalize histogram distribution to get compareable masks.
+            Default is yes except for channel and image comparision options.
 Arguments additionally taken by some options:
   r         Radius. Must be an integer value.
             Increased radius mostly causes less noise, less details and
@@ -86,10 +87,10 @@ Step 1: Color conversion
      --colorspace [=ARG]  Define the colorspace from where to generate the
                       masks. Experimental option, less useful yet.
                       ARG takes arguments:
-                        (word1) colorspace          Default: sRGB
-                        (word2) channel
+                        C       colorspace          Default: sRGB
+                        c       channel
                       Of interest (all channels together): sRGB, RGB
-                      Single channels of interest:   LAB,0 HSL,1  HCL,1
+                      Single channels of interest:   LAB: 0 HSL: 1  HCL: 1
                       For further colorspaces and their channels see:
                       https://legacy.imagemagick.org/Usage/color_basics
                       and 'magick -list colorspace'.
@@ -236,22 +237,24 @@ Step 2b: Mask generation - image comparision masks
 
 Step 2c: Mask generation - colorspace channel masks
   Options can be specified multiple times. The order does not matter.
-  All options are variations of --channel. Most of interest: --saturation
+  All options are variations of --channel and are converted to option --cmd.
+  Most of interest: --darkness
 
  --channel [=ARG]     Use a colorspace channel as mask.
-                      ARG additionally takes arguments:
-                        (word)   colorspace         Default: HSL
-                        (word)   color channel      Default: 1
+                      ARG takes the general mask arguments:
+                        C        colorspace
+                        c        colorspace channel
+                        neg      negate
+                        level    leveling           Default: no
                       Colorspace can be one of 'magick -list colorspace'
                       The color channel is a number from 0..31.
+                      Compare 'magick -list colorspace'.
  --chroma [=ARG]      Chroma channel from HCL colorspace.
  --darkness [=ARG]    Negated lightness channel from HSL colorspace.
                       Dark result, similar to --min.
  --lightness [=ARG]   Lightness channel from HSL colorspace. 
                       Bright result, similar to --max.
  --saturation [=ARG]  Saturation channel from HSL colorspace.
-                      Adding this with low weight, e.g. --saturation=w5,
-                      can soften the image so it looks more natural.
 
 Step 3: Mask merging
   The contrast masks generated in step 2 are merged into one per image.
@@ -1895,16 +1898,6 @@ focus_maskmethod() {
   mpr:sourcegray
     -compose Difference -composite"
     ;;
-    channel|saturation|chroma|lightness|darkness)
-      Maskgenerator="$Maskgenerator
-  # --$Method
-  mpr:sourceimage
-    -colorspace ${Argword1:-HSB} 
-    -channel ${Argword2:-1} -separate
-    +channel"
-      [ "$Method" = "darkness" ] && Maskgenerator="$Maskgenerator
-    -negate"
-    ;;
     cmd)
       Maskgenerator="
   # --cmd='$Argword1'
@@ -2184,9 +2177,9 @@ focus_generate_masks() {
     maskarg_parse "$Count"
     Maskgenerator=""
 
-    [ -n "$Argchannel" ] && {
+    [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] && {
       Maskgenerator="$Maskgenerator
-  # =C=$Argchannel
+  # =C=$Argcolorspace
   mpr:sourcegray
     -write mpr:sourcegray.bak
     -delete 0
@@ -2195,10 +2188,13 @@ focus_generate_masks() {
     -delete 0
   (
     mpr:sourceimage
-      -colorspace $Argcolorspace
-      -channel $Argchannelnumber
+      -colorspace ${Argcolorspace:-"$Colorspace"}"
+      [ -n "$Argchannel" ] && Maskgenerator="$Maskgenerator
+      # =c
+      -channel $Argchannel
       -separate
-      +channel
+      +channel"
+      Maskgenerator="$Maskgenerator
   )
     -write mpr:sourceimage
     -write mpr:sourcegray
@@ -2211,6 +2207,10 @@ $(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
   # =diff
   mpr:sourcegray
     -compose Difference -composite"
+
+    [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
+  # =neg
+  -negate"
 
     grep -q "$Argtype" <<< "$Masktype" && {
       Maskmd5="$(md5cut "$Sourcemd5 $Argoptions $Colorspace $Grayscaleconverter $Maskgenerator")"
@@ -2241,7 +2241,7 @@ $Maskgenerator
     -write '$(maskname "$Argbasename" NUMBER)'
     $(showimagecode "$(maskname "$Argbasename" NUMBER)")
     -delete 0"
-    [ -n "$Argchannel" ] && {
+    [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] && {
       Maskgenerator="$Maskgenerator
   # /=C
   mpr:sourceimage.bak
@@ -2270,9 +2270,9 @@ $Maskgenerator
       maskarg_single "colorspace" ||:
       Command="
   ( '$(sourceimagename $Count)'
-      -colorspace ${Colorspace:-$Argword1}"
-      [ -n "$Argword2" ] && Command="$Command
-      -channel $Argword2
+      -colorspace ${Colorspace:-$Argcolorspace}"
+      [ -n "$Argchannel" ] && Command="$Command
+      -channel $Argchannel
       -separate
       +channel"
       Command="$Command
@@ -3238,9 +3238,9 @@ maskarg_parse() {
       "T")                Argthreshold2="$(percentrm "$Value")" ;;
       "n")                [ -z "$Argnumber1" ]   && Argnumber1="$Value"  || Argnumber2="$Value" ;;
       "N")                Argnumber2="$(percentrm "$Value")" ;;
-      "C")                Argchannel="$Value"
-                          Argcolorspace="$(cut -d'-' -f1 <<< "$Argchannel")"
-                          Argchannelnumber="$(cut -d'-' -f2 <<< "$Argchannel")" ;;
+      "C")                Argcolorspace="$Value" ;;
+      "c")                Argchannel="$Value" ;;
+      "neg")              Argnegate="yes" ;;
       "level")            Arglevel="$Value" ;;
       "TYPE")             Argtype="$Value" ;;
       "DIFF")             Argdiff="yes" ;;
@@ -3270,7 +3270,9 @@ maskarg_store() {
   [ "$Argnumber2" ]            && Argoptions="$Argoptions,N$Argnumber2"
   [ "$Argthreshold1" ]         && Argoptions="$Argoptions,t$Argthreshold1"
   [ "$Argthreshold2" ]         && Argoptions="$Argoptions,T$Argthreshold2"
-  [ "$Argchannel" ]            && Argoptions="$Argoptions,C=$Argchannel"
+  [ "$Argcolorspace" ]         && Argoptions="$Argoptions,C=$Argcolorspace"
+  [ "$Argchannel" ]            && Argoptions="$Argoptions,c$Argchannel"
+  [ "$Argnegate" ]             && Argoptions="$Argoptions,neg"
   [ "$Arglevel" ]              && Argoptions="$Argoptions,level=$Arglevel"
   [ "$Argword1" ]              && Argoptions="$Argoptions,$Argword1"
   [ "$Argword2" ]              && Argoptions="$Argoptions,$Argword2"
@@ -3282,9 +3284,34 @@ maskarg_store() {
 }
 maskarg_defaultvalue() {
   case "${2:-}" in
+    channel)
+      case "${1:-}" in
+        colorspace) ;;
+        channel) ;;
+        chroma)     echo "1" ;;
+        darkness)   echo "2" ;;
+        lightness)  echo "2" ;;
+        saturation) echo "1" ;;
+      esac
+    ;;
+    colorspace)
+      case "${1:-}" in
+        colorspace) echo "sRGB" ;;
+        channel) ;;
+        chroma)     echo "HCL" ;;
+        darkness)   echo "HSL" ;;
+        lightness)  echo "HSL" ;;
+        saturation) echo "HSL" ;;
+      esac
+    ;;
     level)
       case "$Argtype" in
         channel|comparision) echo "no" ;;
+      esac
+    ;;
+    negate)
+      case "${1:-}" in
+        darkness) echo "yes" ;;
       esac
     ;;
     levelmin)
@@ -3325,6 +3352,11 @@ maskarg_defaultvalue() {
         #unsharp
         wavelet)    echo "0" ;;
         *)          echo "" ;;
+      esac
+    ;;
+    negate)
+      case "${1:-}" in
+        darkness) echo "yes" ;;
       esac
     ;;
     percent1)
@@ -3472,23 +3504,17 @@ maskarg_defaultvalue() {
     ;;
     word1)
       case "${1:-}" in
-        channel)    echo "HSL" ;;
-        chroma)     echo "HCL" ;;
         comet)      echo "lighten" ;;
         compose)    echo "overlay" ;;
-        darkness)   echo "HSL" ;;
         diffstat)   echo "median" ;;
         evaluate)   echo "max" ;;
         freichen)   echo "" ;;
         laplacian)  echo "3" ;;
-        lightness)  echo "HSL" ;;
         morphology) echo "edgeout" ;;
-        saturation) echo "HSL" ;;
         statistic)  echo "standarddeviation" ;;
 
         bg)         echo "enfuse" ;;
         cutmorph)   echo "erode" ;;
-        colorspace) echo "SRGB" ;;
         grayscale)  echo "Rec709Luma" ;;
         level)      echo "all" ;;
         maskmorph)  echo "close" ;;
@@ -3500,14 +3526,9 @@ maskarg_defaultvalue() {
     ;;
     word2)
       case "${1:-}" in
-        channel)    echo "2" ;;
-        chroma)     echo "1" ;;
-        darkness)   echo "2" ;;
-        diffstat)   echo "mean" ;;
-        lightness)  echo "2" ;;
-        maskmorph|cutmorph)  echo "Octagon" ;;
-        saturation) echo "1" ;;
-        *)          echo "" ;;
+        diffstat)           echo "mean" ;;
+        maskmorph|cutmorph) echo "Octagon" ;;
+        *)                  echo "" ;;
       esac
     ;;
   esac
@@ -3520,13 +3541,29 @@ maskarg_checkallowed() {
   Arg="${3:-}"
 
   case "$Option" in
+    channel)
+      case "$Argtype" in
+        contrast|comparision|channel) ;;
+        *) 
+          case "${1:-}" in
+            colorspace) ;;
+            *) Errormessage="$Method does not take argument colorspace channel: c$Arg" ;;
+          esac
+        ;;
+      esac
+    ;;
     colorspace)
       case "$Argtype" in
         contrast|comparision|channel)
-          checkmagicklist colorspace "$(cut -d '-' -f1 <<< "$Arg")" || Errormessage="--$Method: unknown colorspace for C=: $Arg 
+          checkmagicklist colorspace "$Arg" || Errormessage="--$Method: unknown colorspace for C=: $Arg 
   Please choose one out of 'magick -list colorspace'"
         ;;
-        *) Errormessage="$Method does not take argument colorspace: C=$Arg" ;;
+        *) 
+          case "${1:-}" in
+            colorspace) ;;
+            *) Errormessage="$Method does not take argument colorspace: C=$Arg" ;;
+          esac
+        ;;
       esac
     ;;
     level)
@@ -3538,6 +3575,12 @@ maskarg_checkallowed() {
           esac
         ;;
         *) Errormessage="$Method does not take argument clut: clut=$Arg" ;;
+      esac
+    ;;
+    negate)
+      case "$Argtype" in
+        contrast|comparision|channel) ;;
+        *) Errormessage="$Method does not take argument negate." ;;
       esac
     ;;
     number1|number2)
@@ -3623,13 +3666,12 @@ maskarg_checkallowed() {
         enfuse) ;;
         grayscale) ;;
         comet|freichen|laplacian) ;;
-        channel|chroma|darkness|lightness|saturation) ;;
         colorspace) 
           checkmagicklist colorspace "$Arg" || Errormessage="--$Method: unknown colorspace: $Arg
   Please choose one out of 'magick -list colorspace'"
         ;;
         compose|merge|soft)
-          checkmagicklist compose "${Arg,,}" || Errormessage="--$Method: unknown argument for word1: $Arg
+          checkmagicklist compose "$Arg" || Errormessage="--$Method: unknown argument for word1: $Arg
   Please choose one out of 'magick -list compose'"
         ;;
         evaluate)
@@ -3674,7 +3716,6 @@ maskarg_checkallowed() {
           checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
         ;;
-        channel|chroma|darkness|lightness|saturation) ;;
         morphology|cutmorph|maskmorph)
           checkmagicklist kernel "$Arg" || Errormessage="--$Method: unknown kernel: $Arg
   Please choose out of 'magick -list kernel'" ;;
@@ -3898,12 +3939,12 @@ declare_variables() {
   Arglist='
   Argbasename=""
   Argchannel=""
-  Argchannelnumber=""
   Argcolorspace=""
   Argcount=""
   Argdiff=""
   Arglevel=""
   Argmethod=""
+  Argnegate=""
   Argnumber1=""
   Argnumber2=""
   Argoptions=""
@@ -4110,32 +4151,37 @@ check_options() {
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
-    [ -z "$Arglevel"  ]     && Arglevel="$(maskarg_defaultvalue      "$Argmethod" level)"
-    [ -z "$Argpercent1" ]   && Argpercent1="$(maskarg_defaultvalue   "$Argmethod" percent1)"
-    [ -z "$Argpercent2" ]   && Argpercent2="$(maskarg_defaultvalue   "$Argmethod" percent2)"
-    [ -z "$Argradius1" ]    && Argradius1="$(maskarg_defaultvalue    "$Argmethod" radius1)"
-    [ -z "$Argradius2" ]    && Argradius2="$(maskarg_defaultvalue    "$Argmethod" radius2)"
-    [ -z "$Argsigma1" ]     && Argsigma1="$(maskarg_defaultvalue     "$Argmethod" sigma1)"
-    [ -z "$Argsigma2" ]     && Argsigma2="$(maskarg_defaultvalue     "$Argmethod" sigma2)"
-    [ -z "$Argthreshold1" ] && Argthreshold1="$(maskarg_defaultvalue "$Argmethod" threshold1)"
-    [ -z "$Argthreshold2" ] && Argthreshold2="$(maskarg_defaultvalue "$Argmethod" threshold2)"
-    [ -z "$Argword1" ]      && Argword1="$(maskarg_defaultvalue      "$Argmethod" word1)"
-    [ -z "$Argword2" ]      && Argword2="$(maskarg_defaultvalue      "$Argmethod" word2)"
-    [ -n "$Argcolorspace" ] && maskarg_checkallowed "$Argmethod" colorspace "$Argcolorspace"
-    [ -n "$Arglevel" ]      && maskarg_checkallowed "$Argmethod" level      "$Arglevel"
-    [ -n "$Argnumber1" ]    && maskarg_checkallowed "$Argmethod" number1    "$Argnumber1"
-    [ -n "$Argnumber2" ]    && maskarg_checkallowed "$Argmethod" number2    "$Argnumber2"
-    [ -n "$Argradius1" ]    && maskarg_checkallowed "$Argmethod" radius1    "$Argradius1"
-    [ -n "$Argradius2" ]    && maskarg_checkallowed "$Argmethod" radius2    "$Argradius2"
-    [ -n "$Argsigma1" ]     && maskarg_checkallowed "$Argmethod" sigma1     "$Argsigma1"
-    [ -n "$Argsigma2" ]     && maskarg_checkallowed "$Argmethod" sigma2     "$Argsigma2"
-    [ -n "$Argpercent1" ]   && maskarg_checkallowed "$Argmethod" percent1   "$Argpercent1"
-    [ -n "$Argpercent2" ]   && maskarg_checkallowed "$Argmethod" percent2   "$Argpercent2"
-    [ -n "$Argthreshold1" ] && maskarg_checkallowed "$Argmethod" threshold1 "$Argthreshold1"
-    [ -n "$Argthreshold2" ] && maskarg_checkallowed "$Argmethod" threshold2 "$Argthreshold2"
-    [ -n "$Argweight" ]     && maskarg_checkallowed "$Argmethod" weight     "$Argweight"
-    [ -n "$Argword1" ]      && maskarg_checkallowed "$Argmethod" word1      "$Argword1"
-    [ -n "$Argword2" ]      && maskarg_checkallowed "$Argmethod" word2      "$Argword2"
+    [ -z "$Argchannel"  ]    && Argchannel="$(maskarg_defaultvalue    "$Argmethod" channel)"
+    [ -z "$Argcolorspace"  ] && Argcolorspace="$(maskarg_defaultvalue "$Argmethod" colorspace)"
+    [ -z "$Arglevel"  ]      && Arglevel="$(maskarg_defaultvalue      "$Argmethod" level)"
+    [ -z "$Argnegate"  ]     && Argnegate="$(maskarg_defaultvalue     "$Argmethod" negate)"
+    [ -z "$Argpercent1" ]    && Argpercent1="$(maskarg_defaultvalue   "$Argmethod" percent1)"
+    [ -z "$Argpercent2" ]    && Argpercent2="$(maskarg_defaultvalue   "$Argmethod" percent2)"
+    [ -z "$Argradius1" ]     && Argradius1="$(maskarg_defaultvalue    "$Argmethod" radius1)"
+    [ -z "$Argradius2" ]     && Argradius2="$(maskarg_defaultvalue    "$Argmethod" radius2)"
+    [ -z "$Argsigma1" ]      && Argsigma1="$(maskarg_defaultvalue     "$Argmethod" sigma1)"
+    [ -z "$Argsigma2" ]      && Argsigma2="$(maskarg_defaultvalue     "$Argmethod" sigma2)"
+    [ -z "$Argthreshold1" ]  && Argthreshold1="$(maskarg_defaultvalue "$Argmethod" threshold1)"
+    [ -z "$Argthreshold2" ]  && Argthreshold2="$(maskarg_defaultvalue "$Argmethod" threshold2)"
+    [ -z "$Argword1" ]       && Argword1="$(maskarg_defaultvalue      "$Argmethod" word1)"
+    [ -z "$Argword2" ]       && Argword2="$(maskarg_defaultvalue      "$Argmethod" word2)"
+    [ -n "$Argchannel" ]     && maskarg_checkallowed "$Argmethod" channel    "$Argchannel"
+    [ -n "$Argcolorspace" ]  && maskarg_checkallowed "$Argmethod" colorspace "$Argcolorspace"
+    [ -n "$Arglevel" ]       && maskarg_checkallowed "$Argmethod" level      "$Arglevel"
+    [ -n "$Argnegate" ]      && maskarg_checkallowed "$Argmethod" negate     "$Argnegate"
+    [ -n "$Argnumber1" ]     && maskarg_checkallowed "$Argmethod" number1    "$Argnumber1"
+    [ -n "$Argnumber2" ]     && maskarg_checkallowed "$Argmethod" number2    "$Argnumber2"
+    [ -n "$Argradius1" ]     && maskarg_checkallowed "$Argmethod" radius1    "$Argradius1"
+    [ -n "$Argradius2" ]     && maskarg_checkallowed "$Argmethod" radius2    "$Argradius2"
+    [ -n "$Argsigma1" ]      && maskarg_checkallowed "$Argmethod" sigma1     "$Argsigma1"
+    [ -n "$Argsigma2" ]      && maskarg_checkallowed "$Argmethod" sigma2     "$Argsigma2"
+    [ -n "$Argpercent1" ]    && maskarg_checkallowed "$Argmethod" percent1   "$Argpercent1"
+    [ -n "$Argpercent2" ]    && maskarg_checkallowed "$Argmethod" percent2   "$Argpercent2"
+    [ -n "$Argthreshold1" ]  && maskarg_checkallowed "$Argmethod" threshold1 "$Argthreshold1"
+    [ -n "$Argthreshold2" ]  && maskarg_checkallowed "$Argmethod" threshold2 "$Argthreshold2"
+    [ -n "$Argweight" ]      && maskarg_checkallowed "$Argmethod" weight     "$Argweight"
+    [ -n "$Argword1" ]       && maskarg_checkallowed "$Argmethod" word1      "$Argword1"
+    [ -n "$Argword2" ]       && maskarg_checkallowed "$Argmethod" word2      "$Argword2"
 
     case "$Argtype" in
       single)
@@ -4178,6 +4224,12 @@ check_options() {
           gradient|standarddeviation|"") Argdiff="" ;;
           *)                             Argdiff="yes" ;;
         esac
+      ;;
+    esac
+
+    case "$Argmethod" in
+      channel|chroma|darkness|lightness|saturation)
+        Imoptions["$Count"]="cmd"
       ;;
     esac
 
@@ -4236,7 +4288,7 @@ check_options() {
   }
 
   # --colorspace
-  maskarg_single "colorspace" && Colorspace="${Argword1^^}"
+  maskarg_single "colorspace" && Colorspace="${Argcolorspace^^}"
   Colorspace="${Colorspace:-"SRGB"}"
 
   # --grayscale
@@ -4524,7 +4576,7 @@ trap - ERR"
   note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   cmd "-exit"
   echo "$Outputimage"
-  command -v xclip >/dev/null && echo "$Outputimage" | xclip -i -selection clipboard
+  command -v xclip >/dev/null && echo -n "$Outputimage" | xclip -i -selection clipboard
 
   # -W
   [ "$Viewnior" ] && viewnior "$Outputimage" &
