@@ -37,6 +37,7 @@ General options:
                           They can be reused in later runs of imfuse.
                           Default DIR: ./cache.imfuse
      --exif [=IMAGE]      Transfer exif meta data from IMAGE or first image.
+     --force              Force imfuse to run even if output image exists.
  -h, --help               Show this help and exit.
      --layered            Store backgrounds and single substacks in layered TIF.
      --limit-memory=ARG   Limit amount of used memory. Default: 80%
@@ -98,17 +99,6 @@ Step 1: Color conversion
                       Compare ImageMagick options -grayscale and -intensity. 
                       ARG takes argument:
                         (word)  mode                Default: Rec709Luma
-                      mode is one of: (number or name)
-                        0 none
-                        1 Rec601Luma
-                        2 Rec601Luminance
-                        3 Rec709Luma
-                        4 Rec709Luminance
-                        5 Brightness
-                        6 Lightness
-                        7 Average
-                        8 MS
-                        9 RMS
                       Converting to grayscale for mask generation can speed up
                       image processing, but the result might be less accurate.
 
@@ -505,6 +495,11 @@ traperror() {
 calc() {
   LC_ALL=C awk "BEGIN {print $* }"
 }
+checkmagicklist() {
+  local Check
+  [ "${3:-}" = "print" ] && Check="" || Check="-q"
+  $Magickbin -list "${1:-}" | grep $Check -w -i "^${2:-XXX}"
+}
 compare() {
   # compare floating number with < > =
   local Arg1 Arg2 Operator
@@ -512,11 +507,11 @@ compare() {
   Operator="${2}"
   Arg2="${3:-}"
   case "$Operator" in
-    "<"|"lt"|"-lt") Operator="<" ;;
-    ">"|"gt"|"-gt") Operator=">" ;;
-    "="|"eq"|"-eq") Operator="=" ;;
+    "<"|"lt"|"-lt")      Operator="<" ;;
+    ">"|"gt"|"-gt")      Operator=">" ;;
+    "="|"eq"|"-eq"|"==") Operator="==" ;;
   esac
-  (( $(echo "$Arg1 $Operator $Arg2" | bc -l) ))
+  [ -n "$(LC_ALL=C awk "BEGIN{if ($Arg1 $Operator $Arg2) print \"yes\"}")" ]
 }
 digitonly() {
   #sed "s/[^0-9.]//g" <<< "${1:-}"
@@ -737,9 +732,6 @@ printfreememory() {
 
 ### Files
 
-checkmagicklist() {
-  $Magickbin -list "${1:-}" | grep -q -w -i "^${2:-XXX}"
-}
 check_outputname() {
   # Generate a unique output name showing options
 
@@ -1387,7 +1379,7 @@ finalblur() {
   Longoptions="image:,mask:,percent:,sigma1:,sigma2:"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
-echo "$Parsedoptions"
+
   while [ $# -gt 0 ]; do
     case "${1:-}" in
       --image)   Image="${2:-}"   ; shift ;;
@@ -2213,7 +2205,7 @@ $(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
   -negate"
 
     grep -q "$Argtype" <<< "$Masktype" && {
-      Maskmd5="$(md5cut "$Sourcemd5 $Argoptions $Colorspace $Grayscaleconverter $Maskgenerator")"
+      Maskmd5="$(md5cut "$Arglevel $Colorspace $Colorspacechannel $Grayscaleconverter $Maskgenerator $Sourcemd5")"
       Argbasename="$Argmethod.$Maskmd5"
       #Argbasename="${Argmethod}${Argoptions}.$Sourcemd5"
       maskarg_store "$Count"
@@ -2267,12 +2259,11 @@ $Maskgenerator
 
       sendmagickmessage "PROGRESS:Mask generation step $Count / $Sourceimagenumber: $(sourceimagename $Count)"
 
-      maskarg_single "colorspace" ||:
       Command="
   ( '$(sourceimagename $Count)'
-      -colorspace ${Colorspace:-$Argcolorspace}"
-      [ -n "$Argchannel" ] && Command="$Command
-      -channel $Argchannel
+      -colorspace $Colorspace"
+      [ -n "$Colorspacechannel" ] && Command="$Command
+      -channel $Colorspacechannel
       -separate
       +channel"
       Command="$Command
@@ -2519,9 +2510,7 @@ focus_hard() {
   local Resultimage Maskmaxcopy=
   local Firstimage Lastimage
   local Focusimagebasename Focusimagefile Focusimagemaskfile
-  local Sourceimage Sourcemask Maskmax Lessthanmaxmask
   local Command Count
-  local Levelmax= Levelmin=
   local Longoptions Parsedoptions
   local Focuscode=
 
@@ -2553,8 +2542,6 @@ focus_hard() {
     -write mpr:cutmask_hard"
   for Count in $(seq $Imoptionsnumber); do
     maskarg_parse "$Count"
-    Focuscode="$Focuscode
-    -grayscale RMS"
     case "$Argtype" in
       focus)
         case "$Argmethod" in
@@ -2700,18 +2687,16 @@ focus_hard() {
   cmd "$Command"
 
   for Count in $(seq $Lastimage -1 $Firstimage); do
-    Sourcemask="$(maskname "$Mergemaskbasename" "$Count")"
-    Sourceimage="$(sourceimagename $Count)"
 
-    sendmagickmessage "PROGRESS:Focus montage step $Count / $Sourceimagenumber: $Sourceimage"
+    sendmagickmessage "PROGRESS:Focus montage step $Count / $Sourceimagenumber"
 
     Command="
   # Load images
-  '$Sourceimage'
+  '$(sourceimagename $Count)'
     -alpha off
     -write mpr:sourceimage
     -delete 0
-  '$Sourcemask'
+  '$(maskname "$Mergemaskbasename" "$Count")'
     -alpha off
     -write mpr:sourcemask
     -delete 0
@@ -2979,7 +2964,7 @@ focus_main() {
   local Transparentlayers=
 
   Startzeit="$(date +%s)"
-  focus_generate_masks #--type="contrast"
+  focus_generate_masks
   sendmagickmessage "NOTE:Generating masks ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   [ "$Maskmethodnumber" -gt "0" ] && { 
     for Substackstep in $(seq $Substacknumber -1 1); do
@@ -2988,7 +2973,6 @@ focus_main() {
       sendmagickmessage "NEWLINE"
       sendmagickmessage "NOTE:Generating substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
 
-      #focus_generate_masks --type="comparision,channel" --first "${Substackfirstimage[$Substackstep]}" --last "${Substacklastimage[$Substackstep]}"
       Startzeit="$(date +%s)"
       focus_merge_masks                                         "${Substackfirstimage[$Substackstep]}"        "${Substacklastimage[$Substackstep]}"
       sendmagickmessage "NOTE:Mask merging ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
@@ -3015,25 +2999,16 @@ focus_main() {
       sendmagickmessage "NOTE:Postprocessing substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
       Substackresultpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post.mpc"
       Substackmaskpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-mask.mpc"
+
       [ -e "${Substackresultpost[$Substackstep]}" ] && {
         sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
       } || {
-
-        false && [ "$Testsetup" ] && {
-          Substackmaskmax="$Cachedir/substackmask.max.$Resultbasename.mpc"
-          Substackmaskmin="$Cachedir/substackmask.min.$Resultbasename.mpc"
-          evaluate max $Substackmaskmax ${Substackmask[@]}
-          #evaluate min $Substackmaskmin ${Substackmask[@]}
-          Levelmax="$(getmagickinfo "$Substackmaskmax" '%[fx:maxima*100]')"
-          Levelmin="$(getmagickinfo "$Substackmaskmax" '%[fx:minima*100]')"
-        }
 
         Command="
 '${Substackresult[$Substackstep]}'
   -write '${Substackresultpost[$Substackstep]}'
   -delete 0
 '${Substackmask[$Substackstep]}'
-  -level ${Levelmin:-0}%x${Levelmax:-100}%
   -write '${Substackmaskpost[$Substackstep]}'
   -delete 0"
         cmd "$Command"
@@ -3061,15 +3036,6 @@ focus_main() {
                   threshold  --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
                              --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" --blur "$Argsigma1" \
                              --cutimage="hard"
-                  Command="
-  '${Substackresultpost[$Substackstep]}'
-  '${Substackmaskpost[$Substackstep]}'
-    -alpha off
-    -compose CopyOpacity -composite
-    -write '${Substackresultpost[$Substackstep]}'
-    -delete 0"
-#                  cmd "$Command"
-#                  cmd_waitforready
                 ;;
               esac
             ;;
@@ -3078,6 +3044,7 @@ focus_main() {
       }
     done
   }
+  cmd_waitforready
   sendmagickmessage "NOTE:Postprocessing ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
   Command="
@@ -3535,7 +3502,6 @@ maskarg_defaultvalue() {
 }
 maskarg_checkallowed() {
   local Method Option Arg
-  local Errormessage=
   Method="${1:-}"
   Option="${2:-}"
   Arg="${3:-}"
@@ -3547,7 +3513,7 @@ maskarg_checkallowed() {
         *) 
           case "${1:-}" in
             colorspace) ;;
-            *) Errormessage="$Method does not take argument colorspace channel: c$Arg" ;;
+            *) error "$Method does not take argument colorspace channel: c$Arg" ;;
           esac
         ;;
       esac
@@ -3555,13 +3521,14 @@ maskarg_checkallowed() {
     colorspace)
       case "$Argtype" in
         contrast|comparision|channel)
-          checkmagicklist colorspace "$Arg" || Errormessage="--$Method: unknown colorspace for C=: $Arg 
+          checkmagicklist colorspace "$Arg" || error "--$Method: unknown colorspace for C=: $Arg 
   Please choose one out of 'magick -list colorspace'"
+          Arg="$(checkmagicklist colorspace "$Arg" print)"
         ;;
         *) 
           case "${1:-}" in
             colorspace) ;;
-            *) Errormessage="$Method does not take argument colorspace: C=$Arg" ;;
+            *) error "$Method does not take argument colorspace: C=$Arg" ;;
           esac
         ;;
       esac
@@ -3571,29 +3538,29 @@ maskarg_checkallowed() {
         contrast|comparision|channel)
           case "$Arg" in
             yes|no) ;;
-            *) Errormessage="level does not take value '$Arg'. Allowed values are yes|no" ;;
+            *) error "level does not take value '$Arg'. Allowed values are yes|no" ;;
           esac
         ;;
-        *) Errormessage="$Method does not take argument clut: clut=$Arg" ;;
+        *) error "$Method does not take argument level: level=$Arg" ;;
       esac
     ;;
     negate)
       case "$Argtype" in
         contrast|comparision|channel) ;;
-        *) Errormessage="$Method does not take argument negate." ;;
+        *) error "$Method does not take argument negate." ;;
       esac
     ;;
     number1|number2)
       case "$Method" in
         substacks) ;;
-        *) Errormessage="$Method does not take argument number: n$Arg" ;;
+        *) error "$Method does not take argument number: n$Arg" ;;
       esac
     ;;
     percent1)
       case "$Method" in
         alpha|cutless|cutwave|maskwave|soft|wavelet) ;;
         substacks) ;;
-        *) Errormessage="$Method does not take argument percent1: p$Arg" ;;
+        *) error "$Method does not take argument percent1: p$Arg" ;;
       esac
     ;;
     percent2)
@@ -3601,7 +3568,7 @@ maskarg_checkallowed() {
         alpha) ;;
         soft) ;;
         substacks) ;;
-        *) Errormessage="$Method does not take argument percent2: P$Arg" ;;
+        *) error "$Method does not take argument percent2: P$Arg" ;;
       esac
     ;;
     radius1)
@@ -3610,26 +3577,26 @@ maskarg_checkallowed() {
         diffstat|statistic|maskstat) ;;
         finalblur2) ;;
         substacks) ;;
-        *) Errormessage="$Method does not take argument radius1: r$Arg" ;;
+        *) error "$Method does not take argument radius1: r$Arg" ;;
       esac
     ;;
     radius2)
       case "$Method" in
         morphology|cutmorph|maskmorph) ;;
-        *) Errormessage="$Method does not take argument radius2: R$Arg" ;;
+        *) error "$Method does not take argument radius2: R$Arg" ;;
       esac
     ;;
     sigma1)
       case "$Method" in
         blur|comet|dog|gaussian|log|unsharp) ;;
         cutblur|cutsoft|finalblur|maskblur|threshold) ;;
-        *) Errormessage="$Method does not take argument sigma1: s$Arg" ;;
+        *) error "$Method does not take argument sigma1: s$Arg" ;;
       esac
     ;;
     sigma2)
       case "$Method" in
         dog|finalblur) ;;
-        *) Errormessage="$Method does not take argument sigma2: S$Arg" ;;
+        *) error "$Method does not take argument sigma2: S$Arg" ;;
       esac
     ;;
     threshold1)
@@ -3638,7 +3605,7 @@ maskarg_checkallowed() {
         *)
           case "$Method" in
             finalblur|finalblur2|threshold) ;;
-            *) Errormessage="$Method does not take argument threshold1: t$Arg" ;;
+            *) error "$Method does not take argument threshold1: t$Arg" ;;
           esac
         ;;
       esac
@@ -3649,7 +3616,7 @@ maskarg_checkallowed() {
         *)
           case "$Method" in
             threshold) ;;
-            *) Errormessage="$Method does not take argument threshold2: T$Arg" ;;
+            *) error "$Method does not take argument threshold2: T$Arg" ;;
           esac
         ;;
       esac
@@ -3657,77 +3624,81 @@ maskarg_checkallowed() {
     weight)
       case "$Argtype" in
         contrast|comparision|channel) ;;
-        *) Errormessage="$Method does not take argument weight: w$Arg" ;;
+        *) error "$Method does not take argument weight: w$Arg" ;;
       esac
     ;;
     word1)
       case "$Method" in
         bg) ;;
         enfuse) ;;
-        grayscale) ;;
+        grayscale)
+          checkmagicklist intensity "$Arg" || error "--$Method: unknown colorspace: $Arg
+  Please choose one out of 'magick -list intensity'"
+          Argword1="$(checkmagicklist intensity "$Arg" print)"
+        ;;
         comet|freichen|laplacian) ;;
         colorspace) 
-          checkmagicklist colorspace "$Arg" || Errormessage="--$Method: unknown colorspace: $Arg
+          checkmagicklist colorspace "$Arg" || error "--$Method: unknown colorspace: $Arg
   Please choose one out of 'magick -list colorspace'"
+          Argword1="$(checkmagicklist colorspace "$Arg" print)"
         ;;
         compose|merge|soft)
-          checkmagicklist compose "$Arg" || Errormessage="--$Method: unknown argument for word1: $Arg
+          checkmagicklist compose "$Arg" || error "--$Method: unknown argument for word1: $Arg
   Please choose one out of 'magick -list compose'"
+          Argword1="$(checkmagicklist compose "$Arg" print)"
         ;;
         evaluate)
-          checkmagicklist "evaluate" "$(tr -d '2' <<< "$Arg")" || {
-            Errormessage="--$Method: unknown argument for word1: $Arg
+          checkmagicklist "evaluate" "$(tr -d '2' <<< "$Arg")" || error "--$Method: unknown argument for word1: $Arg
   Please choose one out of 'magick -list evaluate'"
-          }
+          Argword1="$(checkmagicklist evaluate "$Arg" print)"
         ;;
         image) 
-          [ -f "${Arg}" ] || Errormessage="--image: File not found: $Arg" ### FIXME
+          [ -f "${Arg}" ] || error "--image: File not found: $Arg" ### FIXME
         ;;
         level)
           case "$Arg" in
             all|substack|off) ;;
-            *) Errormessage="$Method does not take argument: $Arg" ;;
+            *) error "$Method does not take argument: $Arg" ;;
           esac
         ;;
         cmd|cmddiff|cutcmd|maskcmd) ;;
         morphology|cutmorph|maskmorph)
-          checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || {
-            Errormessage="--$Method:  unknown argument for word1: $Arg
+          checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || error "--$Method:  unknown argument for word1: $Arg
   Please choose one out of 'magick -list morphology'"
-          }
+          Argword1="$(checkmagicklist morphology "$Arg" print)"
         ;;
         substacks) 
           case "$Arg" in
             kurt) ;;
-            *) Errormessage="--$Method does not take argument: $Arg" ;;
+            *) error "--$Method does not take argument: $Arg" ;;
           esac
         ;;
         statistic|diffstat|maskstat)
-          checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown argument for word1: $Arg
+          checkmagicklist statistic "$Arg" || error "--$Method: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
+          Argword1="$(checkmagicklist statistic "$Arg" print)"
         ;;
-        *) Errormessage="$Method does not take argument word1: $Arg" ;;
+        *) error "$Method does not take argument word1: $Arg" ;;
       esac
     ;;
     word2)
       case "$Method" in
         colorspace) ;;
         diffstat)
-          checkmagicklist statistic "$Arg" || Errormessage="--$Method: unknown argument for word1: $Arg
+          checkmagicklist statistic "$Arg" || error "--$Method: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
+          Argword2="$(checkmagicklist statistic "$Arg" print)"
         ;;
         morphology|cutmorph|maskmorph)
-          checkmagicklist kernel "$Arg" || Errormessage="--$Method: unknown kernel: $Arg
-  Please choose out of 'magick -list kernel'" ;;
-        *) Errormessage="$Method does not take argument word2: $Arg" ;;
+          checkmagicklist kernel "$Arg" || error "--$Method: unknown kernel: $Arg
+  Please choose out of 'magick -list kernel'"
+          Argword2="$(checkmagicklist kernel "$Arg" print)"
+        ;;
+        *) error "$Method does not take argument word2: $Arg" ;;
       esac
     ;;
   esac
 
-  [ "$Errormessage" ] && {
-    error "$Errormessage"
-    return 1
-  }
   return 0
 }
 maskarg_checkpercent() {
@@ -3966,6 +3937,7 @@ declare_variables() {
   Align=""
   Cachedir=""
   Colorspace=""
+  Colorspacechannel=""
   Exifsourceimage=""
   Firstimage=""
   Firstmaskmethod=""
@@ -4288,36 +4260,14 @@ check_options() {
   }
 
   # --colorspace
-  maskarg_single "colorspace" && Colorspace="${Argcolorspace^^}"
-  Colorspace="${Colorspace:-"SRGB"}"
+  maskarg_single "colorspace" && {
+    Colorspace="${Argcolorspace:-"sRGB"}"
+    Colorspacechannel="${Argchannel}"
+  }
+  Colorspace="${Colorspace:-"sRGB"}"
 
   # --grayscale
-  maskarg_single "grayscale" && {
-    Grayscale="$Argword1"
-    case ${Grayscale,,} in
-      0|none|"")         Grayscalenumber=0 ; Grayscale="none" ;;
-      1|rec601luma)      Grayscalenumber=1 ; Grayscale="Rec601Luma" ;;
-      2|rec601luminance) Grayscalenumber=2 ; Grayscale="Rec601Luminance" ;;
-      3|rec709luma)      Grayscalenumber=3 ; Grayscale="Rec709Luma" ;;
-      4|rec709luminance) Grayscalenumber=4 ; Grayscale="Rec709Luminance" ;;
-      5|brightness)      Grayscalenumber=5 ; Grayscale="Brightness" ;;
-      6|lightness)       Grayscalenumber=6 ; Grayscale="Lightness" ;;
-      7|average)         Grayscalenumber=7 ; Grayscale="Average" ;;
-      8|ms)              Grayscalenumber=8 ; Grayscale="MS" ;;
-      9|rms)             Grayscalenumber=9 ; Grayscale="RMS" ;;
-      *) error "--grayscale: Unknown argument: $Grayscale" ;;
-    esac
-    case $Grayscale in
-      ""|none)
-        Grayscaleconverter=""
-      ;;
-      *)
-        Grayscaleconverter="-grayscale $Grayscale"
-        Argword1="$Grayscale"
-        maskarg_store "$Argcount"
-      ;;
-    esac
-  }
+  maskarg_single "grayscale"  && Grayscale="-grayscale $Argword1"
 
   # --level
   maskarg_single "level" || {
@@ -4486,11 +4436,9 @@ main_setup() {
   mkfifo "$Magickfifo"
   exec 3<>"$Magickfifo"
   (
-    #$Untrap
     nice magick -limit memory ${Limitmemory}KB -define registry:temporary-path="$Cachedir" -script - <&3 >"$Magickfifolog" 2>&1
   ) & Magickscriptpid="$!"
   (
-    #$Untrap
     readmagickmessage
   ) & Magickmessagepid="$!"
 
@@ -4506,14 +4454,13 @@ main_setup() {
   }
 
   # start geeqie
-  maskarg_single "colorspace" ||:
   Command="
 # $Resultbasename
 # $(date)
   ( wizard:
-      -colorspace ${Colorspace:-$Argword1}"
-      [ -n "$Argword2" ] && Command="$Command
-      -channel $Argword2
+      -colorspace $Colorspace"
+      [ -n "$Colorspacechannel" ] && Command="$Command
+      -channel $Colorspacechannel
       -separate
       +channel"
       Command="$Command
@@ -4525,7 +4472,7 @@ main_setup() {
     -delete 0"
   cmd "$Command"
   cmd_waitforready
-  [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"$Showimage" 2>/dev/null
+  [ "$Showimageprocessing" = "yes" ] && nohup geeqie -t -r --File:"$Showimage" /dev/null 2>&1
 
   return 0
 }
@@ -4579,7 +4526,11 @@ trap - ERR"
   command -v xclip >/dev/null && echo -n "$Outputimage" | xclip -i -selection clipboard
 
   # -W
-  [ "$Viewnior" ] && viewnior "$Outputimage" &
+  [ "$Viewnior" ] && (
+    $Untrap
+    nohup viewnior "$Outputimage" >/dev/null 2>&1
+  ) &
+
   # --video
   [ "$Video" ]    && generate_video
 
