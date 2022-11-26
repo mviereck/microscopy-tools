@@ -32,7 +32,10 @@ ImageMagick options with same name.
  --contrast-stretch [=ARG]    Contrast with color stretch. Default: auto
  --crop [=GEOMETRY]           Crop a part of the images. GEOMETRY is WxH+X+Y.
                               Use only once within a preparestack command.
-                                         Default: 640x480 from the middle.
+                              Instead of a geometry you can specify a region
+                              with TBLRM for top, bottom, left, right, middle,
+                              e.g. --crop=TL for a square from the top left.
+                                         Default: 800x800 from the middle.
  --gamma [=ARG]               Adjust image gamma.          Default: auto
  --level [=ARG]               Adjust image level.          Default: auto
  --resize [=ARG]              Resize images.               Default: 50%
@@ -502,7 +505,8 @@ ${1:-}"
   Sourceimagelist="$(grep .  <<< "$Sourceimagelist")"
   Sourceimagelist="$(sort -V <<< "$Sourceimagelist")"
   Imagenumber="$(grep -c .   <<< "$Sourceimagelist")"
-  [ "$Terminate" ] && exit 1
+  [ "$Imagenumber" = "0" ] && error "No source images specified."
+  [ "$Terminate" ] && finish 1
   return 0
 }
 finish() {
@@ -547,8 +551,8 @@ main() {
     [ -z "$Imagewidth" ] && check_imagesize
 
     # --crop
-    [ "$Imagewidth"  -gt 640 ] && W="640" || W="$((Imagewidth/2))"
-    [ "$Imageheight" -gt 480 ] && H="480" || H="$((Imageheight/2))"
+    [ "$Imagewidth"  -gt 640 ] && W="800" || W="$((Imagewidth/2))"
+    [ "$Imageheight" -gt 480 ] && H="800" || H="$((Imageheight/2))"
     Cropgeometry="${Cropgeometry:-"M"}"
     grep -q M <<< "$Cropgeometry" && X="$(( Imagewidth/2    -W/2 ))" && Y="$(( Imageheight/2   -H/2 ))"
     grep -q T <<< "$Cropgeometry" && Y="$(( Imageheight/4   -H/2 ))"
