@@ -1,11 +1,10 @@
 #! /bin/bash
 
 # imfuse
-Version="0.8.7-beta"
+Version="0.8.8-beta"
 
 # ToDo:
-# =C=: split into C=, c=
-# --image, --bg=image: fix name storage or drop
+# --compose et al: result less good than expected. max/lighten min/darken issue?
 # mkclut_uniform() fails with b&w masks -> clut and result black
 # check --kirsch
 # drop --unsharp?
@@ -113,7 +112,9 @@ Step 2a: Mask generation - contrast masks
  --blur [=ARG]        Blur edge detection. 
                       Similar to --gaussian, but faster and less accurate.
                       ARG additionally takes argument: 
+                        r       radius              Default: 0
                         s       sigma               Default: 0.75
+                      Adjust only sigma, radius 0 is adjusted automatically.
  --cmd [=ARG]         Custom ImageMagick option to create a mask.
                       ARG takes argument:
                         (word)   string
@@ -128,15 +129,19 @@ Step 2a: Mask generation - contrast masks
                       comparision from command result with source image.
  --comet [=ARG]       Comet edge detection. Compares rotated mean areas.
                       ARG additionally takes arguments: 
+                        r       radius              Default: 0
                         s       sigma               Default: 5
                         (word)  mode                Default: Lighten
                       mode can be one of 'magick -list compose'
                       Recommended: Lighten, Darken.
+                      Adjust only sigma, radius 0 is adjusted automatically.
  --compass [=ARG]     Compass edge detection.
  --dog [=ARG]         Difference of Gaussian.
                       ARG additionally takes arguments: 
-                        s       sigma               Default: 0.4
+                        r       radius              Default: 0
+                        s       sigma1              Default: 0.4
                         S       sigma2              Default: 1.6*sigma1
+                      Adjust only sigma, radius 0 is adjusted automatically.
  --diffstat [=ARG]    Compares two local statistics of source images. 
                       Uses ImageMagick option -statistic. Compare --statistic.
                       ARG additionally takes arguments: 
@@ -153,7 +158,9 @@ Step 2a: Mask generation - contrast masks
  --gaussian [=ARG]    Gaussian blur edge detection. 
                       Similar to --blur, but slower and more accurate.
                       ARG additionally takes argument: 
+                        r       radius              Default: 0
                         s       sigma               Default: 0.3
+                      Adjust only sigma, radius 0 is adjusted automatically.
  --kirsch [=ARG]      Kirsch edge detection. 
  --laplacian [=ARG]   Laplacian edge detection.
                       ARG additionally takes argument: 
@@ -162,7 +169,9 @@ Step 2a: Mask generation - contrast masks
                       http://www.imagemagick.org/Usage/convolve/#laplacian
  --log [=ARG]         Laplacian of Gaussian.
                       ARG additionally takes argument: 
+                        r       radius              Default: 0
                         s       sigma               Default: 0.2
+                      Adjust only sigma, radius 0 is adjusted automatically.
  --morphology [=ARG]  Morphology edge detection.
                       ARG additionally takes arguments: 
                         r       radius              Default: 2
@@ -193,7 +202,9 @@ Step 2a: Mask generation - contrast masks
                       Get an impressive strong contrast with a high radius.
  --unsharp [=ARG]     Difference of -unsharp.
                       ARG additionally takes argument: 
+                        r       radius              Default: 0
                         s       sigma               Default: 2
+                      Adjust only sigma, radius 0 is adjusted automatically.
  --wavelet [=ARG]     Based on ImageMagick option -wavelet-denoise.
                       ARG additionally takes argument:
                         p       percent             Default: 5
@@ -352,7 +363,7 @@ Step 4: Stack fusion
  --cutwave [=ARG]     Soften the cut mask. Result looses a bit of sharpness,
                       but looks more friendly overall, and covers small issues.
                       ARG takes arguments:
-                        p        percent            Default: 50%
+                        p        percent            Default: 75%
                       For percent value compare option -wavelet-denoise.
                       Use along with --maskwave and --maskblur.
  --substacks [=ARG]   Split stack into different stacks (called substacks)
@@ -3323,7 +3334,7 @@ maskarg_defaultvalue() {
       case "${1:-}" in
         alpha)      echo "0" ;;
         cutless)    echo "20" ;;
-        cutwave)    echo "100" ;;
+        cutwave)    echo "75" ;;
         maskwave)   echo "20" ;;
         soft)       echo "2" ;;
         wavelet)    echo "5" ;;
@@ -3637,7 +3648,7 @@ maskarg_checkallowed() {
     word1)
       case "$Method" in
         bg)
-          generate_image "$Arg" --showname >/dev/null || error "--background: unknown image generation mode: '$Arg'.
+          generate_image --mode "$Arg" --showname >/dev/null || error "--background: unknown image generation mode: '$Arg'.
   Please choose one out of:
   enfuse max min mean median
   'magick -list evaluate'
@@ -3650,7 +3661,7 @@ maskarg_checkallowed() {
   Please choose one out of 'magick -list intensity'"
           Argword1="$(checkmagicklist intensity "$Arg" print)"
         ;;
-        comet|freichen|laplacian) ;;
+        freichen|laplacian) ;;
         colorspace) 
           checkmagicklist colorspace "$Arg" || error "--$Method: unknown colorspace: $Arg
   Please choose one out of 'magick -list colorspace'"
@@ -3665,7 +3676,7 @@ maskarg_checkallowed() {
             *) error "$Method does not take argument: $Arg" ;;
           esac
         ;;
-        compose|merge|soft)
+        compose|comet|merge|soft)
           checkmagicklist compose "$Arg" || error "--$Method: unknown argument for word1: $Arg
   Please choose one out of 'magick -list compose'"
           Argword1="$(checkmagicklist compose "$Arg" print)"
@@ -3923,10 +3934,9 @@ finish() {
   echo "" >&2
 
   [ -n "$Magickmessagepid" ] && kill "$Magickmessagepid"
-  #ps -p "$Magickmessagepid" >/dev/null 2>&1 && kill "$Magickmessagepid"
   exec 3>&-
+  rm -f $Magickfifo >/dev/null 2>&1
 
-  #[ -f "$Magickfifolog" ]   && cp "$Magickfifolog" .
   #[ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" .
 
   [ -f "${Showimage:-}" ] && rm "$Showimage"
@@ -4464,17 +4474,15 @@ main_setup() {
   Memory currently free:              $((Freemem/1000)) MB
   Memory limit for imagemagick:       $((Limitmemory/1000)) MB
   Loading source images to RAM:       $Loadsourceimages"
-  note "$Resultbasename"
+  note "Options:
+$Resultbasename"
 
   # start magick -script in background
-  Magickfifo="$Cachedir/magickfifo"
-  Magickfifolog="$Cachedir/magickmessage.log"
-  Magickscriptlog="$Cachedir/magickscript.log"
-  Magickfifolog="$Cachedir/magickmessage.log"
+  Magickfifo="$Cachedir/magickfifo.$Imfusepid"
+  Magickfifolog="$Cachedir/magickmessage.$Imfusepid.log"
   Magickscriptlog="$Cachedir/magickscript.log"
   :> "$Magickscriptlog"
   :> /tmp/imfuse.log
-  rm -f "$Magickfifo" 2>/dev/null ||:
   mkfifo "$Magickfifo"
   exec 3<>"$Magickfifo"
   nice magick -limit memory ${Limitmemory}KB -define registry:temporary-path="$Cachedir" -script - <&3 >"$Magickfifolog" 2>&1 & Magickscriptpid="$!"
