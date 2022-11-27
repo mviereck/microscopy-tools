@@ -51,6 +51,7 @@ General options:
 
 The options below can take additionally arguments [=ARG].
 Multiple arguments are comma-separated. Example: --morphology=r3,blur
+
 Arguments taken by all mask generating options:
   w         Weight of mask. Percent value from 0 to 100.
             Of interest if specifying more than one mask generation method.
@@ -71,12 +72,8 @@ Arguments taken by all mask generating options:
             Default is yes except for channel and image comparision options.
 Arguments additionally taken by some options:
   r         Radius. Must be an integer value.
-            Increased radius mostly causes less noise, less details and
-            more contrast. Smaller radius causes more details and more noise.
   R         Second radius.
   s         Sigma. Takes also non-integer values like 0.75.
-            Increased sigma mostly causes less noise, less details and
-            more contrast. Smaller sigma causes more details and more noise.
   S         Second Sigma.
   p         A percent value.
   P         Second percent value
@@ -84,21 +81,25 @@ Arguments additionally taken by some options:
   N         Second integer value.
   (word)    Some options take one or two word arguments.
 
+Generally spoken, increased radius or sigma enhances contrast, reduces noise,
+looses details and increases undesired seams. There's always a tradeoff.
+The default values are set rather low and mostly profit from increasing.
+Think of radius and sigma as of brush sizes.
+
 Step 1: Color conversion
   By default imfuse uses colorspace sRGB and does not convert to grayscale.
   Normally you don't need to adjust these options.
 
-     --colorspace [=ARG]  Define the colorspace from where to generate the
+ --colorspace [=ARG]  Define the colorspace from where to generate the
                       masks. Experimental option, less useful yet.
                       ARG takes arguments:
-                        C       colorspace          Default: sRGB
                         c       channel
-                      Of interest (all channels together): sRGB, RGB
-                      Single channels of interest:   LAB: 0 HSL: 1  HCL: 1
+                        C       colorspace          Default: sRGB
+                      Some of interest: C=sRGB, C=RGB, C=Jzazbz:0  LAB: 0 HSL: 1  HCL: 1
                       For further colorspaces and their channels see:
                       https://legacy.imagemagick.org/Usage/color_basics
                       and 'magick -list colorspace'.
-     --grayscale [=ARG]  Convert images to grayscale before mask generation.
+ --grayscale [=ARG]   Convert images to grayscale before mask generation.
                       Compare ImageMagick options -grayscale and -intensity. 
                       ARG takes argument:
                         (word)  mode                Default: Rec709Luma
@@ -116,11 +117,11 @@ Step 2a: Mask generation - contrast masks
                         s       sigma               Default: 0.75
                       Adjust only sigma, radius 0 is adjusted automatically.
  --cmd [=ARG]         Custom ImageMagick option to create a mask.
-                      ARG takes argument:
+                      ARG additionally takes argument:
                         (word)   string
                       string can be e.g. '-edge 2'. Avoid comma , in string.
-                      If used without a command but with argument 'C=',
-                      it is possible to get a color channel.
+                      There's also the use case without a command at all
+                      but setting arguments C=, c or I= only.
  --cmddiff [=ARG]     Custom ImageMagick option to create a mask.
                       ARG takes argument:
                         (word)   string
@@ -294,7 +295,7 @@ Step 3: Mask merging
                       For percent value compare option -wavelet-denoise.
  --maskblur [=ARG]    Blur masks to enhance contrast and close minor gaps.
                       ARG takes arguments:
-                        s        sigma              Default: 2
+                        s        sigma              Default: 1
  --maskcmd [=ARG]     Custom ImageMagick option to apply on merged masks.
                       ARG takes argument:
                         (word)   string
@@ -759,7 +760,7 @@ check_outputname() {
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argtype" in
-      contrast|channel|comparision)
+      mask)
         Resultbasename="${Resultbasename}--${Argmethod}=${Imarguments[$Count]%TYPE*}"
       ;;
     esac
@@ -1742,8 +1743,8 @@ maskfromimage() {
   return 0
 }
 mkclut_uniform() {
-  # generate a clut image to uniform distribution in level_masks()
-  # contains code parts from http://www.fmwconcepts.com/imagemagick/redist
+  # Generate a clut image to uniform distribution in level_masks()
+  # Contains code from http://www.fmwconcepts.com/imagemagick/redist with friendly permission from Fred Weinhaus.
   local Referenceimage Clutimage Netpbm Netpbmdata
   local Histogramarray Colorcountarray Totalpixel Lutlist Expo Quantumrange Factor
   local Command Key1 Key2 Count
@@ -1913,7 +1914,7 @@ focus_maskmethod() {
       Maskgenerator="
   # --blur
   mpr:sourcegray
-    -blur ${Argradius1:-0}x${Argsigma1:-0.75}
+    -blur ${Argradius1:-0}x$Argsigma1
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -1936,7 +1937,7 @@ focus_maskmethod() {
   # --comet
   mpr:sourcegray 
     -define morphology:compose=${Argword1:-Lighten}
-    -morphology Convolve Comet:${Argradius1:-0}x${Argsigma1:-5}:>
+    -morphology Convolve Comet:${Argradius1:-0}x${Argsigma1}:>
   mpr:sourcegray
     -compose difference -composite"
     ;;
@@ -1958,14 +1959,14 @@ focus_maskmethod() {
   mpr:sourcegray"
       } || {
         Maskgenerator="$Maskgenerator
-  ( mpr:sourcegray -statistic ${Argword1:-median} ${Argradius1:-5} )"
+  ( mpr:sourcegray -statistic ${Argword1:-median} ${Argradius1} )"
       }
       [ "$Argword2" = "source" ] && {
         Maskgenerator="$Maskgenerator
   mpr:sourcegray"
       } || {
         Maskgenerator="$Maskgenerator
-  ( mpr:sourcegray -statistic ${Argword2:-mean} ${Argradius1:-5} )"
+  ( mpr:sourcegray -statistic ${Argword2:-mean} ${Argradius1} )"
 Maskgenerator="$Maskgenerator
     -compose Difference -composite"
       }
@@ -1975,7 +1976,7 @@ Maskgenerator="$Maskgenerator
   # --dog
   mpr:sourcegray
     -define convolve:scale=100,100%
-    -morphology Convolve DoG:${Argradius1:-0},${Argsigma1:-0.75},${Argsigma2:-1.2}
+    -morphology Convolve DoG:${Argradius1:-0},${Argsigma1},${Argsigma2}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -2044,8 +2045,9 @@ Maskgenerator="$Maskgenerator
     ;;
     gaussian)
       Maskgenerator="
-  # --gaussian ${Argradius1:-0}x${Argsigma1:-0.75}
-  ( mpr:sourcegray -gaussian-blur ${Argradius1:-0}x${Argsigma1:-0.75} )
+  # --gaussian ${Argradius1:-0}x${Argsigma1}
+  mpr:sourcegray
+    -gaussian-blur ${Argradius1:-0}x${Argsigma1}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -2071,7 +2073,7 @@ Maskgenerator="$Maskgenerator
   # --log
   mpr:sourcegray
     -define convolve:scale=100,100%
-    -morphology Convolve LoG:${Argradius1:-0}x${Argsigma1:-0.75}
+    -morphology Convolve LoG:${Argradius1:-0}x${Argsigma1}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -2079,7 +2081,7 @@ Maskgenerator="$Maskgenerator
       Maskgenerator="
   # --morphology
   mpr:sourcegray
-    -morphology ${Argword1:-edge}:${Argradius2:-1} ${Argword2:-Octagon}:${Argradius1:-1}"
+    -morphology ${Argword1}:${Argradius2} ${Argword2:-Octagon}:${Argradius1}"
     ;;
     prewitt)
       Maskgenerator="
@@ -2112,12 +2114,12 @@ Maskgenerator="$Maskgenerator
       Maskgenerator="
   # --statistic
   mpr:sourcegray
-    -statistic ${Argword1:-standarddeviation} ${Argradius1:-2}x${Argradius1:-2}"
+    -statistic ${Argword1} ${Argradius1}x${Argradius1}"
     ;;
     unsharp)
       Maskgenerator="
   # --unsharp
-  mpr:sourcegray -unsharp ${Argradius1:-0}x${Argsigma1:-5}
+  mpr:sourcegray -unsharp ${Argradius1:-0}x${Argsigma1}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -2125,7 +2127,7 @@ Maskgenerator="$Maskgenerator
       Maskgenerator="
   # --wavelet
   mpr:sourcegray 
-    -wavelet-denoise ${Argpercent1:-10}%
+    -wavelet-denoise ${Argpercent1}%
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -2138,26 +2140,24 @@ focus_generate_masks() {
   local Longoptions Parsedoptions
   local Firstimage Lastimage
 
-  Longoptions="first:,last:,type:"
+  Longoptions="first:,last:"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
   while [ $# -gt 0 ]; do
     case "${1:-}" in
       --first)    Firstimage="${2:-}" ; shift ;;
       --last)     Lastimage="${2:-}"  ; shift ;;
-      --type)     Masktype="${2:-}"   ; shift ;;
     esac
     shift
   done
 
   Firstimage="${Firstimage:-1}"
   Lastimage="${Lastimage:-$Sourceimagenumber}"
-  Masktype="${Masktype:-"contrast,comparision,channel"}"
   # Generate Code for mask generation
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
 
-    grep -q "$Argtype" <<< "$Masktype" && {
+    [ "$Argtype" = "mask" ] && {
       Maskgenerator=""
 
       [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] || [ -n "$Argimage" ] && {
@@ -2310,7 +2310,7 @@ ${Maskgenerator_all//NUMBER/$(printnum $Count)}"
   # level and uniform masks
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
-    grep -q "$Argtype" <<< "$Masktype" && {
+    [ "$Argtype" = "mask" ] && {
       [ "$Arglevel" != "no" ] && {
         [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/level.$Argbasename" ] && {
           sendmagickmessage "NOTE:Skipping mask leveling, already done: $Argbasename"
@@ -2360,7 +2360,7 @@ focus_merge_masks() {
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argtype" in
-      contrast|channel|comparision)
+      mask)
         LC_ALL=C awk 'BEGIN {exit !('${Argweight:-100}' >= '${Weightmax:-0}')}' && Weightmax="${Argweight:-100}"
         Methodnumber="$((Methodnumber+1))"
       ;;
@@ -2388,7 +2388,7 @@ focus_merge_masks() {
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argtype" in
-      contrast|channel|comparision)
+      mask)
         #Mergemaskbasename="$Mergemaskbasename-$Argmethod"
         Mergecode="$Mergecode
   (
@@ -2433,7 +2433,7 @@ focus_merge_masks() {
           maskmorph)
     Mergecode="$Mergecode
     # --maskmorph
-    -morphology $Argword1:$Argradius2 $Argword2:$Argradius1"
+    -morphology $Argword1:$Argradius2 ${Argword2:-Octagon}:$Argradius1"
           ;;
 
           maskstat)
@@ -2633,7 +2633,7 @@ focus_hard() {
           cutmorph)
             Focuscode="$Focuscode
     # --cutmorph
-    -morphology ${Argword1}:${Argradius2} ${Argword2}:${Argradius1}"
+    -morphology ${Argword1}:${Argradius2} ${Argword2:-Octagon}:${Argradius1}"
           ;;
 
           cutsoft)
@@ -2979,6 +2979,7 @@ focus_main() {
 
   Startzeit="$(date +%s)"
   focus_generate_masks
+  focus_merge_masks
   sendmagickmessage "NOTE:Generating masks ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   [ "$Maskmethodnumber" -gt "0" ] && { 
     for Substackstep in $(seq $Substacknumber -1 1); do
@@ -2988,7 +2989,7 @@ focus_main() {
       sendmagickmessage "NOTE:Generating substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
 
       Startzeit="$(date +%s)"
-      focus_merge_masks                                         "${Substackfirstimage[$Substackstep]}"        "${Substacklastimage[$Substackstep]}"
+      #focus_merge_masks "${Substackfirstimage[$Substackstep]}" "${Substacklastimage[$Substackstep]}" ### FIXME leveling?
       sendmagickmessage "NOTE:Mask merging ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
       # focus
@@ -3211,7 +3212,7 @@ maskarg_parse() {
       "TYPE")             Argtype="$Value" ;;
       "DIFF")             Argdiff="yes" ;;
       "BASENAME")         Argbasename="$Value" ;;
-      *|WORD1|WORD2) ### FIXME
+      *|WORD1|WORD2)
         [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
         Argword1="${Argword1#WORD1=}"
         Argword2="${Argword2#WORD2=}"
@@ -3281,8 +3282,19 @@ maskarg_defaultvalue() {
       esac
     ;;
     level)
-      case "$Argtype" in
-        channel|comparision) echo "no" ;;
+      case "$Argmethod" in
+        channel)    echo "no" ;;
+        chroma)     echo "no" ;;
+        compose)    echo "no" ;;
+        darkness)   echo "no" ;;
+        enfuse)     echo "no" ;;
+        evaluate)   echo "no" ;;
+        lighten)    echo "no" ;;
+        max)        echo "no" ;;
+        mean)       echo "no" ;;
+        median)     echo "no" ;;
+        min)        echo "no" ;;
+        saturation) echo "no" ;;
       esac
     ;;
     levelmin)
@@ -3414,7 +3426,6 @@ maskarg_defaultvalue() {
       case "${1:-}" in
         dog)       echo "$(calc "${Argsigma1:-0.3} * 1.6")" ;;
         finalblur) echo "2" ;;
-        *)         echo "" ;;
       esac
     ;;
     threshold1)
@@ -3422,28 +3433,32 @@ maskarg_defaultvalue() {
         finalblur)  echo "50" ;;
         finalblur2) echo "50" ;;
         threshold)  echo "50" ;;
-        *)          echo "" ;;
       esac
     ;;
     threshold2)
       case "${1:-}" in
         threshold) echo "" ;;
-        *)     echo "" ;;
       esac
     ;;
     type)
       case "${1:-}" in
         blur|cmd|cmddiff|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
-          echo "contrast"
+          echo "mask"
         ;;
         channel|chroma|darkness|lightness|saturation)
-          echo "channel"
+          echo "mask"
         ;;
         image|enfuse|compose|evaluate|min|max|mean|median)
-          echo "comparision"
+          echo "mask"
+        ;;
+        experimental)
+          echo "mask"
         ;;
         maskblur|maskcmd|maskmorph|maskstat|maskwave)
           echo "merge"
+        ;;
+        cutblur|cutcmd|cutless|cutmorph|cutsoft|cutwave)
+          echo "focus"
         ;;
         alpha|finalblur|finalblur2|threshold)
           echo "postfocus"
@@ -3454,19 +3469,11 @@ maskarg_defaultvalue() {
         colorspace|grayscale|level|merge|soft)
           echo "single"
         ;;
-        cutblur|cutcmd|cutless|cutmorph|cutsoft|cutwave)
-          echo "focus"
-        ;;
         substacks)
           echo "substack"
         ;;
-        experimental)
-          echo "contrast"
-        ;;
         *)
-          echo "UNKNOWN"
           error "maskarg_defaultvalue(): Unknown type for method ${1:-}"
-          return 1
         ;;
       esac
     ;;
@@ -3492,14 +3499,12 @@ maskarg_defaultvalue() {
         maskstat)   echo "mean" ;;
         merge)      echo "screen" ;;
         soft)       echo "plus" ;;
-        *)          echo "" ;;
       esac
     ;;
     word2)
       case "${1:-}" in
-        diffstat)           echo "mean" ;;
-        maskmorph|cutmorph) echo "Octagon" ;;
-        *)                  echo "" ;;
+        diffstat)   echo "mean" ;;
+        maskmorph|morphology|cutmorph) echo "" ;;
       esac
     ;;
   esac
@@ -3513,7 +3518,7 @@ maskarg_checkallowed() {
   case "$Option" in
     channel)
       case "$Argtype" in
-        contrast|comparision|channel) ;;
+        mask) ;;
         *) 
           case "${1:-}" in
             colorspace) ;;
@@ -3524,14 +3529,18 @@ maskarg_checkallowed() {
     ;;
     colorspace)
       case "$Argtype" in
-        contrast|comparision|channel)
+        mask)
           checkmagicklist colorspace "$Arg" || error "--$Method: unknown colorspace for C=: $Arg 
   Please choose one out of 'magick -list colorspace'"
-          Arg="$(checkmagicklist colorspace "$Arg" print)"
+          Argcolorspace="$(checkmagicklist colorspace "$Arg" print)"
         ;;
         *) 
           case "${1:-}" in
-            colorspace) ;;
+            colorspace) 
+              checkmagicklist colorspace "$Arg" || error "--$Method: unknown colorspace for C=: $Arg 
+  Please choose one out of 'magick -list colorspace'"
+              Argcolorspace="$(checkmagicklist colorspace "$Arg" print)"
+            ;;
             *) error "$Method does not take argument colorspace: C=$Arg" ;;
           esac
         ;;
@@ -3539,7 +3548,7 @@ maskarg_checkallowed() {
     ;;
     image)
       case "$Argtype" in
-        contrast|comparision|channel)
+        mask)
           generate_image --mode "$Arg" --showname >/dev/null || error "--$Method: unknown image generation format for Option -I='$Arg'.
   Please choose one out of:
   enfuse max min mean median
@@ -3548,12 +3557,12 @@ maskarg_checkallowed() {
   'magick -list color"
           Argimage="$(generate_image --mode "$Argimage" --showmode)"
         ;;
-        *) error "$Method does not take argument colorspace channel: c$Arg" ;;
+        *) error "$Method does not take argument image comparision: I=$Arg" ;;
       esac
     ;;
     level)
       case "$Argtype" in
-        contrast|comparision|channel)
+        mask)
           case "$Arg" in
             yes|no) ;;
             *) error "level does not take value '$Arg'. Allowed values are yes|no" ;;
@@ -3564,7 +3573,7 @@ maskarg_checkallowed() {
     ;;
     negate)
       case "$Argtype" in
-        contrast|comparision|channel) ;;
+        mask) ;;
         *) error "$Method does not take argument negate." ;;
       esac
     ;;
@@ -3619,7 +3628,7 @@ maskarg_checkallowed() {
     ;;
     threshold1)
       case "$Argtype" in
-        contrast|comparision|channel) ;;
+        mask) ;;
         *)
           case "$Method" in
             finalblur|finalblur2|threshold) ;;
@@ -3630,7 +3639,7 @@ maskarg_checkallowed() {
     ;;
     threshold2)
       case "$Argtype" in
-        contrast|comparision|channel) ;;
+        mask) ;;
         *)
           case "$Method" in
             threshold) ;;
@@ -3641,7 +3650,7 @@ maskarg_checkallowed() {
     ;;
     weight)
       case "$Argtype" in
-        contrast|comparision|channel) ;;
+        mask) ;;
         *) error "$Method does not take argument weight: w$Arg" ;;
       esac
     ;;
@@ -3666,9 +3675,6 @@ maskarg_checkallowed() {
           checkmagicklist colorspace "$Arg" || error "--$Method: unknown colorspace: $Arg
   Please choose one out of 'magick -list colorspace'"
           Argword1="$(checkmagicklist colorspace "$Arg" print)"
-        ;;
-        image) 
-          [ -f "${Arg}" ] || error "--image: File not found: $Arg" ### FIXME
         ;;
         level)
           case "$Arg" in
@@ -3783,9 +3789,9 @@ cmd_waitforkeyvalue() {
   # wait for keyword $1 in output of magick. Prints output after first :
   local Key Line
   Key="${1:-}"
-  while read Line; do
+  tail -f "$Magickfifolog" | while read Line; do
     grep -q "$Key" <<< "$Line" && break
-  done < <(tail -f "$Magickfifolog" ||:)
+  done
   echo "$(cut -d: -f2- <<< "$Line")"
   return 0
 }
@@ -3800,27 +3806,40 @@ cmd_waitforready() {
 readmagickmessage() {
   # read and parse messages from magick
   local Line Code Content
-  local Stopwatch Etacount Etanumber Etaduration Etatime
-  while read Line; do
+  local Stopwatch Etacount Etanumber Etaduration Etatime Etaline Etapos
+  local Esc Colnorm Colgreenbg
+
+  Esc="$(printf '\033')"
+  Colnorm="${Esc}[0m"
+  Colgreenbg="${Esc}[42m"
+
+  tail -f "$Magickfifolog" | while read Line; do
     Code="$(cut -d: -f1 <<< "$Line")"
     Content="$(cut -d: -f2- <<< "$Line")"
 
+    Columns="${COLUMNS:-80}"
     grep -q "ETA:" <<< "$Content" && {
+      Columns="$((Columns))"
       Etacount="${Content#*ETA:}"
       grep -q "/" <<< "$Etacount" && Etanumber="${Etacount#*/}"
       Etacount="${Etacount%/*}"
       Etanumber="${Etanumber:-$Sourceimagenumber}"
       Etaduration="$(( $(date +%s) - Stopwatch ))"
       Etatime="$(( Etacount * Etaduration / (Etanumber-Etacount+1) ))"
-      Content="${Content%ETA:*}$Etacount / $Etanumber, ETA: $(date -u -d @$Etatime +"%T"), DUR: $(date -u -d @$Etaduration +"%T")"
+      Etaline="$Etacount/$Etanumber ETA: $(date -u -d @$Etatime +"%T"), DUR: $(date -u -d @$Etaduration +"%T")"
+      Content="${Content%ETA:*}$Etaline"
+      Content="$(printf "%-${Columns}s" "$Content")"
+      Content="$(cut -c1-${Columns} <<< "imfuse: $Content")"
+      Etapos="$((Columns*Etacount/Etanumber))"
+      Content="${Colgreenbg}${Content:0:$Etapos}${Colnorm}${Content:$Etapos}"
     }
 
     case "$Code" in
       PROGRESS)
-        printsameline "$(cut -c1-${COLUMNS:-80} <<< "imfuse: $Content")"
+        printsameline "$Content"
       ;;
       /PROGRESS|NEWLINE)
-        echo "" >&2
+        echo "$Colnorm" >&2
       ;;
       NOTE)
         note "$Content"
@@ -3837,7 +3856,7 @@ readmagickmessage() {
 $Line"
       break
     }
-  done < <(tail -f "$Magickfifolog" ||:)
+  done
 }
 sendmagickmessage() {
   # send message $1 to output of magick
@@ -3902,9 +3921,6 @@ getmagickinfo() {
   cmd_waitforready
   cmd_waitforkeyvalue "$Key2" >/dev/null
   sed -n "/$Key1/,/$Key2/p" "$Magickfifolog" | sed '1d ; $d'
-  # code for multiple line info. -format would need a leading \n.
-  #cmd_waitforkeyvalue "$Key" >/dev/null
-  #sed -n "/$Key/,\$p" "$Magickfifolog" | sed '1d' | sed '$d' # FIXME might not be reliable; current solution to get multiple output lines
 }
 
 ### main
@@ -3935,7 +3951,7 @@ finish() {
 
   [ -n "$Magickmessagepid" ] && kill "$Magickmessagepid"
   exec 3>&-
-  rm -f $Magickfifo >/dev/null 2>&1
+  rm -f $Magickfifo $Magickfifolog >/dev/null 2>&1
 
   #[ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" .
 
@@ -3982,7 +3998,6 @@ declare_variables() {
   Colorspacechannel=""
   Exifsourceimage=""
   Firstimage=""
-  Firstmaskmethod=""
   Force=""
   Freemem=""
   Grayscale=""
@@ -4199,30 +4214,20 @@ check_options() {
     [ -n "$Argword2" ]       && maskarg_checkallowed "$Argmethod" word2      "$Argword2"
 
     case "$Argtype" in
+      mask)
+        Maskmethodnumber="$((Maskmethodnumber+1))"
+      ;;
       single)
         grep -q -w "$Argmethod" <<< "$Singleoptionlist" && error "Option --$Argmethod can be specified only once."
         Singleoptionlist="$Singleoptionlist $Argmethod"
       ;;
     esac
-    case "$Argtype" in
-      contrast|channel|comparision)
-        Maskmethodnumber="$((Maskmethodnumber+1))"
-        [ -z "$Firstmaskmethod" ] && Firstmaskmethod="$Argmethod"
-      ;;
-    esac
 
     case $Argmethod in
-      cutless)
-        [ -n "${Lessthanmaxoption:-}" ] && error "Option --cutless can be specified only once."
-        Lessthanmaxoption="yes"
-      ;;
       freichen)
         case $Argword1 in
           10|12|19) Argdiff=yes ;;
         esac
-      ;;
-      image)
-        [ -f "$Argword1" ] || error "--image needs an image file name as argument. Not found: '$Argword1'"
       ;;
       morphology)
         case ${Argword1,,} in
@@ -4242,6 +4247,7 @@ check_options() {
       ;;
     esac
 
+    # convert to --cmd
     case "$Argmethod" in
       channel|chroma|darkness|lightness|saturation)
         Imoptions["$Count"]="cmd"
@@ -4267,7 +4273,7 @@ check_options() {
   for Count in $(seq $Imoptionsnumber); do
     maskarg_parse "$Count"
     case $Argtype in
-      contrast|channel|comparision)
+      mask)
         Weightsum="$((Weightsum + Argweight))"
         [ -z "$Argweight" ]   && Masknoweightcount="$((Masknoweightcount+1))"
       ;;
@@ -4278,7 +4284,7 @@ check_options() {
   for Count in $(seq $Imoptionsnumber); do
     maskarg_parse "$Count"
     case $Argtype in
-      contrast|channel|comparision)
+      mask)
         [ -z "$Argweight" ] && {
           LC_ALL=C awk 'BEGIN {exit !('${Weightrest:-0}' <= 0)}' && error "Sum of weight arguments exceed 100%, nothing left for --$Argmethod."
           Argweight="$(calc "$Weightrest / $Masknoweightcount ")"
@@ -4299,7 +4305,6 @@ check_options() {
 
   # --basename
   case $Outputbasename in
-    #"")   Outputbasename="imfuse" ;;
     auto) Outputbasename="$(basename "$(pwd)")" ;;
   esac
   [ -d "$Outputbasename" ] && {
@@ -4532,6 +4537,7 @@ main() {
 trap - SIGINT
 trap - EXIT
 trap - ERR"
+  shopt -s lastpipe
 
   declare_variables
   parse_options "$@"
@@ -4561,7 +4567,10 @@ trap - ERR"
 
   # --exif: transfer EXIF metadata from first image to result
   [ "$Exifsourceimage" ] && {
-    [ "$Exifsourceimage" = "auto" ] && Exifsourceimage="${Sourceimagelist[1]}"
+    [ "$Exifsourceimage" = "auto" ] && { 
+      Exifsourceimage="${Sourceimagelist[1]}"
+      [ "$Revertimagelist" ] && Exifsourceimage="${Sourceimagelist[$Imagenumber]}"
+    }
     exiftransfer "$Exifsourceimage" "$Outputimage"
   }
 
@@ -4572,10 +4581,7 @@ trap - ERR"
   command -v xclip >/dev/null && echo -n "$Outputimage" | xclip -i -selection clipboard
 
   # -W
-  [ "$Viewnior" ] && (
-    $Untrap
-    nohup viewnior "$Outputimage" </dev/null >/dev/null 2>&1
-  ) &
+  [ "$Viewnior" ] && nohup viewnior "$Outputimage" </dev/null >/dev/null 2>&1 &
 
   # --video
   [ "$Video" ]    && generate_video
