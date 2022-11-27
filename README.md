@@ -29,6 +29,8 @@ Dependencies:
  - `geeqie` and `viewnior` (optional image viewers)
  - `exiftool` (optional to preserve exif meta data)
 
+imfuse contains code written by [Fred Weinhaus](http://www.fmwconcepts.com/imagemagick/index.php) with his friendly permission.
+
 ## stackalign
 
 Aligns image stack.
