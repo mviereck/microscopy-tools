@@ -4,6 +4,8 @@
 Version="0.8.9-beta"
 
 # ToDo:
+# --cutsoft: broken? hard seams.
+# --savemask: broken
 # --compose et al: result less good than expected. max/lighten min/darken issue?
 # mkclut_uniform() fails with b&w masks -> clut and result black
 # check --kirsch
@@ -43,6 +45,7 @@ General options:
                           ARG can be a % value or an absolute value for MB.
  -o, --output=FILE        Result image file name. See also --basename.
      --revert             Revert order of source images.
+     --rmcache            Remove cache.imfuse* folders below pwd and exit.
      --savemask [=FILE]   Store contrast mask in file FILE.
      --version            Show imfuse version and exit.
  -V, --showimage          Show intermediate results with image viewer geeqie.
@@ -182,7 +185,7 @@ Step 2a: Mask generation - contrast masks
                       mode can be one of 'magick -list morphology'.
                         try: tophat, edge, dilate, smooth.
                       kernel can be one of 'magick -list kernel'.
-                        https://imagemagick.org/Usage/morphology/#kernel
+                      Compare: https://imagemagick.org/Usage/morphology
  --prewitt [=ARG]     Prewitt edge detection. 
  --roberts [=ARG]     Roberts edge detection. 
  --sobel [=ARG]       Sobel edge detection. 
@@ -285,9 +288,9 @@ Step 3: Mask merging
                       mode can be one of 'magick -list morphology'.
                         try: open, close, erode, dilate, smooth.
                       kernel can be one of 'magick -list kernel'.
-                        https://imagemagick.org/Usage/morphology/#kernel
                       CPU expensive option. Iterating the kernel is cheaper
                       than using a greater radius.
+                      Compare: https://imagemagick.org/Usage/morphology
  --maskwave [=ARG]    Remove noise in masks. Can close gaps, but can also
                       create artefacts in very low contrast areas.
                       ARG takes arguments:
@@ -347,9 +350,9 @@ Step 4: Stack fusion
                       mode can be one of 'magick -list morphology'.
                         try: open, close, erode, dilate, smooth.
                       kernel can be one of 'magick -list kernel'.
-                        https://imagemagick.org/Usage/morphology/#kernel
                       CPU expensive option. Iterating the kernel is cheaper
                       than using a greater radius.
+                      Compare: https://imagemagick.org/Usage/morphology
  --cutsoft [=ARG]     Similar to --cutblur, but paint default sharp cut mask
                       over blurred cut mask.
                       ARG takes argument:
@@ -2556,17 +2559,17 @@ focus_hard() {
     maskarg_parse "$Count"
     case "$Argtype" in
       focus)
+        Focuscode="$Focuscode
+    # --${Argmethod}=${Argoptions}"
         case "$Argmethod" in
 
           cutblur)
             Focuscode="$Focuscode
-    # --cutblur: blur cut mask
-    -blur 0x${Cutblur:-1}"
+    -blur 0x${Argsigma1}"
           ;;
 
           cutcmd)
             Focuscode="$Focuscode
-    # --cutcmd
     $Argword1"
           ;;
 
@@ -2632,13 +2635,11 @@ focus_hard() {
 
           cutmorph)
             Focuscode="$Focuscode
-    # --cutmorph
     -morphology ${Argword1}:${Argradius2} ${Argword2:-Octagon}:${Argradius1}"
           ;;
 
           cutsoft)
             Focuscode="$Focuscode
-    # --cutsoft: add a blur around cut mask
     -blur 0x$Argsigma1
   mpr:cutmask
     -compose Lighten -composite"
@@ -2646,7 +2647,6 @@ focus_hard() {
 
           cutwave)
             Focuscode="$Focuscode
-    # --cutwave
     -wavelet-denoise ${Argpercent1}%"
           ;;
 
@@ -2977,10 +2977,18 @@ focus_main() {
   local Backgroundnumber Backgroundtype Backgroundimage
   local Transparentlayers=
 
+  # Generate helper images
+  generate_image --mode "black"
+  generate_image --mode "white"
+  generate_image --mode "transparent"
+
+  # Generate masks
   Startzeit="$(date +%s)"
   focus_generate_masks
   focus_merge_masks
   sendmagickmessage "NOTE:Generating masks ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+
+  # Focus stacking
   [ "$Maskmethodnumber" -gt "0" ] && { 
     for Substackstep in $(seq $Substacknumber -1 1); do
       Substackresult[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep.mpc"
@@ -3096,9 +3104,10 @@ focus_main() {
     esac
   done
 
-  # --layered
+  # Generate result image
   case "$Storelayered" in
     yes)
+      # --layered
       sendmagickmessage "NOTE:Generating layered tif"
       { maskarg_single "threshold" || maskarg_single "alpha" ; } && Transparentlayers="yes"
       generate_image --mode cyan
@@ -3157,10 +3166,10 @@ focus_main() {
   imfuse has generated an empty transparent result image.
   Suggestion: Try at least '--background=enfuse', or short: --bg"
 
-  # --savemask
+  # --savemask ### FIXME
   [ "$Savemask" ] && {
     cmd "  # --savemask"
-    evaluate max "$Savemask" ${Substackmaskpost[$Substackstep]}
+    #evaluate max "$Savemask" ${Substackmaskpost[$Substackstep]}
   }
 
   return 0
@@ -3174,7 +3183,105 @@ maskarg_add() {
   Imoptions[$Imoptionsnumber]="$Argmethod"
   Imarguments[$Imoptionsnumber]="${2:-}"
   maskarg_parse "$Imoptionsnumber"
+  maskarg_check "$Imoptionsnumber"
   maskarg_store "$Imoptionsnumber"
+  case "$Argtype" in
+    mask)
+      Maskmethodnumber="$((Maskmethodnumber+1))"
+    ;;
+  esac
+}
+maskarg_check() {
+  # check for allowed values, set defaults.
+  # maskarg_parse() must run beforehand.
+  # use maskarg_store() afterwards.
+
+  Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
+  [ -z "$Argchannel"  ]    && Argchannel="$(maskarg_defaultvalue    "$Argmethod" channel)"
+  [ -z "$Argcolorspace"  ] && Argcolorspace="$(maskarg_defaultvalue "$Argmethod" colorspace)"
+  [ -z "$Argimage"  ]      && Argimage="$(maskarg_defaultvalue      "$Argmethod" image)"
+  [ -z "$Arglevel"  ]      && Arglevel="$(maskarg_defaultvalue      "$Argmethod" level)"
+  [ -z "$Argnegate"  ]     && Argnegate="$(maskarg_defaultvalue     "$Argmethod" negate)"
+  [ -z "$Argpercent1" ]    && Argpercent1="$(maskarg_defaultvalue   "$Argmethod" percent1)"
+  [ -z "$Argpercent2" ]    && Argpercent2="$(maskarg_defaultvalue   "$Argmethod" percent2)"
+  [ -z "$Argradius1" ]     && Argradius1="$(maskarg_defaultvalue    "$Argmethod" radius1)"
+  [ -z "$Argradius2" ]     && Argradius2="$(maskarg_defaultvalue    "$Argmethod" radius2)"
+  [ -z "$Argshort" ]       && Argshort="$(maskarg_defaultvalue      "$Argmethod" short)"
+  [ -z "$Argsigma1" ]      && Argsigma1="$(maskarg_defaultvalue     "$Argmethod" sigma1)"
+  [ -z "$Argsigma2" ]      && Argsigma2="$(maskarg_defaultvalue     "$Argmethod" sigma2)"
+  [ -z "$Argthreshold1" ]  && Argthreshold1="$(maskarg_defaultvalue "$Argmethod" threshold1)"
+  [ -z "$Argthreshold2" ]  && Argthreshold2="$(maskarg_defaultvalue "$Argmethod" threshold2)"
+  [ -z "$Argword1" ]       && Argword1="$(maskarg_defaultvalue      "$Argmethod" word1)"
+  [ -z "$Argword2" ]       && Argword2="$(maskarg_defaultvalue      "$Argmethod" word2)"
+  [ -n "$Argchannel" ]     && maskarg_checkallowed "$Argmethod" channel    "$Argchannel"
+  [ -n "$Argcolorspace" ]  && maskarg_checkallowed "$Argmethod" colorspace "$Argcolorspace"
+  [ -n "$Argimage" ]       && maskarg_checkallowed "$Argmethod" image      "$Argimage"
+  [ -n "$Arglevel" ]       && maskarg_checkallowed "$Argmethod" level      "$Arglevel"
+  [ -n "$Argnegate" ]      && maskarg_checkallowed "$Argmethod" negate     "$Argnegate"
+  [ -n "$Argnumber1" ]     && maskarg_checkallowed "$Argmethod" number1    "$Argnumber1"
+  [ -n "$Argnumber2" ]     && maskarg_checkallowed "$Argmethod" number2    "$Argnumber2"
+  [ -n "$Argradius1" ]     && maskarg_checkallowed "$Argmethod" radius1    "$Argradius1"
+  [ -n "$Argradius2" ]     && maskarg_checkallowed "$Argmethod" radius2    "$Argradius2"
+  [ -n "$Argsigma1" ]      && maskarg_checkallowed "$Argmethod" sigma1     "$Argsigma1"
+  [ -n "$Argsigma2" ]      && maskarg_checkallowed "$Argmethod" sigma2     "$Argsigma2"
+  [ -n "$Argpercent1" ]    && maskarg_checkallowed "$Argmethod" percent1   "$Argpercent1"
+  [ -n "$Argpercent2" ]    && maskarg_checkallowed "$Argmethod" percent2   "$Argpercent2"
+  [ -n "$Argthreshold1" ]  && maskarg_checkallowed "$Argmethod" threshold1 "$Argthreshold1"
+  [ -n "$Argthreshold2" ]  && maskarg_checkallowed "$Argmethod" threshold2 "$Argthreshold2"
+  [ -n "$Argweight" ]      && maskarg_checkallowed "$Argmethod" weight     "$Argweight"
+  [ -n "$Argword1" ]       && maskarg_checkallowed "$Argmethod" word1      "$Argword1"
+  [ -n "$Argword2" ]       && maskarg_checkallowed "$Argmethod" word2      "$Argword2"
+
+  case "$Argtype" in
+    single)
+      grep -q -w "$Argmethod" <<< "$Singleoptionlist" && error "Option --$Argmethod can be specified only once."
+      Singleoptionlist="$Singleoptionlist $Argmethod"
+    ;;
+  esac
+
+  # --soft
+  case $Argmethod in
+    soft)
+      Softmode="yes"
+    ;;
+  esac
+
+  # diff
+  case $Argmethod in
+    freichen)
+      case $Argword1 in
+        10|12|19) Argdiff=yes ;; ### FIXME really?
+      esac
+    ;;
+    morphology)
+      case ${Argword1,,} in
+        close) ;;
+        edge|edgein|edgeout|tophat|bottomhat) ;;
+        *) Argdiff="yes" ;; ### FIXME really?
+      esac
+    ;;
+    statistic)
+      case ${Argword1,,} in
+        gradient|standarddeviation|"") Argdiff="" ;;
+        *)                             Argdiff="yes" ;;
+      esac
+    ;;
+  esac
+
+  # convert to --cmd
+  case "$Argmethod" in
+    channel|chroma|darkness|lightness|saturation)
+      Imoptions["${1:-}"]="cmd"
+    ;;
+    enfuse|max|min|mean|median)
+      Imoptions["${1:-}"]="cmd"
+    ;;
+    compose|evaluate)
+      Imoptions["${1:-}"]="cmd"
+      Argimage="$Argword1"
+      Argword1=""
+    ;;
+  esac
 }
 maskarg_parse() {
   local Key Line Value
@@ -3766,37 +3873,6 @@ maskarg_checkallowed() {
 
   return 0
 }
-maskarg_checkpercent() {
-  # Allow percent values to be given without a leading 'p'. Few options only.
-  [ -z "$Argpercent1" ] && [ -n "$Argword1" ] && {
-    Argpercent1="$Argword1"
-    Argword1=""
-  }
-  [ -n "$Argpercent1" ] && [ -n "$Argword1" ] && {
-    error "Option does not take percent value along with a word argument"
-    return 1
-  }
-  
-  [ "$Argpercent1" = "auto" ] || [ "$Argpercent1" = "$(digitonly "$Argpercent1")" ] || {
-    error "Invalid percent value: $Argpercent1"
-    return 1
-  }
-}
-maskarg_checksigma() {
-  # Allow sigma values to be given without a leading 's'. Few options only.
-  [ -z "$Argsigma1" ] && [ -n "$Argword1" ] && {
-    Argsigma1="$Argword1"
-    Argword1=""
-  }
-  [ -n "$Argsigma1" ] && [ -n "$Argword1" ] && {
-    error "Option does not take sigma value along with a word argument"
-    return 1
-  }
-  [ "$Argsigma1" = "auto" ] || [ "$Argsigma1" = "$(digitonly "$Argsigma1")" ] || {
-    error "Invalid sigma value: $Argsigma1"
-    return 1
-  }
-}
 maskarg_single() {
   # provide arguments of an option $1 that can be specified only once
   local Count=
@@ -4071,6 +4147,7 @@ declare_variables() {
   Parsedoptions=""
   Revertimagelist=""
   Resultbasename=""
+  Rmcache=""
   Savemask=""
   Showimage=""
   Showimageprocessing=""
@@ -4113,7 +4190,7 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
   Shortoptions="ho:vVW"
-  Longoptions="basename:,cache::,exif::,force::,help,limit-memory::,mask2cache,output:,savemask::,showimage,showname,test::,verbose,version,video"
+  Longoptions="basename:,cache::,exif::,force::,help,limit-memory::,mask2cache,output:,rmcache,savemask::,showimage,showname,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::,grayscale::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
@@ -4141,6 +4218,7 @@ parse_options() {
       --mask2cache)        Masktocache="yes"                   ;;
       -o|--output)         Outputimage="${2:-}"                ; shift ;;
       --revert)            Revertimagelist="-r"                ;;
+      --rmcache)           Rmcache="yes"                       ;;
       --savemask)          Savemask="${2:-auto}"               ; shift ;;
       -V|--showimage)      Showimageprocessing="yes"           ;;
       --showname)          Showname="yes"                      ;;
@@ -4183,127 +4261,6 @@ check_options() {
   local Arg Part1 Part2 Weightsum= Weightrest Masknoweightcount= Singleoptionlist=
   local Firstimage Lastimage Substacksize Position
   local Lessthanmaxoption
-
-  [ "$Sourceimagenumber" = "0" ] && error "No source images provided."
-
-  # magick
-  Magickbin="$(command -v magick)"
-  false && [ -e "/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4.5.6" ] && {
-    # https://imagemagick.org/script/openmp.php
-    # https://goog-perftools.sourceforge.net/doc/tcmalloc.html
-    Magickbin="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4.5.6 $Magickbin"
-  }
-  [ -z "$Magickbin" ] && error "Command 'magick' not found. Please install ImageMagick version 7."
-
-  # --cache
-  [ -n "$Cachedir" ] && {
-    Masktocache="yes"
-    Keepcache="yes"
-    [ "$Cachedir" = "auto" ] && Cachedir=""
-  }
-  Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
-  case "$Masktocache" in
-    yes) [ -z "$Cachedir" ] && Cachedir="./cache.imfuse" ;;
-    no)  [ -z "$Cachedir" ] && Cachedir="./cache.imfuse.$Imfusepid" ;;
-  esac
-  mkdir -p "$Cachedir"   || error "Error creating cache folder $Cachedir"
-  Testimage="$Cachedir/test.png"
-  Resultmask="$Cachedir/result.max.tif"
-
-  # mask options
-  for Count in $(seq "$Imoptionsnumber"); do
-    maskarg_parse "$Count"
-    Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
-    [ -z "$Argchannel"  ]    && Argchannel="$(maskarg_defaultvalue    "$Argmethod" channel)"
-    [ -z "$Argcolorspace"  ] && Argcolorspace="$(maskarg_defaultvalue "$Argmethod" colorspace)"
-    [ -z "$Argimage"  ]      && Argimage="$(maskarg_defaultvalue      "$Argmethod" image)"
-    [ -z "$Arglevel"  ]      && Arglevel="$(maskarg_defaultvalue      "$Argmethod" level)"
-    [ -z "$Argnegate"  ]     && Argnegate="$(maskarg_defaultvalue     "$Argmethod" negate)"
-    [ -z "$Argpercent1" ]    && Argpercent1="$(maskarg_defaultvalue   "$Argmethod" percent1)"
-    [ -z "$Argpercent2" ]    && Argpercent2="$(maskarg_defaultvalue   "$Argmethod" percent2)"
-    [ -z "$Argradius1" ]     && Argradius1="$(maskarg_defaultvalue    "$Argmethod" radius1)"
-    [ -z "$Argradius2" ]     && Argradius2="$(maskarg_defaultvalue    "$Argmethod" radius2)"
-    [ -z "$Argshort" ]       && Argshort="$(maskarg_defaultvalue      "$Argmethod" short)"
-    [ -z "$Argsigma1" ]      && Argsigma1="$(maskarg_defaultvalue     "$Argmethod" sigma1)"
-    [ -z "$Argsigma2" ]      && Argsigma2="$(maskarg_defaultvalue     "$Argmethod" sigma2)"
-    [ -z "$Argthreshold1" ]  && Argthreshold1="$(maskarg_defaultvalue "$Argmethod" threshold1)"
-    [ -z "$Argthreshold2" ]  && Argthreshold2="$(maskarg_defaultvalue "$Argmethod" threshold2)"
-    [ -z "$Argword1" ]       && Argword1="$(maskarg_defaultvalue      "$Argmethod" word1)"
-    [ -z "$Argword2" ]       && Argword2="$(maskarg_defaultvalue      "$Argmethod" word2)"
-    [ -n "$Argchannel" ]     && maskarg_checkallowed "$Argmethod" channel    "$Argchannel"
-    [ -n "$Argcolorspace" ]  && maskarg_checkallowed "$Argmethod" colorspace "$Argcolorspace"
-    [ -n "$Argimage" ]       && maskarg_checkallowed "$Argmethod" image      "$Argimage"
-    [ -n "$Arglevel" ]       && maskarg_checkallowed "$Argmethod" level      "$Arglevel"
-    [ -n "$Argnegate" ]      && maskarg_checkallowed "$Argmethod" negate     "$Argnegate"
-    [ -n "$Argnumber1" ]     && maskarg_checkallowed "$Argmethod" number1    "$Argnumber1"
-    [ -n "$Argnumber2" ]     && maskarg_checkallowed "$Argmethod" number2    "$Argnumber2"
-    [ -n "$Argradius1" ]     && maskarg_checkallowed "$Argmethod" radius1    "$Argradius1"
-    [ -n "$Argradius2" ]     && maskarg_checkallowed "$Argmethod" radius2    "$Argradius2"
-    [ -n "$Argsigma1" ]      && maskarg_checkallowed "$Argmethod" sigma1     "$Argsigma1"
-    [ -n "$Argsigma2" ]      && maskarg_checkallowed "$Argmethod" sigma2     "$Argsigma2"
-    [ -n "$Argpercent1" ]    && maskarg_checkallowed "$Argmethod" percent1   "$Argpercent1"
-    [ -n "$Argpercent2" ]    && maskarg_checkallowed "$Argmethod" percent2   "$Argpercent2"
-    [ -n "$Argthreshold1" ]  && maskarg_checkallowed "$Argmethod" threshold1 "$Argthreshold1"
-    [ -n "$Argthreshold2" ]  && maskarg_checkallowed "$Argmethod" threshold2 "$Argthreshold2"
-    [ -n "$Argweight" ]      && maskarg_checkallowed "$Argmethod" weight     "$Argweight"
-    [ -n "$Argword1" ]       && maskarg_checkallowed "$Argmethod" word1      "$Argword1"
-    [ -n "$Argword2" ]       && maskarg_checkallowed "$Argmethod" word2      "$Argword2"
-
-    case "$Argtype" in
-      mask)
-        Maskmethodnumber="$((Maskmethodnumber+1))"
-      ;;
-      single)
-        grep -q -w "$Argmethod" <<< "$Singleoptionlist" && error "Option --$Argmethod can be specified only once."
-        Singleoptionlist="$Singleoptionlist $Argmethod"
-      ;;
-    esac
-
-    case $Argmethod in
-      freichen)
-        case $Argword1 in
-          10|12|19) Argdiff=yes ;;
-        esac
-      ;;
-      morphology)
-        case ${Argword1,,} in
-          close) ;;
-          edge|edgein|edgeout|tophat|bottomhat) ;;
-          *) Argdiff="yes" ;;
-        esac
-      ;;
-      soft)
-        Softmode="yes"
-      ;;
-      statistic)
-        case ${Argword1,,} in
-          gradient|standarddeviation|"") Argdiff="" ;;
-          *)                             Argdiff="yes" ;;
-        esac
-      ;;
-    esac
-
-    # convert to --cmd
-    case "$Argmethod" in
-      channel|chroma|darkness|lightness|saturation)
-        Imoptions["$Count"]="cmd"
-      ;;
-      enfuse|max|min|mean|median)
-        Imoptions["$Count"]="cmd"
-      ;;
-      compose|evaluate)
-        Imoptions["$Count"]="cmd"
-        Argimage="$Argword1"
-        Argword1=""
-      ;;
-    esac
-
-    maskarg_store "$Count"
-  done
-
-  for Count in $(seq "$Imoptionsnumber"); do
-    verbose "${Imoptions[$Count]}=${Imarguments[$Count]}"
-  done
 
   # w, weight
   for Count in $(seq $Imoptionsnumber); do
@@ -4364,13 +4321,7 @@ check_options() {
   # --level
   maskarg_single "level" || {
     { maskarg_single maskblur || maskarg_single maskcmd || maskarg_single maskmorph || maskarg_single maskstat || maskarg_single maskwave ;} && {
-      eval $Arglist
-      Argmethod="level"
-      Argtype="single"
-      Argword1="all"
-      Imoptionsnumber="$((Imoptionsnumber+1))"
-      Imoptions[$Imoptionsnumber]="$Argmethod"
-      maskarg_store "$Imoptionsnumber"
+      maskarg_add "level" "all"
     }
   }
 
@@ -4449,7 +4400,15 @@ check_options() {
 
   return 0
 }
-main_setup() {
+check_magick() {
+  # magick
+  Magickbin="$(command -v magick)"
+  false && [ -e "/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4.5.6" ] && {
+    # https://imagemagick.org/script/openmp.php
+    # https://goog-perftools.sourceforge.net/doc/tcmalloc.html
+    Magickbin="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4.5.6 $Magickbin"
+  }
+  [ -z "$Magickbin" ] && error "Command 'magick' not found. Please install ImageMagick version 7."
 
   # check magick version
   Magickversion="$($Magickbin -version)"
@@ -4462,6 +4421,24 @@ main_setup() {
   grep -q " Q32 "       <<< "$Magickversion" && Magickpixelmemory="$(calc "4*(5) *1.2")"
   grep -q " Q32-HDRI "  <<< "$Magickversion" && Magickpixelmemory="$(calc "8*(5) *1.2")"
   Magickversion="$(head -n1 <<< "$Magickversion" | cut -d' ' -f3)"
+}
+main_setup() {
+
+  # --cache
+  [ -n "$Cachedir" ] && {
+    Masktocache="yes"
+    Keepcache="yes"
+    [ "$Cachedir" = "auto" ] && Cachedir=""
+  }
+  Cachedir="$(sed s%'~'%$HOME% <<< "$Cachedir")"
+  case "$Masktocache" in
+    yes) [ -z "$Cachedir" ] && Cachedir="./cache.imfuse" ;;
+    no)  [ -z "$Cachedir" ] && Cachedir="./cache.imfuse.$Imfusepid" ;;
+  esac
+  mkdir -p "$Cachedir"   || error "Error creating cache folder $Cachedir"
+  Testimage="$Cachedir/test.png"
+  Resultmask="$Cachedir/result.max.tif"
+  Showimage="${XDG_RUNTIME_DIR:-$Cachedir}/imfuse.showimage.tif"
 
   # check RAM
   Freemem="$(printfreememory)"
@@ -4479,17 +4456,16 @@ main_setup() {
   }
 
   # Image properties
-  Sourceimagenumberlength="${#Sourceimagenumber}"
-  Image="${Sourceimagelist[1]}"
-  Imagewidth="$($Magickbin identify -format '%w' "$Image")"
-  Imageheight="$($Magickbin identify -format '%h' "$Image")"
-  Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
-  Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
-  Imagelistmemsize="$((Sourceimagenumber*Imagememsize))"
-
-  Sourcemd5="$(md5cut "$( ls -l --full-time "${Sourceimagelist[@]}" )" )"
-  echo "$Sourcemd5" > "$Cachedir/md5"
-  Showimage="${XDG_RUNTIME_DIR:-$Cachedir}/imfuse.showimage.tif"
+  [ "$Sourceimagenumber" -gt "0" ] && {
+    Sourceimagenumberlength="${#Sourceimagenumber}"
+    Image="${Sourceimagelist[1]}"
+    Imagewidth="$($Magickbin identify -format '%w' "$Image")"
+    Imageheight="$($Magickbin identify -format '%h' "$Image")"
+    Imagememsize="$((Imagewidth*Imageheight*Magickpixelmemory/1000))"
+    Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
+    Imagelistmemsize="$((Sourceimagenumber*Imagememsize))"
+    Sourcemd5="$(md5cut "$( ls -l --full-time "${Sourceimagelist[@]}" )" )"
+  }
 
   # check if source images should be loaded to RAM
   [ "$((Imagelistmemsize))" -lt "$((Limitmemory/2))" ] && Loadsourceimages="yes" || Loadsourceimages="no"
@@ -4536,9 +4512,13 @@ $Resultbasename"
     note "Output image already exists with matching md5sum.
   You can force imfuse to run nonetheless with option --force."
     echo $Outputimage
-    exit
-    return 0
+    finish
   }
+  [ "$Force" = "mask" ]  && forcemask
+  [ "$Force" = "merge" ] && forcemerge
+  [ "$Force" = "level" ] && forcelevel
+  [ "$Force" = "focus" ] && forcefocus
+  [ "$Force" = "post" ]  && forcepost
 
   # start geeqie
   Command="
@@ -4564,7 +4544,6 @@ $Resultbasename"
   return 0
 }
 main() {
-#  shopt -s inherit_errexit
   set -Eu
   trap trap_sigint SIGINT
   trap finish      EXIT
@@ -4576,27 +4555,28 @@ trap - ERR"
   shopt -s lastpipe
 
   declare_variables
+  check_magick
   parse_options "$@"
   check_options
+
+  # --rmcache
+  [ "$Rmcache" = "yes" ] && {
+    note "Remowing imfuse cache folders below current directory."
+    env IFS=$'\n' find . -name 'cache.imfuse*' -type d | while read Line; do
+      echo "$Line"
+      rm -r "$Line"
+    done
+    finish
+  }
+
+  [ "$Sourceimagenumber" = "0" ] && error "No source images provided."
   main_setup
   multicore_init
-
-  # --force
-  [ "$Force" = "mask" ]  && forcemask
-  [ "$Force" = "merge" ] && forcemerge
-  [ "$Force" = "level" ] && forcelevel
-  [ "$Force" = "focus" ] && forcefocus
-  [ "$Force" = "post" ]  && forcepost
 
   # --align
   [ "$Align" = "yes" ] && {
     align || error "Error in align()."
   }
-
-  # Generate helper images
-  generate_image --mode "black"
-  generate_image --mode "white"
-  generate_image --mode "transparent"
 
   # run
   focus_main
@@ -4610,17 +4590,18 @@ trap - ERR"
     exiftransfer "$Exifsourceimage" "$Outputimage"
   }
 
+  # throw out
   showimage "$Outputimage"
   note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
   cmd "-exit"
-  echo "$Outputimage"
   command -v xclip >/dev/null && echo -n "$Outputimage" | xclip -i -selection clipboard
-
-  # -W
+  notify-send "imfuse is ready.
+$Outputimage"
   [ "$Viewnior" ] && nohup viewnior "$Outputimage" </dev/null >/dev/null 2>&1 &
+  echo "$Outputimage"
 
   # --video
-  [ "$Video" ]    && generate_video
+  [ "$Video" ] && generate_video
 
   return 0
 }
