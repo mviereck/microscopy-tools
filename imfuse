@@ -2168,9 +2168,6 @@ focus_generate_masks() {
   # backup for =C,c,E
   mpr:sourcegray
     -write mpr:sourcegray.bak
-    -delete 0
-  mpr:sourceimage
-    -write mpr:sourceimage.bak
     -delete 0"
       }
 
@@ -2182,7 +2179,6 @@ focus_generate_masks() {
   $(generate_image --mode "$Argimage" --showname --first "$Firstimage" --last "$Lastimage")
     -compose Difference -composite
     -negate
-    -write mpr:sourceimage
     $Grayscaleconverter
     -write mpr:sourcegray
     -delete 0"
@@ -2201,7 +2197,6 @@ focus_generate_masks() {
       +channel"
         Maskgenerator="$Maskgenerator
   )
-    -write mpr:sourceimage
     -write mpr:sourcegray
     -delete 0"
       }
@@ -2250,10 +2245,6 @@ $Maskgenerator
       [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] || [ -n "$Argimage" ] && {
         Maskgenerator="$Maskgenerator
   # restore backup for =C,c,E
-  mpr:sourceimage.bak
-    -write mpr:sourceimage
-    +set registry:sourceimage.bak
-    -delete 0
   mpr:sourcegray.bak
     -write mpr:sourcegray
     +set registry:sourcegray.bak
@@ -2274,7 +2265,11 @@ $Maskgenerator
       sendmagickmessage "PROGRESS:Mask generation ETA:$Count"
 
       Command="
-  ( '$(sourceimagename $Count)'
+  '$(sourceimagename $Count)'
+    -alpha off
+    -write mpr:sourceimage
+    -delete 0
+  ( mpr:sourceimage
       -colorspace $Colorspace"
       [ -n "$Colorspacechannel" ] && Command="$Command
       -channel $Colorspacechannel
@@ -2282,16 +2277,7 @@ $Maskgenerator
       +channel"
       Command="$Command
   )
-    -alpha off
-    -write mpr:sourceimage
-    -delete 0
-  mpr:sourceimage"
-
-      # --grayscale
-      [ "$Grayscaleconverter" ] && Command="$Command
-      # --grayscale
-      $Grayscaleconverter"
-      Command="$Command
+    $Grayscaleconverter
     -write mpr:sourcegray
     -delete 0"
 
@@ -4152,6 +4138,7 @@ declare_variables() {
   Showimage=""
   Showimageprocessing=""
   Showname=""
+  Singleoptionlist=""
   Substackautoall="no"
   Substackfirstimage=""
   Substacklastimage=""
@@ -4258,7 +4245,7 @@ parse_options() {
 check_options() {
   # parse arguments, check validity, set defaults
 
-  local Arg Part1 Part2 Weightsum= Weightrest Masknoweightcount= Singleoptionlist=
+  local Arg Part1 Part2 Weightsum= Weightrest Masknoweightcount=
   local Firstimage Lastimage Substacksize Position
   local Lessthanmaxoption
 
