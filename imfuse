@@ -276,12 +276,13 @@ Step 3: Mask merging
                         (word)   statistic mode     Default: mean
                       word1 can be one of 'magick -list statistic'.
                       Modes of interest: mean, median, gradient.
- --maskmorph [=ARG]   Closes gaps between nearby contrast lines setting the 
-                      area in between to the same contrast weight.
+ --maskmorph [=ARG]   Change shape of mask. Default 'Dilate' helps
+                      to close gaps. A later --cutmorph=Erode works in
+                      the opposite direction and can remove seams.
                       ARG takes arguments:
                         r        radius             Default: 2
                         R        kernel iteration   Default: 2
-                        (word1)  mode               Default: close
+                        (word1)  mode               Default: Dilate
                         (word2)  kernel             Default: Octagon
                       radius is the kernel radius.
                       kernel iteration multiplies the kernel radius.
@@ -364,6 +365,12 @@ Step 4: Stack fusion
                       ARG takes argument:
                         (word)   string
                       string can be e.g. '-blur 0x5'. Avoid comma , in string.
+ --cutthreshold [=ARG]  Cut of parts of cut mask where main mask is weaker
+                      than threshold. Optionally blur this cut with sigma1.
+                      Removes undesired seams and background.
+                      ARG takes arguments:
+                        s        sigma              Default: 0
+                        t        threshold          Default: 50%
  --cutwave [=ARG]     Soften the cut mask. Result looses a bit of sharpness,
                       but looks more friendly overall, and covers small issues.
                       ARG takes arguments:
@@ -831,7 +838,7 @@ check_outputname() {
 
   Resultbasename="${Resultbasename#,}_md${Fusemd5sum}"
   Resultbasename="$(unspecialstring "$Resultbasename")"
-  Resultbasename="$(sed "s/w100,//g ; s/w100//g ; s/,--/--/g ; s/,_/_/g ; s/=--/--/g ; s/=,/,/g ; s/=_/_/g ; s/=\./\./g" <<< "$Resultbasename")"
+  Resultbasename="$(sed "s/StandardDeviation/Dev/g ; s/w100,//g ; s/w100//g ; s/,--/--/g ; s/,_/_/g ; s/=--/--/g ; s/=,/,/g ; s/=_/_/g ; s/=\./\./g" <<< "$Resultbasename")"
 
   [ -z "${Outputdir:-}" ] && Outputdir="./"
   case $Outputimage in
@@ -2378,7 +2385,6 @@ focus_merge_masks() {
     maskarg_parse "$Count"
     case "$Argtype" in
       mask)
-        #Mergemaskbasename="$Mergemaskbasename-$Argmethod"
         Mergecode="$Mergecode
   (
   $(maskname "$Argbasename" NUMBER)
@@ -2402,9 +2408,16 @@ focus_merge_masks() {
     maskarg_parse "$Count"
     case "$Argtype" in
       merge)
-        #Mergemaskbasename="$Mergemaskbasename-${Imoptions[$Count]}${Imarguments[$Count]%,TYPE*}"
         Mergecode="$Mergecode
   mpr:mergemask"
+
+        [ "$Testsetup" ] && {
+          Argthreshold1="${Testarg:-50}"
+          Mergecode="$Mergecode
+  -black-threshold $Argthreshold1%
+          "
+        }
+
         case "${Imoptions[$Count]}" in
 
           maskblur)
@@ -2631,6 +2644,14 @@ focus_hard() {
     -compose Lighten -composite"
           ;;
 
+          cutthreshold)
+            Focuscode="$Focuscode
+  ( mpr:resultmask
+    -threshold ${Argthreshold1}%
+    -blur 0x${Argsigma1:-0} )
+    -compose Darken -composite"
+          ;;
+
           cutwave)
             Focuscode="$Focuscode
     -wavelet-denoise ${Argpercent1}%"
@@ -2725,8 +2746,10 @@ focus_hard() {
   # get part of source image
   mpr:sourceimage
   mpr:cutmask
-    -alpha off -compose CopyOpacity -composite
+    -alpha off
+    -compose CopyOpacity -composite
     -write mpr:sourcepart
+    $(showimagecode mpr:cutmask)
     -delete 0
 
   # add part of source to result
@@ -2734,8 +2757,8 @@ focus_hard() {
   mpr:sourcepart
     -compose Over -composite
     -write mpr:resultimage
-    $(showimagecode "mpr:resultimage")
     -delete 0"
+#    $(showimagecode "mpr:resultimage")
 
     cmd "$Command"
   done
@@ -3176,6 +3199,15 @@ maskarg_add() {
       Maskmethodnumber="$((Maskmethodnumber+1))"
     ;;
   esac
+
+  # to add a new option:
+  # parse_options():        add to $Longoptions
+  # parse_options():        add it to big collection entry)
+  # maskarg_defaultvalue(): specify type
+  # maskarg_defaultvalue(): specify short
+  # maskarg_defaultvalue(): add default values (if any)
+  # maskarg_checkallowed(): add name to all allowed arguments
+  # check_outputname():     type single needs a custom entry
 }
 maskarg_check() {
   # check for allowed values, set defaults.
@@ -3351,142 +3383,139 @@ maskarg_defaultvalue() {
       case "${1:-}" in
         colorspace) ;;
         channel) ;;
-        chroma)     echo "1" ;;
-        darkness)   echo "2" ;;
-        lightness)  echo "2" ;;
-        saturation) echo "1" ;;
+        chroma)       echo "1" ;;
+        darkness)     echo "2" ;;
+        lightness)    echo "2" ;;
+        saturation)   echo "1" ;;
       esac
     ;;
     colorspace)
       case "${1:-}" in
-        colorspace) echo "sRGB" ;;
+        colorspace)   echo "sRGB" ;;
         channel) ;;
-        chroma)     echo "HCL" ;;
-        darkness)   echo "HSL" ;;
-        lightness)  echo "HSL" ;;
-        saturation) echo "HSL" ;;
+        chroma)       echo "HCL" ;;
+        darkness)     echo "HSL" ;;
+        lightness)    echo "HSL" ;;
+        saturation)   echo "HSL" ;;
       esac
     ;;
     image)
       case "${1:-}" in
-        enfuse)     echo "enfuse" ;;
-        max)        echo "max" ;;
-        mean)       echo "mean" ;;
-        median)     echo "median" ;;
-        min)        echo "min" ;;
+        enfuse)       echo "enfuse" ;;
+        max)          echo "max" ;;
+        mean)         echo "mean" ;;
+        median)       echo "median" ;;
+        min)          echo "min" ;;
       esac
     ;;
     level)
       case "$Argmethod" in
-        channel)    echo "no" ;;
-        chroma)     echo "no" ;;
-        compose)    echo "no" ;;
-        darkness)   echo "no" ;;
-        enfuse)     echo "no" ;;
-        evaluate)   echo "no" ;;
-        lighten)    echo "no" ;;
-        max)        echo "no" ;;
-        mean)       echo "no" ;;
-        median)     echo "no" ;;
-        min)        echo "no" ;;
-        saturation) echo "no" ;;
+        channel)      echo "no" ;;
+        chroma)       echo "no" ;;
+        compose)      echo "no" ;;
+        darkness)     echo "no" ;;
+        enfuse)       echo "no" ;;
+        evaluate)     echo "no" ;;
+        lighten)      echo "no" ;;
+        max)          echo "no" ;;
+        mean)         echo "no" ;;
+        median)       echo "no" ;;
+        min)          echo "no" ;;
+        saturation)   echo "no" ;;
       esac
     ;;
     levelmin)
       case "${1:-}" in
-        blur)       echo "0" ;;
-        comet)      echo "0" ;;
-        compass)    echo "45" ;;
-        dog)        echo "0" ;;
+        blur)         echo "0" ;;
+        comet)        echo "0" ;;
+        compass)      echo "45" ;;
+        dog)          echo "0" ;;
         diffstat)
           case "$Argword1,$Argword2" in
-            "median,mean") echo "0" ;;
-            "min,max")     echo "0" ;;
+            "median,mean")
+                      echo "0" ;;
+            "min,max")
+                      echo "0" ;;
           esac
         ;;
         freichen)
           case $Argword1 in
-            "")     echo "33.6584" ;;
-            15)     echo "19" ;;
+            "")       echo "33.6584" ;;
+            15)       echo "19" ;;
           esac
         ;;
-        gaussian)   echo "0" ;;
-        #kirsch)     echo "" ;;
+        gaussian)     echo "0" ;;
+        #kirsch)       echo "" ;;
         laplacian)
           case $Argword1 in
-            3)      echo "0" ;;
+            3)        echo "0" ;;
           esac
         ;;
-        log)        echo "0" ;;
-        morphology) echo "0" ;;
-        prewitt)    echo "34.3893" ;;
-        #roberts)    echo "7.64782%,100%" ;;
-        sobel)      echo "34.3893" ;;
+        log)          echo "0" ;;
+        morphology)   echo "0" ;;
+        prewitt)      echo "34.3893" ;;
+        #roberts)      echo "7.64782%,100%" ;;
+        sobel)        echo "34.3893" ;;
         statistic)
-          case $Argword1 in
-            standarddeviation) echo "0" ;;
+          case ${Argword1,,} in
+            standarddeviation)
+                      echo "0" ;;
           esac
         ;;
         #unsharp
-        wavelet)    echo "0" ;;
+        wavelet)      echo "0" ;;
       esac
     ;;
     negate)
       case "${1:-}" in
-        darkness) echo "yes" ;;
+        darkness)     echo "yes" ;;
       esac
     ;;
     percent1)
       case "${1:-}" in
-        alpha)      echo "0" ;;
-        cutless)    echo "20" ;;
-        cutwave)    echo "75" ;;
-        maskwave)   echo "20" ;;
-        soft)       echo "2" ;;
-        wavelet)    echo "5" ;;
+        alpha)        echo "0" ;;
+        cutless)      echo "20" ;;
+        cutwave)      echo "75" ;;
+        maskwave)     echo "20" ;;
+        soft)         echo "2" ;;
+        wavelet)      echo "5" ;;
       esac
     ;;
     percent2)
       case "${1:-}" in
-        alpha)      echo "100" ;;
-        soft)       echo "100" ;;
+        alpha)        echo "100" ;;
+        soft)         echo "100" ;;
       esac
     ;;
     radius1)
       case "${1:-}" in
-        blur)       echo "" ;; # 0
-        comet)      echo "" ;; # 0
-        compass)    echo "" ;;
-        diffstat)   echo "3" ;;
-        dog)        echo "" ;; # 0
-        freichen)   echo "" ;;
-        gaussian)   echo "" ;; # 0
-        kirsch)     echo "" ;;
-        laplacian)  echo "" ;;
-        log)        echo "" ;; # 0
-        morphology) echo "1" ;;
-        prewitt)    echo "" ;;
-        roberts)    echo "" ;;
-        sobel)      echo "" ;;
-        statistic)  echo "2" ;;
-        unsharp)    echo "" ;; # 0
+        blur)         echo "" ;; # 0
+        comet)        echo "" ;; # 0
+        diffstat)     echo "3" ;;
+        dog)          echo "" ;; # 0
+        gaussian)     echo "" ;; # 0
+        log)          echo "" ;; # 0
+        morphology)   echo "1" ;;
+        statistic)    echo "2" ;;
+        unsharp)      echo "" ;; # 0
 
-        cutmorph)   echo "1" ;;
-        finalblur2) echo "4" ;;
-        maskmorph)  echo "2" ;;
-        maskstat)   echo "6" ;;
+        cutmorph)     echo "1" ;;
+        finalblur2)   echo "4" ;;
+        maskmorph)    echo "2" ;;
+        maskstat)     echo "6" ;;
       esac
     ;;
     radius2)
       case "${1:-}" in
-        cutmorph)   echo "1" ;;
-        maskmorph)  echo "2" ;;
-        morphology) echo "1" ;;
+        cutmorph)     echo "1" ;;
+        maskmorph)    echo "2" ;;
+        morphology)   echo "1" ;;
       esac
     ;;
     short)
       case "${1:-}" in
-        blur|chroma|cmd|cmddiff|comet|compass|dog|enfuse|kirsch|log|unsharp) echo "${1:-}" ;;
+        blur|chroma|cmd|cmddiff|comet|compass|dog|enfuse|kirsch|log|unsharp)
+                      echo "${1:-}" ;;
         diffstat)     echo "diff" ;;
         freichen)     echo "frei" ;;
         gaussian)     echo "gauss" ;;
@@ -3515,6 +3544,7 @@ maskarg_defaultvalue() {
         cutless)      echo "cless" ;;
         cutmorph)     echo "cmorph" ;;
         cutsoft)      echo "csoft" ;;
+        cutthreshold) echo "cthresh" ;;
         cutwave)      echo "cwave" ;;
         alpha)        echo "alpha" ;;
         finalblur)    echo "fblur" ;;
@@ -3532,70 +3562,72 @@ maskarg_defaultvalue() {
     ;;
     sigma1)
       case "${1:-}" in
-        blur)       echo "0.3" ;;
-        comet)      echo "5" ;;
-        dog)        echo "0.4" ;;
-        gaussian)   echo "0.3" ;;
-        log)        echo "0.2" ;;
-        unsharp)    echo "2" ;;
-        wavelet)    echo "" ;;
+        blur)         echo "0.3" ;;
+        comet)        echo "5" ;;
+        dog)          echo "0.4" ;;
+        gaussian)     echo "0.3" ;;
+        log)          echo "0.2" ;;
+        unsharp)      echo "2" ;;
+        wavelet)      echo "" ;;
 
-        cutblur)    echo "2" ;;
-        cutsoft)    echo "2" ;;
-        finalblur)  echo "3" ;;
-        maskblur)   echo "2" ;;
-        threshold)  echo "0" ;;
+        cutblur)      echo "2" ;;
+        cutsoft)      echo "2" ;;
+        cutthreshold) echo "" ;;
+        finalblur)    echo "3" ;;
+        maskblur)     echo "2" ;;
+        threshold)    echo "0" ;;
       esac
     ;;
     sigma2)
       case "${1:-}" in
-        dog)       echo "$(calc "${Argsigma1:-0.3} * 1.6")" ;;
-        finalblur) echo "2" ;;
+        dog)          echo "$(calc "${Argsigma1:-0.3} * 1.6")" ;;
+        finalblur)    echo "2" ;;
       esac
     ;;
     threshold1)
       case "${1:-}" in
-        finalblur)  echo "50" ;;
-        finalblur2) echo "50" ;;
-        threshold)  echo "50" ;;
+        cutthreshold) echo "50" ;;
+        finalblur)    echo "50" ;;
+        finalblur2)   echo "50" ;;
+        threshold)    echo "50" ;;
       esac
     ;;
     threshold2)
       case "${1:-}" in
-        threshold) echo "" ;;
+        threshold)    echo "" ;;
       esac
     ;;
     type)
       case "${1:-}" in
         blur|cmd|cmddiff|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
-          echo "mask"
+                      echo "mask"
         ;;
         channel|chroma|darkness|lightness|saturation)
-          echo "mask"
+                      echo "mask"
         ;;
         image|enfuse|compose|evaluate|min|max|mean|median)
-          echo "mask"
+                      echo "mask"
         ;;
         experimental)
-          echo "mask"
+                      echo "mask"
         ;;
         maskblur|maskcmd|maskmorph|maskstat|maskwave)
-          echo "merge"
+                      echo "merge"
         ;;
-        cutblur|cutcmd|cutless|cutmorph|cutsoft|cutwave)
-          echo "focus"
+        cutblur|cutcmd|cutless|cutmorph|cutsoft|cutthreshold|cutwave)
+                      echo "focus"
         ;;
         alpha|finalblur|finalblur2|threshold)
-          echo "postfocus"
+                      echo "postfocus"
         ;;
         bg)
-          echo "background"
+                      echo "background"
         ;;
         colorspace|grayscale|level|merge|soft)
-          echo "single"
+                      echo "single"
         ;;
         substacks)
-          echo "substack"
+                      echo "substack"
         ;;
         *)
           error "maskarg_defaultvalue(): Unknown type for method ${1:-}"
@@ -3607,29 +3639,30 @@ maskarg_defaultvalue() {
     ;;
     word1)
       case "${1:-}" in
-        comet)      echo "" ;;
-        compose)    echo "overlay" ;;
-        diffstat)   echo "" ;;
-        evaluate)   echo "max" ;;
-        freichen)   echo "" ;;
-        laplacian)  echo "3" ;;
-        morphology) echo "edgeout" ;;
-        statistic)  echo "" ;;
+        comet)        echo "" ;;
+        compose)      echo "overlay" ;;
+        diffstat)     echo "" ;;
+        evaluate)     echo "max" ;;
+        freichen)     echo "" ;;
+        laplacian)    echo "3" ;;
+        morphology)   echo "edgeout" ;;
+        statistic)    echo "" ;;
 
-        bg)         echo "enfuse" ;;
-        cutmorph)   echo "erode" ;;
-        grayscale)  echo "Rec709Luma" ;;
-        level)      echo "all" ;;
-        maskmorph)  echo "close" ;;
-        maskstat)   echo "mean" ;;
-        merge)      echo "screen" ;;
-        soft)       echo "plus" ;;
+        bg)           echo "enfuse" ;;
+        cutmorph)     echo "erode" ;;
+        grayscale)    echo "Rec709Luma" ;;
+        level)        echo "all" ;;
+        maskmorph)    echo "dilate" ;;
+        maskstat)     echo "mean" ;;
+        merge)        echo "screen" ;;
+        soft)         echo "plus" ;;
       esac
     ;;
     word2)
       case "${1:-}" in
-        diffstat)   echo "" ;;
-        maskmorph|morphology|cutmorph) echo "" ;;
+        diffstat)     echo "" ;;
+        maskmorph|morphology|cutmorph)
+                      echo "" ;;
       esac
     ;;
   esac
@@ -3743,7 +3776,7 @@ maskarg_checkallowed() {
     sigma1)
       case "$Method" in
         blur|comet|dog|gaussian|log|unsharp) ;;
-        cutblur|cutsoft|finalblur|maskblur|threshold) ;;
+        cutblur|cutsoft|cutthreshold|finalblur|maskblur|threshold) ;;
         *) error "$Method does not take argument sigma1: s$Arg" ;;
       esac
     ;;
@@ -3758,7 +3791,7 @@ maskarg_checkallowed() {
         mask) ;;
         *)
           case "$Method" in
-            finalblur|finalblur2|threshold) ;;
+            cutthreshold|finalblur|finalblur2|threshold) ;;
             *) error "$Method does not take argument threshold1: t$Arg" ;;
           esac
         ;;
@@ -4185,7 +4218,7 @@ parse_options() {
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
   Longoptions="$Longoptions,level::,maskblur::,maskcmd::,maskmorph::,maskstat::,maskwave::,merge::"
-  Longoptions="$Longoptions,cutblur::,cutcmd::,cutless::,cutmorph::,cutsoft::,cutwave::,substacks::,soft::"
+  Longoptions="$Longoptions,cutblur::,cutcmd::,cutless::,cutmorph::,cutsoft::,cutthreshold::,cutwave::,substacks::,soft::"
   Longoptions="$Longoptions,alpha::,finalblur::,finalblur2::,threshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
@@ -4222,7 +4255,7 @@ parse_options() {
 \
 --colorspace|--grayscale|\
 --maskblur|--maskcmd|--maskmorph|--maskstat|--maskwave|--level|--merge|\
---cutblur|--cutcmd|--cutless|--cutmorph|--cutsoft|--cutwave|--soft|\
+--cutblur|--cutcmd|--cutless|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
 --alpha|--finalblur|--finalblur2|--threshold|\
 --bg|--background|\
 --substacks)
