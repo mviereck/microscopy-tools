@@ -6,7 +6,7 @@ Version="0.8.9-beta"
 # ToDo:
 # --cutsoft: broken? hard seams.
 # --savemask: broken
-# --compose et al: result less good than expected. max/lighten min/darken issue?
+# --compose et al: result less good than expected.
 # mkclut_uniform() fails with b&w masks -> clut and result black
 # check --kirsch
 # drop --unsharp?
@@ -96,12 +96,12 @@ Step 1: Color conversion
  --colorspace [=ARG]  Define the colorspace from where to generate the
                       masks. Experimental option, less useful yet.
                       ARG takes arguments:
+                        C=      colorspace          Default: sRGB
                         c       channel
-                        C       colorspace          Default: sRGB
-                      Some of interest: C=sRGB, C=RGB, C=Jzazbz:0  LAB: 0 HSL: 1  HCL: 1
-                      For further colorspaces and their channels see:
+                      Some of interest:
+                      C=RGB C=Jzazbz,c0  C=LAB,c0 C=HSL,c1  C=HCL,c1
+                      colorspace can be one of 'magick -list colorspace'.
                       https://legacy.imagemagick.org/Usage/color_basics
-                      and 'magick -list colorspace'.
  --grayscale [=ARG]   Convert images to grayscale before mask generation.
                       Compare ImageMagick options -grayscale and -intensity. 
                       ARG takes argument:
@@ -109,9 +109,11 @@ Step 1: Color conversion
                       Converting to grayscale for mask generation can speed up
                       image processing, but the result might be less accurate.
 
-Step 2a: Mask generation - contrast masks
+Step 2: Mask generation
   Options can be specified multiple times. The order does not matter.
-  Most of interest: --morphology, --statistic, --wavelet
+  The generated masks will be composed into one mask containing them all.
+
+  Contrast masks: (most of interest: --morphology, --statistic, --wavelet)
 
  --blur [=ARG]        Blur edge detection. 
                       Similar to --gaussian, but faster and less accurate.
@@ -213,10 +215,9 @@ Step 2a: Mask generation - contrast masks
                       ARG additionally takes argument:
                         p       percent             Default: 5
 
-Step 2b: Mask generation - image comparision masks
-  Options can be specified multiple times. The order does not matter.
-  All options are converted to option --cmd with arguments I=<name>,level=no
-  Most of interest: --enfuse
+  Image comparision masks: (most of interest: --enfuse)
+    All image comparision masks are converted to option --cmd
+    with arguments I=<name>,level=no
 
  --compose [=ARG]     Composes evaluated min,max of source images with MODE.
                       ARG additionally takes argument:
@@ -241,10 +242,9 @@ Step 2b: Mask generation - image comparision masks
  --min [=ARG]         Same as --evaluate=min. Darkest pixels of stack.
                       Result is similar to --darkness.
 
-Step 2c: Mask generation - colorspace channel masks
-  Options can be specified multiple times. The order does not matter.
-  All options are variations of --channel and are converted to option --cmd.
-  Most of interest: --darkness
+  Colorspace channel masks: (most of interest: --darkness)
+    All channel options are variations of --channel and are converted
+    to option --cmd.
 
  --channel [=ARG]     Use a colorspace channel as mask.
                       ARG takes the general mask arguments:
@@ -264,7 +264,7 @@ Step 2c: Mask generation - colorspace channel masks
 
 Step 3: Mask merging
   The contrast masks generated in step 2 are merged into one per image.
-  Furthermore they can be adjusted with --mask* options.
+  The merged result can be adjusted with --mask* options.
   Options beginning with --mask* can be specified multiple times.
   The order of --mask* options matters, prefer to use in the shown order.
 
@@ -330,6 +330,8 @@ Step 4: Stack fusion
   The order of --cut* options matters, prefer to use in the shown order.
   The --cut* options except --cutless can be specified multiple times.
 
+ --cutbg              Create a background from current cuts.
+                      Can preserve the bokeh if used before --cutthreshold.
  --cutless [=ARG]     Strenghtens less contrasted objects in front of strong
                       contrasted background objects.
                       ARG takes argument:
@@ -369,7 +371,6 @@ Step 4: Stack fusion
                       than threshold. Optionally blur this cut with sigma1.
                       Removes undesired seams and background.
                       ARG takes arguments:
-                        s        sigma              Default: 0
                         t        threshold          Default: 50%
  --cutwave [=ARG]     Soften the cut mask. Result looses a bit of sharpness,
                       but looks more friendly overall, and covers small issues.
@@ -2562,6 +2563,26 @@ focus_hard() {
     # --${Argmethod}=${Argoptions}"
         case "$Argmethod" in
 
+          cutbg)
+            Backgroundnumber="$((Backgroundnumber+1))"
+            Backgroundimage[$Backgroundnumber]="$Cachedir/cutbg.$(md5cut "$Focuscode $(masklist "$Mergemaskbasename")").mpc"
+            [ -e "${Backgroundimage[$Backgroundnumber]}" ] || {
+              generate_image --mode "transparent" --name "${Backgroundimage[$Backgroundnumber]}"
+            }
+            Focuscode="$Focuscode
+    -write mpr:cutmask
+    -delete 0
+  mpr:sourceimage
+  mpr:cutmask
+    -alpha off
+    -compose CopyOpacity -composite
+  ${Backgroundimage[$Backgroundnumber]}
+    -compose DstOver -composite
+    -write ${Backgroundimage[$Backgroundnumber]}
+    -delete 0
+  mpr:cutmask"
+          ;;
+
           cutblur)
             Focuscode="$Focuscode
     -blur 0x${Argsigma1}"
@@ -2648,7 +2669,6 @@ focus_hard() {
             Focuscode="$Focuscode
   ( mpr:resultmask
     -threshold ${Argthreshold1}%
-    -blur 0x${Argsigma1:-0} )
     -compose Darken -composite"
           ;;
 
@@ -2983,13 +3003,27 @@ focus_main() {
   local Substackstep
   local Command Count Startzeit
   local Substackmaskmax Substackmaskmin
-  local Backgroundnumber Backgroundtype Backgroundimage
+  local Backgroundimage
   local Transparentlayers=
 
   # Generate helper images
   generate_image --mode "black"
   generate_image --mode "white"
   generate_image --mode "transparent"
+
+  # --background
+  Backgroundnumber="0"
+  for Count in $(seq "$Imoptionsnumber"); do
+    maskarg_parse "$Count"
+    case "$Argtype" in
+      background)
+        sendmagickmessage "NOTE:Processing --${Imoptions[$Count]}=${Imarguments["$Count"]%,TYPE*}"
+        Backgroundnumber="$((Backgroundnumber+1))"
+        Backgroundimage[$Backgroundnumber]="$(generate_image --showname --mode "$Argword1")"
+        generate_image --mode "$Argword1"
+      ;;
+    esac
+  done
 
   # Generate masks
   Startzeit="$(date +%s)"
@@ -3098,20 +3132,6 @@ focus_main() {
     -delete 0"
   cmd "$Command"
   cmd_waitforready
-
-  # --background
-  Backgroundnumber="0"
-  for Count in $(seq "$Imoptionsnumber"); do
-    maskarg_parse "$Count"
-    case "$Argtype" in
-      background)
-        sendmagickmessage "NOTE:Processing --${Imoptions[$Count]}=${Imarguments["$Count"]%,TYPE*}"
-        Backgroundnumber="$((Backgroundnumber+1))"
-        Backgroundimage[$Backgroundnumber]="$(generate_image --showname --mode "$Argword1")"
-        generate_image --mode "$Argword1"
-      ;;
-    esac
-  done
 
   # Generate result image
   case "$Storelayered" in
@@ -3568,11 +3588,9 @@ maskarg_defaultvalue() {
         gaussian)     echo "0.3" ;;
         log)          echo "0.2" ;;
         unsharp)      echo "2" ;;
-        wavelet)      echo "" ;;
 
         cutblur)      echo "2" ;;
         cutsoft)      echo "2" ;;
-        cutthreshold) echo "" ;;
         finalblur)    echo "3" ;;
         maskblur)     echo "2" ;;
         threshold)    echo "0" ;;
@@ -3614,7 +3632,7 @@ maskarg_defaultvalue() {
         maskblur|maskcmd|maskmorph|maskstat|maskwave)
                       echo "merge"
         ;;
-        cutblur|cutcmd|cutless|cutmorph|cutsoft|cutthreshold|cutwave)
+        cutbg|cutblur|cutcmd|cutless|cutmorph|cutsoft|cutthreshold|cutwave)
                       echo "focus"
         ;;
         alpha|finalblur|finalblur2|threshold)
@@ -3776,7 +3794,7 @@ maskarg_checkallowed() {
     sigma1)
       case "$Method" in
         blur|comet|dog|gaussian|log|unsharp) ;;
-        cutblur|cutsoft|cutthreshold|finalblur|maskblur|threshold) ;;
+        cutblur|cutsoft|finalblur|maskblur|threshold) ;;
         *) error "$Method does not take argument sigma1: s$Arg" ;;
       esac
     ;;
@@ -4160,17 +4178,16 @@ declare_variables() {
   Masksuffix="mpc"
   Masktocache="no"
   Mergemaskbasename=""
+  Oneaction=""
   Outputbasename=""
   Outputdir=""
   Outputimage=""
   Parsedoptions=""
   Revertimagelist=""
   Resultbasename=""
-  Rmcache=""
   Savemask=""
   Showimage=""
   Showimageprocessing=""
-  Showname=""
   Singleoptionlist=""
   Substackautoall="no"
   Substackfirstimage=""
@@ -4218,7 +4235,7 @@ parse_options() {
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
   Longoptions="$Longoptions,level::,maskblur::,maskcmd::,maskmorph::,maskstat::,maskwave::,merge::"
-  Longoptions="$Longoptions,cutblur::,cutcmd::,cutless::,cutmorph::,cutsoft::,cutthreshold::,cutwave::,substacks::,soft::"
+  Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmorph::,cutsoft::,cutthreshold::,cutwave::,substacks::,soft::"
   Longoptions="$Longoptions,alpha::,finalblur::,finalblur2::,threshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
@@ -4232,21 +4249,18 @@ parse_options() {
       --cache)             Cachedir="${2:-auto}"               ; shift ;;
       --exif)              Exifsourceimage="${2:-auto}"        ; shift ;;
       --force)             Force="${2:-yes}"                   ; shift ;;
-      -h|--help)           usage                               ; finish 0 ;;
       --layered)           Storelayered="yes"                  ;;
       --limit-memory)      Limitmemory="${2:-"80%"}"           ; shift ;;
       --mask2cache)        Masktocache="yes"                   ;;
       -o|--output)         Outputimage="${2:-}"                ; shift ;;
       --revert)            Revertimagelist="-r"                ;;
-      --rmcache)           Rmcache="yes"                       ;;
       --savemask)          Savemask="${2:-auto}"               ; shift ;;
       -V|--showimage)      Showimageprocessing="yes"           ;;
-      --showname)          Showname="yes"                      ;;
       --test)              Testsetup="test" ; Testarg="${2:-}" ; shift ;;
       -v|--verbose)        Verbose="yes"                       ;;
-      --version)           echo "imfuse v$Version"             ; finish 0 ;;
       --video)             Video="auto"                        ;;
       -W)                  Viewnior="yes"                      ;;
+      -h|--help|--rmcache|--showname|--version) Oneaction="${1:-}" ;;
 
 --cmd|--cmddiff|--experimental\
 --blur|--comet|--compass|--diffstat|--dog|--freichen|--gaussian|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--unsharp|--wavelet|\
@@ -4255,7 +4269,7 @@ parse_options() {
 \
 --colorspace|--grayscale|\
 --maskblur|--maskcmd|--maskmorph|--maskstat|--maskwave|--level|--merge|\
---cutblur|--cutcmd|--cutless|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
+--cutbg|--cutblur|--cutcmd|--cutless|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
 --alpha|--finalblur|--finalblur2|--threshold|\
 --bg|--background|\
 --substacks)
@@ -4493,12 +4507,6 @@ main_setup() {
   # --output, --basename
   check_outputname
 
-  # --showname
-  [ "$Showname" = "yes" ] && {
-    echo "$Outputimage"
-    finish
-  }
-
   verbose "
   imfuse Version:                     $Version
   Imagemagick version:                $Magickversion
@@ -4579,19 +4587,35 @@ trap - ERR"
   parse_options "$@"
   check_options
 
-  # --rmcache
-  [ "$Rmcache" = "yes" ] && {
-    note "Remowing imfuse cache folders below current directory."
-    env IFS=$'\n' find . -name 'cache.imfuse*' -type d | while read Line; do
-      echo "$Line"
-      rm -r "$Line"
-    done
-    finish
-  }
+  case "$Oneaction" in
+    -h|--help)
+      usage
+      finish
+    ;;
+    --rmcache)
+      note "Remowing imfuse cache folders below current directory."
+      env IFS=$'\n' find . -name 'cache.imfuse*' -type d | while read Line; do
+        echo "$Line"
+        rm -r "$Line"
+      done
+      finish
+    ;;
+    --version)
+      note "$Version"
+      finish
+    ;;
+  esac
 
   [ "$Sourceimagenumber" = "0" ] && error "No source images provided."
   main_setup
   multicore_init
+
+  case "$Oneaction" in
+    --showname)
+      echo "$Outputimage"
+      finish
+    ;;
+  esac
 
   # --align
   [ "$Align" = "yes" ] && {
