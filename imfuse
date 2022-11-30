@@ -76,7 +76,7 @@ Arguments taken by all mask generating options:
 Arguments additionally taken by some options:
   r         Radius. Must be an integer value.
   R         Second radius.
-  s         Sigma. Takes also non-integer values like 0.75.
+  s         Sigma. Takes also non-integer values like 0.75
   S         Second Sigma.
   p         A percent value.
   P         Second percent value
@@ -96,8 +96,8 @@ Step 1: Color conversion
  --colorspace [=ARG]  Define the colorspace from where to generate the
                       masks. Experimental option, less useful yet.
                       ARG takes arguments:
-                        C=      colorspace          Default: sRGB
-                        c       channel
+                        C=       colorspace        Default: sRGB
+                        c        channel
                       Some of interest:
                       C=RGB C=Jzazbz,c0  C=LAB,c0 C=HSL,c1  C=HCL,c1
                       colorspace can be one of 'magick -list colorspace'.
@@ -105,7 +105,7 @@ Step 1: Color conversion
  --grayscale [=ARG]   Convert images to grayscale before mask generation.
                       Compare ImageMagick options -grayscale and -intensity. 
                       ARG takes argument:
-                        (word)  mode                Default: Rec709Luma
+                        (word)  mode               Default: Rec709Luma
                       Converting to grayscale for mask generation can speed up
                       image processing, but the result might be less accurate.
 
@@ -118,8 +118,8 @@ Step 2: Mask generation
  --blur [=ARG]        Blur edge detection. 
                       Similar to --gaussian, but faster and less accurate.
                       ARG additionally takes argument: 
-                        r       radius              Default: 0
-                        s       sigma               Default: 0.75
+                        r        radius            Default: 0
+                        s        sigma             Default: $(maskarg_defaultvalue blur sigma1)
                       Adjust only sigma, radius 0 is adjusted automatically.
  --cmd [=ARG]         Custom ImageMagick option to create a mask.
                       ARG additionally takes argument:
@@ -135,55 +135,55 @@ Step 2: Mask generation
                       comparision from command result with source image.
  --comet [=ARG]       Comet edge detection. Compares rotated mean areas.
                       ARG additionally takes arguments: 
-                        r       radius              Default: 0
-                        s       sigma               Default: 5
-                        (word)  mode                Default: Lighten
+                        r        radius            Default: 0
+                        s        sigma             Default: $(maskarg_defaultvalue comet sigma1)
+                        (word)   mode              Default: Lighten
                       mode can be one of 'magick -list compose'
                       Recommended: Lighten, Darken.
                       Adjust only sigma, radius 0 is adjusted automatically.
  --compass [=ARG]     Compass edge detection.
  --dog [=ARG]         Difference of Gaussian.
                       ARG additionally takes arguments: 
-                        r       radius              Default: 0
-                        s       sigma1              Default: 0.4
-                        S       sigma2              Default: 1.6*sigma1
+                        r        radius            Default: 0
+                        s        sigma1            Default: $(maskarg_defaultvalue dog sigma1)
+                        S        sigma2            Default: 1.6*sigma1
                       Adjust only sigma, radius 0 is adjusted automatically.
  --diffstat [=ARG]    Compares two local statistics of source images. 
                       Uses ImageMagick option -statistic. Compare --statistic.
                       ARG additionally takes arguments: 
-                        r       radius              Default: 3
-                        (word)  mode1               Default: median
-                        (word)  mode2               Default: mean
+                        r        radius            Default: $(maskarg_defaultvalue diffstat radius1)
+                        (word)   mode1             Default: median
+                        (word)   mode2             Default: mean
                       mode1 and mode2 can be out of 'magick -list evaluate'.
  --freichen [=ARG]    Frei-Chen edge detection.
                       ARG additionally takes arguments: 
-                        (word)  modenumber
+                        (word)   modenumber
                       Possible modenumbers at:
                       http://www.imagemagick.org/Usage/convolve/#freichen
-                      Default: A combination of modes 1 and 2.
+                                    Default: A combination of modes 1 and 2.
  --gaussian [=ARG]    Gaussian blur edge detection. 
                       Similar to --blur, but slower and more accurate.
                       ARG additionally takes argument: 
-                        r       radius              Default: 0
-                        s       sigma               Default: 0.3
+                        r        radius            Default: 0
+                        s        sigma             Default: $(maskarg_defaultvalue gaussian sigma1)
                       Adjust only sigma, radius 0 is adjusted automatically.
  --kirsch [=ARG]      Kirsch edge detection. 
  --laplacian [=ARG]   Laplacian edge detection.
                       ARG additionally takes argument: 
-                        (word)  modenumber          Default: 3
+                        (word)   modenumber        Default: $(maskarg_defaultvalue laplacian word1)
                       Possible modenumbers at:
                       http://www.imagemagick.org/Usage/convolve/#laplacian
  --log [=ARG]         Laplacian of Gaussian.
                       ARG additionally takes argument: 
-                        r       radius              Default: 0
-                        s       sigma               Default: 0.2
+                        r        radius            Default: 0
+                        s        sigma             Default: $(maskarg_defaultvalue log sigma1)
                       Adjust only sigma, radius 0 is adjusted automatically.
  --morphology [=ARG]  Morphology edge detection.
-                      ARG additionally takes arguments: 
-                        r       radius              Default: 2
-                        R       kernel iteration    Default: 1
-                        (word1) mode                Default: edgeout
-                        (word2) kernel              Default: octagon
+                      ARG additionally takes arguments:
+                        r        radius            Default: $(maskarg_defaultvalue morphology radius1)
+                        R        kernel iteration  Default: $(maskarg_defaultvalue morphology radius2)
+                        (word1)  mode              Default: $(maskarg_defaultvalue morphology word1)
+                        (word2)  kernel            Default: $(maskarg_defaultvalue morphology word2)
                       mode can be one of 'magick -list morphology'.
                         try: tophat, edge, dilate, smooth.
                       kernel can be one of 'magick -list kernel'.
@@ -193,8 +193,8 @@ Step 2: Mask generation
  --sobel [=ARG]       Sobel edge detection. 
  --statistic [=ARG]   ImageMagick option -statistic.
                       ARG additionally takes arguments: 
-                        r       radius              Default: 2
-                        (word)  mode                Default: standarddeviation
+                        r        radius            Default: $(maskarg_defaultvalue statistic radius1)
+                        (word)   mode              Default: standarddeviation
                       Argument mode is one of (number or name):
                         1|gradient|grad
                         2|maximum|max
@@ -208,12 +208,12 @@ Step 2: Mask generation
                       Get an impressive strong contrast with a high radius.
  --unsharp [=ARG]     Difference of -unsharp.
                       ARG additionally takes argument: 
-                        r       radius              Default: 0
-                        s       sigma               Default: 2
+                        r        radius            Default: 0
+                        s        sigma             Default: $(maskarg_defaultvalue unsharp sigma1)
                       Adjust only sigma, radius 0 is adjusted automatically.
  --wavelet [=ARG]     Based on ImageMagick option -wavelet-denoise.
                       ARG additionally takes argument:
-                        p       percent             Default: 5
+                        p        percent           Default: $(maskarg_defaultvalue wavelet percent1)%
 
   Image comparision masks: (most of interest: --enfuse)
     All image comparision masks are converted to option --cmd
@@ -221,7 +221,7 @@ Step 2: Mask generation
 
  --compose [=ARG]     Composes evaluated min,max of source images with MODE.
                       ARG additionally takes argument:
-                        (word)   mode               Default: overlay
+                        (word)   mode              Default: $(maskarg_defaultvalue compose word1)
                       Adding a '2', e.g. '--compose=overlay2' swaps min,max
                       to max,min and can give a different result.
                       mode can be one of 'magick -list compose'
@@ -232,7 +232,7 @@ Step 2: Mask generation
  --evaluate [=ARG]    Evaluates from all source images with mode MODE and
                       compares the result with each source image.
                       ARG additionally takes arguments:
-                        (word)   mode               Default: max
+                        (word)   mode              Default: max
                       mode can be one of 'magick -list evaluate'
                       Compare --max, --min, --mean, --median.
  --max [=ARG]         Same as --evaluate=max. Brightest pixels of stack.
@@ -251,7 +251,7 @@ Step 2: Mask generation
                         C        colorspace
                         c        colorspace channel
                         neg      negate
-                        level    leveling           Default: no
+                        level    leveling          Default: no
                       Colorspace can be one of 'magick -list colorspace'
                       The color channel is a number from 0..31.
                       Compare 'magick -list colorspace'.
@@ -272,18 +272,18 @@ Step 3: Mask merging
                       to adjust it according to its neighborhood.
                       Option is applied to contrast masks only.
                       ARG takes arguments:
-                        r        radius             Default: 6
-                        (word)   statistic mode     Default: mean
+                        r        radius            Default: $(maskarg_defaultvalue maskstat radius1)
+                        (word)   statistic mode    Default: $(maskarg_defaultvalue maskstat word1)
                       word1 can be one of 'magick -list statistic'.
                       Modes of interest: mean, median, gradient.
  --maskmorph [=ARG]   Change shape of mask. Default 'Dilate' helps
                       to close gaps. A later --cutmorph=Erode works in
                       the opposite direction and can remove seams.
                       ARG takes arguments:
-                        r        radius             Default: 2
-                        R        kernel iteration   Default: 2
-                        (word1)  mode               Default: Dilate
-                        (word2)  kernel             Default: Octagon
+                        r        radius            Default: $(maskarg_defaultvalue maskmorph radius1)
+                        R        kernel iteration  Default: $(maskarg_defaultvalue maskmorph radius2)
+                        (word1)  mode              Default: $(maskarg_defaultvalue maskmorph word1)
+                        (word2)  kernel            Default: $(maskarg_defaultvalue maskmorph word2)
                       radius is the kernel radius.
                       kernel iteration multiplies the kernel radius.
                       mode can be one of 'magick -list morphology'.
@@ -295,18 +295,18 @@ Step 3: Mask merging
  --maskwave [=ARG]    Remove noise in masks. Can close gaps, but can also
                       create artefacts in very low contrast areas.
                       ARG takes arguments:
-                        p        percent            Default: 20%
+                        p        percent           Default: $(maskarg_defaultvalue maskwave percent1)%
                       For percent value compare option -wavelet-denoise.
  --maskblur [=ARG]    Blur masks to enhance contrast and close minor gaps.
                       ARG takes arguments:
-                        s        sigma              Default: 1
+                        s        sigma             Default: $(maskarg_defaultvalue maskblur sigma1)
  --maskcmd [=ARG]     Custom ImageMagick option to apply on merged masks.
                       ARG takes argument:
                         (word)   string
                       string can be e.g. '-blur 0x5'. Avoid comma , in string.
  --merge [=ARG]       Compose mode to merge multiple masks.
                       ARG takes arguments:
-                        (word)   mode               Default: Screen
+                        (word)   mode              Default: Screen
                       mode can be one of 'magick -list compose'.
                       Of interest: Plus Interpolate Multiply Exclusion Blend
  --level [=ARG]       Levels merged masks into visible spectrum from 0%..100%
@@ -314,7 +314,7 @@ Step 3: Mask merging
                       option arguments a full range from 0%..100%.
                       This option is enabled by default if needed.
                       ARG takes argument:
-                        (word)   mode               Default: all
+                        (word)   mode              Default: all
                       mode can be one of:
                         all:      Level all masks.
                         substack: Level only merged masks in current substack.
@@ -335,7 +335,7 @@ Step 4: Stack fusion
  --cutless [=ARG]     Strenghtens less contrasted objects in front of strong
                       contrasted background objects.
                       ARG takes argument:
-                        p        percent            Default: 20%
+                        p        percent           Default: $(maskarg_defaultvalue cutless percent1)%
                       Percent is the minimal intermediate contrast
                       difference between background and foreground object.
                       If unsharp areas appear, use a greater percent value.
@@ -344,10 +344,10 @@ Step 4: Stack fusion
  --cutmorph [=ARG]    Change shape of cut mask. Default mode 'erode' shrinks
                       the cut mask to eliminate undesired fringes.
                       ARG takes arguments:
-                        r        radius             Default: 1
-                        R        kernel iteration   Default: 1
-                        (word1)  mode               Default: erode
-                        (word2)  kernel             Default: Octagon
+                        r        radius            Default: $(maskarg_defaultvalue cutmorph radius1)
+                        R        kernel iteration  Default: $(maskarg_defaultvalue cutmorph radius2)
+                        (word1)  mode              Default: $(maskarg_defaultvalue cutmorph word1)
+                        (word2)  kernel            Default: $(maskarg_defaultvalue cutmorph word2)
                       radius is the kernel radius.
                       kernel iteration multiplies the kernel radius.
                       mode can be one of 'magick -list morphology'.
@@ -359,30 +359,30 @@ Step 4: Stack fusion
  --cutsoft [=ARG]     Similar to --cutblur, but paint default sharp cut mask
                       over blurred cut mask.
                       ARG takes argument:
-                        s        sigma              Default: 2
+                        s        sigma             Default: $(maskarg_defaultvalue cutsoft sigma1)
  --cutblur [=ARG]     Blur cut masks in final focus montage.
                       ARG takes argument:
-                        s        sigma              Default: 2
+                        s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
  --cutcmd [=ARG]      Custom ImageMagick option to apply on cut mask.
                       ARG takes argument:
                         (word)   string
                       string can be e.g. '-blur 0x5'. Avoid comma , in string.
- --cutthreshold [=ARG]  Cut of parts of cut mask where main mask is weaker
-                      than threshold. Optionally blur this cut with sigma1.
-                      Removes undesired seams and background.
+ --cutthreshold [=ARG]  Cut of parts of cut mask where current source mask is
+                      weaker than threshold. Removes undesired seams, but also
+                      the background. Preserve background with --cutbg before.
                       ARG takes arguments:
-                        t        threshold          Default: 50%
+                        t        threshold         Default: $(maskarg_defaultvalue cutthreshold threshold1)%
  --cutwave [=ARG]     Soften the cut mask. Result looses a bit of sharpness,
                       but looks more friendly overall, and covers small issues.
                       ARG takes arguments:
-                        p        percent            Default: 75%
+                        p        percent           Default: $(maskarg_defaultvalue cutwave percent1)%
                       For percent value compare option -wavelet-denoise.
                       Use along with --maskwave and --maskblur.
  --substacks [=ARG]   Split stack into different stacks (called substacks)
                       and fuse them separately. Can be specified multiple times.
                       ARG takes arguments:
-                        r        radius             Default: 5%
-                        p        percent1           Default: 14%
+                        r        radius            Default: 5%
+                        p        percent1          Default: 14%
                         P        percent2
                         n        number1
                         N        number2
@@ -405,8 +405,8 @@ Step 4: Stack fusion
                       default maximum contrast montage. Images are multiplied 
                       with their contrast masks and added altogether as a whole.
                       ARG takes arguments:
-                        p        percent1          Default: 2%
-                        P        percent2          Default: 100%
+                        p        percent1          Default: $(maskarg_defaultvalue soft percent1)%
+                        P        percent2          Default: $(maskarg_defaultvalue soft percent2)%
                         (word)   mode              Default: Plus
                       Increasing percent1 increases softness of low contrast.
                       Increasing percent2 increases sharpness of high contrast.
@@ -424,8 +424,8 @@ Step 5: Post processing
                       Good method to reduce noise in low contrast areas.
                       The semitransparent result is composed over --background.
                       ARG takes arguments:
-                        p        percent1          Default: 0%
-                        P        percent2          Default: 100%
+                        p        percent1          Default: $(maskarg_defaultvalue alpha percent1)%
+                        P        percent2          Default: $(maskarg_defaultvalue alpha percent2)%
                       percent1 affects the low contrast areas with
                        a useful range of -100%..+50%.
                       percent2 affects the high contrast areas with
@@ -435,9 +435,9 @@ Step 5: Post processing
                       on the transparency alpha channel.
  --finalblur [=ARG]   Soft blur of bokeh in low contrast areas.
                       ARG takes arguments:
-                        t        threshold         Default: 50%
-                        s        sigma1            Default: 3
-                        S        sigma2            Default: 2
+                        t        threshold         Default: $(maskarg_defaultvalue finalblur threshold1)%
+                        s        sigma1            Default: $(maskarg_defaultvalue finalblur sigma1)
+                        S        sigma2            Default: $(maskarg_defaultvalue finalblur sigma2)
                       Blurs low contrast areas below threshold with sigma1.
                       If sigma2 is given, the cut border between bokeh and 
                       foreground is blurred for a soft transition.
@@ -445,13 +445,13 @@ Step 5: Post processing
                       Other than --finalblur it blurs according to the contrast
                       mask strengh. Low contrast is blurred more than high.
                       ARG takes arguments:
-                        r        radius            Default: 4
-                        t        threshold         Default: 50
+                        r        radius            Default: $(maskarg_defaultvalue finalblur2 radius1)
+                        t        threshold         Default: $(maskarg_defaultvalue finalblur2 threshold1)%
  --threshold [=ARG]   Make low (or high) contrast area transparent.
                       ARG takes arguments:
-                        t        threshold1        Default: 50%
-                        T        threshold2        Default: 100%
-                        s        sigma             Default: 0
+                        t        threshold1        Default: $(maskarg_defaultvalue threshold threshold1)%
+                        T        threshold2        Default: $(maskarg_defaultvalue threshold threshold2)%
+                        s        sigma             Default: $(maskarg_defaultvalue threshold sigma1)
                       threshold1 removes low contrast areas below a percent.
                       threshold2 removes high contrast areas above a percent.
                       sigma blurs the cut border.
@@ -1196,7 +1196,7 @@ enfuse_split() {
         showimage "${Splitresult[$Split]}"
       done
 
-      sendmagickmessage "NOTE:enfuse: Appending splits to result"
+      sendmagickmessage "VERBOSE:enfuse: Appending splits to result"
       Command="
   mpr:black
     -write mpr:append
@@ -1243,7 +1243,7 @@ evaluate() {
     shift
   done
 
-  sendmagickmessage "NOTE:Evaluating $Mode: $Resultimage"
+  sendmagickmessage "VERBOSE:Evaluating $Mode: $Resultimage"
 
   [ "$Loadsourceimages" = "no" ] && {
     case "$Mode" in
@@ -1288,6 +1288,7 @@ evaluate_iterative() {
     min) Mode="darken" ;;
   esac
 
+  sendmagickmessage "STOPWATCH"
   Command="
   '${Imagelist[1]}'"
   case "$Mode" in
@@ -1295,7 +1296,8 @@ evaluate_iterative() {
       for Count in $(seq 2 $Imagenumber); do
         Command="$Command
   '${Imagelist[$Count]}'
-    -format 'PROGRESS:Evaluating $Count / $Imagenumber: ${Imagelist[$Count]}\n'
+    #-format 'PROGRESS:Evaluating $Count / $Imagenumber: ${Imagelist[$Count]}\n'
+    -format 'PROGRESS:Evaluating $Mode ETA:$Count/$Imagenumber\n'
     -write info:
     -compose $Mode -composite
     $(showimagecode)"
@@ -1306,7 +1308,8 @@ evaluate_iterative() {
         Command="$Command
   '${Imagelist[$Count]}'
     -alpha off
-    -format 'PROGRESS:Evaluating $Count / $Imagenumber: ${Imagelist[$Count]}\n'
+    #-format 'PROGRESS:Evaluating $Count / $Imagenumber: ${Imagelist[$Count]}\n'
+    -format 'PROGRESS:Evaluating $Mode ETA:$Count/$Imagenumber\n'
     -write info:
     -compose blend
     -set option:compose:args $(calc 100/$Count)
@@ -1360,7 +1363,7 @@ evaluate_splitlist() {
     Splitresult[$Split]="$Cachedir/evalsplit_$Mode.$Split.mpc"
   done
 
-  sendmagickmessage "NOTE:evaluating in $Splits tasks outside of script"
+  sendmagickmessage "VERBOSE:evaluating in $Splits tasks outside of script"
 
   for Split in $(seq $Splits); do
 #  -limit memory ${Mem_free}KB
@@ -1570,11 +1573,11 @@ generate_image() {
     *) [ -e "$Imagename" ] && Skip="yes" ;;
   esac
 
-  sendmagickmessage "NOTE:Generating image $Imagename"
   [ "$Skip" = "yes" ] && {
-    sendmagickmessage "NOTE:Skipping image generation, already exists: $Imagename"
+    sendmagickmessage "VERBOSE:Skipping image generation, already exists: $Imagename"
     return 0
   }
+  sendmagickmessage "NOTE:Generating image $Imagename"
 
   case "$Imagetype" in
     enfuse)
@@ -1670,7 +1673,7 @@ level_masks() {
   }
 
   [ "$Clut" = "no" ] && compare "$Levelmin" lt "1" && compare "$Levelmax" gt "99" && [ "$Maskbasename" = "$Outputbasename" ] && {
-    sendmagickmessage "NOTE:Skipping level, range is greater than 1%..99%"
+    sendmagickmessage "VERBOSE:Skipping level, range is greater than 1%..99%"
     return 0
   }
 
@@ -2229,7 +2232,7 @@ $(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
       Maskready="no"
       maskexist "$Argbasename" $Firstimage $Lastimage && {
         Maskready="yes"
-        sendmagickmessage "NOTE:Skipping mask generation, already exists: $Argbasename"
+        sendmagickmessage "VERBOSE:Skipping mask generation, already exists: $Argbasename"
       }
       grep -q -x "$Argbasename" <<< "$Basenamelist" && Maskready="yes"
       Basenamelist="$Basenamelist
@@ -2310,7 +2313,7 @@ ${Maskgenerator_all//NUMBER/$(printnum $Count)}"
     [ "$Argtype" = "mask" ] && {
       [ "$Arglevel" != "no" ] && {
         [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/level.$Argbasename" ] && {
-          sendmagickmessage "NOTE:Skipping mask leveling, already done: $Argbasename"
+          sendmagickmessage "VERBOSE:Skipping mask leveling, already done: $Argbasename"
         } || {
           level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage" --clut
           [ "$Masktocache" = "yes" ] && :> "$Cachedir/level.$Argbasename"
@@ -2330,7 +2333,7 @@ focus_merge_masks() {
   local Firstimage Lastimage
 
   [ "$Maskmethodnumber" = "0" ] && {
-    note "Skipping merge, no mask options are specified."
+    verbose "Skipping merge, no mask options are specified."
     return 0
   }
 
@@ -2473,7 +2476,7 @@ focus_merge_masks() {
   #Mergemaskbasename="$(unspecialstring "$Mergemaskbasename")"
 
   maskexist "$Mergemaskbasename" "$Firstimage" "$Lastimage"  && {
-    note "Skipping merge, $Mergemaskbasename $Firstimage..$Lastimage already exists"
+    verbose "Skipping merge, $Mergemaskbasename $Firstimage..$Lastimage already exists"
   } || {
     # merge masks
     sendmagickmessage "STOPWATCH"
@@ -2507,7 +2510,7 @@ $(sed "s/NUMBER/$(printnum $Count)/g" <<< "$Mergecode" )
       off) ;;
       substack|all)
         [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/$Newbasename" ] && {
-          sendmagickmessage "NOTE:--level=$Argword1: Skipping, mask is already leveled."
+          sendmagickmessage "VERBOSE:--level=$Argword1: Skipping, mask is already leveled."
         } || {
           level_masks --name="$Mergemaskbasename" --output="$Newbasename" --first="$Firstimage" --last="$Lastimage"
           [ "$Masktocache" = "yes" ] && :> "$Cachedir/$Newbasename"
@@ -2547,8 +2550,6 @@ focus_hard() {
 
   Firstimage="${Firstimage:-1}"
   Lastimage="${Lastimage:-$Sourceimagenumber}"
-
-  sendmagickmessage "NOTE:Focus montage hard"
 
   # Code for --cut* options
   Focuscode="
@@ -2614,34 +2615,39 @@ focus_hard() {
     -delete 0
 
   # get area of source mask that is stronger (+offset) than lessmask)
-  mpr:sourcemask 
+  mpr:mergemask 
   ( mpr:lessthanmax -evaluate Add ${Argpercent1}% )
     -compose MinusSrc -composite
     -fill white +opaque black 
     -write mpr:cutmask_less
-    -delete 0
-
+    -delete 0"
+            [ -n "$Argthreshold1" ] && Focuscode="$Focuscode
+  mpr:cutmask_less
+    -threshold ${Argthreshold1}%
+    -write mpr:cutmask_less
+    -delete 0"
+            Focuscode="$Focuscode
   # reduce max in maskmax where --lessthanmax takes over
-  mpr:sourcemask
+  mpr:mergemask
   mpr:cutmask_less
     -compose CopyOpacity -composite
-    -write mpr:sourcemask_part
+    -write mpr:mergemask_part
     -delete 0
   mpr:resultmask
-  mpr:sourcemask_part
+  mpr:mergemask_part
     -compose Over -composite
     -write mpr:resultmask
     -delete 0
 
   # darken lessmask with current source mask to get a mask with decreasing sharpness after a max peak
   mpr:lessthanmax
-  mpr:sourcemask
+  mpr:mergemask
     -compose Darken -composite
     -write mpr:lessthanmax
     -delete 0
 
   # get area of source mask equal or sharper than current max (same code as above, but now with less-adjusted maskmax.
-  mpr:sourcemask
+  mpr:mergemask
   mpr:resultmask
     -compose MinusDst -composite -fill white +opaque black
     -alpha off
@@ -2667,8 +2673,8 @@ focus_hard() {
 
           cutthreshold)
             Focuscode="$Focuscode
-  ( mpr:resultmask
-    -threshold ${Argthreshold1}%
+  ( mpr:mergemask
+      -threshold ${Argthreshold1}% )
     -compose Darken -composite"
           ;;
 
@@ -2691,7 +2697,7 @@ focus_hard() {
   Focusimagemaskfile="$Cachedir/$Focusimagebasename.mask.tif"
 
   [ -e "$Focusimagefile" ] && {
-    sendmagickmessage "NOTE:Skipping focus_hard(), image already exists."
+    sendmagickmessage "VERBOSE:Skipping focus_hard(), image already exists."
     Command="
   '$Focusimagefile'
     $Tifstore
@@ -2708,6 +2714,8 @@ focus_hard() {
     cmd_waitforready
     return 0
   }
+
+  sendmagickmessage "NOTE:Focus montage hard"
 
   load_sourceimages $Firstimage $Lastimage
 
@@ -2738,11 +2746,11 @@ focus_hard() {
     -delete 0
   '$(maskname "$Mergemaskbasename" "$Count")'
     -alpha off
-    -write mpr:sourcemask
+    -write mpr:mergemask
     -delete 0
 
   # stepwise increase maskmax
-  mpr:sourcemask
+  mpr:mergemask
   mpr:resultmask
     -compose Lighten -composite
     -write mpr:resultmask
@@ -2750,7 +2758,7 @@ focus_hard() {
 
   # get area of source mask equal or sharper than current max
   mpr:resultmask
-  mpr:sourcemask
+  mpr:mergemask
     -compose MinusSrc -composite -fill white +opaque black
     -alpha off
     -negate
@@ -2806,6 +2814,7 @@ focus_hard() {
     -delete 0"
     cmd "$Command"
     cmd_waitforready
+    verbose "maskmax: $Maskmaxcopy"
   }
 
   Command="
@@ -2816,8 +2825,8 @@ focus_hard() {
   +set registry:maskmax
   +set registry:maskmax_part
   +set registry:sourceimage
-  +set registry:sourcemask
-  +set registry:sourcemask_part
+  +set registry:mergemask
+  +set registry:mergemask_part
   +set registry:sourcepart"
   cmd "$Command"
   cmd_waitforready
@@ -2856,8 +2865,6 @@ focus_soft() {
   Level="${Level:-"0%x100%"}"
   Composemode="${Composemode:-Plus}"
 
-  sendmagickmessage "NOTE:Focus montage soft"
-
   Addsource="mpr:addsource"
 
   Focusimagebasename="focus-soft.$(percentrm "$Level").$Firstimage..$Lastimage.$(md5cut "$(masklist "$Mergemaskbasename") $Level $Composemode")"
@@ -2866,7 +2873,7 @@ focus_soft() {
 
   [ "$Force" = "focus" ] && forcefocus
   [ -e "$Focusimagefile" ] && {
-    sendmagickmessage "NOTE:Skipping focus_soft(), image already exists."
+    sendmagickmessage "VERBOSE:Skipping focus_soft(), image already exists."
     Command="
   '$Focusimagefile'
     $Tifstore
@@ -2883,6 +2890,8 @@ focus_soft() {
     cmd_waitforready
     return 0
   }
+
+  sendmagickmessage "NOTE:Focus montage soft"
 
   load_sourceimages $Firstimage $Lastimage
 
@@ -2901,35 +2910,33 @@ focus_soft() {
 
   sendmagickmessage "STOPWATCH"
   for Count in $(seq $Lastimage -1 $Firstimage); do
-    Sourcemask="$(maskname "$Mergemaskbasename" "$Count")"
-    Sourceimage="$(sourceimagename $Count)"
 
     sendmagickmessage "PROGRESS:Focus montage soft ETA:$Count"
 
     Command="
-  $Sourceimage
+  '$(sourceimagename $Count)'
     -depth 16
     -alpha off
     -write mpr:sourceimage
     -delete 0
-  $Sourcemask
+  '$(maskname "$Mergemaskbasename" "$Count")'
     -depth 16
-    -write mpr:mask
+    -write mpr:mergemask
     -delete 0"
 
     Command="$Command
-  mpr:mask
+  mpr:mergemask
     +level $Level
     -evaluate Divide $Sourceimagenumber
-    -write mpr:mask
+    -write mpr:mergemask
     -delete 0
   mpr:addmask
-  mpr:mask
+  mpr:mergemask
     -compose $Composemode -composite
     -write mpr:addmask
     -delete 0
   mpr:addsource
-  ( mpr:sourceimage mpr:mask -compose Multiply -composite )
+  ( mpr:sourceimage mpr:mergemask -compose Multiply -composite )
     -evaluate-sequence Add
     -write mpr:sourceadd
     -write mpr:addsource
@@ -2945,10 +2952,6 @@ focus_soft() {
     $(showimagecode "mpr:resultimage")
     -delete 0"
     }
-
-    Command="$Command
-  +set registry:$Sourceimage
-  +set registry:$Sourcemask"
 
     cmd "$Command"
   done
@@ -2990,7 +2993,7 @@ focus_soft() {
   +set registry:addmask
   +set registry:addsource
   +set registry:clut
-  +set registry:mask
+  +set registry:mergemask
   +set registry:sourceadd
   +set registry:sourceimage"
   cmd "$Command"
@@ -3029,7 +3032,7 @@ focus_main() {
   Startzeit="$(date +%s)"
   focus_generate_masks
   focus_merge_masks
-  sendmagickmessage "NOTE:Generating masks ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+  sendmagickmessage "VERBOSE:Generating masks ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
   # Focus stacking
   [ "$Maskmethodnumber" -gt "0" ] && { 
@@ -3041,7 +3044,7 @@ focus_main() {
 
       Startzeit="$(date +%s)"
       #focus_merge_masks "${Substackfirstimage[$Substackstep]}" "${Substacklastimage[$Substackstep]}" ### FIXME leveling?
-      sendmagickmessage "NOTE:Mask merging ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+      sendmagickmessage "VERBOSE:Mask merging ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
       # focus
       Startzeit="$(date +%s)"
@@ -3057,7 +3060,7 @@ focus_main() {
                      --level "${Argpercent1}%x${Argpercent2}%" --compose="$Argword1"
         ;;
       esac
-      sendmagickmessage "NOTE:focus ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+      sendmagickmessage "VERBOSE:focus ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
     done
 
     Startzeit="$(date +%s)"
@@ -3067,7 +3070,7 @@ focus_main() {
       Substackmaskpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-mask.mpc"
 
       [ -e "${Substackresultpost[$Substackstep]}" ] && {
-        sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur, already done."
+        sendmagickmessage "VERBOSE:Skipping --alpha --threshold --finalblur, already done."
       } || {
 
         Command="
@@ -3111,7 +3114,7 @@ focus_main() {
     done
   }
   cmd_waitforready
-  sendmagickmessage "NOTE:Postprocessing ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+  sendmagickmessage "VERBOSE:Postprocessing ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
   Command="
   # composing substack results
@@ -3137,7 +3140,7 @@ focus_main() {
   case "$Storelayered" in
     yes)
       # --layered
-      sendmagickmessage "NOTE:Generating layered tif"
+      sendmagickmessage "VERBOSE:Generating layered tif"
       { maskarg_single "threshold" || maskarg_single "alpha" ; } && Transparentlayers="yes"
       generate_image --mode cyan
       generate_image --mode magenta
@@ -3398,254 +3401,255 @@ maskarg_store() {
   Imarguments[$Argcount]="$Argoptions"
 }
 maskarg_defaultvalue() {
+  local Output=
   case "${2:-}" in
     channel)
       case "${1:-}" in
         colorspace) ;;
         channel) ;;
-        chroma)       echo "1" ;;
-        darkness)     echo "2" ;;
-        lightness)    echo "2" ;;
-        saturation)   echo "1" ;;
+        chroma)       Output="1" ;;
+        darkness)     Output="2" ;;
+        lightness)    Output="2" ;;
+        saturation)   Output="1" ;;
       esac
     ;;
     colorspace)
       case "${1:-}" in
-        colorspace)   echo "sRGB" ;;
+        colorspace)   Output="sRGB" ;;
         channel) ;;
-        chroma)       echo "HCL" ;;
-        darkness)     echo "HSL" ;;
-        lightness)    echo "HSL" ;;
-        saturation)   echo "HSL" ;;
+        chroma)       Output="HCL" ;;
+        darkness)     Output="HSL" ;;
+        lightness)    Output="HSL" ;;
+        saturation)   Output="HSL" ;;
       esac
     ;;
     image)
       case "${1:-}" in
-        enfuse)       echo "enfuse" ;;
-        max)          echo "max" ;;
-        mean)         echo "mean" ;;
-        median)       echo "median" ;;
-        min)          echo "min" ;;
+        enfuse)       Output="enfuse" ;;
+        max)          Output="max" ;;
+        mean)         Output="mean" ;;
+        median)       Output="median" ;;
+        min)          Output="min" ;;
       esac
     ;;
     level)
       case "$Argmethod" in
-        channel)      echo "no" ;;
-        chroma)       echo "no" ;;
-        compose)      echo "no" ;;
-        darkness)     echo "no" ;;
-        enfuse)       echo "no" ;;
-        evaluate)     echo "no" ;;
-        lighten)      echo "no" ;;
-        max)          echo "no" ;;
-        mean)         echo "no" ;;
-        median)       echo "no" ;;
-        min)          echo "no" ;;
-        saturation)   echo "no" ;;
+        channel)      Output="no" ;;
+        chroma)       Output="no" ;;
+        compose)      Output="no" ;;
+        darkness)     Output="no" ;;
+        enfuse)       Output="no" ;;
+        evaluate)     Output="no" ;;
+        lighten)      Output="no" ;;
+        max)          Output="no" ;;
+        mean)         Output="no" ;;
+        median)       Output="no" ;;
+        min)          Output="no" ;;
+        saturation)   Output="no" ;;
       esac
     ;;
     levelmin)
       case "${1:-}" in
-        blur)         echo "0" ;;
-        comet)        echo "0" ;;
-        compass)      echo "45" ;;
-        dog)          echo "0" ;;
+        blur)         Output="0" ;;
+        comet)        Output="0" ;;
+        compass)      Output="45" ;;
+        dog)          Output="0" ;;
         diffstat)
           case "$Argword1,$Argword2" in
             "median,mean")
-                      echo "0" ;;
+                      Output="0" ;;
             "min,max")
-                      echo "0" ;;
+                      Output="0" ;;
           esac
         ;;
         freichen)
           case $Argword1 in
-            "")       echo "33.6584" ;;
-            15)       echo "19" ;;
+            "")       Output="33.6584" ;;
+            15)       Output="19" ;;
           esac
         ;;
-        gaussian)     echo "0" ;;
-        #kirsch)       echo "" ;;
+        gaussian)     Output="0" ;;
+        #kirsch)       Output="" ;;
         laplacian)
           case $Argword1 in
-            3)        echo "0" ;;
+            3)        Output="0" ;;
           esac
         ;;
-        log)          echo "0" ;;
-        morphology)   echo "0" ;;
-        prewitt)      echo "34.3893" ;;
-        #roberts)      echo "7.64782%,100%" ;;
-        sobel)        echo "34.3893" ;;
+        log)          Output="0" ;;
+        morphology)   Output="0" ;;
+        prewitt)      Output="34.3893" ;;
+        #roberts)      Output="7.64782%,100%" ;;
+        sobel)        Output="34.3893" ;;
         statistic)
           case ${Argword1,,} in
             standarddeviation)
-                      echo "0" ;;
+                      Output="0" ;;
           esac
         ;;
         #unsharp
-        wavelet)      echo "0" ;;
+        wavelet)      Output="0" ;;
       esac
     ;;
     negate)
       case "${1:-}" in
-        darkness)     echo "yes" ;;
+        darkness)     Output="yes" ;;
       esac
     ;;
     percent1)
       case "${1:-}" in
-        alpha)        echo "0" ;;
-        cutless)      echo "20" ;;
-        cutwave)      echo "75" ;;
-        maskwave)     echo "20" ;;
-        soft)         echo "2" ;;
-        wavelet)      echo "5" ;;
+        alpha)        Output="0" ;;
+        cutless)      Output="20" ;;
+        cutwave)      Output="75" ;;
+        maskwave)     Output="20" ;;
+        soft)         Output="2" ;;
+        wavelet)      Output="5" ;;
       esac
     ;;
     percent2)
       case "${1:-}" in
-        alpha)        echo "100" ;;
-        soft)         echo "100" ;;
+        alpha)        Output="100" ;;
+        soft)         Output="100" ;;
       esac
     ;;
     radius1)
       case "${1:-}" in
-        blur)         echo "" ;; # 0
-        comet)        echo "" ;; # 0
-        diffstat)     echo "3" ;;
-        dog)          echo "" ;; # 0
-        gaussian)     echo "" ;; # 0
-        log)          echo "" ;; # 0
-        morphology)   echo "1" ;;
-        statistic)    echo "2" ;;
-        unsharp)      echo "" ;; # 0
+        blur)         Output="" ;; # 0
+        comet)        Output="" ;; # 0
+        diffstat)     Output="3" ;;
+        dog)          Output="" ;; # 0
+        gaussian)     Output="" ;; # 0
+        log)          Output="" ;; # 0
+        morphology)   Output="1" ;;
+        statistic)    Output="2" ;;
+        unsharp)      Output="" ;; # 0
 
-        cutmorph)     echo "1" ;;
-        finalblur2)   echo "4" ;;
-        maskmorph)    echo "2" ;;
-        maskstat)     echo "6" ;;
+        cutmorph)     Output="1" ;;
+        finalblur2)   Output="4" ;;
+        maskmorph)    Output="2" ;;
+        maskstat)     Output="6" ;;
       esac
     ;;
     radius2)
       case "${1:-}" in
-        cutmorph)     echo "1" ;;
-        maskmorph)    echo "2" ;;
-        morphology)   echo "1" ;;
+        cutmorph)     Output="1" ;;
+        maskmorph)    Output="2" ;;
+        morphology)   Output="1" ;;
       esac
     ;;
     short)
       case "${1:-}" in
         blur|chroma|cmd|cmddiff|comet|compass|dog|enfuse|kirsch|log|unsharp)
-                      echo "${1:-}" ;;
-        diffstat)     echo "diff" ;;
-        freichen)     echo "frei" ;;
-        gaussian)     echo "gauss" ;;
-        laplacian)    echo "lap" ;;
-        morphology)   echo "morph" ;;
-        prewitt)      echo "prew" ;;
-        roberts)      echo "rob" ;;
-        sobel)        echo "sob" ;;
-        statistic)    echo "stat" ;;
-        wavelet)      echo "wave" ;;
-        channel)      echo "chan" ;;
-        darkness)     echo "dark" ;;
-        lightness)    echo "light" ;;
-        saturation)   echo "sat" ;;
-        compose)      echo "comp" ;;
-        evaluate)     echo "eval" ;;
-        min|max|mean|median) echo "${1:-}" ;;
-        experimental) echo "exp" ;;
-        maskblur)     echo "mblur" ;;
-        maskcmd)      echo "mcmd" ;;
-        maskmorph)    echo "mmorph" ;;
-        maskstat)     echo "mstat" ;;
-        maskwave)     echo "mwave" ;;
-        cutblur)      echo "cblur" ;;
-        cutcmd)       echo "ccmd" ;;
-        cutless)      echo "cless" ;;
-        cutmorph)     echo "cmorph" ;;
-        cutsoft)      echo "csoft" ;;
-        cutthreshold) echo "cthresh" ;;
-        cutwave)      echo "cwave" ;;
-        alpha)        echo "alpha" ;;
-        finalblur)    echo "fblur" ;;
-        finalblur2)   echo "fblur2" ;;
-        threshold)    echo "thresh" ;;
-        bg)           echo "bg" ;;
-        colorspace)   echo "col" ;;
-        grayscale)    echo "gray" ;;
-        level)        echo "lev" ;;
-        merge)        echo "merge" ;;
-        soft)         echo "soft" ;;
-        substacks)    echo "slab" ;;
-        *)            echo "${1:-}" ;;
+                      Output="${1:-}" ;;
+        diffstat)     Output="diff" ;;
+        freichen)     Output="frei" ;;
+        gaussian)     Output="gauss" ;;
+        laplacian)    Output="lap" ;;
+        morphology)   Output="morph" ;;
+        prewitt)      Output="prew" ;;
+        roberts)      Output="rob" ;;
+        sobel)        Output="sob" ;;
+        statistic)    Output="stat" ;;
+        wavelet)      Output="wave" ;;
+        channel)      Output="chan" ;;
+        darkness)     Output="dark" ;;
+        lightness)    Output="light" ;;
+        saturation)   Output="sat" ;;
+        compose)      Output="comp" ;;
+        evaluate)     Output="eval" ;;
+        min|max|mean|median) Output="${1:-}" ;;
+        experimental) Output="exp" ;;
+        maskblur)     Output="mblur" ;;
+        maskcmd)      Output="mcmd" ;;
+        maskmorph)    Output="mmorph" ;;
+        maskstat)     Output="mstat" ;;
+        maskwave)     Output="mwave" ;;
+        cutblur)      Output="cblur" ;;
+        cutcmd)       Output="ccmd" ;;
+        cutless)      Output="cless" ;;
+        cutmorph)     Output="cmorph" ;;
+        cutsoft)      Output="csoft" ;;
+        cutthreshold) Output="cthresh" ;;
+        cutwave)      Output="cwave" ;;
+        alpha)        Output="alpha" ;;
+        finalblur)    Output="fblur" ;;
+        finalblur2)   Output="fblur2" ;;
+        threshold)    Output="thresh" ;;
+        bg)           Output="bg" ;;
+        colorspace)   Output="col" ;;
+        grayscale)    Output="gray" ;;
+        level)        Output="lev" ;;
+        merge)        Output="merge" ;;
+        soft)         Output="soft" ;;
+        substacks)    Output="slab" ;;
+        *)            Output="${1:-}" ;;
       esac
     ;;
     sigma1)
       case "${1:-}" in
-        blur)         echo "0.3" ;;
-        comet)        echo "5" ;;
-        dog)          echo "0.4" ;;
-        gaussian)     echo "0.3" ;;
-        log)          echo "0.2" ;;
-        unsharp)      echo "2" ;;
+        blur)         Output="0.3" ;;
+        comet)        Output="5" ;;
+        dog)          Output="0.4" ;;
+        gaussian)     Output="0.3" ;;
+        log)          Output="0.2" ;;
+        unsharp)      Output="2" ;;
 
-        cutblur)      echo "2" ;;
-        cutsoft)      echo "2" ;;
-        finalblur)    echo "3" ;;
-        maskblur)     echo "2" ;;
-        threshold)    echo "0" ;;
+        cutblur)      Output="2" ;;
+        cutsoft)      Output="2" ;;
+        finalblur)    Output="3" ;;
+        maskblur)     Output="2" ;;
+        threshold)    Output="0" ;;
       esac
     ;;
     sigma2)
       case "${1:-}" in
-        dog)          echo "$(calc "${Argsigma1:-0.3} * 1.6")" ;;
-        finalblur)    echo "2" ;;
+        dog)          Output="$(calc "${Argsigma1:-0.3} * 1.6")" ;;
+        finalblur)    Output="2" ;;
       esac
     ;;
     threshold1)
       case "${1:-}" in
-        cutthreshold) echo "50" ;;
-        finalblur)    echo "50" ;;
-        finalblur2)   echo "50" ;;
-        threshold)    echo "50" ;;
+        cutthreshold) Output="30" ;;
+        finalblur)    Output="50" ;;
+        finalblur2)   Output="50" ;;
+        threshold)    Output="50" ;;
       esac
     ;;
     threshold2)
       case "${1:-}" in
-        threshold)    echo "" ;;
+        threshold)    Output="" ;;
       esac
     ;;
     type)
       case "${1:-}" in
         blur|cmd|cmddiff|comet|compass|diffstat|dog|freichen|gaussian|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
-                      echo "mask"
+                      Output="mask"
         ;;
         channel|chroma|darkness|lightness|saturation)
-                      echo "mask"
+                      Output="mask"
         ;;
         image|enfuse|compose|evaluate|min|max|mean|median)
-                      echo "mask"
+                      Output="mask"
         ;;
         experimental)
-                      echo "mask"
+                      Output="mask"
         ;;
         maskblur|maskcmd|maskmorph|maskstat|maskwave)
-                      echo "merge"
+                      Output="merge"
         ;;
         cutbg|cutblur|cutcmd|cutless|cutmorph|cutsoft|cutthreshold|cutwave)
-                      echo "focus"
+                      Output="focus"
         ;;
         alpha|finalblur|finalblur2|threshold)
-                      echo "postfocus"
+                      Output="postfocus"
         ;;
         bg)
-                      echo "background"
+                      Output="background"
         ;;
         colorspace|grayscale|level|merge|soft)
-                      echo "single"
+                      Output="single"
         ;;
         substacks)
-                      echo "substack"
+                      Output="substack"
         ;;
         *)
           error "maskarg_defaultvalue(): Unknown type for method ${1:-}"
@@ -3653,37 +3657,38 @@ maskarg_defaultvalue() {
       esac
     ;;
     wave)
-      echo "30"
+      Output="30"
     ;;
     word1)
       case "${1:-}" in
-        comet)        echo "" ;;
-        compose)      echo "overlay" ;;
-        diffstat)     echo "" ;;
-        evaluate)     echo "max" ;;
-        freichen)     echo "" ;;
-        laplacian)    echo "3" ;;
-        morphology)   echo "edgeout" ;;
-        statistic)    echo "" ;;
+        comet)        Output="" ;;
+        compose)      Output="overlay" ;;
+        diffstat)     Output="" ;;
+        evaluate)     Output="max" ;;
+        freichen)     Output="" ;;
+        laplacian)    Output="3" ;;
+        morphology)   Output="edgeout" ;;
+        statistic)    Output="" ;;
 
-        bg)           echo "enfuse" ;;
-        cutmorph)     echo "erode" ;;
-        grayscale)    echo "Rec709Luma" ;;
-        level)        echo "all" ;;
-        maskmorph)    echo "dilate" ;;
-        maskstat)     echo "mean" ;;
-        merge)        echo "screen" ;;
-        soft)         echo "plus" ;;
+        bg)           Output="enfuse" ;;
+        cutmorph)     Output="erode" ;;
+        grayscale)    Output="Rec709Luma" ;;
+        level)        Output="all" ;;
+        maskmorph)    Output="dilate" ;;
+        maskstat)     Output="mean" ;;
+        merge)        Output="screen" ;;
+        soft)         Output="plus" ;;
       esac
     ;;
     word2)
       case "${1:-}" in
-        diffstat)     echo "" ;;
+        diffstat)     Output="" ;;
         maskmorph|morphology|cutmorph)
-                      echo "" ;;
+                      Output="" ;;
       esac
     ;;
   esac
+  echo "$Output"
 }
 maskarg_checkallowed() {
   local Method Option Arg
@@ -3809,7 +3814,7 @@ maskarg_checkallowed() {
         mask) ;;
         *)
           case "$Method" in
-            cutthreshold|finalblur|finalblur2|threshold) ;;
+            cutless|cutthreshold|finalblur|finalblur2|threshold) ;;
             *) error "$Method does not take argument threshold1: t$Arg" ;;
           esac
         ;;
@@ -3991,6 +3996,9 @@ readmagickmessage() {
       NOTE)
         note "$Content"
       ;;
+      VERBOSE)
+        verbose "$Content"
+      ;;
       SHOW)
         showimage "$Content"
       ;;
@@ -4076,10 +4084,18 @@ trap_sigint() {
   local Count=0
   trap - ERR
   set +x
-  note "Received SIGINT"
-  [ -n "$Magickscriptpid" ] && kill "$Magickscriptpid"
-  multicore_break
-  finish 130
+  [ "$$" = "$Imfusepid" ] && {
+    note "Received SIGINT"
+    [ -n "$Magickscriptpid" ] && kill "$Magickscriptpid"
+    multicore_break
+    finish 130
+    :
+  } || {
+    note "Received SIGINT in subshell $SHLVL: $$"
+    kill -s SIGINT "$Imfusepid"
+    trap - EXIT
+    exit 130
+  }
 }
 finish() {
   local Count=0
@@ -4315,6 +4331,7 @@ check_options() {
         [ -z "$Argweight" ] && {
           LC_ALL=C awk 'BEGIN {exit !('${Weightrest:-0}' <= 0)}' && error "Sum of weight arguments exceed 100%, nothing left for --$Argmethod."
           Argweight="$(calc "$Weightrest / $Masknoweightcount ")"
+          Argweight="${Argweight%.*}"
         }
         maskarg_store "$Count"
       ;;
