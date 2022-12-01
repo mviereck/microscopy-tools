@@ -2199,7 +2199,6 @@ focus_generate_masks() {
     -write mpr:sourcegray.bak
     -delete 0"
       }
-
       [ -n "$Argimage" ] && {
         generate_image --mode "$Argimage" --first "$Firstimage" --last "$Lastimage"
         Maskgenerator="$Maskgenerator
@@ -2212,7 +2211,6 @@ focus_generate_masks() {
     -write mpr:sourcegray
     -delete 0"
       }
-
       [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] && {
         Maskgenerator="$Maskgenerator
   # =C,c
@@ -2258,11 +2256,7 @@ $Argbasename"
 
       [ "$Maskready" = "no" ] && {
         case "$Argmethod" in
-          channel|saturation|chroma|lightness|darkness) ;;
-          compose)                      generate_image --mode "$Argword1"               --first $Firstimage --last $Lastimage;;
-          enfuse)                       generate_image --mode "enfuse"                  --first $Firstimage --last $Lastimage ;;
-          evaluate|min|max|mean|median) generate_image --mode "${Argword1:-$Argmethod}" --first $Firstimage --last $Lastimage ;;
-          image) ;;
+          compose|evaluate|min|max|mean|median|enfuse) generate_image --mode "$Argimage" --first $Firstimage --last $Lastimage;;
         esac
         Maskgenerator_all="$Maskgenerator_all
 $Maskgenerator
@@ -2796,6 +2790,7 @@ focus_hard() {
 #    $(showimagecode "mpr:resultimage")
 
     cmd "$Command"
+    sleep 1
   done
   sendmagickmessage "/PROGRESS"
 
