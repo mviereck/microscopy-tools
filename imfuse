@@ -1774,7 +1774,7 @@ maskfromimage() {
   mpr:image
     $Grayscaleconverter
   ( '$Sourceimage' $Grayscaleconverter )
-    -compose Difference -composite
+    $Difference
     -alpha off 
     -negate
     -write mpr:diffmask
@@ -1969,7 +1969,7 @@ focus_maskmethod() {
   mpr:sourcegray
     -blur ${Argradius1:-0}x$Argsigma1
   mpr:sourcegray
-    -compose Difference -composite"
+    $Difference"
     ;;
     cmd|channel|chroma|darkness|lightness|saturation|enfuse|compose|evaluate|max|min|mean|median)
       Maskgenerator="$Maskgenerator
@@ -1982,7 +1982,7 @@ focus_maskmethod() {
   mpr:sourcegray 
     $Argword1
   mpr:sourcegray
-    -compose Difference -composite"
+    $Difference"
     ;;
     comet)
       Maskgenerator="$Maskgenerator
@@ -1990,7 +1990,7 @@ focus_maskmethod() {
     -define morphology:compose=${Argword1}
     -morphology Convolve Comet:${Argradius1}x${Argsigma1}:>
   mpr:sourcegray
-    -compose difference -composite"
+    $Difference"
     ;;
     compass)
       Maskgenerator="$Maskgenerator
@@ -1999,7 +1999,7 @@ focus_maskmethod() {
     -define morphology:compose=${Argword1}
     -define convolve:bias=50%
     -morphology Convolve Compass:>"
-    #-compose Difference -composite" # sort of interesting.
+    #$Difference" # sort of interesting.
     ;;
     diffstat)
       [ "$Argword1" = "source" ] && {
@@ -2016,7 +2016,7 @@ focus_maskmethod() {
         Maskgenerator="$Maskgenerator
   ( mpr:sourcegray -statistic ${Argword2} ${Argradius1} )"
 Maskgenerator="$Maskgenerator
-    -compose Difference -composite"
+    $Difference"
       }
     ;;
     dog) # DoG: Difference of Gaussian
@@ -2025,7 +2025,7 @@ Maskgenerator="$Maskgenerator
     -define convolve:scale=100,100%
     -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}
   mpr:sourcegray
-    -compose Difference -composite"
+    $Difference"
     ;;
     GAUSSexperimental) 
       Maskgenerator="$Maskgenerator
@@ -2033,7 +2033,7 @@ Maskgenerator="$Maskgenerator
     -define convolve:scale=-100,200%
     -morphology Convolve Gaussian:${Argradius1}x${Argsigma1}
   mpr:sourcegray
-    -compose Difference -composite"
+    $Difference"
     ;;
     CROSSMORPHexperimental)
       Maskgenerator="$Maskgenerator
@@ -2092,7 +2092,7 @@ Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -gaussian-blur ${Argradius1}x${Argsigma1}
   mpr:sourcegray
-    -compose Difference -composite"
+    $Difference"
     ;;
     kirsch)
       Maskgenerator="$Maskgenerator
@@ -2115,7 +2115,7 @@ Maskgenerator="$Maskgenerator
     -define convolve:scale=100,100%
     -morphology Convolve LoG:${Argradius1}x${Argsigma1}
   mpr:sourcegray
-    -compose Difference -composite"
+    $Difference"
     ;;
     morphology)
       Maskgenerator="$Maskgenerator
@@ -2156,14 +2156,14 @@ Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -unsharp ${Argradius1}x${Argsigma1}
   mpr:sourcegray
-    -compose Difference -composite"
+    $Difference"
     ;;
     wavelet)
       Maskgenerator="$Maskgenerator
   mpr:sourcegray 
     -wavelet-denoise ${Argpercent1}%
   mpr:sourcegray
-    -compose Difference -composite"
+    $Difference"
     ;;
   esac
 
@@ -2207,7 +2207,7 @@ focus_generate_masks() {
   # =E
   mpr:sourceimage
   $(generate_image --mode "$Argimage" --showname --first "$Firstimage" --last "$Lastimage")
-    -compose Difference -composite
+    $Difference
     -negate
     $Grayscaleconverter
     -write mpr:sourcegray
@@ -2235,7 +2235,7 @@ $(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
       [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
   # =diff
   mpr:sourcegray
-    -compose Difference -composite"
+    $Difference"
 
       [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
   # =neg
@@ -2456,7 +2456,7 @@ focus_merge_masks() {
                 Mergecode="$Mergecode
   mpr:mergemask
     -alpha off
-    -compose Difference -composite"
+    $Difference"
               ;;
             esac
           ;;
@@ -2523,7 +2523,7 @@ focus_hard() {
 
   local Resultimage Maskmaxcopy=
   local Firstimage Lastimage
-  local Focusimagebasename Focusimagefile Focusimagemaskfile
+  local Focusimagebasename Focusimagefile Focusimagemaskfile Focusimagedepthfile
   local Command Count
   local Longoptions Parsedoptions
   local Focuscode=
@@ -2691,6 +2691,7 @@ focus_hard() {
   Focusimagebasename="focus-hard.$Firstimage..$Lastimage.$(md5cut "$(masklist "$Mergemaskbasename") $Focuscode")"
   Focusimagefile="$Cachedir/$Focusimagebasename.tif"
   Focusimagemaskfile="$Cachedir/$Focusimagebasename.mask.tif"
+  Focusimagedepthfile="$Cachedir/$Focusimagebasename.depth.tif"
 
   [ -e "$Focusimagefile" ] && {
     sendmagickmessage "NOTE:Skipping focus_hard(), image already exists."
@@ -2714,8 +2715,6 @@ focus_hard() {
   sendmagickmessage "NOTE:Focus montage hard"
 
   load_sourceimages $Firstimage $Lastimage
-  
-  generate_image --mode black --name $Cachedir/depth.mpc
 
   Command="
   mpr:transparent
@@ -2724,6 +2723,10 @@ focus_hard() {
   mpr:black
     -alpha off
     -write mpr:resultmask
+    -delete 0
+  mpr:black
+    -alpha off
+    -write mpr:depthmap
     -delete 0"
   maskarg_single "cutless" && Command="$Command
   mpr:transparent
@@ -2767,8 +2770,8 @@ focus_hard() {
     Command="$Command
   $Focuscode"
 
-    [ "$Testsetup" ] && Command="$Command
-  # sort of depth map
+    Command="$Command
+  # depth map
   mpr:black
     +level $(calc "100*($Sourceimagenumber-$Count)/$Sourceimagenumber")%
   mpr:cutmask
@@ -2776,10 +2779,10 @@ focus_hard() {
     -compose CopyOpacity -composite
     -write mpr:sourcepart
     -delete 0
-  $Cachedir/depth.mpc
+  mpr:depthmap
   mpr:sourcepart
     -compose Over -composite
-    -write $Cachedir/depth.mpc
+    -write mpr:depthmap
     -delete 0"
 
     Command="$Command
@@ -2814,9 +2817,20 @@ focus_hard() {
   mpr:resultmask
     $Tifstore
     -write '$Focusimagemaskfile'
+    -delete 0
+  mpr:depthmap
+    $Tifstore
+    -write '$Focusimagedepthfile'
     -delete 0"
   cmd "$Command"
   cmd_waitforready
+
+  note "focus_hard() results:
+$Focusimagefile
+  Mask:
+$Focusimagemaskfile
+  Depth map:
+$Focusimagedepthfile"
 
   [ "$Maskmaxcopy" ] && {
     Command="
@@ -3139,7 +3153,6 @@ focus_main() {
     Command="
   # composing substack results
   mpr:resultimage"
-    note "$Substacknumber N"
     for Substackstep in $(seq $Substacknumber -1 1); do
       Command="$Command
   '${Substackresultpost[$Substackstep]}'
@@ -3430,10 +3443,10 @@ maskarg_defaultvalue() {
     image)
       case "$Method" in
         enfuse)       Output="enfuse" ;;
-        max)          Output="max" ;;
-        mean)         Output="mean" ;;
-        median)       Output="median" ;;
-        min)          Output="min" ;;
+        max)          Output="Max" ;;
+        mean)         Output="Mean" ;;
+        median)       Output="Median" ;;
+        min)          Output="Min" ;;
       esac
     ;;
     level)
@@ -3670,7 +3683,7 @@ maskarg_defaultvalue() {
       case "$Method" in
         comet)        Output="Lighten" ;;
         compass)      Output="Lighten" ;;
-        compose)      Output="Interpolate" ;;
+        compose)      Output="Overlay" ;;
         diffstat)     Output="Median" ;;
         evaluate)     Output="Max" ;;
         freichen)     Output="" ;;
@@ -3980,6 +3993,9 @@ maskarg_short() {
       ;;
       image)
         [ -n "$Argimage" ]       && Append=",I=$Argimage"
+        [ "$Argimage" = "$(maskarg_defaultvalue "$Argmethod" image "$Argimage")" ] && case "$Argmethod" in
+          enfuse|max|min|mean|median) Append=""
+        esac
       ;;
       colorspace)
         [ -n "$Argcolorspace" ]  && Append=",C=$Argcolorspace"
@@ -4263,6 +4279,7 @@ declare_variables() {
   Cachedir=""
   Colorspace=""
   Colorspacechannel=""
+  Difference=""
   Exifsourceimage=""
   Firstimage=""
   Force=""
@@ -4736,6 +4753,28 @@ trap - ERR"
     --showname)
       echo "$Outputimage"
       finish
+    ;;
+  esac
+
+  case "$Difference" in
+    1) 
+      Difference="
+    -compose Difference -composite"
+    ;;
+    2|"")
+      Difference="
+    -compose Difference -composite
+    -evaluate Divide 3
+    -separate -evaluate-sequence add"
+    ;;
+    3)
+      Difference="
+    -compose Difference -composite \
+    -evaluate Pow 2
+    -evaluate divide 3
+    -separate \
+    -evaluate-sequence Add
+    -evaluate Pow 0.5"
     ;;
   esac
 
