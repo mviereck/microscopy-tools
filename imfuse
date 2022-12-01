@@ -1247,7 +1247,7 @@ evaluate() {
   sendmagickmessage "NOTE:Evaluating $Mode: $Resultimage"
 
   [ "$Loadsourceimages" = "no" ] && {
-    case "$Mode" in
+    case "${Mode,,}" in
       max|min|mean)
         #evaluate_splitlist "$Mode" "$Resultimage" "${Imagelist[@]}"
         evaluate_iterative "$Mode" "$Resultimage" "${Imagelist[@]}"
@@ -1284,7 +1284,7 @@ evaluate_iterative() {
     Imagelist[$Imagenumber]="${1:-}"
     shift
   done
-  case "$Mode" in
+  case "${Mode,,}" in
     max) Mode="lighten" ;;
     min) Mode="darken" ;;
   esac
@@ -1292,7 +1292,7 @@ evaluate_iterative() {
   sendmagickmessage "STOPWATCH"
   Command="
   '${Imagelist[$Imagenumber]}'"
-  case "$Mode" in
+  case "${Mode,,}" in
     darken|lighten)
       for Count in $(seq $((Imagenumber-1)) -1 1); do
         Command="$Command
@@ -2425,13 +2425,6 @@ focus_merge_masks() {
         Mergecode="$Mergecode
   mpr:mergemask"
 
-        [ "$Testsetup" ] && {
-          Argthreshold1="${Testarg:-50}"
-          Mergecode="$Mergecode
-  -black-threshold $Argthreshold1%
-          "
-        }
-
         case "${Imoptions[$Count]}" in
 
           maskblur)
@@ -2719,6 +2712,8 @@ focus_hard() {
   sendmagickmessage "NOTE:Focus montage hard"
 
   load_sourceimages $Firstimage $Lastimage
+  
+  generate_image --mode black --name $Cachedir/depth.mpc
 
   Command="
   mpr:transparent
@@ -2760,16 +2755,31 @@ focus_hard() {
   # get area of source mask equal or sharper than current max
   mpr:resultmask
   mpr:mergemask
-    -compose MinusSrc -composite -fill white +opaque black
     -alpha off
+    -compose MinusSrc -composite -fill white +opaque black
     -negate
-    -grayscale RMS
+    #-grayscale RMS
     -write mpr:cutmask
     -delete 0"
 
     # add --cut* options
     Command="$Command
   $Focuscode"
+
+    [ "$Testsetup" ] && Command="$Command
+  # sort of depth map
+  mpr:black
+    +level $(calc "100*($Sourceimagenumber-$Count)/$Sourceimagenumber")%
+  mpr:cutmask
+    -alpha off
+    -compose CopyOpacity -composite
+    -write mpr:sourcepart
+    -delete 0
+  $Cachedir/depth.mpc
+  mpr:sourcepart
+    -compose Over -composite
+    -write $Cachedir/depth.mpc
+    -delete 0"
 
     Command="$Command
   # get part of source image
@@ -2790,7 +2800,6 @@ focus_hard() {
 #    $(showimagecode "mpr:resultimage")
 
     cmd "$Command"
-    sleep 1
   done
   sendmagickmessage "/PROGRESS"
 
