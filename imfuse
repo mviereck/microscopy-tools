@@ -142,6 +142,8 @@ Step 2: Mask generation
                       Recommended: Lighten, Darken.
                       Adjust only sigma, radius 0 is adjusted automatically.
  --compass [=ARG]     Compass edge detection.
+                        (word)   mode              Default: $(maskarg_defaultvalue compass word1)
+                      mode can be one of 'magick -list compose'
  --dog [=ARG]         Difference of Gaussian.
                       ARG additionally takes arguments: 
                         r        radius            Default: $(maskarg_defaultvalue dog radius1)
@@ -1985,8 +1987,8 @@ focus_maskmethod() {
     comet)
       Maskgenerator="$Maskgenerator
   mpr:sourcegray 
-    -define morphology:compose=${Argword1:-Lighten}
-    -morphology Convolve Comet:${Argradius1:-0}x${Argsigma1}:>
+    -define morphology:compose=${Argword1}
+    -morphology Convolve Comet:${Argradius1}x${Argsigma1}:>
   mpr:sourcegray
     -compose difference -composite"
     ;;
@@ -1994,7 +1996,7 @@ focus_maskmethod() {
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:scale=50%!
-    -define morphology:compose=Lighten
+    -define morphology:compose=${Argword1}
     -define convolve:bias=50%
     -morphology Convolve Compass:>"
     #-compose Difference -composite" # sort of interesting.
@@ -2005,14 +2007,14 @@ focus_maskmethod() {
   mpr:sourcegray"
       } || {
         Maskgenerator="$Maskgenerator
-  ( mpr:sourcegray -statistic ${Argword1:-median} ${Argradius1} )"
+  ( mpr:sourcegray -statistic ${Argword1} ${Argradius1} )"
       }
       [ "$Argword2" = "source" ] && {
         Maskgenerator="$Maskgenerator
   mpr:sourcegray"
       } || {
         Maskgenerator="$Maskgenerator
-  ( mpr:sourcegray -statistic ${Argword2:-mean} ${Argradius1} )"
+  ( mpr:sourcegray -statistic ${Argword2} ${Argradius1} )"
 Maskgenerator="$Maskgenerator
     -compose Difference -composite"
       }
@@ -2021,7 +2023,7 @@ Maskgenerator="$Maskgenerator
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:scale=100,100%
-    -morphology Convolve DoG:${Argradius1:-0},${Argsigma1},${Argsigma2}
+    -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -2029,7 +2031,7 @@ Maskgenerator="$Maskgenerator
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:scale=-100,200%
-    -morphology Convolve Gaussian:${Argradius1:-0}x${Argsigma1:-0.75}
+    -morphology Convolve Gaussian:${Argradius1}x${Argsigma1}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -2052,7 +2054,7 @@ Maskgenerator="$Maskgenerator
     experimental)
       Maskgenerator="$Maskgenerator
   ( mpr:sourcegray -colorspace HSB -channel 1 -separate +channel )
-    -statistic standarddeviation ${Argradius1:-2}x${Argradius1:-2}"
+    -statistic standarddeviation ${Argradius1}x${Argradius1}"
     ;;
     freichen)
       case $Argword1 in
@@ -2081,14 +2083,14 @@ Maskgenerator="$Maskgenerator
     -define convolve:scale=100%!
     -define morphology:compose=Screen
     -define convolve:bias=10%
-    -morphology Convolve FreiChen:${Argword1:-0}>"
+    -morphology Convolve FreiChen:${Argword1}>"
         ;;
       esac
     ;;
     gaussian)
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
-    -gaussian-blur ${Argradius1:-0}x${Argsigma1}
+    -gaussian-blur ${Argradius1}x${Argsigma1}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -2096,7 +2098,7 @@ Maskgenerator="$Maskgenerator
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:scale=100%!
-    -define morphology:compose=screen
+    -define morphology:compose=Screen
     -define convolve:bias=15%
     -morphology Convolve Kirsch:>"
     ;;
@@ -2105,26 +2107,26 @@ Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:bias=5%
     -define convolve:scale=100%!
-    -morphology Convolve Laplacian:${Argword1:-0}>"
+    -morphology Convolve Laplacian:${Argword1}>"
     ;;
     log)  # LoG: Laplacian of Gaussian
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:scale=100,100%
-    -morphology Convolve LoG:${Argradius1:-0}x${Argsigma1}
+    -morphology Convolve LoG:${Argradius1}x${Argsigma1}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
     morphology)
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
-    -morphology ${Argword1}:${Argradius2} ${Argword2:-Octagon}:${Argradius1}"
+    -morphology ${Argword1}:${Argradius2} ${Argword2}:${Argradius1}"
     ;;
     prewitt)
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:scale=100%!
-    -define morphology:compose=screen
+    -define morphology:compose=Screen
     -define convolve:bias=10%
     -morphology Convolve Prewitt:>"
     ;;
@@ -2132,7 +2134,7 @@ Maskgenerator="$Maskgenerator
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:scale=100%
-    -define morphology:compose=screen
+    -define morphology:compose=Screen
     -define convolve:bias=10%
     -morphology Convolve Roberts:@"
     ;;
@@ -2141,18 +2143,18 @@ Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:scale=100%!
     -define convolve:bias=10%
-    -define morphology:compose=screen
+    -define morphology:compose=Screen
     -morphology Convolve Sobel:>"
     ;;
     statistic)
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
-    -statistic ${Argword1:-"StandardDeviation"} ${Argradius1}x${Argradius1}"
+    -statistic ${Argword1} ${Argradius1}x${Argradius1}"
     ;;
     unsharp)
       Maskgenerator="$Maskgenerator
   mpr:sourcegray
-    -unsharp ${Argradius1:-0}x${Argsigma1}
+    -unsharp ${Argradius1}x${Argsigma1}
   mpr:sourcegray
     -compose Difference -composite"
     ;;
@@ -2753,12 +2755,11 @@ focus_hard() {
     -delete 0
 
   # get area of source mask equal or sharper than current max
-  mpr:resultmask
   mpr:mergemask
+  mpr:resultmask
     -alpha off
-    -compose MinusSrc -composite -fill white +opaque black
+    -compose Minus -composite -fill white +opaque black
     -negate
-    #-grayscale RMS
     -write mpr:cutmask
     -delete 0"
 
@@ -3045,6 +3046,14 @@ focus_main() {
   focus_merge_masks
   sendmagickmessage "NOTE:Generating masks ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
+  Command="
+  # base for result image
+  mpr:transparent
+    -alpha set
+    -write mpr:resultimage
+    -delete 0"
+  cmd "$Command"
+
   # Focus stacking
   [ "$Maskmethodnumber" -gt "0" ] && { 
     for Substackstep in $(seq $Substacknumber -1 1); do
@@ -3123,29 +3132,27 @@ focus_main() {
         done
       }
     done
-  }
-  cmd_waitforready
-  sendmagickmessage "NOTE:Postprocessing ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
-  Command="
+    cmd_waitforready
+    sendmagickmessage "NOTE:Postprocessing ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+
+    Command="
   # composing substack results
-  mpr:transparent
-    -alpha set
-    -write mpr:resultimage
-    -delete 0
   mpr:resultimage"
-  for Substackstep in $(seq $Substacknumber -1 1); do
-    Command="$Command
+    note "$Substacknumber N"
+    for Substackstep in $(seq $Substacknumber -1 1); do
+      Command="$Command
   '${Substackresultpost[$Substackstep]}'
     -compose Over -composite
-    $(showimagecode)"
-  done
-  Command="$Command
+      $(showimagecode)"
+    done
+    Command="$Command
     -write mpr:resultimage
     $(showimagecode)
     -delete 0"
-  cmd "$Command"
-  cmd_waitforready
+    cmd "$Command"
+    cmd_waitforready
+  }
 
   # Generate result image
   case "$Storelayered" in
@@ -3662,7 +3669,8 @@ maskarg_defaultvalue() {
     word1)
       case "$Method" in
         comet)        Output="Lighten" ;;
-        compose)      Output="Overlay" ;;
+        compass)      Output="Lighten" ;;
+        compose)      Output="Interpolate" ;;
         diffstat)     Output="Median" ;;
         evaluate)     Output="Max" ;;
         freichen)     Output="" ;;
@@ -3862,7 +3870,7 @@ maskarg_checkallowed() {
             *) error "$Method does not take argument: $Arg" ;;
           esac
         ;;
-        compose|comet|merge|soft)
+        compose|comet|compass|merge|soft)
           checkmagicklist compose "$Arg" || error "--$Method: unknown argument for word1: $Arg
   Please choose one out of 'magick -list compose'"
           Argword1="$(checkmagicklist compose "$Arg" print)"
@@ -4000,7 +4008,7 @@ maskarg_short() {
       word1)
         [ -n "$Argword1" ]       && Append=",$Argword1"
         [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1 "$Argword1")" ] && case "$Argmethod" in
-          comet|diffstat|statistic|level|merge|soft) Append=""
+          comet|compass|diffstat|statistic|level|merge|soft) Append=""
         esac
       ;;
       word2)
