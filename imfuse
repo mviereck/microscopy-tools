@@ -12,8 +12,7 @@ Version="0.8.9-beta"
 # drop --unsharp?
 
 usage() {
-  echo "imfuse v$Version
-Combines focus stackshot images to one overall sharp image.
+  echo "imfuse: Combines focus stackshot images to one overall sharp image.
 
 Usage:
   imfuse [OPTIONS] -- image1 image2 image3 ...
@@ -474,7 +473,8 @@ Without them this project would not have been possible.
 A first start to get an idea of the stackshot image fusing workflow was
 inspired by Alan Gibson's focStack.bat at https://im.snibgo.com/focstack.htm .
 imfuse also contains code from Fred Weinhaus with his friendly permisson.
-"
+
+imfuse version: v$Version"
 }
 
 ### Messages
@@ -762,12 +762,22 @@ check_outputname() {
   # Generate a unique output name showing options
 
   Resultbasename=""
-  [ "$Align" = "yes" ] && Resultbasename="${Resultbasename}_align"
+  Comment=""
+  [ "$Align" = "yes" ] && {
+    Resultbasename="${Resultbasename}_align"
+    Comment="$Comment --align"
+  }
 
   # step colorspace
-  maskarg_single "colorspace" && Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+  maskarg_single "colorspace" && {
+    Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+    Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+  }
   # step grayscale
-  maskarg_single "grayscale" && Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+  maskarg_single "grayscale" && {
+    Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+    Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+  }
 
   # step mask generation
   for Count in $(seq "$Imoptionsnumber"); do
@@ -776,6 +786,7 @@ check_outputname() {
       mask)
         #Resultbasename="${Resultbasename}_${Argshort}=${Imarguments[$Count]%TYPE*}"
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
       ;;
     esac
   done
@@ -786,19 +797,30 @@ check_outputname() {
     case "$Argtype" in
       merge)
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
       ;;
     esac
   done
-  maskarg_single "merge" && Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-  maskarg_single "level" && Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+  maskarg_single "merge" && {
+    Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+    Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+  }
+  maskarg_single "level" && {
+    Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+    Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+  }
 
   # step focus
-  maskarg_single "soft"    && Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+  maskarg_single "soft"    && {
+    Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+    Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+  }
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argtype" in
       focus)
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
       ;;
     esac
   done
@@ -809,6 +831,7 @@ check_outputname() {
     case "$Argtype" in
       substack)
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
       ;;
     esac
   done
@@ -819,6 +842,7 @@ check_outputname() {
     case "$Argtype" in
       postfocus)
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
       ;;
     esac
   done
@@ -829,12 +853,13 @@ check_outputname() {
     case "$Argtype" in
       background)
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
+        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
       ;;
     esac
   done
 
   # misc
-  [ -n "$Revertimagelist" ]   && Resultbasename="${Resultbasename}_rev"
+  [ -n "$Revertimagelist" ]   && {Resultbasename="${Resultbasename}_rev"
   [ "$Storelayered" = "yes" ] && Resultbasename="${Resultbasename}_layered"
   [ -n "$Testsetup" ]         && Resultbasename="${Resultbasename}_test$Testarg"
 
@@ -842,7 +867,8 @@ check_outputname() {
 
   Resultbasename="${Resultbasename#,}_md${Fusemd5sum}"
   Resultbasename="$(unspecialstring "$Resultbasename")"
-  Resultbasename="$(sed "s/StandardDeviation/Dev/g ; s/w100,//g ; s/w100//g ; s/,--/--/g ; s/,_/_/g ; s/=--/--/g ; s/=,/,/g ; s/=_/_/g ; s/=\./\./g" <<< "$Resultbasename")"
+  #Resultbasename="$(sed "s/StandardDeviation/Dev/g ; s/w100,//g ; s/w100//g ; s/,--/--/g ; s/,_/_/g ; s/=--/--/g ; s/=,/,/g ; s/=_/_/g ; s/=\./\./g" <<< "$Resultbasename")"
+  Comment="$(sed "s/= / /g ; s/w100,//g ; s/=$//g" <<< "$Comment")"
 
   [ -z "${Outputdir:-}" ] && Outputdir="./"
   case $Outputimage in
@@ -853,6 +879,8 @@ check_outputname() {
 
   # --savemask
   [ "$Savemask" = "auto" ] && Savemask="$Outputimage.mask.tif"
+
+  Comment="${Comment#" "}"
 
   return 0
 }
@@ -3229,10 +3257,10 @@ focus_main() {
   imfuse has generated an empty transparent result image.
   Suggestion: Try at least '--background=enfuse', or short: --bg"
 
-  # --savemask ### FIXME
+  # --savemask
   [ "$Savemask" ] && {
     cmd "  # --savemask"
-    #evaluate max "$Savemask" ${Substackmaskpost[$Substackstep]}
+    evaluate max "$Savemask" ${Substackmaskpost[$Substackstep]}
   }
 
   return 0
@@ -4279,6 +4307,7 @@ declare_variables() {
   Cachedir=""
   Colorspace=""
   Colorspacechannel=""
+  Comment=""
   Difference=""
   Exifsourceimage=""
   Firstimage=""
@@ -4659,7 +4688,9 @@ main_setup() {
   Memory limit for imagemagick:       $((Limitmemory/1000)) MB
   Loading source images to RAM:       $Loadsourceimages"
   note "Option summary:
-$Resultbasename"
+$Resultbasename
+  Parsed Options:
+$Comment"
 
   # start magick -script in background
   Magickfifo="$Cachedir/magickfifo.$Imfusepid"
@@ -4788,6 +4819,9 @@ trap - ERR"
 
   # --exif: transfer EXIF metadata from first image to result
   [ "$Exifsourceimage" ] && exiftransfer "$Exifsourceimage" "$Outputimage"
+  command -v exiftool && {
+    exiftool -Software="imfuse v$Version" -ImageDescription="$Comment" "$Outputimage"
+  }
 
   # throw out
   cmd "-exit"
