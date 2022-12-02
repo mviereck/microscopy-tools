@@ -175,10 +175,9 @@ Step 2: Mask generation
                       mode1 and mode2 can be two of 'magick -list evaluate'.
  --freichen [=ARG]    Frei-Chen edge detection.
                       ARG additionally takes arguments: 
-                        (word)   modenumber
+                        n        mode number   Default: Combination of 1 and 2.
                       Possible mode numbers at:
                       http://www.imagemagick.org/Usage/convolve/#freichen
-                                    Default: A combination of modes 1 and 2.
  --gaussian [=ARG]    Gaussian blur edge detection. 
                       Similar to --blur, but slower and more accurate.
                       ARG additionally takes argument: 
@@ -188,7 +187,7 @@ Step 2: Mask generation
  --kirsch [=ARG]      Kirsch edge detection. 
  --laplacian [=ARG]   Laplacian edge detection.
                       ARG additionally takes argument: 
-                        (word)   modenumber        Default: $(maskarg_defaultvalue laplacian word1)
+                        n        mode number       Default: $(maskarg_defaultvalue laplacian number1)
                       Possible mode numbers at:
                       http://www.imagemagick.org/Usage/convolve/#laplacian
  --log [=ARG]         Laplacian of Gaussian.
@@ -958,7 +957,7 @@ maskexist() {
   case "$Masktocache" in
     yes)
       for Count in $(seq $Firstimage $Lastimage); do
-        [ -e "$Cachedir/mask.${1:-}.$(printnum "$Count").${Masksuffix}" ] || return 1
+        [ -e "$Cachedir/mask.${1:-}.$(printnum "$Count").${Maskformat}" ] || return 1
       done
       return 0
     ;;
@@ -972,7 +971,7 @@ maskname() {
   [ -z "${2:-}" ] && error "maskname(): number not given: ${1:-} ${2:-}"
   case "$Masktocache" in
     yes)
-      echo "$Cachedir/mask.${1:-}.$(printnum "${2:-}").${Masksuffix}"
+      echo "$Cachedir/mask.${1:-}.$(printnum "${2:-}").${Maskformat}"
     ;;
     no)
       echo "mpr:${1:-}.$(printnum "${2:-}")"
@@ -2083,7 +2082,7 @@ Maskgenerator="$Maskgenerator
     -statistic standarddeviation ${Argradius1}x${Argradius1}"
     ;;
     freichen)
-      case $Argword1 in
+      case $Argnumber1 in
         "")
           Maskgenerator="$Maskgenerator
   (
@@ -2109,7 +2108,7 @@ Maskgenerator="$Maskgenerator
     -define convolve:scale=100%!
     -define morphology:compose=Screen
     -define convolve:bias=10%
-    -morphology Convolve FreiChen:${Argword1}>"
+    -morphology Convolve FreiChen:${Argnumber1}>"
         ;;
       esac
     ;;
@@ -2133,7 +2132,7 @@ Maskgenerator="$Maskgenerator
   mpr:sourcegray
     -define convolve:bias=5%
     -define convolve:scale=100%!
-    -morphology Convolve Laplacian:${Argword1}>"
+    -morphology Convolve Laplacian:${Argnumber1}>"
     ;;
     log)  # LoG: Laplacian of Gaussian
       Maskgenerator="$Maskgenerator
@@ -3301,6 +3300,8 @@ maskarg_check() {
   [ -z "$Argimage"  ]      && Argimage="$(maskarg_defaultvalue      "$Argmethod" image)"
   [ -z "$Arglevel"  ]      && Arglevel="$(maskarg_defaultvalue      "$Argmethod" level)"
   [ -z "$Argnegate"  ]     && Argnegate="$(maskarg_defaultvalue     "$Argmethod" negate)"
+  [ -z "$Argnumber1"  ]    && Argnumber1="$(maskarg_defaultvalue    "$Argmethod" number1)"
+  [ -z "$Argnumber2"  ]    && Argnumber2="$(maskarg_defaultvalue    "$Argmethod" number2)"
   [ -z "$Argpercent1" ]    && Argpercent1="$(maskarg_defaultvalue   "$Argmethod" percent1)"
   [ -z "$Argpercent2" ]    && Argpercent2="$(maskarg_defaultvalue   "$Argmethod" percent2)"
   [ -z "$Argradius1" ]     && Argradius1="$(maskarg_defaultvalue    "$Argmethod" radius1)"
@@ -3343,7 +3344,7 @@ maskarg_check() {
       Argword1=""
     ;;
     freichen)
-      case $Argword1 in
+      case $Argnumber1 in
         10|12|19) Argdiff=yes ;; ### FIXME really?
       esac
     ;;
@@ -3536,6 +3537,17 @@ maskarg_defaultvalue() {
         darkness)     Output="yes" ;;
       esac
     ;;
+    number1)
+      case "$Method" in
+        freichen)     Output="" ;;
+        laplacian)    Output="3" ;;
+      esac
+    ;;
+    number2)
+      case "$Method" in
+        freichen)     Output="" ;;
+      esac
+    ;;
     percent1)
       case "$Method" in
         alpha)        Output="0" ;;
@@ -3662,15 +3674,15 @@ maskarg_defaultvalue() {
         compose)      Output="Overlay" ;;
         diffstat)     Output="Median" ;;
         evaluate)     Output="Max" ;;
-        freichen)     Output="" ;;
-        laplacian)    Output="3" ;;
         morphology)   Output="EdgeOut" ;;
         statistic)    Output="StandardDeviation" ;;
 
         bg)           Output="enfuse" ;;
         cutmorph)     Output="Erode" ;;
+        format)       Output="tif" ;;
         grayscale)    Output="Rec709Luma" ;;
         level)        Output="all" ;;
+        maskformat)   Output="mpc" ;;
         maskmorph)    Output="Dilate" ;;
         maskstat)     Output="Mean" ;;
         merge)        Output="Screen" ;;
@@ -3755,7 +3767,13 @@ maskarg_checkallowed() {
         *) error "$Method does not take argument negate." ;;
       esac
     ;;
-    number1|number2)
+    number1)
+      case "$Method" in
+        freichen|laplacian|substacks) ;;
+        *) error "$Method does not take argument number: n$Arg" ;;
+      esac
+    ;;
+    number2)
       case "$Method" in
         substacks) ;;
         *) error "$Method does not take argument number: n$Arg" ;;
@@ -3847,7 +3865,6 @@ maskarg_checkallowed() {
   Please choose one out of 'magick -list intensity'"
           Argword1="$(checkmagicklist intensity "$Arg" print)"
         ;;
-        freichen|laplacian) ;;
         colorspace) 
           checkmagicklist colorspace "$Arg" || error "--$Method: unknown colorspace: $Arg
   Please choose one out of 'magick -list colorspace'"
@@ -4263,7 +4280,7 @@ declare_variables() {
   Grayscaleconverter=""
   Grayscalenumber=""
   Image=""
-  Imageformat="tif"
+  Imageformat=""
   Imageheight=""
   Imagelistmemsize=""
   Imagememsize=""
@@ -4286,7 +4303,7 @@ declare_variables() {
   Magickscriptpid=""
   Magickversion=""
   Maskmethodnumber="0"
-  Masksuffix="mpc"
+  Maskformat=""
   Masktocache="no"
   Mergemaskbasename=""
   Oneaction=""
@@ -4299,7 +4316,7 @@ declare_variables() {
   Resultbasename=""
   Savemask=""
   Showimage=""
-  Showimageprocessing=""
+  Showimageprocessing="no"
   Singleoptionlist=""
   Subprocess=""
   Substackautoall="no"
@@ -4340,7 +4357,7 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
   Shortoptions="ho:vVW"
-  Longoptions="basename:,cache::,exif::,force::,help,license,limit-memory::,mask2cache,output:,rmcache,savemask::,showimage,showname,sub::,test::,verbose,version,video"
+  Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,maskformat::,output:,rmcache,savemask::,showimage,showname,sub::,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::,grayscale::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
@@ -4362,9 +4379,11 @@ parse_options() {
       --cache)             Cachedir="${2:-auto}"               ; shift ;;
       --exif)              Exifsourceimage="${2:-auto}"        ; shift ;;
       --force)             Force="${2:-yes}"                   ; shift ;;
+      --format)            Imageformat="${2:-tif}"             ; shift ;;
       --layered)           Storelayered="yes"                  ;;
       --limit-memory)      Limitmemory="${2:-"80%"}"           ; shift ;;
       --mask2cache)        Masktocache="yes"                   ;;
+      --maskformat)        Maskformat="${2:-mpc}"              ; shift ;;
       -o|--output)         Outputimage="${2:-}"                ; shift ;;
       --revert)            Revertimagelist="-r"                ;;
       --savemask)          Savemask="${2:-auto}"               ; shift ;;
@@ -4468,8 +4487,14 @@ check_options() {
     command -v exiftool >/dev/null || error "Option --exif: exiftool not found."
   }
 
+  # --format
+  Imageformat="${Imageformat:-"$(maskarg_defaultvalue format word1)"}"
+
   # --grayscale
   maskarg_single "grayscale"  && Grayscale="-grayscale $Argword1"
+
+  # --maskformat
+  Maskformat="${Maskformat:-"$(maskarg_defaultvalue maskformat word1)"}"
 
   # --substacks
   for Count in $(seq "$Imoptionsnumber"); do
@@ -4533,7 +4558,6 @@ check_options() {
     maskarg_single "cutwave"  && Softmode="error"
     [ "$Softmode" = "error" ] && error "Option --soft does not support options --cut*."
   }
-
 
   # -V, --showimage
   [ "$Showimageprocessing" = "yes" ] && {
