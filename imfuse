@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse - Combines focus stackshot images to one overall sharp image.
-Version="0.9.0-beta"
+Version="0.9.1-beta"
 
 ### Information
 
@@ -38,7 +38,7 @@ from front to back; for the other way around use option --revert.
 
 Dependencies:
   ImageMagick 7       Mandatory (command 'magick').
-  exiftool            Optional, needed to set and transfer metadata.
+  exiftool            Optional, needed to set and transfer image metadata.
   enfuse              Optional, needed for options --enfuse and --bg=enfuse.
   geeqie              Optional, needed for option -V, --showimage.
   viewnior            Optional, needed for option -W to show result image.
@@ -517,7 +517,6 @@ verbose() {
 showimage() {
   local Frame
   [ "$Showimageprocessing" = "yes" ] && geeqie -t -r --File:"${1:-}" 2>/dev/null &
-  #[ "$Showimageprocessing" ] && bash imgview "${1:-}"
   [ "$Video" ] && {
 #    Videoframecount="$((Videoframecount+1))"
     Videoframecount="$(ls "$Cachedir"/videoframe????.* | sort -V | tail -n1)"
@@ -780,35 +779,25 @@ printfreememory() {
 ### Files
 
 check_outputname() {
-  # Generate a unique output name showing options
+  # Generate a unique output name and parsed option string for EXIF meta data
+  local Outputtime
 
-  Resultbasename=""
-  Comment=""
-  [ "$Align" = "yes" ] && {
-    Resultbasename="${Resultbasename}_align"
-    Comment="$Comment --align"
-  }
+  Parsedoptions=""
+  [ "$Align" = "yes" ] && Parsedoptions="$Parsedoptions --align"
 
   # step colorspace
-  maskarg_single "colorspace" && {
-    Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-    Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
-  }
+  maskarg_single "colorspace" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
+
   # step grayscale
-  maskarg_single "grayscale" && {
-    Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-    Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
-  }
+  maskarg_single "grayscale" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
 
   # step mask generation
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argtype" in
       mask)
-        #Resultbasename="${Resultbasename}_${Argshort}=${Imarguments[$Count]%TYPE*}"
-        Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
-      ;;
+        Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
+     ;;
     esac
   done
 
@@ -817,31 +806,20 @@ check_outputname() {
     maskarg_parse "$Count"
     case "$Argtype" in
       merge)
-        Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
+        Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
       ;;
     esac
   done
-  maskarg_single "merge" && {
-    Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-    Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
-  }
-  maskarg_single "level" && {
-    Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-    Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
-  }
+  maskarg_single "merge" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
+  maskarg_single "level" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
 
   # step focus
-  maskarg_single "soft"    && {
-    Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-    Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
-  }
+  maskarg_single "soft"  && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argtype" in
       focus)
-        Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
+        Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
       ;;
     esac
   done
@@ -851,8 +829,7 @@ check_outputname() {
     maskarg_parse "$Count"
     case "$Argtype" in
       substack)
-        Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
+        Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
       ;;
     esac
   done
@@ -862,8 +839,7 @@ check_outputname() {
     maskarg_parse "$Count"
     case "$Argtype" in
       postfocus)
-        Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
+        Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
       ;;
     esac
   done
@@ -873,35 +849,36 @@ check_outputname() {
     maskarg_parse "$Count"
     case "$Argtype" in
       background)
-        Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
+        Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
       ;;
     esac
   done
 
   # misc
-  [ -n "$Revertimagelist" ]   && {Resultbasename="${Resultbasename}_rev"
-  [ "$Storelayered" = "yes" ] && Resultbasename="${Resultbasename}_layered"
-  [ -n "$Testsetup" ]         && Resultbasename="${Resultbasename}_test$Testarg"
+  [ -n "$Revertimagelist" ]   && Parsedoptions="$Parsedoptions --revert"
+  [ "$Storelayered" = "yes" ] && Parsedoptions="$Parsedoptions --layered"
+  [ -n "$Testsetup" ]         && Parsedoptions="$Parsedoptions --test=$Testarg"
 
   Fusemd5sum="$(md5cut "$Sourcemd5 ${Imoptions[@]} ${Imarguments[@]} $Testsetup$Testarg" )"
 
-  Resultbasename="${Resultbasename#,}_md${Fusemd5sum}"
-  Resultbasename="$(unspecialstring "$Resultbasename")"
-  #Resultbasename="$(sed "s/StandardDeviation/Dev/g ; s/w100,//g ; s/w100//g ; s/,--/--/g ; s/,_/_/g ; s/=--/--/g ; s/=,/,/g ; s/=_/_/g ; s/=\./\./g" <<< "$Resultbasename")"
-  Comment="$(sed "s/= / /g ; s/w100,//g ; s/=$//g" <<< "$Comment")"
+  Resultbasename=""
+  Outputtime="$(date +%y-%m-%d_%H:%M)"
+  Resultbasename="${Resultbasename}${Outputtime}"
+  Resultbasename="${Resultbasename}_${Fusemd5sum}"
+  [ "$Storelayered" = "yes" ] && Resultbasename="_layered"
 
   [ -z "${Outputdir:-}" ] && Outputdir="./"
   case $Outputimage in
-    "") Outputimage="$Outputdir/${Outputbasename:-"imfuse"}${Resultbasename}.${Imageformat}" ;;
+    "") Outputimage="$Outputdir/${Outputbasename:-"imfuse"}.${Resultbasename}.${Imageformat}" ;;
     *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="${Outputdir}/{$Outputimage}" ;;
   esac
+  Outputimage_searchmask="$(sed "s/$Outputtime/??-??-??_??:??/g" <<< "$Outputimage")"
   [ "$Video" ] && Video="$Outputimage.webm"
 
   # --savemask
   [ "$Savemask" = "auto" ] && Savemask="$Outputimage.mask.tif"
 
-  Comment="${Comment#" "}"
+  Parsedoptions="${Parsedoptions#" "}"
 
   return 0
 }
@@ -1610,7 +1587,7 @@ generate_image() {
     esac
   }
   Subimfuse="imfuse --cache=$Cachedir --output=$Imagename --sub=bg-wave"
-  [ "$Showimage" ] && Subimfuse="$Subimfuse --showimage"
+  [ "$Showimageprocessing" = "yes" ] && Subimfuse="$Subimfuse --showimage"
 
   [ -z "$Imagename" ] && {
     note "generate_image() ERROR: No image name given and none created
@@ -1997,7 +1974,7 @@ threshold() {
   return 0
 }
 
-# core focus stack routines
+### core focus stack routines
 
 focus_maskmethod() {
   # Mask generating ImageMagick options
@@ -3017,7 +2994,7 @@ focus_soft() {
     -write mpr:addsource
     -delete 0"
 
-    [ "$Showimageprocessing" ] && {
+    [ "$Showimageprocessing" = "yes" ] && {
       Command="$Command
   # create result only for --show
   mpr:addsource
@@ -3328,7 +3305,6 @@ maskarg_check() {
   [ -z "$Argpercent2" ]    && Argpercent2="$(maskarg_defaultvalue   "$Argmethod" percent2)"
   [ -z "$Argradius1" ]     && Argradius1="$(maskarg_defaultvalue    "$Argmethod" radius1)"
   [ -z "$Argradius2" ]     && Argradius2="$(maskarg_defaultvalue    "$Argmethod" radius2)"
-  [ -z "$Argshort" ]       && Argshort="$(maskarg_defaultvalue      "$Argmethod" short)"
   [ -z "$Argsigma1" ]      && Argsigma1="$(maskarg_defaultvalue     "$Argmethod" sigma1)"
   [ -z "$Argsigma2" ]      && Argsigma2="$(maskarg_defaultvalue     "$Argmethod" sigma2)"
   [ -z "$Argthreshold1" ]  && Argthreshold1="$(maskarg_defaultvalue "$Argmethod" threshold1)"
@@ -3423,7 +3399,6 @@ maskarg_parse() {
       "neg")              Argnegate="yes" ;;
       "level")            Arglevel="$Value" ;;
       "TYPE")             Argtype="$Value" ;;
-      "SHORT")            Argshort="$Value" ;;
       "DIFF")             Argdiff="yes" ;;
       "BASENAME")         Argbasename="$Value" ;;
       *|WORD1|WORD2)
@@ -3459,7 +3434,6 @@ maskarg_store() {
   [ "$Argword1" ]              && Argoptions="$Argoptions,$Argword1"
   [ "$Argword2" ]              && Argoptions="$Argoptions,$Argword2"
   [ "$Argtype" ]               && Argoptions="$Argoptions,TYPE=$Argtype"
-  [ "$Argshort" ]              && Argoptions="$Argoptions,SHORT=$Argshort"
   [ "$Argdiff" ]               && Argoptions="$Argoptions,DIFF"
   [ "$Argbasename" ]           && Argoptions="$Argoptions,BASENAME=$Argbasename"
   Argoptions="${Argoptions#,}"
@@ -3603,54 +3577,6 @@ maskarg_defaultvalue() {
         cutmorph)     Output="1" ;;
         maskmorph)    Output="2" ;;
         morphology)   Output="1" ;;
-      esac
-    ;;
-    short)
-      case "$Method" in
-        blur|chroma|cmd|cmddiff|comet|compass|dog|enfuse|kirsch|log|unsharp)
-                      Output="$Method" ;;
-        diffstat)     Output="diff" ;;
-        freichen)     Output="frei" ;;
-        gaussian)     Output="gauss" ;;
-        laplacian)    Output="lap" ;;
-        morphology)   Output="morph" ;;
-        prewitt)      Output="prew" ;;
-        roberts)      Output="rob" ;;
-        sobel)        Output="sob" ;;
-        statistic)    Output="stat" ;;
-        wavelet)      Output="wave" ;;
-        channel)      Output="chan" ;;
-        darkness)     Output="dark" ;;
-        lightness)    Output="light" ;;
-        saturation)   Output="sat" ;;
-        compose)      Output="comp" ;;
-        evaluate)     Output="eval" ;;
-        min|max|mean|median) Output="$Method" ;;
-        experimental) Output="exp" ;;
-        maskblur)     Output="mblur" ;;
-        maskcmd)      Output="mcmd" ;;
-        maskmorph)    Output="mmorph" ;;
-        maskstat)     Output="mstat" ;;
-        maskwave)     Output="mwave" ;;
-        cutblur)      Output="cblur" ;;
-        cutcmd)       Output="ccmd" ;;
-        cutless)      Output="cless" ;;
-        cutmorph)     Output="cmorph" ;;
-        cutsoft)      Output="csoft" ;;
-        cutthreshold) Output="cthresh" ;;
-        cutwave)      Output="cwave" ;;
-        alpha)        Output="alpha" ;;
-        finalblur)    Output="fblur" ;;
-        finalblur2)   Output="fblur2" ;;
-        threshold)    Output="thresh" ;;
-        bg)           Output="bg" ;;
-        colorspace)   Output="col" ;;
-        grayscale)    Output="gray" ;;
-        level)        Output="lev" ;;
-        merge)        Output="merge" ;;
-        soft)         Output="soft" ;;
-        substacks)    Output="slab" ;;
-        *)            Output="$Method" ;;
       esac
     ;;
     sigma1)
@@ -4088,8 +4014,8 @@ maskarg_short() {
   done
 
   Output="${Output#,}"
-  [ -n "$Output" ] && Output="=$Output"
-  Output="$Argshort$Output"
+  [ -n "$Output" ] && Output="=${Output}"
+  Output="--${Argmethod}${Output}"
 
   echo "$Output"
 }
@@ -4211,7 +4137,7 @@ sendmagickmessage() {
 showimagecode() {
   local Image Imageformat
   # magick code to store current image and print a showimage message for readmagickmessage()
-  [ "$Showimageprocessing" ] && {
+  [ "$Showimageprocessing" = "yes" ] && {
     Image="${1:-}"
     Imageformat="$(rev <<< "$Image" | cut -d. -f1 | rev)"
     [ "$(cut -c1-4 <<< "$Image")" = "mpr:" ] && Imageformat="mpr"
@@ -4320,7 +4246,6 @@ declare_variables() {
   Argdiff=""
   Argmethod=""
   Argoptions=""
-  Argshort=""
   Argtype=""
   '
   eval $Arglist
@@ -4329,7 +4254,6 @@ declare_variables() {
   Cachedir=""
   Colorspace=""
   Colorspacechannel=""
-  Comment=""
   Difference=""
   Exifsourceimage=""
   Firstimage=""
@@ -4369,6 +4293,7 @@ declare_variables() {
   Outputbasename=""
   Outputdir=""
   Outputimage=""
+  Outputimage_searchmask=""
   Parsedoptions=""
   Revertimagelist=""
   Resultbasename=""
@@ -4611,7 +4536,7 @@ check_options() {
 
 
   # -V, --showimage
-  [ "$Showimageprocessing" ] && {
+  [ "$Showimageprocessing" = "yes" ] && {
     command -v geeqie >/dev/null || error "Option -V, --showimage: geeqie not found."
   }
 
@@ -4647,6 +4572,7 @@ check_magick() {
   Magickversion="$(head -n1 <<< "$Magickversion" | cut -d' ' -f3)"
 }
 main_setup() {
+  local Outputimage_check
 
   # --cache
   [ -n "$Cachedir" ] && {
@@ -4709,10 +4635,8 @@ main_setup() {
   Memory currently free:              $((Freemem/1000)) MB
   Memory limit for imagemagick:       $((Limitmemory/1000)) MB
   Loading source images to RAM:       $Loadsourceimages"
-  note "Option summary:
-$Resultbasename
-  Parsed Options:
-$Comment"
+  note "Parsed image processing options:
+$Parsedoptions"
 
   # start magick -script in background
   Magickfifo="$Cachedir/magickfifo.$Imfusepid"
@@ -4726,14 +4650,18 @@ $Comment"
   readmagickmessage & Magickmessagepid="$!"
 
   # --force
-  [ -f "$Outputimage" ] && [ -z "$Force" ] && {
-    showimage "$Outputimage"
-    [ "$Viewnior" ] && viewnior "$Outputimage" &
-    note "Output image already exists with matching md5sum.
+  [ -z "$Force" ] && {
+    Outputimage_check="$(find -wholename "$Outputimage_searchmask" | head -n1)"
+    [ -n "$Outputimage_check" ] && {
+      showimage "$Outputimage_check"
+      [ "$Viewnior" ] && viewnior "$Outputimage_check" &
+      note "Output image already exists with matching md5sum.
   You can force imfuse to run nonetheless with option --force."
-    echo $Outputimage
-    finish
+      echo "$Outputimage_check"
+      finish
+    }
   }
+
   [ "$Force" = "mask" ]  && forcemask
   [ "$Force" = "merge" ] && forcemerge
   [ "$Force" = "level" ] && forcelevel
@@ -4843,10 +4771,12 @@ trap - ERR"
   # run
   focus_main
 
-  # --exif: transfer EXIF metadata from first image to result
+  # --exif: transfer EXIF metadata from first image to result, store imfuse version and parsed options
   [ "$Exifsourceimage" ] && exiftransfer "$Exifsourceimage" "$Outputimage"
   command -v exiftool && {
-    exiftool -Software="imfuse v$Version" -ImageDescription="$Comment" "$Outputimage"
+    exiftool -Software="imfuse v$Version" -ImageDescription="$Parsedoptions" "$Outputimage"
+  } || {
+    note "Failed to store metadata in output image. Is exiftool installed?"
   }
 
   # throw out
