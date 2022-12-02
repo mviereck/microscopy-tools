@@ -223,8 +223,8 @@ Step 2: Mask generation
                         p        percent           Default: $(maskarg_defaultvalue wavelet percent1)%
 
   Image comparision masks: (most of interest: --enfuse)
-    All image comparision masks are converted to option --cmd
-    with arguments I=<name>,level=no
+    Adding --compose with e.g. =Overlay with a rather low weight
+    between w5..w25 can help to close gaps, especially in large dark areas.
 
  --compose [=ARG]     Composes evaluated min,max of source images with MODE.
                       ARG additionally takes argument:
@@ -250,8 +250,9 @@ Step 2: Mask generation
                       Result is similar to --darkness.
 
   Colorspace channel masks: (most of interest: --darkness)
-    All channel options are variations of --channel and are converted
-    to option --cmd.
+    All channel options are variations of --channel.
+    Adding --darkness with a rather low weight between w5..w25 can
+    help to close gaps, especially in large dark areas.
 
  --channel [=ARG]     Use a colorspace channel as mask.
                       ARG takes the general mask arguments:
@@ -306,7 +307,9 @@ Step 3: Mask merging
                       For percent value compare option -wavelet-denoise.
  --maskblur [=ARG]    Blur masks to enhance contrast and close minor gaps.
                       ARG takes arguments:
-                        s        sigma             Default: $(maskarg_defaultvalue maskblur sigma1)
+                        r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
+                        s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
+                      Adjust only sigma, radius 0 is adjusted automatically.
  --maskcmd [=ARG]     Custom ImageMagick option to apply on merged masks.
                       ARG takes argument:
                         (word)   string
@@ -373,7 +376,9 @@ Step 4: Stack fusion
                         s        sigma             Default: $(maskarg_defaultvalue cutsoft sigma1)
  --cutblur [=ARG]     Blur cut masks in final focus montage.
                       ARG takes argument:
+                        r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
                         s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
+                      Adjust only sigma, radius 0 is adjusted automatically.
  --cutcmd [=ARG]      Custom ImageMagick option to apply on cut mask.
                       ARG takes argument:
                         (word)   string
@@ -576,7 +581,7 @@ lowercase() {
 }
 md5cut() {
   # print last 6 digits
-  tr "\n" " " <<< "$*" | md5sum | cut -c27-32
+  grep -v "#" <<< "$*" | tr "\n" " " | md5sum | cut -c27-32
 }
 numberofpercent() {
   Number="${1:-}"
@@ -1540,7 +1545,7 @@ finalblur2() {
   cmd_waitforready
 }
 generate_image() {
-  local Mode Imagename= Swap Imagetype= Showname= Showmode= Command Size 
+  local Mode Imagename= Swap= Imagetype= Showname= Showmode= Command Size 
   local Generalimage= Skip= Subimfuse
   local Longoptions Parsedoptions
   local Firstimage Lastimage
@@ -1564,6 +1569,8 @@ generate_image() {
   Lastimage="${Lastimage:-$Sourceimagenumber}"
   Size="${Imagewidth}x${Imageheight}"
 
+  grep -q "2" <<< "$Mode" && Swap="-swap 0,1" || Swap=""
+  Mode="$(tr -d "2" <<< "$Mode")"
 
   checkmagicklist color                     "$Mode"   && Imagetype="color"    && Mode="$(checkmagicklist "$Imagetype" "$Mode" print)"
   checkmagicklist evaluate                  "$Mode"   && Imagetype="evaluate" && Mode="$(checkmagicklist "$Imagetype" "$Mode" print)"
@@ -1581,7 +1588,7 @@ generate_image() {
       wave)       Imagename="$Cachedir/wave.${Firstimage}..${Lastimage}.$Sourcemd5.tif" ;;
       wavedark)   Imagename="$Cachedir/wavedark.${Firstimage}..${Lastimage}.$Sourcemd5.tif" ;;
       evaluate)   Imagename="$Cachedir/evaluate.${Firstimage}..${Lastimage}.$Mode.$Sourcemd5.mpc" ;;
-      compose)    Imagename="$Cachedir/compose.${Firstimage}..${Lastimage}.$Mode.$Sourcemd5.mpc" ;;
+      compose)    Imagename="$Cachedir/compose.${Firstimage}..${Lastimage}.$Mode$([ "$Swap" ] && echo 2 ||:).$Sourcemd5.mpc" ;;
       color)      Imagename="mpr:$Mode" ;;
     esac
   }
@@ -1595,7 +1602,7 @@ generate_image() {
   }
 
   [ "$Showmode" ] && {
-    echo "$Mode"
+    echo "$Mode$([ "$Swap" ] && echo 2 ||:)"
     return 0
   }
   [ "$Showname" ] && {
@@ -1626,8 +1633,6 @@ generate_image() {
       cmd_waitforready
     ;;
     compose)
-      grep -q "2" <<< "$Mode" && Swap="-swap 0,1" || Swap=""
-      Mode="$(tr -d "2" <<< "$Mode")"
       generate_image --mode min --first $Firstimage
       generate_image --mode max --last $Lastimage
 
@@ -1669,6 +1674,43 @@ generate_video() {
   nice ffmpeg -y -hide_banner -nostdin  -r $Videoframerate -f image2 -start_number 1 -i "$Cachedir/videoframe%04d.$Imageformat" "$Video" || note "ERROR in video generation"
   rm "$Cachedir"/videoframe*
   ffplay "$Video"
+}
+imageproperties() {
+  Imageproperties="$($Magickbin $Sourceimagelist -evaluate-sequence mean -format '
+Imageautogamma=%[fx:log(mean)/log(0.5)]
+Imageminlevel=%[fx:minima*100]
+Imagemaxlevel=%[fx:maxima*100]
+Imagewidth=%[w]
+Imageheight=%[h]
+' -write info: \
+  -filter box -resize 1x1! -format "Imagemeancolor='%[pixel:u]'" -write info: \
+  -delete 0 \
+  -exit)"
+  eval $Imageproperties
+  
+  local Imagelist Imagenumber=0
+  local Command
+
+  while [ $# -gt 0 ]; do
+    Imagenumber="$((Imagenumber+1))"
+    Imagelist[$Imagenumber]="${1:-}"
+    shift
+  done
+
+  sendmagickmessage "STOPWATCH"
+  Command=""
+  for Count in $(seq $((Imagenumber)) -1 1); do
+    Command="
+  ${Imagelist[$Count]}
+  
+    -delete 0"
+  done
+
+  cmd "$Command"
+  cmd_waitforready
+  sendmagickmessage "/PROGRESS"
+
+  return 0
 }
 level_masks() {
   local Maskbasename Maskmax Maskmin Maskmd5 Clutimage Resultmask Clut= Round=
@@ -1998,7 +2040,6 @@ focus_maskmethod() {
     ;;
     cmd|channel|chroma|darkness|lightness|saturation|enfuse|compose|evaluate|max|min|mean|median)
       Maskgenerator="$Maskgenerator
-  # --$Method
   mpr:sourcegray 
     $Argword1"
     ;;
@@ -2607,7 +2648,7 @@ focus_hard() {
 
           cutblur)
             Focuscode="$Focuscode
-    -blur 0x${Argsigma1}"
+    -blur ${Argradius1}x${Argsigma1}"
           ;;
 
           cutcmd)
@@ -2617,7 +2658,7 @@ focus_hard() {
 
           cutless)
             Focuscode="$Focuscode
-  ##### --cutless
+  ### --cutless
     -write mpr:cutmask_max
     -delete 0
 
@@ -2628,14 +2669,14 @@ focus_hard() {
     -write mpr:maskmax_part
     -delete 0
 
-  # paint actual maskmax part into lessmask
+  # paint actual mergemask part into lessmask
   mpr:lessthanmax
   mpr:maskmax_part
     -compose Over -composite
     -write mpr:lessthanmax
     -delete 0
 
-  # get area of source mask that is stronger (+offset) than lessmask)
+  # get area of merge mask that is stronger (+offset) than lessmask)
   mpr:mergemask 
   ( mpr:lessthanmax -evaluate Add ${Argpercent1}% )
     -compose MinusSrc -composite
@@ -2648,7 +2689,7 @@ focus_hard() {
     -write mpr:cutmask_less
     -delete 0"
             Focuscode="$Focuscode
-  # reduce max in maskmax where --lessthanmax takes over
+  # reduce max in resultmask where --lessthanmax takes over
   mpr:mergemask
   mpr:cutmask_less
     -compose CopyOpacity -composite
@@ -2660,14 +2701,14 @@ focus_hard() {
     -write mpr:resultmask
     -delete 0
 
-  # darken lessmask with current source mask to get a mask with decreasing sharpness after a max peak
+  # darken lessmask with current merge mask to get a mask with decreasing sharpness after a max peak
   mpr:lessthanmax
   mpr:mergemask
     -compose Darken -composite
     -write mpr:lessthanmax
     -delete 0
 
-  # get area of source mask equal or sharper than current max (same code as above, but now with less-adjusted maskmax.
+  # get area of merge mask equal or sharper than current max (same code as above, but now with less-adjusted maskmax.
   mpr:mergemask
   mpr:resultmask
     -compose MinusDst -composite -fill white +opaque black
@@ -2677,7 +2718,40 @@ focus_hard() {
     -delete 0
 
   mpr:cutmask
-  ####/ --cutless"
+  ###/ --cutless"
+          ;;
+
+          cutmax)
+            Focuscode="$Focuscode
+  ### --cutmax
+  # get part of mergemask that fits current cutmask
+  mpr:mergemask
+  mpr:cutmask
+    -compose CopyOpacity -composite
+    -write mpr:mergemask_part
+    -delete 0
+  # get part of resultmask that fits current cutmask
+  mpr:resultmask
+  mpr:cutmask
+    -compose CopyOpacity -composite
+    -write mpr:resultmask_part
+    -delete 0
+  # get area where cutmask is stronger than resultmask
+  mpr:mergemask_part
+  mpr:resultmask_part
+    -alpha off
+    -compose Minus -composite -fill white +opaque black
+    -negate
+    -write mpr:cutmask_part
+    -delete 0
+  # restrict cutmask to area where it is stronger than resultmask
+  mpr:cutmask
+  mpr:cutmask_part
+    -compose Darken -composite
+    -write mpr:cutmask
+    -delete 0
+  mpr:cutmask
+  ###/ --cutmax"
           ;;
 
           cutmorph)
@@ -2775,14 +2849,14 @@ focus_hard() {
     -write mpr:mergemask
     -delete 0
 
-  # stepwise increase maskmax
+  # stepwise increase max in resultmask
   mpr:mergemask
   mpr:resultmask
     -compose Lighten -composite
     -write mpr:resultmask
     -delete 0
 
-  # get area of source mask equal or sharper than current max
+  # get area of merge mask equal or sharper than current max
   mpr:mergemask
   mpr:resultmask
     -alpha off
@@ -3085,14 +3159,6 @@ focus_main() {
   focus_merge_masks
   sendmagickmessage "NOTE:Generating masks ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
-  Command="
-  # base for result image
-  mpr:transparent
-    -alpha set
-    -write mpr:resultimage
-    -delete 0"
-  cmd "$Command"
-
   # Focus stacking
   [ "$Maskmethodnumber" -gt "0" ] && { 
     for Substackstep in $(seq $Substacknumber -1 1); do
@@ -3177,12 +3243,11 @@ focus_main() {
 
     Command="
   # composing substack results
-  mpr:resultimage"
+  mpr:transparent"
     for Substackstep in $(seq $Substacknumber -1 1); do
       Command="$Command
   '${Substackresultpost[$Substackstep]}'
-    -compose Over -composite
-      $(showimagecode)"
+    -compose Over -composite"
     done
     Command="$Command
     -write mpr:resultimage
@@ -3284,7 +3349,6 @@ maskarg_add() {
   # parse_options():        add to $Longoptions
   # parse_options():        add it to big collection entry)
   # maskarg_defaultvalue(): specify type
-  # maskarg_defaultvalue(): specify short
   # maskarg_defaultvalue(): add default values (if any)
   # maskarg_checkallowed(): add name to all allowed arguments
   # check_outputname():     type single needs a custom entry
@@ -3578,8 +3642,10 @@ maskarg_defaultvalue() {
         statistic)    Output="2" ;;
         unsharp)      Output="0" ;;
 
+        cutblur)      Output="0" ;;
         cutmorph)     Output="1" ;;
         finalblur2)   Output="4" ;;
+        maskblur)     Output="0" ;;
         maskmorph)    Output="2" ;;
         maskstat)     Output="6" ;;
       esac
@@ -3644,7 +3710,7 @@ maskarg_defaultvalue() {
         maskblur|maskcmd|maskmorph|maskstat|maskwave)
                       Output="merge"
         ;;
-        cutbg|cutblur|cutcmd|cutless|cutmorph|cutsoft|cutthreshold|cutwave)
+        cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
                       Output="focus"
         ;;
         alpha|finalblur|finalblur2|threshold)
@@ -3793,6 +3859,8 @@ maskarg_checkallowed() {
     ;;
     radius1)
       case "$Method" in
+        blur|comet|dog|gaussian|log|unsharp) ;;
+        cutblur|maskblur) ;;
         morphology|cutmorph|maskmorph) ;;
         diffstat|statistic|maskstat) ;;
         finalblur2) ;;
@@ -3877,9 +3945,9 @@ maskarg_checkallowed() {
           esac
         ;;
         compose|comet|compass|merge|soft)
-          checkmagicklist compose "$Arg" || error "--$Method: unknown argument for word1: $Arg
+          checkmagicklist compose "${Arg%2}" || error "--$Method: unknown argument for word1: $Arg
   Please choose one out of 'magick -list compose'"
-          Argword1="$(checkmagicklist compose "$Arg" print)"
+          Argword1="$(checkmagicklist compose "${Arg%2}" print)$(tr -d -c "2" <<< "$Arg")"
         ;;
         evaluate)
           checkmagicklist evaluate "$Arg" || error "--$Method: unknown argument for word1: $Arg
@@ -3951,7 +4019,7 @@ maskarg_short() {
       radius1)
         [ -n "$Argradius1" ]     && Append=",r$Argradius1"
         [ "$Argradius1" = "$(maskarg_defaultvalue "$Argmethod" radius1 "$Argradius1")" ] && case "$Argmethod" in
-          blur|comet|dog|gaussian|log|unsharp) Append="" ;;
+          blur|comet|cutblur|dog|gaussian|maskblur|log|unsharp) Append="" ;;
         esac
       ;;
       radius2)
@@ -4365,7 +4433,7 @@ parse_options() {
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
   Longoptions="$Longoptions,level::,maskblur::,maskcmd::,maskmorph::,maskstat::,maskwave::,merge::"
-  Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmorph::,cutsoft::,cutthreshold::,cutwave::,substacks::,soft::"
+  Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::,substacks::,soft::"
   Longoptions="$Longoptions,alpha::,finalblur::,finalblur2::,threshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
@@ -4402,7 +4470,7 @@ parse_options() {
 \
 --colorspace|--grayscale|\
 --maskblur|--maskcmd|--maskmorph|--maskstat|--maskwave|--level|--merge|\
---cutbg|--cutblur|--cutcmd|--cutless|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
+--cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
 --alpha|--finalblur|--finalblur2|--threshold|\
 --bg|--background|\
 --substacks)
