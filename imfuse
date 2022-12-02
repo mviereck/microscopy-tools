@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse
-Version="0.8.9-beta"
+Version="0.8.10-beta"
 
 # ToDo:
 # --cutsoft: broken? hard seams.
@@ -771,12 +771,12 @@ check_outputname() {
   # step colorspace
   maskarg_single "colorspace" && {
     Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-    Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+    Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
   }
   # step grayscale
   maskarg_single "grayscale" && {
     Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-    Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+    Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
   }
 
   # step mask generation
@@ -786,7 +786,7 @@ check_outputname() {
       mask)
         #Resultbasename="${Resultbasename}_${Argshort}=${Imarguments[$Count]%TYPE*}"
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
       ;;
     esac
   done
@@ -797,30 +797,30 @@ check_outputname() {
     case "$Argtype" in
       merge)
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
       ;;
     esac
   done
   maskarg_single "merge" && {
     Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-    Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+    Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
   }
   maskarg_single "level" && {
     Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-    Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+    Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
   }
 
   # step focus
   maskarg_single "soft"    && {
     Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-    Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+    Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
   }
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argtype" in
       focus)
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
       ;;
     esac
   done
@@ -831,7 +831,7 @@ check_outputname() {
     case "$Argtype" in
       substack)
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
       ;;
     esac
   done
@@ -842,7 +842,7 @@ check_outputname() {
     case "$Argtype" in
       postfocus)
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
       ;;
     esac
   done
@@ -853,7 +853,7 @@ check_outputname() {
     case "$Argtype" in
       background)
         Resultbasename="${Resultbasename}_$(maskarg_short "$Argcount")"
-        Comment="$Comment --$Argmethod=${Imoptions[$Argcount]%,TYPE*}"
+        Comment="$Comment --$Argmethod=${Imarguments[$Argcount]%,TYPE*}"
       ;;
     esac
   done
