@@ -1,16 +1,32 @@
 #! /bin/bash
 
-# imfuse
-Version="0.8.10-beta"
+# imfuse - Combines focus stackshot images to one overall sharp image.
+Version="0.9.0-beta"
 
-# ToDo:
-# --cutsoft: broken? hard seams.
-# --savemask: broken
-# --compose et al: result less good than expected.
-# mkclut_uniform() fails with b&w masks -> clut and result black
-# check --kirsch
-# drop --unsharp?
+### Information
 
+license() {
+  echo "
+imfuse - Combines focus stackshot images to one overall sharp image.
+Copyright (C) 2022  Martin Viereck
+
+    This program is free software; you can redistribute it and/or
+    modify it under the terms of the GNU General Public License
+    as published by the Free Software Foundation; either version 2
+    of the License, or (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software Foundation,
+    Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+imfuse website and contact: https://github.com/mviereck/microscopy-tools
+"
+}
 usage() {
   echo "imfuse: Combines focus stackshot images to one overall sharp image.
 
@@ -22,10 +38,10 @@ from front to back; for the other way around use option --revert.
 
 Dependencies:
   ImageMagick 7       Mandatory (command 'magick').
+  exiftool            Optional, needed to set and transfer metadata.
   enfuse              Optional, needed for options --enfuse and --bg=enfuse.
   geeqie              Optional, needed for option -V, --showimage.
   viewnior            Optional, needed for option -W to show result image.
-  exiftool            Optional, needed for option --exif to transfer metadata.
   focus-stack         Optional, needed for option --align.
                         https://github.com/PetteriAimonen/focus-stack
   xclip               Optional, to send result file name to clipboard.
@@ -40,11 +56,12 @@ General options:
      --force              Force imfuse to run even if output image exists.
  -h, --help               Show this help and exit.
      --layered            Store backgrounds and single substacks in layered TIF.
+     --license            Show license (GPLv2) and exit.
      --limit-memory=ARG   Limit amount of used memory. Default: 80%
                           ARG can be a % value or an absolute value for MB.
  -o, --output=FILE        Result image file name. See also --basename.
      --revert             Revert order of source images.
-     --rmcache            Remove cache.imfuse* folders below pwd and exit.
+     --rmcache            Remove all cache.imfuse* folders below pwd and exit.
      --savemask [=FILE]   Store contrast mask in file FILE.
      --version            Show imfuse version and exit.
  -V, --showimage          Show intermediate results with image viewer geeqie.
@@ -474,7 +491,11 @@ A first start to get an idea of the stackshot image fusing workflow was
 inspired by Alan Gibson's focStack.bat at https://im.snibgo.com/focstack.htm .
 imfuse also contains code from Fred Weinhaus with his friendly permisson.
 
-imfuse version: v$Version"
+Version: imfuse v$Version
+Author:  Martin Viereck, Germany
+License: GPLv2 https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#SEC1
+Website: https://github.com/mviereck/microscopy-tools
+"
 }
 
 ### Messages
@@ -3267,6 +3288,7 @@ focus_main() {
 }
 
 ### mask args
+
 maskarg_add() {
   Imoptionsnumber="$((Imoptionsnumber+1))"
   Argmethod="${1#--}"
@@ -4393,7 +4415,7 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
   Shortoptions="ho:vVW"
-  Longoptions="basename:,cache::,exif::,force::,help,limit-memory::,mask2cache,output:,rmcache,savemask::,showimage,showname,sub::,test::,verbose,version,video"
+  Longoptions="basename:,cache::,exif::,force::,help,license,limit-memory::,mask2cache,output:,rmcache,savemask::,showimage,showname,sub::,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::,grayscale::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,gaussian::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
@@ -4427,7 +4449,7 @@ parse_options() {
       -v|--verbose)        Verbose="yes"                       ;;
       --video)             Video="auto"                        ;;
       -W)                  Viewnior="yes"                      ;;
-      -h|--help|--rmcache|--showname|--version) Oneaction="${1:-}" ;;
+      -h|--help|--license|--rmcache|--showname|--version) Oneaction="${1:-}" ;;
 
 --cmd|--cmddiff|--experimental\
 --blur|--comet|--compass|--diffstat|--dog|--freichen|--gaussian|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--unsharp|--wavelet|\
@@ -4760,6 +4782,10 @@ trap - ERR"
   case "$Oneaction" in
     -h|--help)
       usage
+      finish
+    ;;
+    --license)
+      license
       finish
     ;;
     --rmcache)
