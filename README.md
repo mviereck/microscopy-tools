@@ -29,7 +29,8 @@ Dependencies:
  - `geeqie` and `viewnior` (optional image viewers)
  - `exiftool` (optional to preserve exif meta data)
 
-imfuse contains code written by [Fred Weinhaus](http://www.fmwconcepts.com/imagemagick/index.php) with his friendly permission.
+imfuse contains code written by [Fred Weinhaus](http://www.fmwconcepts.com/imagemagick) with his friendly permission.
+imfuse was inspired by [Alan Gibson](https://im.snibgo.com/)'s [focStack.bat](https://im.snibgo.com/focstack.htm).
 
 ## stackalign
 
@@ -137,19 +138,30 @@ Animated video:
 ## Related tools
 
 ### Free and Open Source
- - `enfuse`: Enfuse blends differently exposed images of the same scene into a nice output
-image. Command line tool, used by `stackfuser`.
- - `entangle`: Entangle provides a graphical interface for "tethered shooting", aka
-taking photographs with a digital camera completely controlled from the
-computer.
- - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack): A cross-platform tool for focus stacking images based on wavelet algorithms.
- - [`pulsar123/Macro-scripts`](https://github.com/pulsar123/Macro-scripts): A set of BASH scripts and C++ programs representing a complete workflow for processing macro focus stacking photographs.
- - `gphoto2`: The gphoto2 library allows access and control of various digital camera models. Command line tool, used by `stackshooter`.
- - `hugin`: Hugin is a panorama photo stitching program for several overlapping photos taken from the same location, transforming the photos to one larger image.
- - `imagemagick`: ImageMagick is a powerful software suite to create, edit, and compose bitmap images. Command line tool, used by `stackfuser` and `stackshooter`.
- - [`mfkter`](https://github.com/hqhoang/mftker): GUI for enfuse. Replaces former MacroFusion.
- - `rawtherapee`: RawTherapee is an advanced program for developing raw photos and for processing
-non-raw photos.
+ - [`enfuse`](https://enblend.sourceforge.net/):
+   Enfuse blends differently exposed images of the same scene into a nice output image.
+   Command line tool, used by `stackfuser`.
+ - [`Entangle`](https://entangle-photo.org/):
+   Entangle provides a graphical interface for "tethered shooting", aka taking photographs with a digital camera completely controlled from the computer.
+ - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack):
+   A cross-platform tool for focus stacking images based on wavelet algorithms.
+ - [`pulsar123/Macro-scripts`](https://github.com/pulsar123/Macro-scripts):
+   A set of BASH scripts and C++ programs representing a complete workflow for processing macro focus stacking photographs.
+ - [`gphoto2`](http://www.gphoto.org/):
+   The gphoto2 library allows access and control of various digital camera models.
+   Command line tool, used by `stackshooter` and `camcfg`.
+ - [`hugin`](https://hugin.sourceforge.io/):
+   Hugin is a panorama photo stitching program for several overlapping photos taken from the same location, transforming the photos to one larger image.
+ - [`ImageMagick`](https://imagemagick.org):
+   ImageMagick is a powerful software suite to create, edit, and compose bitmap images. 
+   Command line tool, used by almost all tools in this repo.
+ - [`mfkter`](https://github.com/hqhoang/mftker):
+   GUI for enfuse. Replaces former MacroFusion.
+ - [`RawTherapee`](https://www.rawtherapee.com/):
+   RawTherapee is an advanced program for developing raw photos and for processing non-raw photos.
+ - ImageMagick scripts:
+   - [Snibgo's ImageMagick pages](https://im.snibgo.com/) (Windows batch scripts.)
+   - [Fred's ImageMagick Scripts](http://www.fmwconcepts.com/imagemagick) (Linux bash scripts.)
 
 ### Closed Source freeware
  - [CombineZP](https://combinezp.software.informer.com/): Stacker for MS Windows. Works with wine on Linux, too.
