@@ -477,7 +477,7 @@ Step 5: Post processing
 
  --finallevel         Levels result mask into visible spectrum from 0%..100%.
                       This option is applied before all follwing options.
- --alpha [=ARG]       Generate transparent image using the contrast mask as 
+ --finalalpha [=ARG]  Generate transparent image using the contrast mask as 
                       alpha channel (=transparency channel).
                       Good method to reduce noise in low contrast areas.
                       The semitransparent result is composed over --background.
@@ -3336,7 +3336,7 @@ focus_main() {
       Substackmaskpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-mask.mpc"
 
       [ -e "${Substackresultpost[$Substackstep]}" ] && {
-        sendmagickmessage "NOTE:Skipping --alpha --threshold --finalblur[2], already done."
+        sendmagickmessage "NOTE:Skipping --finalalpha --threshold --finalblur[2], already done."
       } || {
 
         Command="
@@ -3357,7 +3357,7 @@ focus_main() {
             postfocus)
               sendmagickmessage "NOTE:Applying --${Imoptions[$Count]}=${Imarguments["$Count"]%,TYPE*}"
               case "$Option" in
-                alpha)
+                finalalpha)
                   alphalevel --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
                              --percent1 "${Argpercent1}" --percent2 "${Argpercent2}%"
                 ;;
@@ -3405,7 +3405,7 @@ focus_main() {
     yes)
       # --layered
       sendmagickmessage "NOTE:Generating layered tif"
-      { maskarg_single "threshold" || maskarg_single "alpha" ; } && Transparentlayers="yes"
+      { maskarg_single "threshold" || maskarg_single "finalalpha" ; } && Transparentlayers="yes"
       generate_image --mode cyan
       generate_image --mode magenta
       generate_image --mode yellow
@@ -3759,10 +3759,10 @@ maskarg_defaultvalue() {
       case "$Method" in
         blur|maskblur|cutblur)
                       Output="100" ;;
-        alpha)        Output="0" ;;
         cutless)      Output="20" ;;
         cutmax)       Output="0" ;;
         cutwave)      Output="75" ;;
+        finalalpha)   Output="0" ;;
         masklevel)    Output="" ;;
         maskwave)     Output="20" ;;
         soft)         Output="2" ;;
@@ -3771,13 +3771,13 @@ maskarg_defaultvalue() {
     ;;
     percent2)
       case "$Method" in
-        alpha)        Output="100" ;;
-        wavelet|maskwave|cutwave)
-                      Output="0" ;;
         blur|maskblur|cutblur)
                       Output="$((100-Argpercent1))" ;;
+        finalalpha)   Output="100" ;;
         masklevel)    Output="" ;;
         soft)         Output="100" ;;
+        wavelet|maskwave|cutwave)
+                      Output="0" ;;
       esac
     ;;
     radius1)
@@ -3861,7 +3861,7 @@ maskarg_defaultvalue() {
         cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
                       Output="focus"
         ;;
-        alpha|finalblur|finalblur2|threshold)
+        finalalpha|finalblur|finalblur2|threshold)
                       Output="postfocus"
         ;;
         bg)
@@ -3994,13 +3994,13 @@ maskarg_checkallowed() {
     ;;
     percent1)
       case "$Method" in
-        alpha|blur|cutblur|cutless|cutmax|cutwave|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
+        blur|cutblur|cutless|cutmax|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "$Method does not take argument percent1: p$Arg" ;;
       esac
     ;;
     percent2)
       case "$Method" in
-        alpha|blur|cutblur|cutwave|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
+        blur|cutblur|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "$Method does not take argument percent2: P$Arg" ;;
       esac
     ;;
@@ -4597,7 +4597,7 @@ parse_options() {
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
   Longoptions="$Longoptions,maskblur::,maskcmd::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::,substacks::,soft::"
-  Longoptions="$Longoptions,alpha::,finalblur::,finalblur2::,finallevel::,threshold::"
+  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finallevel::,threshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error while parsing options."
@@ -4634,7 +4634,7 @@ parse_options() {
 --colorspace|--grayscale|\
 --maskblur|--maskcmd|--masklevel|--maskmorph|--maskstat|--maskwave|--maskmerge|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
---alpha|--finalblur|--finalblur2|--finallevel|--threshold|\
+--finalalpha|--finalblur|--finalblur2|--finallevel|--threshold|\
 --bg|--background|\
 --substacks)
                            maskarg_add "${1:-}" "${2:-}"       ; shift
