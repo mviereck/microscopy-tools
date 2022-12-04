@@ -275,17 +275,26 @@ Step 2: Mask generation
 Step 3: Mask merging
   The contrast masks generated in step 2 are merged into one per image.
   The merged result can be adjusted with --mask* options.
-  Options beginning with --mask* can be specified multiple times.
-  The order of --mask* options matters, prefer to use in the shown order.
+  Most options beginning with --mask* can be specified multiple times.
+  The order of most --mask* options matters.
 
- --maskstat [=ARG]    Apply a statistic method for each mask pixel
-                      to adjust it according to its neighborhood.
-                      Option is applied to contrast masks only.
-                      ARG takes arguments:
-                        r        radius            Default: $(maskarg_defaultvalue maskstat radius1)
-                        (word)   statistic mode    Default: $(maskarg_defaultvalue maskstat word1)
-                      word1 can be one of 'magick -list statistic'.
-                      Modes of interest: mean, median, gradient.
+ --maskblur [=ARG]    Blur masks to enhance contrast and close minor gaps.
+                      ARG takes argument:
+                        r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
+                        s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
+                        p        percent1          Default: 100%
+                        P        percent2          Default: 100-percent1%
+                        (word)   gaussian
+                      Adjust only sigma, radius 0 is adjusted automatically.
+                      percent1 defines how strong the blur will be applied.
+                      percent2 defines how strong the original we remain.
+                      gaussian enables slower but more accurate gaussian blur.
+                      Can be specified multiple times, the order matters.
+ --maskcmd [=ARG]     Custom ImageMagick option to apply on merged masks.
+                      ARG takes argument:
+                        (word)   string
+                      string can be e.g. '-blur 0x5'. Avoid comma , in string.
+                      Can be specified multiple times, the order matters.
  --maskmorph [=ARG]   Change shape of mask. Default 'Dilate' helps
                       to close gaps. A later --cutmorph=Erode works in
                       the opposite direction and can remove seams.
@@ -302,6 +311,20 @@ Step 3: Mask merging
                       CPU expensive option. Iterating the kernel is cheaper
                       than using a greater radius.
                       Compare: https://imagemagick.org/Usage/morphology
+                      Can be specified multiple times, the order matters.
+ --maskstat [=ARG]    Apply a statistic method for each mask pixel
+                      to adjust it according to its neighborhood.
+                      Option is applied to contrast masks only.
+                      ARG takes arguments:
+                        r        radius            Default: $(maskarg_defaultvalue maskstat radius1)
+                        (word)   statistic mode    Default: $(maskarg_defaultvalue maskstat word1)
+                      word1 can be one of 'magick -list statistic'.
+                      Modes of interest: mean, median, gradient.
+                      Mode mean softens the result and closes gaps.
+                      Mode median sharpens the result and opens gaps.
+                      Mode gradient sharpens the result, closes gaps
+                      and adds noise in weak areas.
+                      Can be specified multiple times, the order matters.
  --maskwave [=ARG]    Remove noise in masks. Can close gaps, but can also
                       create artefacts in very low contrast areas.
                       ARG takes arguments:
@@ -309,26 +332,14 @@ Step 3: Mask merging
                         P        percent2          Default: $(maskarg_defaultvalue wavelet percent2)%
                       For percent1 value compare option -wavelet-denoise.
                       percent2 for less softness  is less useful yet.
- --maskblur [=ARG]    Blur masks to enhance contrast and close minor gaps.
-                      ARG takes argument:
-                        r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
-                        s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
-                        p        percent1          Default: 100%
-                        P        percent2          Default: 100-percent1%
-                        (word)   gaussian
-                      Adjust only sigma, radius 0 is adjusted automatically.
-                      percent1 defines how strong the blur will be applied.
-                      percent2 defines how strong the original we remain.
-                      gaussian enables slower but more accurate gaussian blur.
- --maskcmd [=ARG]     Custom ImageMagick option to apply on merged masks.
-                      ARG takes argument:
-                        (word)   string
-                      string can be e.g. '-blur 0x5'. Avoid comma , in string.
- --merge [=ARG]       Compose mode to merge multiple masks.
+                      Can be specified multiple times, the order matters.
+
+ --maskmerge [=ARG]   Compose mode to merge multiple masks.
                       ARG takes arguments:
-                        (word)   mode              Default: $(maskarg_defaultvalue merge word1)
+                        (word)   mode              Default: $(maskarg_defaultvalue maskmerge word1)
                       mode can be one of 'magick -list compose'.
                       Of interest: Plus Interpolate Multiply Exclusion Blend
+                      Can be specified only once, order does not matter.
  --masklevel [=ARG]   Levels merged masks into visible spectrum from 0%..100%
                       to provide the following focus and postprocessing
                       option arguments a full range from 0%..100%.
@@ -348,13 +359,31 @@ Step 3: Mask merging
                        substack. Only mode 'all' reliably provides valid values.
                       percent values min and max allow to set absolute values.
                       This option is always executed as the last one of --mask*.
+                      Can be specified only once, order does not matter.
 
 Step 4: Stack fusion
   The source images are processed with the merged masks,
   the overall sharp image will be generated.
-  The order of --cut* options matters, prefer to use in the shown order.
+  The order of --cut* options matters, use --cutless always first.
   The --cut* options except --cutless can be specified multiple times.
 
+ --cutbg              Create a background from current cuts.
+                      Can preserve the bokeh if used before --cutthreshold.
+ --cutblur [=ARG]     Blur cut masks in final focus montage.
+                      ARG takes argument:
+                        r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
+                        s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
+                        p        percent1          Default: 100%
+                        P        percent2          Default: 100-percent1%
+                        (word)   gaussian
+                      Adjust only sigma, radius 0 is adjusted automatically.
+                      percent1 defines how strong the blur will be applied.
+                      percent2 defines how strong the original we remain.
+                      gaussian enables slower but more accurate gaussian blur.
+ --cutcmd [=ARG]      Custom ImageMagick option to apply on cut mask.
+                      ARG takes argument:
+                        (word)   string
+                      string can be e.g. '-blur 0x5'. Avoid comma , in string.
  --cutless [=ARG]     Strenghtens less contrasted objects in front of strong
                       contrasted background objects.
                       ARG takes argument:
@@ -364,6 +393,7 @@ Step 4: Stack fusion
                       If unsharp areas appear, use a greater percent value.
                       If the foreground object still has holes, use a lower 
                       percent value or try some of the --mask* options.
+                      Can be specified only once, the order matters.
  --cutmax [=ARG]      Remove parts of current cut mask that are weaker than
                       current max in result mask.
                       ARG takes argument:
@@ -388,23 +418,6 @@ Step 4: Stack fusion
                       over blurred cut mask.
                       ARG takes argument:
                         s        sigma             Default: $(maskarg_defaultvalue cutsoft sigma1)
- --cutblur [=ARG]     Blur cut masks in final focus montage.
-                      ARG takes argument:
-                        r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
-                        s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
-                        p        percent1          Default: 100%
-                        P        percent2          Default: 100-percent1%
-                        (word)   gaussian
-                      Adjust only sigma, radius 0 is adjusted automatically.
-                      percent1 defines how strong the blur will be applied.
-                      percent2 defines how strong the original we remain.
-                      gaussian enables slower but more accurate gaussian blur.
- --cutcmd [=ARG]      Custom ImageMagick option to apply on cut mask.
-                      ARG takes argument:
-                        (word)   string
-                      string can be e.g. '-blur 0x5'. Avoid comma , in string.
- --cutbg              Create a background from current cuts.
-                      Can preserve the bokeh if used before --cutthreshold.
  --cutthreshold [=ARG]  Cut of parts of cut mask where current source mask is
                       weaker than threshold. Removes undesired seams, but also
                       the background. Preserve background with --cutbg before.
@@ -416,6 +429,7 @@ Step 4: Stack fusion
                         p        percent           Default: $(maskarg_defaultvalue cutwave percent1)%
                       For percent1 value compare option -wavelet-denoise.
                       percent2 for less softness  is less useful yet.
+
  --substacks [=ARG]   Split stack into different stacks (called substacks)
                       and fuse them separately. Can be specified multiple times.
                       ARG takes arguments:
@@ -450,7 +464,8 @@ Step 4: Stack fusion
                       Increasing percent2 increases sharpness of high contrast.
                       mode can be one of 'magick -list compose'. Of interest:
                         Plus Screen
-                      Does not support --cutless, --cutblur, --cutsoft.
+                      Does not support --cut* options.
+                      Can be specified only once.
 
 Step 5: Post processing
   The order of the options on cli matters. Noteably --alpha with percent values
@@ -849,7 +864,7 @@ check_outputname() {
       ;;
     esac
   done
-  maskarg_single "merge" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
+  maskarg_single "maskmerge" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
   maskarg_single "masklevel" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
 
   # step focus
@@ -2524,7 +2539,7 @@ focus_merge_masks() {
   done
   Weightmax=100
 
-  maskarg_single "merge" ||:
+  maskarg_single "maskmerge" ||:
   Mergemethod="${Argword1:-"Screen"}"
   case "${Mergemethod,,}" in ### FIXME check further modes
     multiply)
@@ -2976,6 +2991,14 @@ focus_hard() {
     -compose Minus -composite -fill white +opaque black
     -negate
     -write mpr:cutmask
+    -delete 0
+
+  # drop areas with strength 0
+  mpr:focusmask
+    -threshold 0%
+  mpr:cutmask
+    -compose Darken -composite
+    -write mpr:cutmask
     -delete 0"
 
     # add --cut* options
@@ -3080,8 +3103,7 @@ focus_soft() {
   local Focusimagebasename Focusimagefile Focusimagemaskfile
   local Longoptions Parsedoptions
 
-  Longoptions="composemode:,maskmax:,output:,:,firstimage:,lastimage:"
-
+  Longoptions="composemode:,level:,maskmax:,output:,firstimage:,lastimage:"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
 
@@ -3845,7 +3867,7 @@ maskarg_defaultvalue() {
         bg)
                       Output="background"
         ;;
-        colorspace|finallevel|grayscale|masklevel|merge|soft)
+        colorspace|finallevel|grayscale|masklevel|maskmerge|soft)
                       Output="single"
         ;;
         substacks)
@@ -3874,9 +3896,9 @@ maskarg_defaultvalue() {
         grayscale)    Output="Rec709Luma" ;;
         masklevel)    Output="all" ;;
         maskformat)   Output="mpc" ;;
+        maskmerge)    Output="Screen" ;;
         maskmorph)    Output="Dilate" ;;
         maskstat)     Output="Mean" ;;
-        merge)        Output="Screen" ;;
         soft)         Output="Plus" ;;
       esac
     ;;
@@ -4076,7 +4098,7 @@ maskarg_checkallowed() {
             *) error "$Method does not take argument: $Arg" ;;
           esac
         ;;
-        compose|comet|compass|merge|soft)
+        compose|comet|compass|maskmerge|soft)
           checkmagicklist compose "${Arg%2}" || error "--$Method: unknown argument for word1: $Arg
   Please choose one out of 'magick -list compose'"
           Argword1="$(checkmagicklist compose "${Arg%2}" print)$(tr -d -c "2" <<< "$Arg")"
@@ -4224,7 +4246,7 @@ maskarg_short() {
       word1)
         [ -n "$Argword1" ]       && Append=",$Argword1"
         [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1 "$Argword1")" ] && case "$Argmethod" in
-          comet|compass|diffstat|statistic|masklevel|merge|soft) Append="" ;;
+          comet|compass|diffstat|statistic|masklevel|maskmerge|soft) Append="" ;;
         esac
       ;;
       word2)
@@ -4573,7 +4595,7 @@ parse_options() {
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
-  Longoptions="$Longoptions,maskblur::,maskcmd::,masklevel::,maskmorph::,maskstat::,maskwave::,merge::"
+  Longoptions="$Longoptions,maskblur::,maskcmd::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::,substacks::,soft::"
   Longoptions="$Longoptions,alpha::,finalblur::,finalblur2::,finallevel::,threshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
@@ -4610,7 +4632,7 @@ parse_options() {
 --compose|--enfuse|--evaluate|--max|--mean|--median|--min|\
 \
 --colorspace|--grayscale|\
---maskblur|--maskcmd|--masklevel|--maskmorph|--maskstat|--maskwave|--merge|\
+--maskblur|--maskcmd|--masklevel|--maskmorph|--maskstat|--maskwave|--maskmerge|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
 --alpha|--finalblur|--finalblur2|--finallevel|--threshold|\
 --bg|--background|\
