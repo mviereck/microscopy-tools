@@ -3540,7 +3540,7 @@ maskarg_parse() {
       Value="${Line#*"="}"
       Key="${Line%"=${Value}"}"
     } || {
-      Key="${Line//[0-9.-+]/}" # remove digits including +-.
+      Key="${Line//[0-9-+.]/}" # remove digits including +-.
       Value="${Line#${Key:-NOKEY}}"
     }
     Value="${Value//%/}"
