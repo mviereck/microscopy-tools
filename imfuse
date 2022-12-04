@@ -505,7 +505,7 @@ Step 5: Post processing
                       ARG takes arguments:
                         r        radius            Default: $(maskarg_defaultvalue finalblur2 radius1)
                         t        threshold         Default: $(maskarg_defaultvalue finalblur2 threshold1)%
- --threshold [=ARG]   Make low (or high) contrast area transparent.
+ --finalthreshold [=ARG]  Make low (or high) contrast area transparent.
                       ARG takes arguments:
                         t        threshold1        Default: $(maskarg_defaultvalue threshold threshold1)%
                         T        threshold2        Default: $(maskarg_defaultvalue threshold threshold2)%
@@ -3369,7 +3369,7 @@ focus_main() {
                   finalblur2 --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
                              --percent "$Argthreshold1" --blur "$Argradius1"
                 ;;
-                threshold)
+                finalthreshold)
                   threshold  --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
                              --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" --blur "$Argsigma1" \
                              --cutimage="hard"
@@ -3833,12 +3833,14 @@ maskarg_defaultvalue() {
         masklevel)    Output="5" ;;
         finalblur)    Output="50" ;;
         finalblur2)   Output="50" ;;
-        threshold)    Output="50" ;;
+        finalthreshold) 
+                      Output="50" ;;
       esac
     ;;
     threshold2)
       case "$Method" in
-        threshold)    Output="100" ;;
+        finalthreshold)
+                      Output="100" ;;
       esac
     ;;
     type)
@@ -3861,7 +3863,7 @@ maskarg_defaultvalue() {
         cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
                       Output="focus"
         ;;
-        finalalpha|finalblur|finalblur2|threshold)
+        finalalpha|finalblur|finalblur2|finalthreshold)
                       Output="postfocus"
         ;;
         bg)
@@ -4041,7 +4043,7 @@ maskarg_checkallowed() {
         mask) ;;
         *)
           case "$Method" in
-            cutless|cutthreshold|finalblur|finalblur2|masklevel|threshold) ;;
+            cutless|cutthreshold|finalblur|finalblur2|finalthreshold|masklevel) ;;
             *) error "$Method does not take argument threshold1: t$Arg" ;;
           esac
         ;;
@@ -4052,7 +4054,7 @@ maskarg_checkallowed() {
         mask) ;;
         *)
           case "$Method" in
-            threshold) ;;
+            finalthreshold) ;;
             *) error "$Method does not take argument threshold2: T$Arg" ;;
           esac
         ;;
@@ -4210,7 +4212,7 @@ maskarg_short() {
       threshold2)
         [ -n "$Argthreshold2" ]  && Append=",T$Argthreshold2"
         [ "$Argthreshold2" = "$(maskarg_defaultvalue "$Argmethod" threshold2 "$Argthreshold2")" ] && case "$Argmethod" in
-          threshold) Append="" ;;
+          finalthreshold) Append="" ;;
         esac
       ;;
       image)
@@ -4596,8 +4598,9 @@ parse_options() {
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
   Longoptions="$Longoptions,maskblur::,maskcmd::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskwave::"
-  Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::,substacks::,soft::"
-  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finallevel::,threshold::"
+  Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
+  Longoptions="$Longoptions,substacks::,soft::"
+  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finallevel::,finalthreshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error while parsing options."
@@ -4634,7 +4637,7 @@ parse_options() {
 --colorspace|--grayscale|\
 --maskblur|--maskcmd|--masklevel|--maskmorph|--maskstat|--maskwave|--maskmerge|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
---finalalpha|--finalblur|--finalblur2|--finallevel|--threshold|\
+--finalalpha|--finalblur|--finalblur2|--finallevel|--finalthreshold|\
 --bg|--background|\
 --substacks)
                            maskarg_add "${1:-}" "${2:-}"       ; shift
