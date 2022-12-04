@@ -137,9 +137,11 @@ Step 2: Mask generation
                         s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
                         p        percent1          Default: 100%
                         P        percent2          Default: 100-percent1%
+                        (word)   gaussian
                       Adjust only sigma, radius 0 is adjusted automatically.
                       percent1 defines how strong the blur will be applied.
                       percent2 defines how strong the original we remain.
+                      gaussian enables slower but more accurate gaussian blur.
  --cmd [=ARG]         Custom ImageMagick option to create a mask.
                       ARG additionally takes argument:
                         (word)   string
@@ -308,9 +310,11 @@ Step 3: Mask merging
                         s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
                         p        percent1          Default: 100%
                         P        percent2          Default: 100-percent1%
+                        (word)   gaussian
                       Adjust only sigma, radius 0 is adjusted automatically.
                       percent1 defines how strong the blur will be applied.
                       percent2 defines how strong the original we remain.
+                      gaussian enables slower but more accurate gaussian blur.
  --maskcmd [=ARG]     Custom ImageMagick option to apply on merged masks.
                       ARG takes argument:
                         (word)   string
@@ -384,9 +388,11 @@ Step 4: Stack fusion
                         s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
                         p        percent1          Default: 100%
                         P        percent2          Default: 100-percent1%
+                        (word)   gaussian
                       Adjust only sigma, radius 0 is adjusted automatically.
                       percent1 defines how strong the blur will be applied.
                       percent2 defines how strong the original we remain.
+                      gaussian enables slower but more accurate gaussian blur.
  --cutcmd [=ARG]      Custom ImageMagick option to apply on cut mask.
                       ARG takes argument:
                         (word)   string
@@ -2053,8 +2059,13 @@ focus_maskmethod() {
 
     blur)
       Maskgenerator="$Maskgenerator
-  mpr:sourcegray
-    -blur ${Argradius1}x${Argsigma1}"
+  mpr:sourcegray"
+      case "$Argword1" in
+        ""|"blur") Maskgenerator="$Maskgenerator
+    -blur ${Argradius1}x${Argsigma1}" ;;
+        "gaussian") Maskgenerator="$Maskgenerator
+    -gaussian-blur ${Argradius1}x${Argsigma1}" ;;
+      esac
       [ "$Argpercent1,$Argpercent2" = "100,0" ] || {
         Maskgenerator="$Maskgenerator
   mpr:sourcegray
@@ -2539,8 +2550,13 @@ focus_merge_masks() {
 
           maskblur)
             Mergecode="$Mergecode
-    -write mpr:mergemask
-    -blur ${Argradius1}x${Argsigma1}"
+    -write mpr:mergemask"
+            case "$Argword1" in
+              ""|"blur") Mergecode="$Mergecode
+    -blur ${Argradius1}x${Argsigma1}" ;;
+              "gaussian") Mergecode="$Mergecode
+    -gaussian-blur ${Argradius1}x${Argsigma1}" ;;
+            esac
             [ "$Argpercent1,$Argpercent2" = "100,0" ] || {
               Mergecode="$Mergecode
   mpr:mergemask
@@ -2693,8 +2709,13 @@ focus_hard() {
 
           cutblur)
             Focuscode="$Focuscode
-    -write mpr:cutmask
-    -blur ${Argradius1}x${Argsigma1}"
+    -write mpr:cutmask"
+            case "$Argword1" in
+              ""|"blur") Focuscode="$Focuscode
+    -blur ${Argradius1}x${Argsigma1}" ;;
+              "gaussian") Focuscode="$Focuscode
+    -gaussian-blur ${Argradius1}x${Argsigma1}" ;;
+            esac
             [ "$Argpercent1,$Argpercent2" = "100,0" ] || {
               Focuscode="$Focuscode
   mpr:cutmask
@@ -3809,6 +3830,8 @@ maskarg_defaultvalue() {
     ;;
     word1)
       case "$Method" in
+        blur|maskblur|cutblur)
+                      Output="" ;;
         comet)        Output="Lighten" ;;
         compass)      Output="Lighten" ;;
         compose)      Output="Overlay" ;;
@@ -4002,6 +4025,13 @@ maskarg_checkallowed() {
   'magick -list color"
           Argword1="$(generate_image --mode "$Arg" --showmode)"
         ;;
+        blur|maskblur|cutblur)
+          Argword1="${Argword1,,}"
+          case "$Argword1" in
+            ""|"gaussian") ;;
+            *) error "--$Method does not know argument: $Argword1" ;;
+          esac
+        ;;
         grayscale)
           checkmagicklist intensity "$Arg" || error "--$Method: unknown colorspace: $Arg
   Please choose one out of 'magick -list intensity'"
@@ -4107,9 +4137,15 @@ maskarg_short() {
       ;;
       percent1)
         [ -n "$Argpercent1" ]    && Append=",p$Argpercent1"
+        [ "$Argpercent1" = "$(maskarg_defaultvalue "$Argmethod" percent1 "$Argpercent1")" ] && case "$Argmethod" in
+          blur|maskblur|cutblur) Append=""
+        esac
       ;;
       percent2)
         [ -n "$Argpercent2" ]    && Append=",P$Argpercent2"
+        [ "$Argpercent2" = "$(maskarg_defaultvalue "$Argmethod" percent2 "$Argpercent2")" ] && case "$Argmethod" in
+          blur|maskblur|cutblur) Append=""
+        esac
       ;;
       number1)
         [ -n "$Argnumber1" ]     && Append=",n$Argnumber1"
