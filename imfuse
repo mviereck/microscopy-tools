@@ -314,11 +314,17 @@ Step 3: Mask merging
                       Mode median sharpens the result and opens gaps.
                       Mode gradient sharpens the result, closes gaps
                       and adds noise in weak areas.
+ --maskthreshold [=ARG]  Remove low (or high) contrast area.
+                      ARG takes arguments:
+                        t        threshold1        Default: $(maskarg_defaultvalue maskthreshold threshold1)%
+                        T        threshold2        Default: $(maskarg_defaultvalue maskthreshold threshold2)%
+                      threshold1 removes low contrast areas below a percent.
+                      threshold2 removes high contrast areas above a percent.
  --maskwave [=ARG]    Remove noise in masks. Can close gaps, but can also
                       create artefacts in very low contrast areas.
                       ARG takes arguments:
                         p        percent1          Default: $(maskarg_defaultvalue maskwave percent1)%
-                        P        percent2          Default: $(maskarg_defaultvalue wavelet percent2)%
+                        P        percent2          Default: $(maskarg_defaultvalue maskwave percent2)%
                       For percent1 value compare option -wavelet-denoise.
                       percent2 for less softness  is less useful yet.
 
@@ -333,10 +339,10 @@ Step 3: Mask merging
                       to provide the following focus and postprocessing
                       option arguments a full range from 0%..100%.
                       ARG takes argument:
-                        t        round threshold   Default: $(maskarg_defaultvalue level threshold1)%
+                        t        round threshold   Default: $(maskarg_defaultvalue masklevel threshold1)%
                         p        min
                         P        max
-                        (word)   mode              Default: $(maskarg_defaultvalue level word1)
+                        (word)   mode              Default: $(maskarg_defaultvalue masklevel word1)
                       mode can be one of:
                         all:      Level all masks.
                         substack: Level only merged masks in current substack.
@@ -471,8 +477,8 @@ Step 5: Post processing
                       Good method to reduce noise in low contrast areas.
                       The semitransparent result is composed over --background.
                       ARG takes arguments:
-                        p        percent1          Default: $(maskarg_defaultvalue alpha percent1)%
-                        P        percent2          Default: $(maskarg_defaultvalue alpha percent2)%
+                        p        percent1          Default: $(maskarg_defaultvalue finalalpha percent1)%
+                        P        percent2          Default: $(maskarg_defaultvalue finalalpha percent2)%
                       percent1 affects the low contrast areas with
                        a useful range of -100%..+50%.
                       percent2 affects the high contrast areas with
@@ -496,9 +502,9 @@ Step 5: Post processing
                         t        threshold         Default: $(maskarg_defaultvalue finalblur2 threshold1)%
  --finalthreshold [=ARG]  Make low (or high) contrast area transparent.
                       ARG takes arguments:
-                        t        threshold1        Default: $(maskarg_defaultvalue threshold threshold1)%
-                        T        threshold2        Default: $(maskarg_defaultvalue threshold threshold2)%
-                        s        sigma             Default: $(maskarg_defaultvalue threshold sigma1)
+                        t        threshold1        Default: $(maskarg_defaultvalue finalthreshold threshold1)%
+                        T        threshold2        Default: $(maskarg_defaultvalue finalthreshold threshold2)%
+                        s        sigma             Default: $(maskarg_defaultvalue finalthreshold sigma1)
                       threshold1 removes low contrast areas below a percent.
                       threshold2 removes high contrast areas above a percent.
                       sigma blurs the cut border.
@@ -2482,7 +2488,9 @@ focus_merge_masks() {
   $(maskname "$Argbasename" NUMBER)
     # =t (threshold)
     -black-threshold ${Argthreshold1:-0}%
-    -white-threshold ${Argthreshold2:-100}%
+    -negate
+    -black-threshold $((100-${Argthreshold2:-100}))%
+    -negate
     # =w (weight)
     +level 0%,$(calc "(100 * ${Argweight:-100}) / ( $Weightmax * $Methodnumber )" )%
   )
@@ -2547,6 +2555,14 @@ focus_merge_masks() {
               ;;
             esac
           ;;
+
+          maskthreshold)
+            Mergecode="$Mergecode
+    -black-threshold ${Argthreshold1}%
+    -negate
+    -black-threshold $((100-Argthreshold2))%
+    -negate"
+    ;;
 
           maskwave)
             Mergecode="$Mergecode
@@ -3421,7 +3437,6 @@ maskarg_check() {
   Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
   [ -z "$Argchannel"  ]    && Argchannel="$(maskarg_defaultvalue    "$Argmethod" channel)"
   [ -z "$Argcolorspace"  ] && Argcolorspace="$(maskarg_defaultvalue "$Argmethod" colorspace)"
-  [ -z "$Argdiff"  ]       && Argdiff="$(maskarg_defaultvalue       "$Argmethod" diff)"
   [ -z "$Argimage"  ]      && Argimage="$(maskarg_defaultvalue      "$Argmethod" image)"
   [ -z "$Arglevel"  ]      && Arglevel="$(maskarg_defaultvalue      "$Argmethod" level)"
   [ -z "$Argnegate"  ]     && Argnegate="$(maskarg_defaultvalue     "$Argmethod" negate)"
@@ -3437,9 +3452,9 @@ maskarg_check() {
   [ -z "$Argthreshold2" ]  && Argthreshold2="$(maskarg_defaultvalue "$Argmethod" threshold2)"
   [ -z "$Argword1" ]       && Argword1="$(maskarg_defaultvalue      "$Argmethod" word1)"
   [ -z "$Argword2" ]       && Argword2="$(maskarg_defaultvalue      "$Argmethod" word2)"
+  [ -z "$Argdiff"  ]       && Argdiff="$(maskarg_defaultvalue       "$Argmethod" diff)"
   [ -n "$Argchannel" ]     && maskarg_checkallowed "$Argmethod" channel    "$Argchannel"
   [ -n "$Argcolorspace" ]  && maskarg_checkallowed "$Argmethod" colorspace "$Argcolorspace"
-  [ -n "$Argdiff" ]        && maskarg_checkallowed "$Argmethod" diff       "$Argdiff"
   [ -n "$Argimage" ]       && maskarg_checkallowed "$Argmethod" image      "$Argimage"
   [ -n "$Arglevel" ]       && maskarg_checkallowed "$Argmethod" level      "$Arglevel"
   [ -n "$Argnegate" ]      && maskarg_checkallowed "$Argmethod" negate     "$Argnegate"
@@ -3456,6 +3471,7 @@ maskarg_check() {
   [ -n "$Argweight" ]      && maskarg_checkallowed "$Argmethod" weight     "$Argweight"
   [ -n "$Argword1" ]       && maskarg_checkallowed "$Argmethod" word1      "$Argword1"
   [ -n "$Argword2" ]       && maskarg_checkallowed "$Argmethod" word2      "$Argword2"
+  [ -n "$Argdiff" ]        && maskarg_checkallowed "$Argmethod" diff       "$Argdiff"
 
   case "$Argtype" in
     single)
@@ -3750,13 +3766,13 @@ maskarg_defaultvalue() {
         masklevel)    Output="5" ;;
         finalblur)    Output="50" ;;
         finalblur2)   Output="50" ;;
-        finalthreshold) 
+        finalthreshold|maskthreshold) 
                       Output="50" ;;
       esac
     ;;
     threshold2)
       case "$Argmethod" in
-        finalthreshold)
+        finalthreshold|maskthreshold)
                       Output="100" ;;
       esac
     ;;
@@ -3774,7 +3790,7 @@ maskarg_defaultvalue() {
         experimental)
                       Output="mask"
         ;;
-        maskblur|maskcmd|maskmorph|maskstat|maskwave)
+        maskblur|maskcmd|maskmorph|maskstat|maskthreshold|maskwave)
                       Output="merge"
         ;;
         cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
@@ -3965,7 +3981,7 @@ maskarg_checkallowed() {
         mask) ;;
         *)
           case "$Argmethod" in
-            cutless|cutthreshold|finalblur|finalblur2|finalthreshold|masklevel) ;;
+            cutless|cutthreshold|finalblur|finalblur2|finalthreshold|masklevel|maskthreshold) ;;
             *) error "$Argmethod does not take argument threshold1: t$Arg" ;;
           esac
         ;;
@@ -3976,7 +3992,7 @@ maskarg_checkallowed() {
         mask) ;;
         *)
           case "$Argmethod" in
-            finalthreshold) ;;
+            finalthreshold|maskthreshold) ;;
             *) error "$Argmethod does not take argument threshold2: T$Arg" ;;
           esac
         ;;
@@ -4160,7 +4176,7 @@ maskarg_short() {
       threshold2)
         [ -n "$Argthreshold2" ]  && Append=",T$Argthreshold2"
         [ "$Argthreshold2" = "$(maskarg_defaultvalue "$Argmethod" threshold2)" ] && case "$Argmethod" in
-          finalthreshold) Append="" ;;
+          finalthreshold|maskthreshold) Append="" ;;
         esac
       ;;
       level)
@@ -4519,7 +4535,7 @@ parse_options() {
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
-  Longoptions="$Longoptions,maskblur::,maskcmd::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskwave::"
+  Longoptions="$Longoptions,maskblur::,maskcmd::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
   Longoptions="$Longoptions,substacks::,soft::"
   Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finallevel::,finalthreshold::"
@@ -4557,7 +4573,7 @@ parse_options() {
 --compose|--enfuse|--evaluate|--max|--mean|--median|--min|\
 \
 --colorspace|\
---maskblur|--maskcmd|--masklevel|--maskmorph|--maskstat|--maskwave|--maskmerge|\
+--maskblur|--maskcmd|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
 --finalalpha|--finalblur|--finalblur2|--finallevel|--finalthreshold|\
 --bg|--background|\
