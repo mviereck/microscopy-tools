@@ -77,8 +77,6 @@ Arguments taken by all mask generating options:
             Example: --morphology --saturation=w25
             This will generate two masks. The saturation mask will only have
             noteable effect where the morphology mask strength is below 25%.
-  t         Threshold (removal) of low contrast areas.
-  T         Threshold (removal) of high contrast areas.
   C=        Colorspace to use instead of default sRGB. Compare --colorspace.
   c         Colorspace channel to use. Counting up from 0 for first channel.
             Example: C=HSL,c2 will use the saturation channel from HSL.
@@ -86,7 +84,11 @@ Arguments taken by all mask generating options:
             Example: --statistic=E=max will generate a mask from an evaluated
             max image that was compared with the source image.
             Compare step 2b: Mask generation - image comparision masks.
+  diff [=yes|no] Use difference of command result to source image.
+            Normally not neded to be set manually.
   neg       Negate / invert the mask. Most of interest for color channels.
+  t         Threshold (removal) of low contrast areas.
+  T         Threshold (removal) of high contrast areas.
   level [=yes|no] Equalize histogram distribution to get compareable masks.
             Default is yes except for channel and image comparision options.
 Arguments additionally taken by some options:
@@ -159,12 +161,14 @@ Step 2: Mask generation
  --compass [=ARG]     Compass edge detection.
                         (word)   mode              Default: $(maskarg_defaultvalue compass word1)
                       mode can be one of 'magick -list compose'
- --dog [=ARG]         Difference of Gaussian.
+ --diffblur [=ARG]    Difference of 2 blur results.
                       ARG additionally takes arguments: 
-                        r        radius            Default: $(maskarg_defaultvalue dog radius1)
-                        s        sigma1            Default: $(maskarg_defaultvalue dog sigma1)
+                        r        radius            Default: $(maskarg_defaultvalue diffblur radius1)
+                        s        sigma1            Default: $(maskarg_defaultvalue diffblur sigma1)
                         S        sigma2            Default: 1.6*sigma1
+                        (word)   gaussian
                       Adjust only sigma, radius 0 is adjusted automatically.
+                      gaussian enables slower but more accurate gaussian blur.
  --diffstat [=ARG]    Compares two local statistics of source images. 
                       Uses ImageMagick option -statistic. Compare --statistic.
                       ARG additionally takes arguments: 
@@ -206,11 +210,6 @@ Step 2: Mask generation
                         r        radius            Default: $(maskarg_defaultvalue statistic radius1)
                         (word)   mode              Default: $(maskarg_defaultvalue statistic word1)
                       mode can be one of 'magick -list statistic'.
- --unsharp [=ARG]     Difference of -unsharp.
-                      ARG additionally takes argument: 
-                        r        radius            Default: $(maskarg_defaultvalue unsharp radius1)
-                        s        sigma             Default: $(maskarg_defaultvalue unsharp sigma1)
-                      Adjust only sigma, radius 0 is adjusted automatically.
  --wavelet [=ARG]     Based on ImageMagick option -wavelet-denoise.
                       ARG additionally takes argument:
                         p        percent1          Default: $(maskarg_defaultvalue wavelet percent1)%
@@ -382,7 +381,7 @@ Step 4: Stack fusion
                       difference between background and foreground object.
                       If unsharp areas appear, use a greater percent value.
                       If the foreground object still has holes, use a lower 
-                      percent value or try some of the --mask* options.
+                      percent value.
                       Can be specified only once, the order matters.
  --cutmax [=ARG]      Remove parts of current cut mask that are weaker than
                       current max in result mask.
@@ -2054,9 +2053,6 @@ focus_maskmethod() {
     -define compose:args=$Argpercent2%,$Argpercent1%
     -composite"
       }
-      Maskgenerator="$Maskgenerator
-  mpr:sourceimage
-    -compose Difference -composite"
     ;;
 
     cmd|channel|chroma|darkness|lightness|saturation|enfuse|compose|evaluate|max|min|mean|median)
@@ -2068,18 +2064,14 @@ focus_maskmethod() {
     cmddiff)
       Maskgenerator="$Maskgenerator
   mpr:sourceimage 
-    $Argword1
-  mpr:sourceimage
-    -compose Difference -composite"
+    $Argword1"
     ;;
 
     comet)
       Maskgenerator="$Maskgenerator
   mpr:sourceimage 
     -define morphology:compose=${Argword1}
-    -morphology Convolve Comet:${Argradius1}x${Argsigma1}:>
-  mpr:sourceimage
-    -compose Difference -composite"
+    -morphology Convolve Comet:${Argradius1}x${Argsigma1}:>"
     ;;
 
     compass)
@@ -2098,13 +2090,22 @@ focus_maskmethod() {
     -compose Difference -composite"
     ;;
 
-    dog) # DoG: Difference of Gaussian
-      Maskgenerator="$Maskgenerator
-  mpr:sourceimage
-    -define convolve:scale=100,100%
-    -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}
-  mpr:sourceimage
+    diffblur)
+      case "$Argword1" in
+        ""|"blur") 
+          Maskgenerator="$Maskgenerator
+  ( mpr:sourceimage -blur ${Argradius1},${Argsigma1} )
+  ( mpr:sourceimage -blur ${Argradius1},${Argsigma2} )
     -compose Difference -composite"
+        ;;
+        "gaussian")
+          Maskgenerator="$Maskgenerator
+  mpr:sourceimage
+    -define convolve:scale=100%
+    -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}"
+        ;;
+      esac
+
     ;;
 
     GAUSSexperimental) 
@@ -2189,10 +2190,8 @@ focus_maskmethod() {
     log)  # LoG: Laplacian of Gaussian
       Maskgenerator="$Maskgenerator
   mpr:sourceimage
-    -define convolve:scale=100,100%
-    -morphology Convolve LoG:${Argradius1}x${Argsigma1}
-  mpr:sourceimage
-    -compose Difference -composite"
+    -define convolve:scale=100%
+    -morphology Convolve LoG:${Argradius1}x${Argsigma1}"
     ;;
 
     morphology)
@@ -2234,20 +2233,10 @@ focus_maskmethod() {
     -statistic ${Argword1} ${Argradius1}x${Argradius1}"
     ;;
 
-    unsharp)
-      Maskgenerator="$Maskgenerator
-  mpr:sourceimage
-    -unsharp ${Argradius1}x${Argsigma1}
-  mpr:sourceimage
-    -compose Difference -composite"
-    ;;
-
     wavelet)
       Maskgenerator="$Maskgenerator
   mpr:sourceimage 
-    -wavelet-denoise ${Argpercent1}%,${Argpercent2}%
-  mpr:sourceimage
-    -compose Difference -composite"
+    -wavelet-denoise ${Argpercent1}%,${Argpercent2}%"
     ;;
 
   esac
@@ -2316,7 +2305,7 @@ focus_generate_masks() {
       Maskgenerator="$Maskgenerator
 $(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
 
-      [ "$Argdiff" ] && Maskgenerator="$Maskgenerator
+      [ "$Argdiff" = "yes" ] && Maskgenerator="$Maskgenerator
     # =diff
   mpr:sourceimage
     -compose Difference -composite"
@@ -3433,6 +3422,7 @@ maskarg_check() {
   Argtype="$(maskarg_defaultvalue "$Argmethod" type)"
   [ -z "$Argchannel"  ]    && Argchannel="$(maskarg_defaultvalue    "$Argmethod" channel)"
   [ -z "$Argcolorspace"  ] && Argcolorspace="$(maskarg_defaultvalue "$Argmethod" colorspace)"
+  [ -z "$Argdiff"  ]       && Argdiff="$(maskarg_defaultvalue       "$Argmethod" diff)"
   [ -z "$Argimage"  ]      && Argimage="$(maskarg_defaultvalue      "$Argmethod" image)"
   [ -z "$Arglevel"  ]      && Arglevel="$(maskarg_defaultvalue      "$Argmethod" level)"
   [ -z "$Argnegate"  ]     && Argnegate="$(maskarg_defaultvalue     "$Argmethod" negate)"
@@ -3450,6 +3440,7 @@ maskarg_check() {
   [ -z "$Argword2" ]       && Argword2="$(maskarg_defaultvalue      "$Argmethod" word2)"
   [ -n "$Argchannel" ]     && maskarg_checkallowed "$Argmethod" channel    "$Argchannel"
   [ -n "$Argcolorspace" ]  && maskarg_checkallowed "$Argmethod" colorspace "$Argcolorspace"
+  [ -n "$Argdiff" ]        && maskarg_checkallowed "$Argmethod" diff       "$Argdiff"
   [ -n "$Argimage" ]       && maskarg_checkallowed "$Argmethod" image      "$Argimage"
   [ -n "$Arglevel" ]       && maskarg_checkallowed "$Argmethod" level      "$Arglevel"
   [ -n "$Argnegate" ]      && maskarg_checkallowed "$Argmethod" negate     "$Argnegate"
@@ -3479,26 +3470,8 @@ maskarg_check() {
       Argimage="${Argimage:-$Argword1}"
       Argword1=""
     ;;
-    freichen)
-      case $Argnumber1 in
-        10|12|19) Argdiff=yes ;; ### FIXME really?
-      esac
-    ;;
-    morphology)
-      case ${Argword1,,} in
-        close) ;;
-        edge|edgein|edgeout|tophat|bottomhat) ;;
-        *) Argdiff="yes" ;; ### FIXME really?
-      esac
-    ;;
     soft)
       Softmode="yes"
-    ;;
-    statistic)
-      case ${Argword1,,} in
-        gradient|standarddeviation|"") Argdiff="" ;;
-        *)                             Argdiff="yes" ;;
-      esac
     ;;
   esac
 }
@@ -3538,7 +3511,7 @@ maskarg_parse() {
       "neg")              Argnegate="yes" ;;
       "level")            Arglevel="$Value" ;;
       "TYPE")             Argtype="$Value" ;;
-      "DIFF")             Argdiff="yes" ;;
+      "diff")             Argdiff="${Value:-yes}" ;;
       "BASENAME")         Argbasename="$Value" ;;
       *|WORD1|WORD2)
         [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
@@ -3562,17 +3535,17 @@ maskarg_store() {
   [ "$Argpercent2" ]           && Argoptions="$Argoptions,P$Argpercent2"
   [ "$Argnumber1" ]            && Argoptions="$Argoptions,n$Argnumber1"
   [ "$Argnumber2" ]            && Argoptions="$Argoptions,N$Argnumber2"
-  [ "$Argthreshold1" ]         && Argoptions="$Argoptions,t$Argthreshold1"
-  [ "$Argthreshold2" ]         && Argoptions="$Argoptions,T$Argthreshold2"
   [ "$Argimage" ]              && Argoptions="$Argoptions,I=$Argimage"
   [ "$Argcolorspace" ]         && Argoptions="$Argoptions,C=$Argcolorspace"
   [ "$Argchannel" ]            && Argoptions="$Argoptions,c$Argchannel"
+  [ "$Argdiff" ]               && Argoptions="$Argoptions,diff=$Argdiff"
   [ "$Argnegate" ]             && Argoptions="$Argoptions,neg"
   [ "$Arglevel" ]              && Argoptions="$Argoptions,level=$Arglevel"
+  [ "$Argthreshold1" ]         && Argoptions="$Argoptions,t$Argthreshold1"
+  [ "$Argthreshold2" ]         && Argoptions="$Argoptions,T$Argthreshold2"
   [ "$Argword1" ]              && Argoptions="$Argoptions,$Argword1"
   [ "$Argword2" ]              && Argoptions="$Argoptions,$Argword2"
   [ "$Argtype" ]               && Argoptions="$Argoptions,TYPE=$Argtype"
-  [ "$Argdiff" ]               && Argoptions="$Argoptions,DIFF"
   [ "$Argbasename" ]           && Argoptions="$Argoptions,BASENAME=$Argbasename"
   Argoptions="${Argoptions#,}"
   Imarguments[$Argcount]="$Argoptions"
@@ -3600,6 +3573,25 @@ maskarg_defaultvalue() {
         darkness)     Output="HSL" ;;
         lightness)    Output="HSL" ;;
         saturation)   Output="HSL" ;;
+      esac
+    ;;
+    diff)
+      case "$Method" in
+        blur|cmddiff|comet|wavelet)
+                      Output="yes" ;;
+        morphology)
+          case ${Argword1,,} in
+            close) ;;
+            edge|edgein|edgeout|tophat|bottomhat) ;;
+            *)        Output="yes" ;; ### FIXME really?
+          esac
+        ;;
+        statistic)
+          case ${Argword1,,} in
+            gradient|standarddeviation) ;;
+            *)        Output="yes" ;;
+          esac
+        ;;
       esac
     ;;
     image)
@@ -3632,7 +3624,7 @@ maskarg_defaultvalue() {
         blur)         Output="0" ;;
         comet)        Output="0" ;;
         compass)      Output="45" ;;
-        dog)          Output="0" ;;
+        diffblur)     Output="0" ;;
         diffstat)
           case "$Argword1,$Argword2" in
             "median,mean")
@@ -3664,7 +3656,6 @@ maskarg_defaultvalue() {
                       Output="0" ;;
           esac
         ;;
-        #unsharp
         wavelet)      Output="0" ;;
       esac
     ;;
@@ -3713,12 +3704,11 @@ maskarg_defaultvalue() {
       case "$Method" in
         blur)         Output="0" ;;
         comet)        Output="0" ;;
+        diffblur)     Output="0" ;;
         diffstat)     Output="3" ;;
-        dog)          Output="0" ;;
         log)          Output="0" ;;
         morphology)   Output="1" ;;
         statistic)    Output="2" ;;
-        unsharp)      Output="0" ;;
 
         cutblur)      Output="0" ;;
         cutmorph)     Output="1" ;;
@@ -3739,9 +3729,8 @@ maskarg_defaultvalue() {
       case "$Method" in
         blur)         Output="0.3" ;;
         comet)        Output="5" ;;
-        dog)          Output="0.4" ;;
+        diffblur)     Output="0.4" ;;
         log)          Output="0.2" ;;
-        unsharp)      Output="2" ;;
 
         cutblur)      Output="2" ;;
         cutsoft)      Output="2" ;;
@@ -3752,7 +3741,7 @@ maskarg_defaultvalue() {
     ;;
     sigma2)
       case "$Method" in
-        dog)          Output="$(calc "$Argsigma1 * 1.6")" ;;
+        diffblur)     Output="$(calc "$Argsigma1 * 1.6")" ;;
         finalblur)    Output="2" ;;
       esac
     ;;
@@ -3774,7 +3763,7 @@ maskarg_defaultvalue() {
     ;;
     type)
       case "$Method" in
-        blur|cmd|cmddiff|comet|compass|diffstat|dog|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|unsharp|wavelet)
+        blur|cmd|cmddiff|comet|compass|diffstat|diffblur|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|wavelet)
                       Output="mask"
         ;;
         channel|chroma|darkness|lightness|saturation)
@@ -3879,6 +3868,12 @@ maskarg_checkallowed() {
         ;;
       esac
     ;;
+    diff)
+      case "$Argtype" in
+        mask) ;;
+        *) error "--$Method does not take argument diff" ;;
+      esac
+    ;;
     image)
       case "$Argtype" in
         mask)
@@ -3936,7 +3931,7 @@ maskarg_checkallowed() {
     ;;
     radius1)
       case "$Method" in
-        blur|comet|cutblur|dog|log|maskblur|unsharp) ;;
+        blur|comet|cutblur|diffblur|log|maskblur) ;;
         cutblur|maskblur) ;;
         morphology|cutmorph|maskmorph) ;;
         diffstat|statistic|maskstat) ;;
@@ -3955,14 +3950,14 @@ maskarg_checkallowed() {
     ;;
     sigma1)
       case "$Method" in
-        blur|comet|dog|log|unsharp) ;;
+        blur|comet|diffblur|log) ;;
         cutblur|cutsoft|finalblur|maskblur|threshold) ;;
         *) error "$Method does not take argument sigma1: s$Arg" ;;
       esac
     ;;
     sigma2)
       case "$Method" in
-        dog|finalblur) ;;
+        diffblur|finalblur) ;;
         *) error "$Method does not take argument sigma2: S$Arg" ;;
       esac
     ;;
@@ -4098,7 +4093,7 @@ maskarg_short() {
       radius1)
         [ -n "$Argradius1" ]     && Append=",r$Argradius1"
         [ "$Argradius1" = "$(maskarg_defaultvalue "$Argmethod" radius1 "$Argradius1")" ] && case "$Argmethod" in
-          blur|comet|cutblur|dog|maskblur|log|unsharp) Append="" ;;
+          blur|comet|cutblur|diffblur|maskblur|log) Append="" ;;
         esac
       ;;
       radius2)
@@ -4129,15 +4124,6 @@ maskarg_short() {
       number2)
         [ -n "$Argnumber2" ]     && Append=",N$Argnumber2"
       ;;
-      threshold1)
-        [ -n "$Argthreshold1" ]  && Append=",t$Argthreshold1"
-      ;;
-      threshold2)
-        [ -n "$Argthreshold2" ]  && Append=",T$Argthreshold2"
-        [ "$Argthreshold2" = "$(maskarg_defaultvalue "$Argmethod" threshold2 "$Argthreshold2")" ] && case "$Argmethod" in
-          finalthreshold) Append="" ;;
-        esac
-      ;;
       image)
         [ -n "$Argimage" ]       && Append=",I=$Argimage"
         [ "$Argimage" = "$(maskarg_defaultvalue "$Argmethod" image "$Argimage")" ] && case "$Argmethod" in
@@ -4156,10 +4142,26 @@ maskarg_short() {
           chroma|darkness|lightness|saturation) Append="" ;;
         esac
       ;;
+      diff)
+        [ "$Argdiff" = "yes" ]   && Append=",diff"
+        [ "$Argdiff" = "no"  ]   && Append=",diff=no"
+        [ "$Argdiff" = "$(maskarg_defaultvalue "$Argmethod" diff "$Argdiff")" ] && case "$Argmethod" in
+          *) Append="" ;;
+        esac
+      ;;
       negate)
         [ -n "$Argnegate" ]      && Append=",neg"
         [ "$Argnegate" = "$(maskarg_defaultvalue "$Argmethod" negate "$Argnegate")" ] && case "$Argmethod" in
           darkness) Append="" ;;
+        esac
+      ;;
+      threshold1)
+        [ -n "$Argthreshold1" ]  && Append=",t$Argthreshold1"
+      ;;
+      threshold2)
+        [ -n "$Argthreshold2" ]  && Append=",T$Argthreshold2"
+        [ "$Argthreshold2" = "$(maskarg_defaultvalue "$Argmethod" threshold2 "$Argthreshold2")" ] && case "$Argmethod" in
+          finalthreshold) Append="" ;;
         esac
       ;;
       level)
@@ -4514,7 +4516,7 @@ parse_options() {
   Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,maskformat::,output:,rmcache,savemask::,showimage,showname,sub::,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
-  Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,unsharp::,wavelet::"  
+  Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,diffblur::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
@@ -4551,7 +4553,7 @@ parse_options() {
       -h|--help|--license|--rmcache|--showname|--version) Oneaction="${1:-}" ;;
 
 --cmd|--cmddiff|--experimental|\
---blur|--comet|--compass|--diffstat|--dog|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--unsharp|--wavelet|\
+--blur|--comet|--compass|--diffstat|--diffblur|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--wavelet|\
 --channel|--chroma|--darkness|--lightness|--saturation|\
 --compose|--enfuse|--evaluate|--max|--mean|--median|--min|\
 \
@@ -4935,7 +4937,7 @@ trap - ERR"
   # --exif: transfer EXIF metadata from first image to result, store imfuse version and parsed options
   [ "$Exifsourceimage" ] && exiftransfer "$Exifsourceimage" "$Outputimage"
   command -v exiftool && {
-    exiftool -Software="imfuse v$Version" -ImageDescription="$Parsedoptions" "$Outputimage"
+    exiftool -overwrite_original -Software="imfuse v$Version" -ImageDescription="$Parsedoptions" "$Outputimage"
   } || {
     note "Failed to store metadata in output image. Is exiftool installed?"
   }
