@@ -2025,17 +2025,16 @@ threshold() {
 focus_maskmethod() {
   # Mask generating ImageMagick options
   # Most of them are based on edge detection: http://www.imagemagick.org/Usage/convolve/#edgedet
-  local Method Sourceimage Enfuseimage
+  local Sourceimage Enfuseimage
   local Maskgenerator=
   local Firstimage Lastimage
 
-  Method="${1:-}"
-  Firstimage="${2:-1}"
-  Lastimage="${3:-$Sourceimagenumber}"
+  Firstimage="${1:-1}"
+  Lastimage="${2:-$Sourceimagenumber}"
 
   Maskgenerator="
-  # --$Method=${Argoptions%,TYPE*}"
-  case $Method in
+  # --$Argmethod=${Argoptions%,TYPE*}"
+  case $Argmethod in
 
     blur)
       Maskgenerator="$Maskgenerator
@@ -2303,7 +2302,7 @@ focus_generate_masks() {
     -delete 0"
       }
       Maskgenerator="$Maskgenerator
-$(focus_maskmethod "$Argmethod" $Firstimage $Lastimage)"
+$(focus_maskmethod "$Firstimage" "$Lastimage")"
 
       [ "$Argdiff" = "yes" ] && Maskgenerator="$Maskgenerator
     # =diff
@@ -3551,12 +3550,12 @@ maskarg_store() {
   Imarguments[$Argcount]="$Argoptions"
 }
 maskarg_defaultvalue() {
-  local Method Argument Output=
-  Method="${1:-}"
+  local Argmethod Argument Output=
+  Argmethod="${1:-}"
   Argument="${2:-}"
   case "$Argument" in
     channel)
-      case "$Method" in
+      case "$Argmethod" in
         colorspace) ;;
         channel) ;;
         chroma)       Output="1" ;;
@@ -3566,7 +3565,7 @@ maskarg_defaultvalue() {
       esac
     ;;
     colorspace)
-      case "$Method" in
+      case "$Argmethod" in
         colorspace)   Output="sRGB" ;;
         channel) ;;
         chroma)       Output="HCL" ;;
@@ -3576,7 +3575,7 @@ maskarg_defaultvalue() {
       esac
     ;;
     diff)
-      case "$Method" in
+      case "$Argmethod" in
         blur|cmddiff|comet|wavelet)
                       Output="yes" ;;
         morphology)
@@ -3595,7 +3594,7 @@ maskarg_defaultvalue() {
       esac
     ;;
     image)
-      case "$Method" in
+      case "$Argmethod" in
         enfuse)       Output="enfuse" ;;
         max)          Output="Max" ;;
         mean)         Output="Mean" ;;
@@ -3620,7 +3619,7 @@ maskarg_defaultvalue() {
       esac
     ;;
     levelmin)
-      case "$Method" in
+      case "$Argmethod" in
         blur)         Output="0" ;;
         comet)        Output="0" ;;
         compass)      Output="45" ;;
@@ -3660,23 +3659,23 @@ maskarg_defaultvalue() {
       esac
     ;;
     negate)
-      case "$Method" in
+      case "$Argmethod" in
         darkness)     Output="yes" ;;
       esac
     ;;
     number1)
-      case "$Method" in
+      case "$Argmethod" in
         freichen)     Output="" ;;
         laplacian)    Output="3" ;;
       esac
     ;;
     number2)
-      case "$Method" in
+      case "$Argmethod" in
         freichen)     Output="" ;;
       esac
     ;;
     percent1)
-      case "$Method" in
+      case "$Argmethod" in
         blur|maskblur|cutblur)
                       Output="100" ;;
         cutless)      Output="20" ;;
@@ -3690,7 +3689,7 @@ maskarg_defaultvalue() {
       esac
     ;;
     percent2)
-      case "$Method" in
+      case "$Argmethod" in
         blur|maskblur|cutblur)
                       Output="$((100-Argpercent1))" ;;
         finalalpha)   Output="100" ;;
@@ -3701,7 +3700,7 @@ maskarg_defaultvalue() {
       esac
     ;;
     radius1)
-      case "$Method" in
+      case "$Argmethod" in
         blur)         Output="0" ;;
         comet)        Output="0" ;;
         diffblur)     Output="0" ;;
@@ -3719,14 +3718,14 @@ maskarg_defaultvalue() {
       esac
     ;;
     radius2)
-      case "$Method" in
+      case "$Argmethod" in
         cutmorph)     Output="1" ;;
         maskmorph)    Output="2" ;;
         morphology)   Output="1" ;;
       esac
     ;;
     sigma1)
-      case "$Method" in
+      case "$Argmethod" in
         blur)         Output="0.3" ;;
         comet)        Output="5" ;;
         diffblur)     Output="0.4" ;;
@@ -3740,13 +3739,13 @@ maskarg_defaultvalue() {
       esac
     ;;
     sigma2)
-      case "$Method" in
+      case "$Argmethod" in
         diffblur)     Output="$(calc "$Argsigma1 * 1.6")" ;;
         finalblur)    Output="2" ;;
       esac
     ;;
     threshold1)
-      case "$Method" in
+      case "$Argmethod" in
         cutthreshold) Output="30" ;;
         masklevel)    Output="5" ;;
         finalblur)    Output="50" ;;
@@ -3756,13 +3755,13 @@ maskarg_defaultvalue() {
       esac
     ;;
     threshold2)
-      case "$Method" in
+      case "$Argmethod" in
         finalthreshold)
                       Output="100" ;;
       esac
     ;;
     type)
-      case "$Method" in
+      case "$Argmethod" in
         blur|cmd|cmddiff|comet|compass|diffstat|diffblur|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|wavelet)
                       Output="mask"
         ;;
@@ -3794,12 +3793,12 @@ maskarg_defaultvalue() {
                       Output="substack"
         ;;
         *)
-          error "maskarg_defaultvalue(): Unknown type for method $Method"
+          error "maskarg_defaultvalue(): Unknown type for method $Argmethod"
         ;;
       esac
     ;;
     word1)
-      case "$Method" in
+      case "$Argmethod" in
         blur|maskblur|cutblur)
                       Output="" ;;
         comet)        Output="Lighten" ;;
@@ -3822,7 +3821,7 @@ maskarg_defaultvalue() {
       esac
     ;;
     word2)
-      case "$Method" in
+      case "$Argmethod" in
         diffstat)     Output="Mean" ;;
         maskmorph|morphology|cutmorph)
                       Output="Octagon" ;;
@@ -3832,8 +3831,8 @@ maskarg_defaultvalue() {
   echo "$Output"
 }
 maskarg_checkallowed() {
-  local Method Option Arg
-  Method="${1:-}"
+  local Argmethod Option Arg
+  Argmethod="${1:-}"
   Option="${2:-}"
   Arg="${3:-}"
 
@@ -3844,7 +3843,7 @@ maskarg_checkallowed() {
         *) 
           case "${1:-}" in
             colorspace) ;;
-            *) error "$Method does not take argument colorspace channel: c$Arg" ;;
+            *) error "$Argmethod does not take argument colorspace channel: c$Arg" ;;
           esac
         ;;
       esac
@@ -3852,18 +3851,18 @@ maskarg_checkallowed() {
     colorspace)
       case "$Argtype" in
         mask)
-          checkmagicklist colorspace "$Arg" || error "--$Method: unknown colorspace for C=: $Arg 
+          checkmagicklist colorspace "$Arg" || error "--$Argmethod: unknown colorspace for C=: $Arg 
   Please choose one out of 'magick -list colorspace'"
           Argcolorspace="$(checkmagicklist colorspace "$Arg" print)"
         ;;
         *) 
           case "${1:-}" in
             colorspace) 
-              checkmagicklist colorspace "$Arg" || error "--$Method: unknown colorspace for C=: $Arg 
+              checkmagicklist colorspace "$Arg" || error "--$Argmethod: unknown colorspace for C=: $Arg 
   Please choose one out of 'magick -list colorspace'"
               Argcolorspace="$(checkmagicklist colorspace "$Arg" print)"
             ;;
-            *) error "$Method does not take argument colorspace: C=$Arg" ;;
+            *) error "$Argmethod does not take argument colorspace: C=$Arg" ;;
           esac
         ;;
       esac
@@ -3871,13 +3870,13 @@ maskarg_checkallowed() {
     diff)
       case "$Argtype" in
         mask) ;;
-        *) error "--$Method does not take argument diff" ;;
+        *) error "--$Argmethod does not take argument diff" ;;
       esac
     ;;
     image)
       case "$Argtype" in
         mask)
-          generate_image --mode "$Arg" --showname >/dev/null || error "--$Method: unknown image generation format for Option -I='$Arg'.
+          generate_image --mode "$Arg" --showname >/dev/null || error "--$Argmethod: unknown image generation format for Option -I='$Arg'.
   Please choose one out of:
   enfuse max min mean median
   'magick -list evaluate'
@@ -3885,7 +3884,7 @@ maskarg_checkallowed() {
   'magick -list color"
           Argimage="$(generate_image --mode "$Argimage" --showmode)"
         ;;
-        *) error "$Method does not take argument image comparision: I=$Arg" ;;
+        *) error "$Argmethod does not take argument image comparision: I=$Arg" ;;
       esac
     ;;
     level)
@@ -3896,78 +3895,78 @@ maskarg_checkallowed() {
             *) error "level does not take value '$Arg'. Allowed values are yes|no" ;;
           esac
         ;;
-        *) error "$Method does not take argument level: level=$Arg" ;;
+        *) error "$Argmethod does not take argument level: level=$Arg" ;;
       esac
     ;;
     negate)
       case "$Argtype" in
         mask) ;;
-        *) error "$Method does not take argument negate." ;;
+        *) error "$Argmethod does not take argument negate." ;;
       esac
     ;;
     number1)
-      case "$Method" in
+      case "$Argmethod" in
         freichen|laplacian|substacks) ;;
-        *) error "$Method does not take argument number: n$Arg" ;;
+        *) error "$Argmethod does not take argument number: n$Arg" ;;
       esac
     ;;
     number2)
-      case "$Method" in
+      case "$Argmethod" in
         substacks) ;;
-        *) error "$Method does not take argument number: n$Arg" ;;
+        *) error "$Argmethod does not take argument number: n$Arg" ;;
       esac
     ;;
     percent1)
-      case "$Method" in
+      case "$Argmethod" in
         blur|cutblur|cutless|cutmax|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
-        *) error "$Method does not take argument percent1: p$Arg" ;;
+        *) error "$Argmethod does not take argument percent1: p$Arg" ;;
       esac
     ;;
     percent2)
-      case "$Method" in
+      case "$Argmethod" in
         blur|cutblur|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
-        *) error "$Method does not take argument percent2: P$Arg" ;;
+        *) error "$Argmethod does not take argument percent2: P$Arg" ;;
       esac
     ;;
     radius1)
-      case "$Method" in
+      case "$Argmethod" in
         blur|comet|cutblur|diffblur|log|maskblur) ;;
         cutblur|maskblur) ;;
         morphology|cutmorph|maskmorph) ;;
         diffstat|statistic|maskstat) ;;
         finalblur2) ;;
         substacks) ;;
-        *) error "$Method does not take argument radius1: r$Arg" ;;
+        *) error "$Argmethod does not take argument radius1: r$Arg" ;;
       esac
     ;;
     radius2)
-      case "$Method" in
+      case "$Argmethod" in
         morphology|cutmorph|maskmorph) ;;
-        *) error "$Method does not take argument radius2: R$Arg" ;;
+        *) error "$Argmethod does not take argument radius2: R$Arg" ;;
       esac
     ;;
     short)
     ;;
     sigma1)
-      case "$Method" in
+      case "$Argmethod" in
         blur|comet|diffblur|log) ;;
         cutblur|cutsoft|finalblur|maskblur|threshold) ;;
-        *) error "$Method does not take argument sigma1: s$Arg" ;;
+        *) error "$Argmethod does not take argument sigma1: s$Arg" ;;
       esac
     ;;
     sigma2)
-      case "$Method" in
+      case "$Argmethod" in
         diffblur|finalblur) ;;
-        *) error "$Method does not take argument sigma2: S$Arg" ;;
+        *) error "$Argmethod does not take argument sigma2: S$Arg" ;;
       esac
     ;;
     threshold1)
       case "$Argtype" in
         mask) ;;
         *)
-          case "$Method" in
+          case "$Argmethod" in
             cutless|cutthreshold|finalblur|finalblur2|finalthreshold|masklevel) ;;
-            *) error "$Method does not take argument threshold1: t$Arg" ;;
+            *) error "$Argmethod does not take argument threshold1: t$Arg" ;;
           esac
         ;;
       esac
@@ -3976,9 +3975,9 @@ maskarg_checkallowed() {
       case "$Argtype" in
         mask) ;;
         *)
-          case "$Method" in
+          case "$Argmethod" in
             finalthreshold) ;;
-            *) error "$Method does not take argument threshold2: T$Arg" ;;
+            *) error "$Argmethod does not take argument threshold2: T$Arg" ;;
           esac
         ;;
       esac
@@ -3986,11 +3985,11 @@ maskarg_checkallowed() {
     weight)
       case "$Argtype" in
         mask) ;;
-        *) error "$Method does not take argument weight: w$Arg" ;;
+        *) error "$Argmethod does not take argument weight: w$Arg" ;;
       esac
     ;;
     word1)
-      case "$Method" in
+      case "$Argmethod" in
         bg)
           generate_image --mode "$Arg" --showname >/dev/null || error "--background: unknown image generation mode: '$Arg'.
   Please choose one out of:
@@ -4004,64 +4003,64 @@ maskarg_checkallowed() {
           Argword1="${Argword1,,}"
           case "$Argword1" in
             ""|"gaussian") ;;
-            *) error "--$Method does not know argument: $Argword1" ;;
+            *) error "--$Argmethod does not know argument: $Argword1" ;;
           esac
         ;;
         colorspace) 
-          checkmagicklist colorspace "$Arg" || error "--$Method: unknown colorspace: $Arg
+          checkmagicklist colorspace "$Arg" || error "--$Argmethod: unknown colorspace: $Arg
   Please choose one out of 'magick -list colorspace'"
           Argword1="$(checkmagicklist colorspace "$Arg" print)"
         ;;
         masklevel)
           case "$Arg" in
             all|substack) ;;
-            *) error "$Method does not take argument: $Arg" ;;
+            *) error "$Argmethod does not take argument: $Arg" ;;
           esac
         ;;
         compose|comet|compass|maskmerge|soft)
-          checkmagicklist compose "${Arg%2}" || error "--$Method: unknown argument for word1: $Arg
+          checkmagicklist compose "${Arg%2}" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose one out of 'magick -list compose'"
           Argword1="$(checkmagicklist compose "${Arg%2}" print)$(tr -d -c "2" <<< "$Arg")"
         ;;
         evaluate)
-          checkmagicklist evaluate "$Arg" || error "--$Method: unknown argument for word1: $Arg
+          checkmagicklist evaluate "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose one out of 'magick -list evaluate'"
           Argword1="$(checkmagicklist evaluate "$Arg" print)"
         ;;
         cmd|cmddiff|cutcmd|maskcmd) ;;
         morphology|cutmorph|maskmorph)
-          checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || error "--$Method:  unknown argument for word1: $Arg
+          checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || error "--$Argmethod:  unknown argument for word1: $Arg
   Please choose one out of 'magick -list morphology'"
           Argword1="$(checkmagicklist morphology "$Arg" print)"
         ;;
         substacks) 
           case "$Arg" in
             kurt) ;;
-            *) error "--$Method does not take argument: $Arg" ;;
+            *) error "--$Argmethod does not take argument: $Arg" ;;
           esac
         ;;
         statistic|diffstat|maskstat)
-          checkmagicklist statistic "$Arg" || error "--$Method: unknown argument for word1: $Arg
+          checkmagicklist statistic "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
           Argword1="$(checkmagicklist statistic "$Arg" print)"
         ;;
-        *) error "$Method does not take argument word1: $Arg" ;;
+        *) error "$Argmethod does not take argument word1: $Arg" ;;
       esac
     ;;
     word2)
-      case "$Method" in
+      case "$Argmethod" in
         colorspace) ;;
         diffstat)
-          checkmagicklist statistic "$Arg" || error "--$Method: unknown argument for word1: $Arg
+          checkmagicklist statistic "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
           Argword2="$(checkmagicklist statistic "$Arg" print)"
         ;;
         morphology|cutmorph|maskmorph)
-          checkmagicklist kernel "$Arg" || error "--$Method: unknown kernel: $Arg
+          checkmagicklist kernel "$Arg" || error "--$Argmethod: unknown kernel: $Arg
   Please choose out of 'magick -list kernel'"
           Argword2="$(checkmagicklist kernel "$Arg" print)"
         ;;
-        *) error "$Method does not take argument word2: $Arg" ;;
+        *) error "$Argmethod does not take argument word2: $Arg" ;;
       esac
     ;;
   esac
@@ -4092,7 +4091,7 @@ maskarg_short() {
       ;;
       radius1)
         [ -n "$Argradius1" ]     && Append=",r$Argradius1"
-        [ "$Argradius1" = "$(maskarg_defaultvalue "$Argmethod" radius1 "$Argradius1")" ] && case "$Argmethod" in
+        [ "$Argradius1" = "$(maskarg_defaultvalue "$Argmethod" radius1)" ] && case "$Argmethod" in
           blur|comet|cutblur|diffblur|maskblur|log) Append="" ;;
         esac
       ;;
@@ -4107,13 +4106,13 @@ maskarg_short() {
       ;;
       percent1)
         [ -n "$Argpercent1" ]    && Append=",p$Argpercent1"
-        [ "$Argpercent1" = "$(maskarg_defaultvalue "$Argmethod" percent1 "$Argpercent1")" ] && case "$Argmethod" in
+        [ "$Argpercent1" = "$(maskarg_defaultvalue "$Argmethod" percent1)" ] && case "$Argmethod" in
           blur|maskblur|cutblur) Append="" ;;
         esac
       ;;
       percent2)
         [ -n "$Argpercent2" ]    && Append=",P$Argpercent2"
-        [ "$Argpercent2" = "$(maskarg_defaultvalue "$Argmethod" percent2 "$Argpercent2")" ] && case "$Argmethod" in
+        [ "$Argpercent2" = "$(maskarg_defaultvalue "$Argmethod" percent2)" ] && case "$Argmethod" in
           blur|maskblur|cutblur) Append="" ;;
           wavelet|maskwave|cutwave) Append="" ;;
         esac
@@ -4126,32 +4125,32 @@ maskarg_short() {
       ;;
       image)
         [ -n "$Argimage" ]       && Append=",I=$Argimage"
-        [ "$Argimage" = "$(maskarg_defaultvalue "$Argmethod" image "$Argimage")" ] && case "$Argmethod" in
+        [ "$Argimage" = "$(maskarg_defaultvalue "$Argmethod" image)" ] && case "$Argmethod" in
           enfuse|max|min|mean|median) Append="" ;;
         esac
       ;;
       colorspace)
         [ -n "$Argcolorspace" ]  && Append=",C=$Argcolorspace"
-        [ "$Argcolorspace" = "$(maskarg_defaultvalue "$Argmethod" colorspace "$Argcolorspace")" ] && case "$Argmethod" in
+        [ "$Argcolorspace" = "$(maskarg_defaultvalue "$Argmethod" colorspace)" ] && case "$Argmethod" in
           chroma|darkness|lightness|saturation) Append="" ;;
         esac
       ;;
       channel)
         [ -n "$Argchannel" ]     && Append=",c$Argchannel"
-        [ "$Argchannel" = "$(maskarg_defaultvalue "$Argmethod" channel "$Argchannel")" ] && case "$Argmethod" in
+        [ "$Argchannel" = "$(maskarg_defaultvalue "$Argmethod" channel)" ] && case "$Argmethod" in
           chroma|darkness|lightness|saturation) Append="" ;;
         esac
       ;;
       diff)
         [ "$Argdiff" = "yes" ]   && Append=",diff"
         [ "$Argdiff" = "no"  ]   && Append=",diff=no"
-        [ "$Argdiff" = "$(maskarg_defaultvalue "$Argmethod" diff "$Argdiff")" ] && case "$Argmethod" in
+        [ "$Argdiff" = "$(maskarg_defaultvalue "$Argmethod" diff)" ] && case "$Argmethod" in
           *) Append="" ;;
         esac
       ;;
       negate)
         [ -n "$Argnegate" ]      && Append=",neg"
-        [ "$Argnegate" = "$(maskarg_defaultvalue "$Argmethod" negate "$Argnegate")" ] && case "$Argmethod" in
+        [ "$Argnegate" = "$(maskarg_defaultvalue "$Argmethod" negate)" ] && case "$Argmethod" in
           darkness) Append="" ;;
         esac
       ;;
@@ -4160,25 +4159,25 @@ maskarg_short() {
       ;;
       threshold2)
         [ -n "$Argthreshold2" ]  && Append=",T$Argthreshold2"
-        [ "$Argthreshold2" = "$(maskarg_defaultvalue "$Argmethod" threshold2 "$Argthreshold2")" ] && case "$Argmethod" in
+        [ "$Argthreshold2" = "$(maskarg_defaultvalue "$Argmethod" threshold2)" ] && case "$Argmethod" in
           finalthreshold) Append="" ;;
         esac
       ;;
       level)
         [ -n "$Arglevel" ]       && Append=",lev=$Arglevel"
-        [ "$Arglevel" = "$(maskarg_defaultvalue "$Argmethod" level "$Arglevel")" ] && case "$Argmethod" in
+        [ "$Arglevel" = "$(maskarg_defaultvalue "$Argmethod" level)" ] && case "$Argmethod" in
           enfuse|evaluate|max|mean|median|min|compose|channel|chroma|darkness|lightness|saturation) Append="" ;;
         esac
       ;;
       word1)
         [ -n "$Argword1" ]       && Append=",$Argword1"
-        [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1 "$Argword1")" ] && case "$Argmethod" in
+        [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
           comet|compass|diffstat|statistic|masklevel|maskmerge|soft) Append="" ;;
         esac
       ;;
       word2)
         [ -n "$Argword2" ]       && Append=",$Argword2"
-        [ "$Argword2" = "$(maskarg_defaultvalue "$Argmethod" word2 "$Argword2")" ] && case "$Argmethod" in
+        [ "$Argword2" = "$(maskarg_defaultvalue "$Argmethod" word2)" ] && case "$Argmethod" in
           diffstat|maskmorph|morphology|cutmorph) Append="" ;;
         esac
       ;;
