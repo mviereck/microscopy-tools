@@ -41,7 +41,7 @@ Dependencies:
   exiftool            Optional, needed to set and transfer image metadata.
   enfuse              Optional, needed for options --enfuse and --bg=enfuse.
   geeqie              Optional, needed for option -V, --showimage.
-  viewnior            Optional, needed for option -W to show result image.
+  feh                 Optional, needed for option -W to show result image.
   focus-stack         Optional, needed for option --align.
                         https://github.com/PetteriAimonen/focus-stack
   xclip               Optional, to send result file name to clipboard.
@@ -172,10 +172,14 @@ Step 2: Mask generation
  --diffstat [=ARG]    Compares two local statistics of source images. 
                       Uses ImageMagick option -statistic. Compare --statistic.
                       ARG additionally takes arguments: 
-                        r        radius            Default: $(maskarg_defaultvalue diffstat radius1)
+                        r        radius1           Default: $(maskarg_defaultvalue diffstat radius1)
+                        R        radius2           Default: same as radius1
                         (word)   mode1             Default: $(maskarg_defaultvalue diffstat word1)
                         (word)   mode2             Default: $(maskarg_defaultvalue diffstat word2)
                       mode1 and mode2 can be two of 'magick -list evaluate'.
+                      Mode StandardDeviation can be shortened to StDev.
+                      Rather use --statistic for same mode with two radii
+                      than setting radius2 here.
  --freichen [=ARG]    Frei-Chen edge detection.
                       ARG additionally takes arguments: 
                         n        mode number   Default: Combination of 1 and 2.
@@ -207,9 +211,13 @@ Step 2: Mask generation
  --sobel [=ARG]       Sobel edge detection. 
  --statistic [=ARG]   ImageMagick option -statistic.
                       ARG additionally takes arguments: 
-                        r        radius            Default: $(maskarg_defaultvalue statistic radius1)
+                        r        radius1           Default: $(maskarg_defaultvalue statistic radius1)
+                        R        radius2
                         (word)   mode              Default: $(maskarg_defaultvalue statistic word1)
                       mode can be one of 'magick -list statistic'.
+                      Mode StandardDeviation can be shortened to StDev.
+                      If radius2 is set, it gives the difference of two
+                      statistic mode results with radius1 and radius2.
  --wavelet [=ARG]     Based on ImageMagick option -wavelet-denoise.
                       ARG additionally takes argument:
                         p        percent1          Default: $(maskarg_defaultvalue wavelet percent1)%
@@ -314,6 +322,7 @@ Step 3: Mask merging
                       Mode median sharpens the result and opens gaps.
                       Mode gradient sharpens the result, closes gaps
                       and adds noise in weak areas.
+                      Mode StandardDeviation can be shortened to StDev.
  --maskthreshold [=ARG]  Remove low (or high) contrast area.
                       ARG takes arguments:
                         t        threshold1        Default: $(maskarg_defaultvalue maskthreshold threshold1)%
@@ -573,8 +582,17 @@ showimage() {
   return 0
 }
 showviewnior() {
+  local W H
   [ "$Viewnior" ] && {
-    viewnior "${1:-}" >/dev/null 2>&1 &
+    #viewnior "$@" >/dev/null 2>&1 &
+    W=900
+    H=900
+    compare "$Imagewidth"  -lt "$W" && W="$Imagewidth" 
+    compare "$Imageheight" -lt "$H" && H="$Imageheight" 
+    nohup feh --draw-filename --draw-tinted --scale-down --keep-zoom-vp --reverse \
+              --geometry ${W}x${H}+37+0 \
+              --info='exiftool -imagedescription %F | cut -d: -f2- | fold -s -w 110' \
+              "$@" </dev/null >/dev/null 2>&1 &
     disown $!
   }
   return 0
@@ -2091,7 +2109,7 @@ focus_maskmethod() {
     diffstat)
         Maskgenerator="$Maskgenerator
   ( mpr:sourceimage -statistic ${Argword1} ${Argradius1} )
-  ( mpr:sourceimage -statistic ${Argword2} ${Argradius1} )
+  ( mpr:sourceimage -statistic ${Argword2} ${Argradius2} )
     -compose Difference -composite"
     ;;
 
@@ -2233,9 +2251,19 @@ focus_maskmethod() {
     ;;
 
     statistic)
-      Maskgenerator="$Maskgenerator
+      case "$Argradius2" in
+        "")
+          Maskgenerator="$Maskgenerator
   mpr:sourceimage
     -statistic ${Argword1} ${Argradius1}x${Argradius1}"
+        ;;
+        *)
+          Maskgenerator="$Maskgenerator
+  ( mpr:sourceimage -statistic ${Argword1} ${Argradius1} )
+  ( mpr:sourceimage -statistic ${Argword1} ${Argradius2} )
+    -compose Difference -composite"
+        ;;
+      esac
     ;;
 
     wavelet)
@@ -2625,7 +2653,8 @@ focus_hard() {
 
   local Resultimage Maskmaxcopy=
   local Firstimage Lastimage
-  local Focusimagebasename Focusimagefile Focusimagemaskfile Focusimagedepthfile
+  local Focusimagebasename
+  #local Focusimagefile Focusimagemaskfile Focusimagedepthfile
   local Command Count
   local Longoptions Parsedoptions
   local Focuscode=
@@ -2733,13 +2762,14 @@ focus_hard() {
     -fill white +opaque black 
     -write mpr:cutmask_less
     -delete 0"
+
             [ -n "$Argthreshold1" ] && Focuscode="$Focuscode
   mpr:cutmask_less
     -threshold ${Argthreshold1}%
     -write mpr:cutmask_less
     -delete 0"
             Focuscode="$Focuscode
-  # reduce max in resultmask where --lessthanmax takes over
+  # reduce max in focus mask where --lessthanmax takes over
   mpr:mergemask
   mpr:cutmask_less
     -alpha off
@@ -2769,8 +2799,18 @@ focus_hard() {
     +opaque black
     -negate
     -write mpr:cutmask
-    -delete 0
+    -delete 0"
 
+            Focuscode="$Focuscode
+  # drop areas with strength 0
+  mpr:focusmask
+    -threshold 0%
+  mpr:cutmask
+    -compose Darken -composite
+    -write mpr:cutmask
+    -delete 0"
+
+            Focuscode="$Focuscode
   mpr:cutmask
   ###/ --cutless"
           ;;
@@ -2787,14 +2827,14 @@ focus_hard() {
     -compose CopyOpacity -composite
     -write mpr:mergemask_part
     -delete 0
-  # get part of resultmask that fits current cutmask
+  # get part of focus mask that fits current cutmask
   mpr:focusmask
   mpr:cutmask
     -alpha off
     -compose CopyOpacity -composite
     -write mpr:focusmask_part
     -delete 0
-  # get area where cutmask area is stronger than resultmask
+  # get area where cutmask area is stronger than focus mask
   mpr:mergemask_part
   ( mpr:focusmask_part -evaluate Subtract $Argpercent1% )
     -alpha off
@@ -2804,7 +2844,7 @@ focus_hard() {
     -negate
     -write mpr:cutmask_part
     -delete 0
-  # restrict cutmask to area where it is stronger than resultmask
+  # restrict cutmask to area where it is stronger than focus mask
   mpr:cutmask
   mpr:cutmask_part
     -alpha off
@@ -2887,8 +2927,7 @@ focus_hard() {
   mpr:black
     -alpha off
     -write mpr:depthmap
-    -delete 0"
-  maskarg_single "cutless" && Command="$Command
+    -delete 0
   mpr:transparent
     -write mpr:lessthanmax
     -delete 0"
@@ -2910,13 +2949,6 @@ focus_hard() {
     -write mpr:mergemask
     -delete 0
 
-  # stepwise increase max in resultmask
-  mpr:mergemask
-  mpr:focusmask
-    -compose Lighten -composite
-    -write mpr:focusmask
-    -delete 0
-
   # get area of merge mask equal or sharper than current max
   mpr:mergemask
   mpr:focusmask
@@ -2926,6 +2958,15 @@ focus_hard() {
     -write mpr:cutmask
     -delete 0
 
+  # increase max in focusmask
+  mpr:mergemask
+  mpr:focusmask
+    -compose Lighten -composite
+    -write mpr:focusmask
+    -delete 0
+    "
+
+    Command="$Command
   # drop areas with strength 0
   mpr:focusmask
     -threshold 0%
@@ -2945,10 +2986,10 @@ focus_hard() {
   mpr:cutmask
     -alpha off
     -compose CopyOpacity -composite
-    -write mpr:sourcepart
+    -write mpr:depthmappart
     -delete 0
   mpr:depthmap
-  mpr:sourcepart
+  mpr:depthmappart
     -compose Over -composite
     -write mpr:depthmap
     -delete 0"
@@ -2987,6 +3028,8 @@ focus_hard() {
     -write '$Focusimagemaskfile'
     -delete 0
   mpr:depthmap
+  ( -size 1x37 gradient:white-red gradient:red-orange gradient:orange-yellow gradient:yellow-green gradient:green-blue gradient:blue-indigo gradient:indigo-black -append -rotate 90 -flip )
+    -clut
     $Tifstore
     -write '$Focusimagedepthfile'
     -delete 0"
@@ -3241,9 +3284,6 @@ focus_main() {
       Substackmask[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-mask.mpc"
       sendmagickmessage "NEWLINE"
       sendmagickmessage "NOTE:Generating substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
-
-      Startzeit="$(date +%s)"
-      sendmagickmessage "NOTE:Mask merging ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
       # focus
       Startzeit="$(date +%s)"
@@ -3736,8 +3776,10 @@ maskarg_defaultvalue() {
     radius2)
       case "$Argmethod" in
         cutmorph)     Output="1" ;;
+        diffstat)     Output="$Argradius1" ;;
         maskmorph)    Output="2" ;;
         morphology)   Output="1" ;;
+        statistic) ;;
       esac
     ;;
     sigma1)
@@ -3957,6 +3999,7 @@ maskarg_checkallowed() {
     ;;
     radius2)
       case "$Argmethod" in
+        diffstat|statistic) ;;
         morphology|cutmorph|maskmorph) ;;
         *) error "$Argmethod does not take argument radius2: R$Arg" ;;
       esac
@@ -4056,6 +4099,7 @@ maskarg_checkallowed() {
           esac
         ;;
         statistic|diffstat|maskstat)
+          [ "${Arg,,}" = "stdev" ] && Arg="StandardDeviation"
           checkmagicklist statistic "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
           Argword1="$(checkmagicklist statistic "$Arg" print)"
@@ -4113,6 +4157,9 @@ maskarg_short() {
       ;;
       radius2)
         [ -n "$Argradius2" ]     && Append=",R$Argradius2"
+        [ "$Argradius2" = "$(maskarg_defaultvalue "$Argmethod" radius2)" ] && case "$Argmethod" in
+          diffstat) Append="" ;;
+        esac
       ;;
       sigma1)
         [ -n "$Argsigma1" ]      && Append=",s$Argsigma1"
@@ -4190,6 +4237,7 @@ maskarg_short() {
         [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
           comet|compass|diffstat|statistic|masklevel|maskmerge|soft) Append="" ;;
         esac
+        [ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
       ;;
       word2)
         [ -n "$Argword2" ]       && Append=",$Argword2"
@@ -4963,7 +5011,7 @@ trap - ERR"
   showimage "$Outputimage"
   command -v xclip >/dev/null && echo -n "$Outputimage" | xclip -i -selection clipboard
   notify-send "imfuse is ready" 2>/dev/null ||:
-  showviewnior "$Outputimage"
+  showviewnior "$Focusimagemaskfile" "$Focusimagedepthfile" "$Outputimage"
   echo "$Outputimage"
 
   # --video
