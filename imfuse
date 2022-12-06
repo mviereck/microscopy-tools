@@ -3452,7 +3452,7 @@ focus_main() {
   }
 
   # Save mask
-  evaluate max "$Resultmask" "${Substackmaskpost[@]}"
+  [ "$Substacknumber" -gt "0" ] && evaluate max "$Resultmask" "${Substackmaskpost[@]}"
 
   return 0
 }
