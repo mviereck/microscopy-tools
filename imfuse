@@ -54,6 +54,7 @@ General options:
                           Default DIR: ./cache.imfuse
      --exif [=IMAGE]      Transfer exif meta data from IMAGE or first image.
      --force              Force imfuse to run even if output image exists.
+     --format=FORMAT      Store result in image format FORMAT.
  -h, --help               Show this help and exit.
      --layered            Store backgrounds and single substacks in layered TIF.
      --license            Show license (GPLv2) and exit.
@@ -129,13 +130,12 @@ Step 2: Mask generation
  --blur [=ARG]        Gaussian blur edge detection.
                       ARG takes argument:
                         r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
-                        s        sigma             Default: $(maskarg_defaultvalue cutblur sigma1)
-                        p        percent1          Default: 100%
-                        P        percent2          Default: 100-percent1%
+                        s        sigma1            Default: $(maskarg_defaultvalue cutblur sigma1)
+                        S        sigma2
                         (word)   gaussian
                       Adjust only sigma, radius 0 is adjusted automatically.
-                      percent1 defines how strong the blur will be applied.
-                      percent2 defines how strong the original we remain.
+                      If sigma2 is set, --blur gives the difference of two
+                      blur results with sigma1 and sigma2.
                       gaussian enables slower but more accurate gaussian blur.
  --cmd [=ARG]         Custom ImageMagick option to create a mask.
                       ARG additionally takes argument:
@@ -160,14 +160,6 @@ Step 2: Mask generation
  --compass [=ARG]     Compass edge detection.
                         (word)   mode              Default: $(maskarg_defaultvalue compass word1)
                       mode can be one of 'magick -list compose'
- --diffblur [=ARG]    Difference of 2 blur results.
-                      ARG additionally takes arguments: 
-                        r        radius            Default: $(maskarg_defaultvalue diffblur radius1)
-                        s        sigma1            Default: $(maskarg_defaultvalue diffblur sigma1)
-                        S        sigma2            Default: 1.6*sigma1
-                        (word)   gaussian
-                      Adjust only sigma, radius 0 is adjusted automatically.
-                      gaussian enables slower but more accurate gaussian blur.
  --diffstat [=ARG]    Compares two local statistics of source images. 
                       Uses ImageMagick option -statistic. Compare --statistic.
                       ARG additionally takes arguments: 
@@ -193,8 +185,11 @@ Step 2: Mask generation
  --log [=ARG]         Laplacian of Gaussian.
                       ARG additionally takes argument: 
                         r        radius            Default: $(maskarg_defaultvalue log radius1)
-                        s        sigma             Default: $(maskarg_defaultvalue log sigma1)
+                        s        sigma1            Default: $(maskarg_defaultvalue log sigma1)
+                        S        sigma2
                       Adjust only sigma, radius 0 is adjusted automatically.
+                      If sigma2 is set, it gives the difference of two
+                      log results with sigma1 and sigma2.
  --morphology [=ARG]  Morphology edge detection.
                       ARG additionally takes arguments:
                         r        radius            Default: $(maskarg_defaultvalue morphology radius1)
@@ -596,6 +591,13 @@ showviewnior() {
   }
   return 0
 }
+showresult() {
+  showimage "$Resultimage"
+  command -v xclip >/dev/null && echo -n "$Resultimage" | xclip -i -selection clipboard
+  notify-send "imfuse is ready" 2>/dev/null ||:
+  showviewnior "$Resultimage" "$Resultmask" "$Resultdepthmap"
+  echo "$Resultimage"
+}
 traperror() {
   error "traperror($Subprocess): Command at Line ${2:-} returned with error code ${1:-}:
   ${4:-}
@@ -846,7 +848,6 @@ printfreememory() {
 
 check_outputname() {
   # Generate a unique output name and parsed option string for EXIF meta data
-  local Outputtime
 
   Parsedoptions=""
   [ "$Align" = "yes" ] && Parsedoptions="$Parsedoptions --align"
@@ -927,8 +928,8 @@ check_outputname() {
   Fusemd5sum="$(md5cut "$Sourcemd5 ${Imoptions[@]} ${Imarguments[@]} $Testsetup$Testarg" )"
 
   Resultbasename=""
-  Outputtime="$(date +%y-%m-%d_%H:%M)"
-  Resultbasename="${Resultbasename}${Outputtime}"
+  Resulttimestamp="$(date +%y-%m-%d_%H:%M)"
+  Resultbasename="${Resultbasename}${Resulttimestamp}"
   Resultbasename="${Resultbasename}_${Fusemd5sum}"
   [ "$Storelayered" = "yes" ] && Resultbasename="_layered"
 
@@ -938,10 +939,12 @@ check_outputname() {
     *) [ "$(basename "$Resultimage")" = "$Resultimage" ] && Resultimage="${Outputdir}/{$Resultimage}" ;;
   esac
   [ "$Video" ] && Video="$Resultimage.webm"
+  [ "$(rev <<< "$Resultimage" | cut -d. -f1)" = "$(rev <<< "$Imageformat")" ] && {
+    Resultimage="$(rev <<< "$Resultimage" | cut -d. -f2- | rev)"
+  }
   Resultdepthmap="${Resultimage}.depth.${Imageformat}"
   Resultmask="${Resultimage}.mask.${Imageformat}"
   Resultimage="${Resultimage}.${Imageformat}"
-  Resultimage_searchmask="$(sed "s/$Outputtime/??-??-??_??:??/g" <<< "$Resultimage")"
 
   Parsedoptions="${Parsedoptions#" "}"
 
@@ -1645,9 +1648,9 @@ generate_image() {
   [ -z "$Imagename" ] && {
     Generalimage="yes"
     case "$Imagetype" in
-      enfuse)     Imagename="$Cachedir/enfuse.${Firstimage}..${Lastimage}.$Sourcemd5.tif" ;;
-      wave)       Imagename="$Cachedir/wave.${Firstimage}..${Lastimage}.$Sourcemd5.tif" ;;
-      wavedark)   Imagename="$Cachedir/wavedark.${Firstimage}..${Lastimage}.$Sourcemd5.tif" ;;
+      enfuse)     Imagename="$Cachedir/enfuse.${Firstimage}..${Lastimage}.$Sourcemd5.$Imageformat" ;;
+      wave)       Imagename="$Cachedir/wave.${Firstimage}..${Lastimage}.$Sourcemd5.$Imageformat" ;;
+      wavedark)   Imagename="$Cachedir/wavedark.${Firstimage}..${Lastimage}.$Sourcemd5.$Imageformat" ;;
       evaluate)   Imagename="$Cachedir/evaluate.${Firstimage}..${Lastimage}.$Mode.$Sourcemd5.mpc" ;;
       compose)    Imagename="$Cachedir/compose.${Firstimage}..${Lastimage}.$Mode$([ "$Swap" ] && echo 2 ||:).$Sourcemd5.mpc" ;;
       color)      Imagename="mpr:$Mode" ;;
@@ -1718,10 +1721,10 @@ generate_image() {
       evaluate "$Mode" "$Imagename" "${Imsourceimagelist[@]:$Firstimage:$Lastimage}"
     ;;
     wave)
-      $Subimfuse --wavelet=p100 --cutwave=p100 "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
+      $Subimfuse --format="$Imageformat" --wavelet=p100 --cutwave=p100 "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
     ;;
     wavedark)
-      $Subimfuse --wavelet=p100 --cutwave=p100 --darkness=w25 "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
+      $Subimfuse --format="$Imageformat" --wavelet=p100 --cutwave=p100 --darkness=w25 "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
     ;;
   esac
 
@@ -2058,23 +2061,39 @@ focus_maskmethod() {
   Maskgenerator="
   # --$Argmethod=${Argoptions%,TYPE*}"
   case $Argmethod in
-
     blur)
-      Maskgenerator="$Maskgenerator
+      case "$Argsigma2" in
+        "")
+          Maskgenerator="$Maskgenerator
   mpr:sourceimage"
-      case "$Argword1" in
-        ""|"blur") Maskgenerator="$Maskgenerator
-    -blur ${Argradius1}x${Argsigma1}" ;;
-        "gaussian") Maskgenerator="$Maskgenerator
-    -gaussian-blur ${Argradius1}x${Argsigma1}" ;;
-      esac
-      [ "$Argpercent1,$Argpercent2" = "100,0" ] || {
-        Maskgenerator="$Maskgenerator
+          case "$Argword1" in
+            ""|"blur") 
+              Maskgenerator="$Maskgenerator
+    -blur ${Argradius1}x${Argsigma1}"
+            ;;
+        "gaussian")
+           Maskgenerator="$Maskgenerator
+    -gaussian-blur ${Argradius1}x${Argsigma1}"
+            ;;
+          esac
+        ;;
+        *)
+          case "$Argword1" in
+            ""|"blur") 
+              Maskgenerator="$Maskgenerator
+  ( mpr:sourceimage -blur ${Argradius1},${Argsigma1} )
+  ( mpr:sourceimage -blur ${Argradius1},${Argsigma2} )
+    -compose Difference -composite"
+            ;;
+            "gaussian")
+              Maskgenerator="$Maskgenerator
   mpr:sourceimage
-    -compose Blend
-    -define compose:args=$Argpercent2%,$Argpercent1%
-    -composite"
-      }
+    -define convolve:scale=100%
+    -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}"
+            ;;
+          esac
+        ;;
+      esac
     ;;
 
     cmd|channel|chroma|darkness|lightness|saturation|enfuse|compose|evaluate|max|min|mean|median)
@@ -2110,24 +2129,6 @@ focus_maskmethod() {
   ( mpr:sourceimage -statistic ${Argword1} ${Argradius1} )
   ( mpr:sourceimage -statistic ${Argword2} ${Argradius2} )
     -compose Difference -composite"
-    ;;
-
-    diffblur)
-      case "$Argword1" in
-        ""|"blur") 
-          Maskgenerator="$Maskgenerator
-  ( mpr:sourceimage -blur ${Argradius1},${Argsigma1} )
-  ( mpr:sourceimage -blur ${Argradius1},${Argsigma2} )
-    -compose Difference -composite"
-        ;;
-        "gaussian")
-          Maskgenerator="$Maskgenerator
-  mpr:sourceimage
-    -define convolve:scale=100%
-    -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}"
-        ;;
-      esac
-
     ;;
 
     GAUSSexperimental) 
@@ -2214,6 +2215,11 @@ focus_maskmethod() {
   mpr:sourceimage
     -define convolve:scale=100%
     -morphology Convolve LoG:${Argradius1}x${Argsigma1}"
+    [ -n "$Argsigma2" ] && Maskgenerator="$Maskgenerator
+  ( mpr:sourceimage
+      -define convolve:scale=100%
+      -morphology Convolve LoG:${Argradius1}x${Argsigma2} )
+    -compose Difference -composite"
     ;;
 
     morphology)
@@ -2898,14 +2904,17 @@ focus_hard() {
     Command="
   '$Focusimagefile'
     $Tifstore
-    -write mpr:focusimage
     -write '$Resultcopy'
     -delete 0"
-    [ -n "$Maskmaxcopy" ] && Command="$Command
+    [ -n "$Maskmaxcopy" ] && [ -f "$Focusimagemaskfile" ] && Command="$Command
   '$Focusimagemaskfile'
     $Tifstore
-    -write mpr:focusmask
     -write '$Maskmaxcopy'
+    -delete 0"
+    [ -n "$Depthmap" ] && [ -f "$Focusimagedepthfile" ] && Command="$Command
+  '$Focusimagedepthfile'
+    $Tifstore
+    -write '$Depthmap'
     -delete 0"
     cmd "$Command"
     cmd_waitforready
@@ -2949,6 +2958,13 @@ focus_hard() {
     -write mpr:mergemask
     -delete 0
 
+  # increase max in focusmask
+  mpr:mergemask
+  mpr:focusmask
+    -compose Lighten -composite
+    -write mpr:focusmask
+    -delete 0
+
   # get area of merge mask equal or sharper than current max
   mpr:mergemask
   mpr:focusmask
@@ -2956,13 +2972,6 @@ focus_hard() {
     -compose Minus -composite -fill white +opaque black
     -negate
     -write mpr:cutmask
-    -delete 0
-
-  # increase max in focusmask
-  mpr:mergemask
-  mpr:focusmask
-    -compose Lighten -composite
-    -write mpr:focusmask
     -delete 0
     "
 
@@ -3628,7 +3637,10 @@ maskarg_defaultvalue() {
     ;;
     diff)
       case "$Argmethod" in
-        blur|cmddiff|comet|wavelet)
+        blur)
+          [ -z "$Argsigma2" ] && 
+                      Output="yes" ;;
+        cmddiff|comet|wavelet)
                       Output="yes" ;;
         morphology)
           case ${Argword1,,} in
@@ -3675,7 +3687,6 @@ maskarg_defaultvalue() {
         blur)         Output="0" ;;
         comet)        Output="0" ;;
         compass)      Output="45" ;;
-        diffblur)     Output="0" ;;
         diffstat)
           case "$Argword1,$Argword2" in
             "median,mean")
@@ -3728,7 +3739,7 @@ maskarg_defaultvalue() {
     ;;
     percent1)
       case "$Argmethod" in
-        blur|maskblur|cutblur)
+        maskblur|cutblur)
                       Output="100" ;;
         cutless)      Output="20" ;;
         cutmax)       Output="0" ;;
@@ -3742,7 +3753,7 @@ maskarg_defaultvalue() {
     ;;
     percent2)
       case "$Argmethod" in
-        blur|maskblur|cutblur)
+        maskblur|cutblur)
                       Output="$((100-Argpercent1))" ;;
         finalalpha)   Output="100" ;;
         masklevel)    Output="" ;;
@@ -3755,7 +3766,6 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         blur)         Output="0" ;;
         comet)        Output="0" ;;
-        diffblur)     Output="0" ;;
         diffstat)     Output="3" ;;
         log)          Output="0" ;;
         morphology)   Output="1" ;;
@@ -3782,7 +3792,6 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         blur)         Output="0.3" ;;
         comet)        Output="5" ;;
-        diffblur)     Output="0.4" ;;
         log)          Output="0.2" ;;
 
         cutblur)      Output="2" ;;
@@ -3794,8 +3803,9 @@ maskarg_defaultvalue() {
     ;;
     sigma2)
       case "$Argmethod" in
-        diffblur)     Output="$(calc "$Argsigma1 * 1.6")" ;;
+        blur) ;;
         finalblur)    Output="2" ;;
+        log) ;;
       esac
     ;;
     threshold1)
@@ -3816,7 +3826,7 @@ maskarg_defaultvalue() {
     ;;
     type)
       case "$Argmethod" in
-        blur|cmd|cmddiff|comet|compass|diffstat|diffblur|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|wavelet)
+        blur|cmd|cmddiff|comet|compass|diffstat|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|wavelet)
                       Output="mask"
         ;;
         channel|chroma|darkness|lightness|saturation)
@@ -3972,19 +3982,19 @@ maskarg_checkallowed() {
     ;;
     percent1)
       case "$Argmethod" in
-        blur|cutblur|cutless|cutmax|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
+        cutblur|cutless|cutmax|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "$Argmethod does not take argument percent1: p$Arg" ;;
       esac
     ;;
     percent2)
       case "$Argmethod" in
-        blur|cutblur|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
+        cutblur|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "$Argmethod does not take argument percent2: P$Arg" ;;
       esac
     ;;
     radius1)
       case "$Argmethod" in
-        blur|comet|cutblur|diffblur|log|maskblur) ;;
+        blur|comet|cutblur|log|maskblur) ;;
         cutblur|maskblur) ;;
         morphology|cutmorph|maskmorph) ;;
         diffstat|statistic|maskstat) ;;
@@ -4004,14 +4014,14 @@ maskarg_checkallowed() {
     ;;
     sigma1)
       case "$Argmethod" in
-        blur|comet|diffblur|log) ;;
+        blur|comet|log) ;;
         cutblur|cutsoft|finalblur|maskblur|threshold) ;;
         *) error "$Argmethod does not take argument sigma1: s$Arg" ;;
       esac
     ;;
     sigma2)
       case "$Argmethod" in
-        diffblur|finalblur) ;;
+        blur|finalblur|log) ;;
         *) error "$Argmethod does not take argument sigma2: S$Arg" ;;
       esac
     ;;
@@ -4148,7 +4158,7 @@ maskarg_short() {
       radius1)
         [ -n "$Argradius1" ]     && Append=",r$Argradius1"
         [ "$Argradius1" = "$(maskarg_defaultvalue "$Argmethod" radius1)" ] && case "$Argmethod" in
-          blur|comet|cutblur|diffblur|maskblur|log) Append="" ;;
+          blur|comet|cutblur|maskblur|log) Append="" ;;
         esac
       ;;
       radius2)
@@ -4166,13 +4176,13 @@ maskarg_short() {
       percent1)
         [ -n "$Argpercent1" ]    && Append=",p$Argpercent1"
         [ "$Argpercent1" = "$(maskarg_defaultvalue "$Argmethod" percent1)" ] && case "$Argmethod" in
-          blur|maskblur|cutblur) Append="" ;;
+          maskblur|cutblur) Append="" ;;
         esac
       ;;
       percent2)
         [ -n "$Argpercent2" ]    && Append=",P$Argpercent2"
         [ "$Argpercent2" = "$(maskarg_defaultvalue "$Argmethod" percent2)" ] && case "$Argmethod" in
-          blur|maskblur|cutblur) Append="" ;;
+          maskblur|cutblur) Append="" ;;
           wavelet|maskwave|cutwave) Append="" ;;
         esac
       ;;
@@ -4531,6 +4541,7 @@ declare_variables() {
   Resultimage=""
   Resultimage_searchmask=""
   Resultmask=""
+  Resulttimestamp=""
   Showimage=""
   Showimageprocessing="no"
   Singleoptionlist=""
@@ -4576,7 +4587,7 @@ parse_options() {
   Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,maskformat::,output:,rmcache,showimage,showname,sub::,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
-  Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,diffblur::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
+  Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
@@ -4612,7 +4623,7 @@ parse_options() {
       -h|--help|--license|--rmcache|--showname|--version) Oneaction="${1:-}" ;;
 
 --cmd|--cmddiff|--experimental|\
---blur|--comet|--compass|--diffstat|--diffblur|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--wavelet|\
+--blur|--comet|--compass|--diffstat|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--wavelet|\
 --channel|--chroma|--darkness|--lightness|--saturation|\
 --compose|--enfuse|--evaluate|--max|--mean|--median|--min|\
 \
@@ -4887,13 +4898,16 @@ $Parsedoptions"
 
   # --force
   [ -z "$Force" ] && {
-    Resultimage_check="$(find -wholename "$Resultimage_searchmask" | head -n1)"
+    Resultimage_searchmask="$(sed "s/$Resulttimestamp/??-??-??_??:??/g" <<< "$Resultimage")"
+
+    Resultimage_check="$(find -wholename "$(sed "s/$Resulttimestamp/??-??-??_??:??/g" <<< "$Resultimage" | tail -n1)")"
     [ -n "$Resultimage_check" ] && {
-      showimage "$Resultimage_check"
-      showviewnior "$Resultimage_check"
+      Resultimage="$Resultimage_check"
+      Resultdepthmap="$(find -wholename "$(sed "s/$Resulttimestamp/??-??-??_??:??/g" <<< "$Resultdepthmap" | tail -n1)")"
+      Resultmask="$(find -wholename "$(sed "s/$Resulttimestamp/??-??-??_??:??/g" <<< "$Resultmask" | tail -n1)")"
       note "Output image already exists with matching md5sum.
   You can force imfuse to run nonetheless with option --force."
-      echo "$Resultimage_check"
+      showresult
       finish
     }
   }
@@ -5003,11 +5017,7 @@ trap - ERR"
   # throw out
   cmd "-exit"
   note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
-  showimage "$Resultimage"
-  command -v xclip >/dev/null && echo -n "$Resultimage" | xclip -i -selection clipboard
-  notify-send "imfuse is ready" 2>/dev/null ||:
-  showviewnior "$Resultimage" "$Resultmask" "$Resultdepthmap"
-  echo "$Resultimage"
+  showresult
 
   # --video
   [ "$Video" ] && generate_video
