@@ -26,7 +26,7 @@ Dependencies:
  - `imagemagick` version 7.
  - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack) (optional for option `--align`)
  - `enfuse` (optional, needed for some options)
- - `geeqie` and `viewnior` (optional image viewers)
+ - `geeqie` and `feh` (optional image viewers)
  - `exiftool` (optional to preserve exif meta data)
 
 imfuse contains code written by [Fred Weinhaus](http://www.fmwconcepts.com/imagemagick) with his friendly permission.
