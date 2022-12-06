@@ -62,7 +62,6 @@ General options:
  -o, --output=FILE        Result image file name. See also --basename.
      --revert             Revert order of source images.
      --rmcache            Remove all cache.imfuse* folders below pwd and exit.
-     --savemask [=FILE]   Store contrast mask in file FILE.
      --version            Show imfuse version and exit.
  -V, --showimage          Show intermediate results with image viewer geeqie.
      --video              Generate a video of shown intermediate images.
@@ -589,7 +588,7 @@ showviewnior() {
     H=900
     compare "$Imagewidth"  -lt "$W" && W="$Imagewidth" 
     compare "$Imageheight" -lt "$H" && H="$Imageheight" 
-    nohup feh --draw-filename --draw-tinted --scale-down --keep-zoom-vp --reverse \
+    nohup feh --draw-filename --draw-tinted --auto-zoom --keep-zoom-vp \
               --geometry ${W}x${H}+37+0 \
               --info='exiftool -imagedescription %F | cut -d: -f2- | fold -s -w 110' \
               "$@" </dev/null >/dev/null 2>&1 &
@@ -934,15 +933,15 @@ check_outputname() {
   [ "$Storelayered" = "yes" ] && Resultbasename="_layered"
 
   [ -z "${Outputdir:-}" ] && Outputdir="./"
-  case $Outputimage in
-    "") Outputimage="$Outputdir/${Outputbasename:-"imfuse"}.${Resultbasename}.${Imageformat}" ;;
-    *) [ "$(basename "$Outputimage")" = "$Outputimage" ] && Outputimage="${Outputdir}/{$Outputimage}" ;;
+  case $Resultimage in
+    "") Resultimage="$Outputdir/${Outputbasename:-"imfuse"}.${Resultbasename}" ;;
+    *) [ "$(basename "$Resultimage")" = "$Resultimage" ] && Resultimage="${Outputdir}/{$Resultimage}" ;;
   esac
-  Outputimage_searchmask="$(sed "s/$Outputtime/??-??-??_??:??/g" <<< "$Outputimage")"
-  [ "$Video" ] && Video="$Outputimage.webm"
-
-  # --savemask
-  [ "$Savemask" = "auto" ] && Savemask="$Outputimage.mask.tif"
+  [ "$Video" ] && Video="$Resultimage.webm"
+  Resultdepthmap="${Resultimage}.depth.${Imageformat}"
+  Resultmask="${Resultimage}.mask.${Imageformat}"
+  Resultimage="${Resultimage}.${Imageformat}"
+  Resultimage_searchmask="$(sed "s/$Outputtime/??-??-??_??:??/g" <<< "$Resultimage")"
 
   Parsedoptions="${Parsedoptions#" "}"
 
@@ -1775,10 +1774,10 @@ Imageheight=%[h]
   return 0
 }
 level_masks() {
-  local Maskbasename= Maskmax Maskmin Maskmd5 Clutimage Resultmask Clut= Round=
+  local Maskbasename= Maskmax Maskmin Maskmd5 Clutimage Clut= Round=
   local Count Mask Levelmin= Levelmax=
   local Longoptions Parsedoptions
-  local Firstimage Lastimage Masknumber=0 Sourcemask Destmask
+  local Firstimage Lastimage Masknumber=0 Sourcemask Destmask Outputbasename
   local Masklist
 
   Longoptions="first:,last:,max::,min::,name:,output:,clut::,round::"
@@ -2651,7 +2650,7 @@ $(sed "s/NUMBER/$(printnum $Count)/g" <<< "$Mergecode" )
 focus_hard() {
   # Finally: focus stacking
 
-  local Resultimage Maskmaxcopy=
+  local Resultcopy Maskmaxcopy= Depthmap=
   local Firstimage Lastimage
   local Focusimagebasename
   #local Focusimagefile Focusimagemaskfile Focusimagedepthfile
@@ -2659,15 +2658,16 @@ focus_hard() {
   local Longoptions Parsedoptions
   local Focuscode=
 
-  Longoptions="maskmax:,output:,firstimage:,lastimage:"
+  Longoptions="maskmax:,depthmap:,output:,firstimage:,lastimage:"
 
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
 
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --output)       Resultimage="${2:-}" ; shift ;;
+      --output)       Resultcopy="${2:-}" ; shift ;;
       --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
+      --depthmap)     Depthmap="${2:-}" ; shift ;;
       --firstimage)   Firstimage="${2:-}"  ; shift ;;
       --lastimage)    Lastimage="${2:-}"   ; shift ;;
       --) ;;
@@ -2899,7 +2899,7 @@ focus_hard() {
   '$Focusimagefile'
     $Tifstore
     -write mpr:focusimage
-    -write '$Resultimage'
+    -write '$Resultcopy'
     -delete 0"
     [ -n "$Maskmaxcopy" ] && Command="$Command
   '$Focusimagemaskfile'
@@ -2979,7 +2979,7 @@ focus_hard() {
     Command="$Command
   $Focuscode"
 
-    Command="$Command
+    [ -n "$Depthmap" ] && Command="$Command
   # depth map
   mpr:black
     +level $(calc "100*($Sourceimagenumber-$Count)/$Sourceimagenumber")%
@@ -3020,44 +3020,39 @@ focus_hard() {
   # store result image and mask
   mpr:focusimage
     $Tifstorealpha
-    -write '$Resultimage'
+    -write '$Resultcopy'
     -write '$Focusimagefile'
     -delete 0
   mpr:focusmask
     $Tifstore
     -write '$Focusimagemaskfile'
-    -delete 0
+    -delete 0"
+
+  [ -n "$Depthmap" ] && Command="$Command
   mpr:depthmap
   ( -size 1x37 gradient:white-red gradient:red-orange gradient:orange-yellow gradient:yellow-green gradient:green-blue gradient:blue-indigo gradient:indigo-black -append -rotate 90 -flip )
     -clut
     $Tifstore
     -write '$Focusimagedepthfile'
+    -write '$Depthmap'
     -delete 0"
-  cmd "$Command"
-  cmd_waitforready
 
-  note "focus_hard() results:
-$Focusimagefile
-  Mask:
-$Focusimagemaskfile
-  Depth map:
-$Focusimagedepthfile"
-
-  [ "$Maskmaxcopy" ] && {
-    Command="
+  [ -n "$Maskmaxcopy" ] && Command="$Command
   # copy max mask
   mpr:focusmask
     -write '$Maskmaxcopy'
     -delete 0"
-    cmd "$Command"
-    cmd_waitforready
-    verbose "maskmax: $Maskmaxcopy"
-  }
+
+  cmd "$Command"
+  cmd_waitforready
 
   Command="
   +set registry:cutmask
   +set registry:cutmask_less
   +set registry:cutmask_max
+  +set registry:depthmap
+  +set registry:focusimage
+  +set registry:focusmask
   +set registry:lessthanmax
   +set registry:maskmax
   +set registry:maskmax_part
@@ -3072,7 +3067,7 @@ $Focusimagedepthfile"
   return 0
 }
 focus_soft() {
-  local Resultimage Maskmaxcopy
+  local Resultcopy Maskmaxcopy
   local Level Composemode
   local Firstimage Lastimage
   local Count Command
@@ -3085,7 +3080,7 @@ focus_soft() {
 
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --output)       Resultimage="${2:-}" ; shift ;;
+      --output)       Resultcopy="${2:-}" ; shift ;;
       --level)        Level="${2:-}"       ; shift ;;
       --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
       --firstimage)   Firstimage="${2:-}"  ; shift ;;
@@ -3114,7 +3109,7 @@ focus_soft() {
   '$Focusimagefile'
     $Tifstore
     -write mpr:focusimage
-    -write '$Resultimage'
+    -write '$Resultcopy'
     -delete 0"
     [ -n "$Maskmaxcopy" ] && Command="$Command
   '$Focusimagemaskfile'
@@ -3219,7 +3214,7 @@ focus_soft() {
   mpr:focusimage
     $Tifstore 
     -write '$Focusimagefile'
-    -write '$Resultimage'
+    -write '$Resultcopy'
     $(showimagecode "$Focusimagefile")
     -delete 0"
   cmd "$Command"
@@ -3290,7 +3285,8 @@ focus_main() {
       case $Softmode in
         "no")
           focus_hard --maskmax "${Substackmask[$Substackstep]}" --output "${Substackresult[$Substackstep]}" \
-                     --firstimage="${Substackfirstimage[$Substackstep]}" --lastimage="${Substacklastimage[$Substackstep]}"
+                     --firstimage="${Substackfirstimage[$Substackstep]}" --lastimage="${Substacklastimage[$Substackstep]}" \
+                     --depthmap "$Resultdepthmap" ### FIXME
         ;;
         "yes")
           maskarg_single "soft" ||:
@@ -3403,8 +3399,8 @@ focus_main() {
       Command="$Command
     $Tifstorealpha
     #-define tiff:write-layers=yes
-    -write '$Outputimage'
-    $(showimagecode "$Outputimage")
+    -write '$Resultimage'
+    $(showimagecode "$Resultimage")
     -delete 0"
     ;;
 
@@ -3423,7 +3419,7 @@ focus_main() {
     -delete 0
   mpr:resultimage
     $Tifstorealpha
-    -write '$Outputimage'
+    -write '$Resultimage'
     -delete 0"
     ;;
   esac
@@ -3431,15 +3427,15 @@ focus_main() {
   cmd "$Command"
   cmd_waitforready
 
-  [ "$Maskmethodnumber" = "0" ] && [ "$Backgroundnumber" = "0" ] && note "No mask option and no background has been specified.
+  [ "$Maskmethodnumber" = "0" ] && [ "$Backgroundnumber" = "0" ] && {
+    note "No mask option and no background has been specified.
   imfuse has generated an empty transparent result image.
   Suggestion: Try at least '--background=enfuse', or short: --bg"
-
-  # --savemask
-  [ "$Savemask" ] && {
-    cmd "  # --savemask"
-    evaluate max "$Savemask" ${Substackmaskpost[$Substackstep]}
+    return 0
   }
+
+  # Save mask
+  evaluate max "$Resultmask" ${Substackmaskpost[$Substackstep]}
 
   return 0
 }
@@ -4528,12 +4524,13 @@ declare_variables() {
   Oneaction=""
   Outputbasename=""
   Outputdir=""
-  Outputimage=""
-  Outputimage_searchmask=""
   Parsedoptions=""
   Revertimagelist=""
   Resultbasename=""
-  Savemask=""
+  Resultdepthmap=""
+  Resultimage=""
+  Resultimage_searchmask=""
+  Resultmask=""
   Showimage=""
   Showimageprocessing="no"
   Singleoptionlist=""
@@ -4576,7 +4573,7 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
   Shortoptions="ho:vVW"
-  Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,maskformat::,output:,rmcache,savemask::,showimage,showname,sub::,test::,verbose,version,video"
+  Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,maskformat::,output:,rmcache,showimage,showname,sub::,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,diffblur::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
@@ -4604,9 +4601,8 @@ parse_options() {
       --limit-memory)      Limitmemory="${2:-"80%"}"           ; shift ;;
       --mask2cache)        Masktocache="yes"                   ;;
       --maskformat)        Maskformat="${2:-mpc}"              ; shift ;;
-      -o|--output)         Outputimage="${2:-}"                ; shift ;;
+      -o|--output)         Resultimage="${2:-}"                ; shift ;;
       --revert)            Revertimagelist="-r"                ;;
-      --savemask)          Savemask="${2:-auto}"               ; shift ;;
       --sub)               Subprocess=" ${2:-sub}"             ; shift ;;
       -V|--showimage)      Showimageprocessing="yes"           ;;
       --test)              Testsetup="test" ; Testarg="${2:-}" ; shift ;;
@@ -4783,7 +4779,7 @@ check_options() {
 
   # -W
   [ "$Viewnior" ] && {
-    command -v viewnior >/dev/null || error "Option -W: viewnior not found."
+    command -v feh >/dev/null || error "Option -W: image viewer feh not found."
   }
 
   ### FIXME dependency checks for enfuse
@@ -4813,7 +4809,7 @@ check_magick() {
   Magickversion="$(head -n1 <<< "$Magickversion" | cut -d' ' -f3)"
 }
 main_setup() {
-  local Outputimage_check
+  local Resultimage_check
 
   # --cache
   [ -n "$Cachedir" ] && {
@@ -4828,7 +4824,6 @@ main_setup() {
   esac
   mkdir -p "$Cachedir"   || error "Error creating cache folder $Cachedir"
   Testimage="$Cachedir/test.png"
-  Resultmask="$Cachedir/result.max.tif"
   Showimage="${XDG_RUNTIME_DIR:-$Cachedir}/imfuse.showimage.tif"
 
   # check RAM
@@ -4892,13 +4887,13 @@ $Parsedoptions"
 
   # --force
   [ -z "$Force" ] && {
-    Outputimage_check="$(find -wholename "$Outputimage_searchmask" | head -n1)"
-    [ -n "$Outputimage_check" ] && {
-      showimage "$Outputimage_check"
-      showviewnior "$Outputimage_check"
+    Resultimage_check="$(find -wholename "$Resultimage_searchmask" | head -n1)"
+    [ -n "$Resultimage_check" ] && {
+      showimage "$Resultimage_check"
+      showviewnior "$Resultimage_check"
       note "Output image already exists with matching md5sum.
   You can force imfuse to run nonetheless with option --force."
-      echo "$Outputimage_check"
+      echo "$Resultimage_check"
       finish
     }
   }
@@ -4984,7 +4979,7 @@ trap - ERR"
 
   case "$Oneaction" in
     --showname)
-      echo "$Outputimage"
+      echo "$Resultimage"
       finish
     ;;
   esac
@@ -4998,9 +4993,9 @@ trap - ERR"
   focus_main
 
   # --exif: transfer EXIF metadata from first image to result, store imfuse version and parsed options
-  [ "$Exifsourceimage" ] && exiftransfer "$Exifsourceimage" "$Outputimage"
+  [ "$Exifsourceimage" ] && exiftransfer "$Exifsourceimage" "$Resultimage"
   command -v exiftool && {
-    exiftool -overwrite_original -Software="imfuse v$Version" -ImageDescription="$Parsedoptions" "$Outputimage"
+    exiftool -overwrite_original -Software="imfuse v$Version" -ImageDescription="$Parsedoptions" "$Resultimage"
   } || {
     note "Failed to store metadata in output image. Is exiftool installed?"
   }
@@ -5008,11 +5003,11 @@ trap - ERR"
   # throw out
   cmd "-exit"
   note "Ready after $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
-  showimage "$Outputimage"
-  command -v xclip >/dev/null && echo -n "$Outputimage" | xclip -i -selection clipboard
+  showimage "$Resultimage"
+  command -v xclip >/dev/null && echo -n "$Resultimage" | xclip -i -selection clipboard
   notify-send "imfuse is ready" 2>/dev/null ||:
-  showviewnior "$Focusimagemaskfile" "$Focusimagedepthfile" "$Outputimage"
-  echo "$Outputimage"
+  showviewnior "$Resultimage" "$Resultmask" "$Resultdepthmap"
+  echo "$Resultimage"
 
   # --video
   [ "$Video" ] && generate_video
