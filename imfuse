@@ -54,12 +54,15 @@ General options:
                           Default DIR: ./cache.imfuse
      --exif [=IMAGE]      Transfer exif meta data from IMAGE or first image.
      --force              Force imfuse to run even if output image exists.
-     --format=FORMAT      Store result in image format FORMAT.
+     --format=FORMAT      Store result in image format FORMAT.   Default: $(maskarg_defaultvalue format word1)
  -h, --help               Show this help and exit.
-     --layered            Store backgrounds and single substacks in layered TIF.
+     --layered            Store backgrounds and substacks in layered TIF.
      --license            Show license (GPLv2) and exit.
      --limit-memory=ARG   Limit amount of used memory. Default: 80%
                           ARG can be a % value or an absolute value for MB.
+     --maskformat=FORMAT  Store masks in cache in format FORMAT. Default: $(maskarg_defaultvalue maskformat word1)
+                          Should be a lossless format like tif or png.
+                          mpc is optimized for fast access by ImageMagick.
  -o, --output=FILE        Result image file name. See also --basename.
      --revert             Revert order of source images.
      --rmcache            Remove all cache.imfuse* folders below pwd and exit.
@@ -127,7 +130,7 @@ Step 2: Mask generation
 
   Contrast masks: (most of interest: --morphology, --statistic, --wavelet)
 
- --blur [=ARG]        Gaussian blur edge detection.
+ --blur [=ARG]        Blur edge detection.
                       ARG takes argument:
                         r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
                         s        sigma1            Default: $(maskarg_defaultvalue cutblur sigma1)
@@ -171,6 +174,13 @@ Step 2: Mask generation
                       Mode StandardDeviation can be shortened to StDev.
                       Rather use --statistic for same mode with two radii
                       than setting radius2 here.
+ --dog [=ARG]         Difference of Gaussian.
+                      ARG takes argument:
+                        r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
+                        s        sigma1            Default: $(maskarg_defaultvalue cutblur sigma1)
+                        S        sigma2            Default: 1.6 * sigma1
+                        (word)   gaussian
+                      Adjust only sigma, radius 0 is adjusted automatically.
  --freichen [=ARG]    Frei-Chen edge detection.
                       ARG additionally takes arguments: 
                         n        mode number   Default: Combination of 1 and 2.
@@ -391,6 +401,7 @@ Step 4: Stack fusion
                       If unsharp areas appear, use a greater percent value.
                       If the foreground object still has holes, use a lower 
                       percent value.
+                      Useful percent values heavily depend on previous options.
                       Can be specified only once, the order matters.
  --cutmax [=ARG]      Remove parts of current cut mask that are weaker than
                       current max in result mask.
@@ -2071,8 +2082,8 @@ focus_maskmethod() {
               Maskgenerator="$Maskgenerator
     -blur ${Argradius1}x${Argsigma1}"
             ;;
-        "gaussian")
-           Maskgenerator="$Maskgenerator
+            "gaussian")
+              Maskgenerator="$Maskgenerator
     -gaussian-blur ${Argradius1}x${Argsigma1}"
             ;;
           esac
@@ -2085,11 +2096,11 @@ focus_maskmethod() {
   ( mpr:sourceimage -blur ${Argradius1},${Argsigma2} )
     -compose Difference -composite"
             ;;
-            "gaussian")
+            "gaussian") 
               Maskgenerator="$Maskgenerator
-  mpr:sourceimage
-    -define convolve:scale=100%
-    -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}"
+  ( mpr:sourceimage -gaussian-blur ${Argradius1},${Argsigma1} )
+  ( mpr:sourceimage -gaussian-blur ${Argradius1},${Argsigma2} )
+    -compose Difference -composite"
             ;;
           esac
         ;;
@@ -2129,6 +2140,14 @@ focus_maskmethod() {
   ( mpr:sourceimage -statistic ${Argword1} ${Argradius1} )
   ( mpr:sourceimage -statistic ${Argword2} ${Argradius2} )
     -compose Difference -composite"
+    ;;
+
+    dog)
+      Maskgenerator="$Maskgenerator
+  mpr:sourceimage
+    -bias 50%
+    -define convolve:scale=100%
+    -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}"
     ;;
 
     GAUSSexperimental) 
@@ -3767,6 +3786,7 @@ maskarg_defaultvalue() {
         blur)         Output="0" ;;
         comet)        Output="0" ;;
         diffstat)     Output="3" ;;
+        dog)          Output="0" ;;
         log)          Output="0" ;;
         morphology)   Output="1" ;;
         statistic)    Output="2" ;;
@@ -3792,6 +3812,7 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         blur)         Output="0.3" ;;
         comet)        Output="5" ;;
+        dog)          Output="0.3" ;;
         log)          Output="0.2" ;;
 
         cutblur)      Output="2" ;;
@@ -3805,6 +3826,7 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         blur) ;;
         finalblur)    Output="2" ;;
+        dog)          Output="$(calc "$Argsigma1 * 1.6")"  ;;
         log) ;;
       esac
     ;;
@@ -3826,7 +3848,7 @@ maskarg_defaultvalue() {
     ;;
     type)
       case "$Argmethod" in
-        blur|cmd|cmddiff|comet|compass|diffstat|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|wavelet)
+        blur|cmd|cmddiff|comet|compass|diffstat|dog|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|wavelet)
                       Output="mask"
         ;;
         channel|chroma|darkness|lightness|saturation)
@@ -3994,7 +4016,7 @@ maskarg_checkallowed() {
     ;;
     radius1)
       case "$Argmethod" in
-        blur|comet|cutblur|log|maskblur) ;;
+        blur|comet|cutblur|dog|log|maskblur) ;;
         cutblur|maskblur) ;;
         morphology|cutmorph|maskmorph) ;;
         diffstat|statistic|maskstat) ;;
@@ -4014,14 +4036,14 @@ maskarg_checkallowed() {
     ;;
     sigma1)
       case "$Argmethod" in
-        blur|comet|log) ;;
+        blur|comet|dog|log) ;;
         cutblur|cutsoft|finalblur|maskblur|threshold) ;;
         *) error "$Argmethod does not take argument sigma1: s$Arg" ;;
       esac
     ;;
     sigma2)
       case "$Argmethod" in
-        blur|finalblur|log) ;;
+        blur|finalblur|dog|log) ;;
         *) error "$Argmethod does not take argument sigma2: S$Arg" ;;
       esac
     ;;
@@ -4158,7 +4180,7 @@ maskarg_short() {
       radius1)
         [ -n "$Argradius1" ]     && Append=",r$Argradius1"
         [ "$Argradius1" = "$(maskarg_defaultvalue "$Argmethod" radius1)" ] && case "$Argmethod" in
-          blur|comet|cutblur|maskblur|log) Append="" ;;
+          blur|comet|cutblur|dog|log|maskblur) Append="" ;;
         esac
       ;;
       radius2)
@@ -4587,7 +4609,7 @@ parse_options() {
   Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,maskformat::,output:,rmcache,showimage,showname,sub::,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
-  Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
+  Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
@@ -4623,7 +4645,7 @@ parse_options() {
       -h|--help|--license|--rmcache|--showname|--version) Oneaction="${1:-}" ;;
 
 --cmd|--cmddiff|--experimental|\
---blur|--comet|--compass|--diffstat|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--wavelet|\
+--blur|--comet|--compass|--diffstat|--dog|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--wavelet|\
 --channel|--chroma|--darkness|--lightness|--saturation|\
 --compose|--enfuse|--evaluate|--max|--mean|--median|--min|\
 \
@@ -5009,7 +5031,7 @@ trap - ERR"
   # --exif: transfer EXIF metadata from first image to result, store imfuse version and parsed options
   [ "$Exifsourceimage" ] && exiftransfer "$Exifsourceimage" "$Resultimage"
   command -v exiftool && {
-    exiftool -overwrite_original -Software="imfuse v$Version" -ImageDescription="$Parsedoptions" "$Resultimage"
+    exiftool -overwrite_original -Software="imfuse v$Version" -ImageDescription="$Parsedoptions" "$Resultimage" "$Resultmask" "$Resultdepthmap"
   } || {
     note "Failed to store metadata in output image. Is exiftool installed?"
   }
