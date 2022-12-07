@@ -477,26 +477,27 @@ Step 5: Post processing
   The order of the options on cli matters. Noteably --alpha with percent values
   different from =0%,100% affects the following percent arguments.
   Using --finallevel first helps to unify useful percent values and to have
-  a good start for --alpha.
-  All options except --finallevel can be specified multiple times if that makes
-  sense.
+  a good start for --finalalpha.
+  All options except --finallevel can be specified multiple times.
 
  --finallevel         Levels result mask into visible spectrum from 0%..100%.
                       This option is applied before all follwing options.
  --finalalpha [=ARG]  Generate transparent image using the contrast mask as 
                       alpha channel (=transparency channel).
-                      Good method to reduce noise in low contrast areas.
                       The semitransparent result is composed over --background.
                       ARG takes arguments:
                         p        percent1          Default: $(maskarg_defaultvalue finalalpha percent1)%
                         P        percent2          Default: $(maskarg_defaultvalue finalalpha percent2)%
+                        (word)   off
                       percent1 affects the low contrast areas with
                        a useful range of -100%..+50%.
                       percent2 affects the high contrast areas with
                        a useful range of +100%..+200%.
                       Higher values make less transparent.
-                      The percent values are applied as '+level p%xP%'
-                      on the transparency alpha channel.
+                       The percent values are applied as '+level p%xP%'
+                       on the transparency alpha channel.
+                      If word 'off' is set, the alpha channel is disabled
+                       without further action.
  --finalblur [=ARG]   Soft blur of bokeh in low contrast areas.
                       ARG takes arguments:
                         t        threshold         Default: $(maskarg_defaultvalue finalblur threshold1)%
@@ -1722,10 +1723,10 @@ generate_image() {
       evaluate "$Mode" "$Imagename" "${Imsourceimagelist[@]:$Firstimage:$Lastimage}"
     ;;
     wave)
-      $Subimfuse --format="$Imageformat" --wavelet=p100 --cutwave=p100 "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
+      $Subimfuse --format="$Imageformat" --wavelet=p100 --cutwave=p100 --finalalpha=off "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
     ;;
     wavedark)
-      $Subimfuse --format="$Imageformat" --wavelet=p100 --cutwave=p100 --darkness=w25 "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
+      $Subimfuse --format="$Imageformat" --wavelet=p100 --cutwave=p100 --darkness=w25 --finalalpha=off "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
     ;;
   esac
 
@@ -1801,7 +1802,9 @@ Imagemaxlevel=%[fx:maxima*100]
 ")"
       [ "$Checkmin" ] && compare "$Imageminlevel" -lt "$Levelmin" && Levelmin="$Imageminlevel"
       [ "$Checkmax" ] && compare "$Imagemaxlevel" -gt "$Levelmax" && Levelmax="$Imagemaxlevel"
+      sendmagickmessage "PROGRESS:Calculating min:$Levelmin%, max:$Levelmax%, ETA:$Count"
     done
+    sendmagickmessage "/PROGRESS"
   }
 
   [ -n "$Round" ] && {
@@ -2190,6 +2193,7 @@ focus_maskmethod() {
     log)  # LoG: Laplacian of Gaussian
       Maskgenerator="$Maskgenerator
   mpr:sourceimage
+    -define convolve:bias=50%
     -define convolve:scale=100%
     -morphology Convolve LoG:${Argradius1}x${Argsigma1}"
     [ -n "$Argsigma2" ] && Maskgenerator="$Maskgenerator
@@ -3317,8 +3321,20 @@ focus_main() {
               sendmagickmessage "NOTE:Applying --${Imoptions[$Count]}=${Imarguments["$Count"]%,TYPE*}"
               case "$Option" in
                 finalalpha)
-                  alphalevel --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
+                  case "$Argword1" in
+                    "")
+                      alphalevel --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
                              --percent1 "${Argpercent1}" --percent2 "${Argpercent2}%"
+                    ;;
+                    off)
+                      Command="
+  '${Substackresultpost[$Substackstep]}'
+    -alpha off
+    -write '${Substackresultpost[$Substackstep]}'
+    -delete 0"
+                      cmd "$Command"
+                    ;;
+                  esac
                 ;;
                 finalblur)
                   finalblur  --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
@@ -3786,6 +3802,12 @@ maskarg_checkallowed() {
           checkmagicklist evaluate "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose one out of 'magick -list evaluate'"
           Argword1="$(checkmagicklist evaluate "$Arg" print)"
+        ;;
+        finalalpha)
+          case "$Argword1" in
+            ""|"off") ;;
+            *) error "--$Argmethod: unknown argument for word1: $Arg" ;;
+          esac
         ;;
         cmd|cmddiff|cutcmd|maskcmd) ;;
         morphology|cutmorph|maskmorph)
