@@ -280,9 +280,11 @@ Step 3: Mask merging
  --maskenhance [=ARG] Remove noise from mask.
                       ARG takes argument:
                         n        iterations        Default: $(maskarg_defaultvalue maskenhance number1)
+                      Compare ImageMagick option -enhance.
  --maskdespeckle [=ARG] Remove noise from mask.
                       ARG takes argument:
                         n        iterations        Default: $(maskarg_defaultvalue maskdespeckle number1)
+                      Compare ImageMagick option -despeckle.
  --maskmorph [=ARG]   Change shape of mask. 
                       ARG takes arguments:
                         r        radius            Default: $(maskarg_defaultvalue maskmorph radius1)
@@ -501,6 +503,13 @@ Step 5: Post processing
                         (word)   string            Default: $(maskarg_defaultvalue finalcmd word1)
                       string can be e.g. '-auto-gamma'. Avoid comma , in string.
                       https://imagemagick.org/script/command-line-options.php
+ --finalstretch [=ARG]  Enhance result image contrast by stretching intensity.
+                      ARG takes arguments:
+                        p        percent1          Default: $(maskarg_defaultvalue finalstretch percent1)%
+                        P        percent2          Default: $(maskarg_defaultvalue finalstretch percent2)%
+                      Percent values >0% will black out (percent1)
+                      or white-out (percent2) parts of the image.
+                      Compare ImageMagick option -contrast-stretch.
  --finalthreshold [=ARG]  Make low (or high) contrast area transparent.
                       ARG takes arguments:
                         t        threshold1        Default: $(maskarg_defaultvalue finalthreshold threshold1)%
@@ -3368,6 +3377,14 @@ focus_main() {
     -delete 0"
                   cmd "$Command"
                 ;;
+                finalstretch)
+                  Command="
+  ${Substackresultpost[$Substackstep]}
+    -contrast-stretch ${Argpercent1}x${Argpercent2}
+    -write ${Substackresultpost[$Substackstep]}
+    -delete 0"
+                  cmd "$Command"
+                ;;
                 finalthreshold)
                   threshold  --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
                              --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" --blur "$Argsigma1" \
@@ -3721,13 +3738,13 @@ maskarg_checkallowed() {
     ;;
     percent1)
       case "$Argmethod" in
-        cutblur|cutless|cutmax|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
+        cutblur|cutless|cutmax|cutwave|finalalpha|finalstretch|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "$Argmethod does not take argument percent1: p$Arg" ;;
       esac
     ;;
     percent2)
       case "$Argmethod" in
-        cutblur|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
+        cutblur|finalalpha|finalstretch|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "$Argmethod does not take argument percent2: P$Arg" ;;
       esac
     ;;
@@ -3977,6 +3994,7 @@ maskarg_defaultvalue() {
         cutmax)       Output="0" ;;
         cutwave)      Output="25" ;;
         finalalpha)   Output="0" ;;
+        finalstretch) Output="0" ;;
         masklevel)    Output="" ;;
         maskwave)     Output="20" ;;
         soft)         Output="2" ;;
@@ -3988,6 +4006,7 @@ maskarg_defaultvalue() {
         maskblur|cutblur)
                       Output="$((100-Argpercent1))" ;;
         finalalpha)   Output="100" ;;
+        finalstretch) Output="0" ;;
         masklevel)    Output="" ;;
         soft)         Output="100" ;;
         wavelet)      Output="" ;;
@@ -4079,7 +4098,7 @@ maskarg_defaultvalue() {
         cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
                       Output="focus"
         ;;
-        finalalpha|finalblur|finalblur2|finalcmd|finalthreshold)
+        finalalpha|finalblur|finalblur2|finalcmd|finalstretch|finalthreshold)
                       Output="postfocus"
         ;;
         bg)
@@ -4110,7 +4129,8 @@ maskarg_defaultvalue() {
 
         bg)           Output="enfuse" ;;
         cutmorph)     Output="Erode" ;;
-        finalcmd)     Output="-contrast-stretch 0x0" ;;
+        cmd|maskcmd|cutcmd|finalcmd)
+                      Output="" ;;
         format)       Output="tif" ;;
         masklevel)    Output="all" ;;
         maskformat)   Output="mpc" ;;
@@ -4177,13 +4197,13 @@ maskarg_short() {
       percent1)
         [ -n "$Argpercent1" ]    && Append=",p$Argpercent1"
         [ "$Argpercent1" = "$(maskarg_defaultvalue "$Argmethod" percent1)" ] && case "$Argmethod" in
-          maskblur|cutblur) Append="" ;;
+          maskblur|cutblur|finalstretch) Append="" ;;
         esac
       ;;
       percent2)
         [ -n "$Argpercent2" ]    && Append=",P$Argpercent2"
         [ "$Argpercent2" = "$(maskarg_defaultvalue "$Argmethod" percent2)" ] && case "$Argmethod" in
-          maskblur|cutblur) Append="" ;;
+          maskblur|cutblur|finalstretch) Append="" ;;
         esac
       ;;
       number1)
@@ -4239,15 +4259,19 @@ maskarg_short() {
         esac
       ;;
       word1)
-        [ -n "$Argword1" ]       && Append=",'$Argword1'"
+        [ -n "$Argword1" ]       && case "$Argmethod" in
+          cmd|maskcmd|cutcmd|finalcmd) 
+                                    Append=",'$Argword1'" ;;
+          *)                        Append=",$Argword1" ;;
+        esac
+        [ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
         [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
           comet|compass|diffstat|statistic|masklevel|maskmerge|soft) Append="" ;;
         esac
-        [ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
       ;;
       word2)
-        [ -n "$Argword2" ]       && Append=",'$Argword2'"
-        [ "$Argword2" = "'$(maskarg_defaultvalue "$Argmethod" word2)'" ] && case "$Argmethod" in
+        [ -n "$Argword2" ]       && Append=",$Argword2"
+        [ "$Argword2" = "'$(maskarg_defaultvalue "$Argmethod" word2)" ] && case "$Argmethod" in
           diffstat|maskmorph|morphology|cutmorph) Append="" ;;
         esac
       ;;
@@ -4587,7 +4611,7 @@ parse_options() {
   Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
   Longoptions="$Longoptions,substacks::,soft::"
-  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finallevel::,finalthreshold::"
+  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finallevel::,finalstretch::,finalthreshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error while parsing options."
@@ -4623,7 +4647,7 @@ parse_options() {
 --colorspace|\
 --maskblur|--maskcmd|--maskdespeckle|--maskenhance|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
---finalalpha|--finalblur|--finalblur2|--finalcmd|--finallevel|--finalthreshold|\
+--finalalpha|--finalblur|--finalblur2|--finalcmd|--finallevel|--finalstretch|--finalthreshold|\
 --bg|--background|\
 --substacks)
                            maskarg_add "${1:-}" "${2:-}"       ; shift
