@@ -3380,7 +3380,7 @@ focus_main() {
                 finalstretch)
                   Command="
   ${Substackresultpost[$Substackstep]}
-    -contrast-stretch ${Argpercent1}x${Argpercent2}
+    -contrast-stretch ${Argpercent1}%x${Argpercent2}%
     -write ${Substackresultpost[$Substackstep]}
     -delete 0"
                   cmd "$Command"
@@ -3388,6 +3388,9 @@ focus_main() {
                 finalthreshold)
                   threshold  --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
                              --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" --blur "$Argsigma1" \
+                             --cutimage="hard"
+                  threshold  --image "$Resultdepthmap" --mask "${Substackmaskpost[$Substackstep]}" \
+                             --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" \
                              --cutimage="hard"
                 ;;
               esac
