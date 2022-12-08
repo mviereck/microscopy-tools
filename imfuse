@@ -277,9 +277,13 @@ Step 3: Mask merging
                         (word)   string
                       string can be e.g. '-blur 0x5'. Avoid comma , in string.
                       https://imagemagick.org/script/command-line-options.php
- --maskmorph [=ARG]   Change shape of mask. Default 'Dilate' helps
-                      to close gaps. A later --cutmorph=Erode works in
-                      the opposite direction and can remove seams.
+ --maskenhance [=ARG] Remove noise from mask.
+                      ARG takes argument:
+                        n        iterations        Default: $(maskarg_defaultvalue maskenhance number1)
+ --maskdespeckle [=ARG] Remove noise from mask.
+                      ARG takes argument:
+                        n        iterations        Default: $(maskarg_defaultvalue maskdespeckle number1)
+ --maskmorph [=ARG]   Change shape of mask. 
                       ARG takes arguments:
                         r        radius            Default: $(maskarg_defaultvalue maskmorph radius1)
                         R        kernel iteration  Default: $(maskarg_defaultvalue maskmorph radius2)
@@ -1812,7 +1816,7 @@ Imagemaxlevel=%[fx:maxima*100]
       [ "$Checkmax" ] && compare "$Imagemaxlevel" -gt "$Levelmax" && Levelmax="$Imagemaxlevel"
       sendmagickmessage "PROGRESS:Calculating min:$Levelmin%, max:$Levelmax%, ETA:$Count"
       [ -n "$Round" ] && compare "$Levelmin" -lt "$Round" && compare "$Levelmax" -gt "$((100-Round))" && {
-        sendmagickmessage "PROGRESS:Stopped calculating min/max, min<$Round%, max>$((100-Round))%"
+        sendmagickmessage "PROGRESS:Stopped calculating min/max because min<$Round%, max>$((100-Round))%"
         break
       }
     done
@@ -2544,6 +2548,20 @@ focus_merge_masks() {
           maskcmd)
             Mergecode="$Mergecode
     $Argword1"
+          ;;
+
+          maskenhance)
+            for Count in "$(seq "$Argnumber1")"; do
+              Mergecode="$Mergecode
+    -enhance"
+            done
+          ;;
+
+          maskdespeckle)
+            for Count in "$(seq "$Argnumber1")"; do
+              Mergecode="$Mergecode
+    -despeckle"
+            done
           ;;
 
           maskmorph)
@@ -3686,19 +3704,19 @@ maskarg_checkallowed() {
     negate)
       case "$Argtype" in
         mask) ;;
-        *) error "$Argmethod does not take argument negate." ;;
+        *) error "$Argmethod does not take argument neg." ;;
       esac
     ;;
     number1)
       case "$Argmethod" in
-        freichen|laplacian|substacks) ;;
-        *) error "$Argmethod does not take argument number: n$Arg" ;;
+        freichen|laplacian|maskdespeckle|maskenhance|substacks) ;;
+        *) error "$Argmethod does not take argument number1: n$Arg" ;;
       esac
     ;;
     number2)
       case "$Argmethod" in
         substacks) ;;
-        *) error "$Argmethod does not take argument number: n$Arg" ;;
+        *) error "$Argmethod does not take argument number2: n$Arg" ;;
       esac
     ;;
     percent1)
@@ -3942,6 +3960,8 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         freichen)     Output="" ;;
         laplacian)    Output="3" ;;
+        maskdespeckle|maskenhance)
+                      Output="1" ;;
       esac
     ;;
     number2)
@@ -4053,7 +4073,7 @@ maskarg_defaultvalue() {
         experimental)
                       Output="mask"
         ;;
-        maskblur|maskcmd|maskmorph|maskstat|maskthreshold|maskwave)
+        maskblur|maskcmd|maskdespeckle|maskenhance|maskmorph|maskstat|maskthreshold|maskwave)
                       Output="merge"
         ;;
         cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
@@ -4564,7 +4584,7 @@ parse_options() {
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
-  Longoptions="$Longoptions,maskblur::,maskcmd::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
+  Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
   Longoptions="$Longoptions,substacks::,soft::"
   Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finallevel::,finalthreshold::"
@@ -4601,7 +4621,7 @@ parse_options() {
 --compose|--enfuse|--evaluate|--max|--mean|--median|--min|\
 \
 --colorspace|\
---maskblur|--maskcmd|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
+--maskblur|--maskcmd|--maskdespeckle|--maskenhance|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
 --finalalpha|--finalblur|--finalblur2|--finalcmd|--finallevel|--finalthreshold|\
 --bg|--background|\
