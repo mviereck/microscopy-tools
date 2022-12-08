@@ -1,32 +1,10 @@
 #! /bin/bash
 
 # imfuse - Combines focus stackshot images to one overall sharp image.
-Version="0.9.3-beta"
+Version="0.9.4-beta"
 
 ### Information
 
-license() {
-  echo "
-imfuse - Combines focus stackshot images to one overall sharp image.
-Copyright (C) 2022  Martin Viereck
-
-    This program is free software; you can redistribute it and/or
-    modify it under the terms of the GNU General Public License
-    as published by the Free Software Foundation; either version 2
-    of the License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software Foundation,
-    Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-
-imfuse website and contact: https://github.com/mviereck/microscopy-tools
-"
-}
 usage() {
   echo "imfuse: Combines focus stackshot images to one overall sharp image.
 
@@ -74,13 +52,13 @@ General options:
 The options below can take additionally arguments [=ARG].
 Multiple arguments are comma-separated. Example: --morphology=r3,blur
 
-Arguments taken by all mask generating options:
+Arguments taken by all mask generating options: (Mostly you only need w).
   w         Weight of mask. Percent value from 0 to 100.
             Of interest if specifying more than one mask generation method.
-            Example: --morphology --saturation=w25
+            Example: --morphology --darkness=w15
             This will generate two masks. The saturation mask will only have
             noteable effect where the morphology mask strength is below 25%.
-  C=        Colorspace to use instead of default sRGB. Compare --colorspace.
+  C=        Colorspace to use instead of default $(maskarg_defaultvalue colorspace colorspace). Compare --colorspace.
   c         Colorspace channel to use. Counting up from 0 for first channel.
             Example: C=HSL,c2 will use the saturation channel from HSL.
   I=        Image creation and comparision. For possible args see --background.
@@ -108,14 +86,12 @@ Arguments additionally taken by some options:
 Generally spoken, increased radius or sigma enhances contrast, reduces noise,
 looses details and increases undesired seams. There's always a tradeoff.
 The default values are set rather low and mostly profit from increasing.
-Think of radius and sigma as of brush sizes.
+As a metapher, think of radius and sigma as of brush sizes.
 
 Step 1: Color conversion
-  By default imfuse uses colorspace sRGB.
-  Normally you don't need to adjust this option.
 
  --colorspace [=ARG]  Define the colorspace from where to generate the
-                      masks. Experimental option, less useful yet.
+                      masks. Normally you don't need to adjust this option.
                       ARG takes arguments:
                         C=       colorspace        Default: $(maskarg_defaultvalue colorspace colorspace)
                         c        channel
@@ -147,6 +123,7 @@ Step 2: Mask generation
                       string can be e.g. '-edge 2'. Avoid comma , in string.
                       There's also a use case without a command at all
                       but setting arguments C=,c only.
+                      https://imagemagick.org/script/command-line-options.php
  --cmddiff [=ARG]     Custom ImageMagick option to create a mask.
                       The resulting mask will be a '-compose Difference' 
                       comparision from command result with source image.
@@ -155,6 +132,7 @@ Step 2: Mask generation
                       ARG takes argument:
                         (word)   string
                       string can be e.g. '-blur 0x5'. Avoid comma , in string.
+                      https://imagemagick.org/script/command-line-options.php
  --comet [=ARG]       Comet edge detection. Compares rotated mean areas.
                       ARG additionally takes arguments: 
                         r        radius            Default: $(maskarg_defaultvalue comet radius1)
@@ -298,6 +276,7 @@ Step 3: Mask merging
                       ARG takes argument:
                         (word)   string
                       string can be e.g. '-blur 0x5'. Avoid comma , in string.
+                      https://imagemagick.org/script/command-line-options.php
  --maskmorph [=ARG]   Change shape of mask. Default 'Dilate' helps
                       to close gaps. A later --cutmorph=Erode works in
                       the opposite direction and can remove seams.
@@ -390,6 +369,7 @@ Step 4: Stack fusion
                       ARG takes argument:
                         (word)   string
                       string can be e.g. '-blur 0x5'. Avoid comma , in string.
+                      https://imagemagick.org/script/command-line-options.php
  --cutless [=ARG]     Strenghtens less contrasted objects in front of strong
                       contrasted background objects.
                       ARG takes argument:
@@ -512,6 +492,11 @@ Step 5: Post processing
                       ARG takes arguments:
                         r        radius            Default: $(maskarg_defaultvalue finalblur2 radius1)
                         t        threshold         Default: $(maskarg_defaultvalue finalblur2 threshold1)%
+ --finalcmd [=ARG]    Custom ImageMagick option to apply on result image.
+                      ARG takes argument:
+                        (word)   string            Default: $(maskarg_defaultvalue finalcmd word1)
+                      string can be e.g. '-auto-gamma'. Avoid comma , in string.
+                      https://imagemagick.org/script/command-line-options.php
  --finalthreshold [=ARG]  Make low (or high) contrast area transparent.
                       ARG takes arguments:
                         t        threshold1        Default: $(maskarg_defaultvalue finalthreshold threshold1)%
@@ -548,6 +533,28 @@ Version: imfuse v$Version
 Author:  Martin Viereck, Germany
 License: GPLv2 https://www.gnu.org/licenses/old-licenses/gpl-2.0.html#SEC1
 Website: https://github.com/mviereck/microscopy-tools
+"
+}
+license() {
+  echo "
+imfuse - Combines focus stackshot images to one overall sharp image.
+Copyright (C) 2022  Martin Viereck
+
+    This program is free software; you can redistribute it and/or
+    modify it under the terms of the GNU General Public License
+    as published by the Free Software Foundation; either version 2
+    of the License, or (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software Foundation,
+    Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+imfuse website and contact: https://github.com/mviereck/microscopy-tools
 "
 }
 
@@ -2032,8 +2039,9 @@ focus_maskmethod() {
   local Maskgenerator=
   local Firstimage Lastimage
 
-  Firstimage="${1:-1}"
-  Lastimage="${2:-$Sourceimagenumber}"
+  Sourceimage="${1:-1}"
+  Firstimage="${2:-1}"
+  Lastimage="${3:-$Sourceimagenumber}"
 
   Maskgenerator="
   # --$Argmethod=${Argoptions%,TYPE*}"
@@ -2042,7 +2050,7 @@ focus_maskmethod() {
       case "$Argsigma2" in
         "")
           Maskgenerator="$Maskgenerator
-  mpr:sourceimage"
+  $Sourceimage"
           case "$Argword1" in
             ""|"blur") 
               Maskgenerator="$Maskgenerator
@@ -2058,14 +2066,14 @@ focus_maskmethod() {
           case "$Argword1" in
             ""|"blur") 
               Maskgenerator="$Maskgenerator
-  ( mpr:sourceimage -blur ${Argradius1},${Argsigma1} )
-  ( mpr:sourceimage -blur ${Argradius1},${Argsigma2} )
+  ( $Sourceimage -blur ${Argradius1},${Argsigma1} )
+  ( $Sourceimage -blur ${Argradius1},${Argsigma2} )
     -compose Difference -composite"
             ;;
             "gaussian") 
               Maskgenerator="$Maskgenerator
-  ( mpr:sourceimage -gaussian-blur ${Argradius1},${Argsigma1} )
-  ( mpr:sourceimage -gaussian-blur ${Argradius1},${Argsigma2} )
+  ( $Sourceimage -gaussian-blur ${Argradius1},${Argsigma1} )
+  ( $Sourceimage -gaussian-blur ${Argradius1},${Argsigma2} )
     -compose Difference -composite"
             ;;
           esac
@@ -2075,26 +2083,26 @@ focus_maskmethod() {
 
     cmd|channel|chroma|darkness|lightness|saturation|enfuse|compose|evaluate|max|min|mean|median)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage 
+  $Sourceimage 
     $Argword1"
     ;;
 
     cmddiff)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage 
+  $Sourceimage 
     $Argword1"
     ;;
 
     comet)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage 
+  $Sourceimage 
     -define morphology:compose=${Argword1}
     -morphology Convolve Comet:${Argradius1}x${Argsigma1}:>"
     ;;
 
     compass)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:scale=50%!
     -define morphology:compose=${Argword1}
     -define convolve:bias=50%
@@ -2103,14 +2111,14 @@ focus_maskmethod() {
 
     diffstat)
         Maskgenerator="$Maskgenerator
-  ( mpr:sourceimage -statistic ${Argword1} ${Argradius1} )
-  ( mpr:sourceimage -statistic ${Argword2} ${Argradius2} )
+  ( $Sourceimage -statistic ${Argword1} ${Argradius1} )
+  ( $Sourceimage -statistic ${Argword2} ${Argradius2} )
     -compose Difference -composite"
     ;;
 
     dog)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -bias 50%
     -define convolve:scale=100%
     -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}"
@@ -2118,31 +2126,31 @@ focus_maskmethod() {
 
     GAUSSexperimental) 
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:scale=-100,200%
     -morphology Convolve Gaussian:${Argradius1}x${Argsigma1}
-  mpr:sourceimage
+  $Sourceimage
     -compose Difference -composite"
     ;;
     CROSSMORPHexperimental)
       Maskgenerator="$Maskgenerator
-  ( mpr:sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1:-3}x1+1+0 )
-  ( mpr:sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1:-3}x1+${Argradius1:-3}+0 )
-  ( mpr:sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:1x${Argradius1:-3}+0+1 )
-  ( mpr:sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:1x${Argradius1:-3}+0+${Argradius1:-3} )
+  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1:-3}x1+1+0 )
+  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1:-3}x1+${Argradius1:-3}+0 )
+  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:1x${Argradius1:-3}+0+1 )
+  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:1x${Argradius1:-3}+0+${Argradius1:-3} )
     -evaluate-sequence min"
     ;;
     CROSSMORPH2experimental)
       Maskgenerator="$Maskgenerator
-  ( mpr:sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1}x$((Argradius1/2))+0+$((Argradius1/4)) )
-  ( mpr:sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1}x$((Argradius1/2))+$((Argradius1-1))+$((Argradius1/4)) )
-  ( mpr:sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:$((Argradius1/2))x$((Argradius1))+$((Argradius1/4))+0 )
-  ( mpr:sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:$((Argradius1/2))x$((Argradius1))+$((Argradius1/4))+$((Argradius1-1)) )
+  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1}x$((Argradius1/2))+0+$((Argradius1/4)) )
+  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1}x$((Argradius1/2))+$((Argradius1-1))+$((Argradius1/4)) )
+  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:$((Argradius1/2))x$((Argradius1))+$((Argradius1/4))+0 )
+  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:$((Argradius1/2))x$((Argradius1))+$((Argradius1/4))+$((Argradius1-1)) )
     -evaluate-sequence min"
     ;;
     experimental)
       Maskgenerator="$Maskgenerator
-  ( mpr:sourceimage -colorspace HSB -channel 1 -separate +channel )
+  ( $Sourceimage -colorspace HSB -channel 1 -separate +channel )
     -statistic standarddeviation ${Argradius1}x${Argradius1}"
     ;;
 
@@ -2151,14 +2159,14 @@ focus_maskmethod() {
         "")
           Maskgenerator="$Maskgenerator
   (
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:scale=100%!
     -define morphology:compose=Screen
     -define convolve:bias=5%
     -morphology Convolve FreiChen:1>
   )
   (
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:scale=100%!
     -define morphology:compose=Screen
     -define convolve:bias=5%
@@ -2169,7 +2177,7 @@ focus_maskmethod() {
         ;;
         *)
           Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:scale=100%!
     -define morphology:compose=Screen
     -define convolve:bias=10%
@@ -2180,7 +2188,7 @@ focus_maskmethod() {
 
     kirsch)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:scale=100%!
     -define morphology:compose=Screen
     -define convolve:bias=15%
@@ -2189,7 +2197,7 @@ focus_maskmethod() {
 
     laplacian)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:bias=5%
     -define convolve:scale=100%!
     -morphology Convolve Laplacian:${Argnumber1}>"
@@ -2197,12 +2205,12 @@ focus_maskmethod() {
 
     log)  # LoG: Laplacian of Gaussian
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:bias=50%
     -define convolve:scale=100%
     -morphology Convolve LoG:${Argradius1}x${Argsigma1}"
     [ -n "$Argsigma2" ] && Maskgenerator="$Maskgenerator
-  ( mpr:sourceimage
+  ( $Sourceimage
       -define convolve:scale=100%
       -morphology Convolve LoG:${Argradius1}x${Argsigma2} )
     -compose Difference -composite"
@@ -2210,13 +2218,13 @@ focus_maskmethod() {
 
     morphology)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -morphology ${Argword1}:${Argradius2} ${Argword2}:${Argradius1}"
     ;;
 
     prewitt)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:scale=100%!
     -define morphology:compose=Screen
     -define convolve:bias=10%
@@ -2225,7 +2233,7 @@ focus_maskmethod() {
 
     roberts)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:scale=100%
     -define morphology:compose=Screen
     -define convolve:bias=10%
@@ -2234,7 +2242,7 @@ focus_maskmethod() {
 
     sobel)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -define convolve:scale=100%!
     -define convolve:bias=10%
     -define morphology:compose=Screen
@@ -2245,13 +2253,13 @@ focus_maskmethod() {
       case "$Argradius2" in
         "")
           Maskgenerator="$Maskgenerator
-  mpr:sourceimage
+  $Sourceimage
     -statistic ${Argword1} ${Argradius1}x${Argradius1}"
         ;;
         *)
           Maskgenerator="$Maskgenerator
-  ( mpr:sourceimage -statistic ${Argword1} ${Argradius1} )
-  ( mpr:sourceimage -statistic ${Argword1} ${Argradius2} )
+  ( $Sourceimage -statistic ${Argword1} ${Argradius1} )
+  ( $Sourceimage -statistic ${Argword1} ${Argradius2} )
     -compose Difference -composite"
         ;;
       esac
@@ -2259,10 +2267,10 @@ focus_maskmethod() {
 
     wavelet)
       Maskgenerator="$Maskgenerator
-  mpr:sourceimage 
+  $Sourceimage 
     -wavelet-denoise ${Argpercent1}%"
       [ -n "$Argpercent2" ] && Maskgenerator="$Maskgenerator
-  ( mpr:sourceimage 
+  ( $Sourceimage 
       -wavelet-denoise ${Argpercent2}% )
     -compose Difference -composite"
     ;;
@@ -2272,7 +2280,7 @@ focus_maskmethod() {
   echo "$Maskgenerator"
 }
 focus_generate_masks() {
-  local Maskgenerator Maskgenerator_all= Basenamelist= Maskready= Maskmax Mode Line Imagename Command= Maskmd5 Count
+  local Maskgenerator Maskgenerator_all= Basenamelist= Maskready= Maskmax Mode Line Imagename Command= Maskmd5 Count Sourceimagecode
   local Longoptions Parsedoptions
   local Firstimage Lastimage
 
@@ -2289,53 +2297,51 @@ focus_generate_masks() {
 
   Firstimage="${Firstimage:-1}"
   Lastimage="${Lastimage:-$Sourceimagenumber}"
+
   # Generate Code for mask generation
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
 
     [ "$Argtype" = "mask" ] && {
-      Maskgenerator=""
 
-      [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] || [ -n "$Argimage" ] && {
-        Maskgenerator="$Maskgenerator
-  # backup for =C,c,E
+      Sourceimagecode="
   mpr:sourceimage
-    -write mpr:sourceimage.bak
-    -delete 0"
+    # --colorspace
+    -colorspace $Colorspace"
+      [ -n "$Colorspacechannel" ] && Sourceimagecode="$Sourceimagecode
+    -channel $Colorspacechannel
+    -separate
+    +channel"
+
+      [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] && {
+        Sourceimagecode="
+  # =C
+  mpr:sourceimage
+    -colorspace ${Argcolorspace:-"$Colorspace"}"
+        [ -n "$Argchannel" ] && Sourceimagecode="$Sourceimagecode
+    # =c
+    -channel $Argchannel
+    -separate
+    +channel"
       }
+
       [ -n "$Argimage" ] && {
+        ### FIXME colorspace
         generate_image --mode "$Argimage" --first "$Firstimage" --last "$Lastimage"
-        Maskgenerator="$Maskgenerator
+        Sourceimagecode="
   # =E
   mpr:sourceimage
   $(generate_image --mode "$Argimage" --showname --first "$Firstimage" --last "$Lastimage")
     -compose Difference -composite
-    -negate
-    -write mpr:sourceimage
-    -delete 0"
+    -negate"
       }
-      [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] && {
-        Maskgenerator="$Maskgenerator
-  # =C,c
-  (
-    mpr:sourceimage
-      -colorspace ${Argcolorspace:-"$Colorspace"}"
-        [ -n "$Argchannel" ] && Maskgenerator="$Maskgenerator
-      # =c
-      -channel $Argchannel
-      -separate
-      +channel"
-        Maskgenerator="$Maskgenerator
-  )
-    -write mpr:sourceimage
-    -delete 0"
-      }
-      Maskgenerator="$Maskgenerator
-$(focus_maskmethod "$Firstimage" "$Lastimage")"
+
+      Maskgenerator="
+$(focus_maskmethod "$Sourceimagecode" "$Firstimage" "$Lastimage")"
 
       [ "$Argdiff" = "yes" ] && Maskgenerator="$Maskgenerator
     # =diff
-  mpr:sourceimage
+  ( $Sourceimagecode )
     -compose Difference -composite"
 
       [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
@@ -2348,12 +2354,12 @@ $(focus_maskmethod "$Firstimage" "$Lastimage")"
     -separate
     -evaluate-sequence add"
 
-      Maskmd5="$(md5cut "$Arglevel $Colorspace $Colorspacechannel $Maskgenerator $Sourcemd5")"
+      Maskmd5="$(md5cut "$Arglevel $Maskgenerator $Sourcemd5")"
       Argbasename="$Argmethod.$Maskmd5"
       #Argbasename="${Argmethod}${Argoptions}.$Sourcemd5"
       maskarg_store "$Count"
 
-      ## avoid [double] creating of existing masks
+      ## Check if mask already exists
       Maskready="no"
       maskexist "$Argbasename" "$Firstimage" "$Lastimage" && {
         Maskready="yes"
@@ -2375,15 +2381,6 @@ $Maskgenerator
     $(showimagecode "$(maskname "$Argbasename" NUMBER)")
     -delete 0"
       }
-
-      [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] || [ -n "$Argimage" ] && {
-        Maskgenerator="$Maskgenerator
-  # restore backup for =C,c,E
-  mpr:sourceimage.bak
-    -write mpr:sourceimage
-    +set registry:sourceimage.bak
-    -delete 0"
-      }
     }
   done
 
@@ -2393,28 +2390,14 @@ $Maskgenerator
     grep -q "NUMBER" <<< "$Maskgenerator_all" && load_sourceimages "$Firstimage" "$Lastimage"
     sendmagickmessage "STOPWATCH"
 
-    # Generate command to generate masks
     for Count in $(seq "$Lastimage" -1 "$Firstimage"); do
 
       sendmagickmessage "PROGRESS:Mask generation ETA:$Count"
 
       Command="
   '$(sourceimagename "$Count")'
-    -alpha off
     -write mpr:sourceimage
     -delete 0
-  ( mpr:sourceimage
-      -colorspace $Colorspace"
-      [ -n "$Colorspacechannel" ] && Command="$Command
-      -channel $Colorspacechannel
-      -separate
-      +channel"
-      Command="$Command
-  )
-    -write mpr:sourceimage
-    -delete 0"
-
-      Command="$Command
 ${Maskgenerator_all//NUMBER/$(printnum "$Count")}"
 
       cmd "$Command"
@@ -2590,8 +2573,19 @@ focus_merge_masks() {
     ;;
 
           maskwave)
-            Mergecode="$Mergecode
-    -wavelet-denoise ${Argpercent1:-30}%"
+            case "$Argpercent2" in
+              "")
+                Mergecode="$Mergecode
+    -wavelet-denoise ${Argpercent1}%"
+              ;;
+              *)
+                Mergecode="$Mergecode
+    -write mpr:mergemask
+  ( mpr:mergemask -wavelet-denoise ${Argpercent1}% )
+  ( mpr:mergemask -wavelet-denoise ${Argpercent2}% )
+    -compose Difference -composite"
+              ;;
+            esac
           ;;
 
         esac
@@ -3303,7 +3297,7 @@ focus_main() {
       Substackmaskpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-mask.mpc"
 
       [ -e "${Substackresultpost[$Substackstep]}" ] && {
-        sendmagickmessage "NOTE:Skipping --finalalpha --threshold --finalblur[2], already done."
+        sendmagickmessage "NOTE:Skipping --final* options, already done."
       } || {
 
         Command="
@@ -3347,6 +3341,14 @@ focus_main() {
                 finalblur2)
                   finalblur2 --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
                              --percent "$Argthreshold1" --blur "$Argradius1"
+                ;;
+                finalcmd)
+                  Command="
+  ${Substackresultpost[$Substackstep]}
+    $Argword1
+    -write ${Substackresultpost[$Substackstep]}
+    -delete 0"
+                  cmd "$Command"
                 ;;
                 finalthreshold)
                   threshold  --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
@@ -3569,10 +3571,11 @@ maskarg_parse() {
       "I")                Argimage="$Value" ;;
       "C")                Argcolorspace="$Value" ;;
       "c")                Argchannel="$Value" ;;
+      "diff")             Argdiff="${Value:-yes}" ;;
       "neg")              Argnegate="yes" ;;
       "level")            Arglevel="$Value" ;;
       "TYPE")             Argtype="$Value" ;;
-      "diff")             Argdiff="${Value:-yes}" ;;
+      "AUTOWEIGHT")       Argautoweight="$Value" ;;
       "BASENAME")         Argbasename="$Value" ;;
       *|WORD1|WORD2)
         [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
@@ -3607,6 +3610,7 @@ maskarg_store() {
   [ "$Argword1" ]              && Argoptions="$Argoptions,$Argword1"
   [ "$Argword2" ]              && Argoptions="$Argoptions,$Argword2"
   [ "$Argtype" ]               && Argoptions="$Argoptions,TYPE=$Argtype"
+  [ "$Argautoweight" ]         && Argoptions="$Argoptions,AUTOWEIGHT=yes"
   [ "$Argbasename" ]           && Argoptions="$Argoptions,BASENAME=$Argbasename"
   Argoptions="${Argoptions#,}"
   Imarguments[$Argcount]="$Argoptions"
@@ -3705,7 +3709,7 @@ maskarg_checkallowed() {
     ;;
     percent2)
       case "$Argmethod" in
-        cutblur|finalalpha|maskblur|masklevel|soft|substacks|wavelet) ;;
+        cutblur|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "$Argmethod does not take argument percent2: P$Arg" ;;
       esac
     ;;
@@ -3789,7 +3793,8 @@ maskarg_checkallowed() {
         colorspace) 
           checkmagicklist colorspace "$Arg" || error "--$Argmethod: unknown colorspace: $Arg
   Please choose one out of 'magick -list colorspace'"
-          Argword1="$(checkmagicklist colorspace "$Arg" print)"
+          Argcolorspace="$(checkmagicklist colorspace "$Arg" print)"
+          Argword1=""
         ;;
         masklevel)
           case "$Arg" in
@@ -3813,7 +3818,7 @@ maskarg_checkallowed() {
             *) error "--$Argmethod: unknown argument for word1: $Arg" ;;
           esac
         ;;
-        cmd|cmddiff|cutcmd|maskcmd) ;;
+        cmd|cmddiff|cutcmd|finalcmd|maskcmd) ;;
         morphology|cutmorph|maskmorph)
           checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || error "--$Argmethod:  unknown argument for word1: $Arg
   Please choose one out of 'magick -list morphology'"
@@ -3871,7 +3876,7 @@ maskarg_defaultvalue() {
     ;;
     colorspace)
       case "$Argmethod" in
-        colorspace)   Output="sRGB" ;;
+        colorspace)   Output="CMYK" ;;
         channel) ;;
         chroma)       Output="HCL" ;;
         darkness)     Output="HSL" ;;
@@ -3950,7 +3955,7 @@ maskarg_defaultvalue() {
                       Output="100" ;;
         cutless)      Output="20" ;;
         cutmax)       Output="0" ;;
-        cutwave)      Output="75" ;;
+        cutwave)      Output="25" ;;
         finalalpha)   Output="0" ;;
         masklevel)    Output="" ;;
         maskwave)     Output="20" ;;
@@ -3982,7 +3987,7 @@ maskarg_defaultvalue() {
         cutmorph)     Output="1" ;;
         finalblur2)   Output="4" ;;
         maskblur)     Output="0" ;;
-        maskmorph)    Output="2" ;;
+        maskmorph)    Output="1" ;;
         maskstat)     Output="6" ;;
       esac
     ;;
@@ -3990,7 +3995,7 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         cutmorph)     Output="1" ;;
         diffstat)     Output="$Argradius1" ;;
-        maskmorph)    Output="2" ;;
+        maskmorph)    Output="1" ;;
         morphology)   Output="1" ;;
         statistic) ;;
       esac
@@ -4054,7 +4059,7 @@ maskarg_defaultvalue() {
         cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
                       Output="focus"
         ;;
-        finalalpha|finalblur|finalblur2|finalthreshold)
+        finalalpha|finalblur|finalblur2|finalcmd|finalthreshold)
                       Output="postfocus"
         ;;
         bg)
@@ -4085,11 +4090,12 @@ maskarg_defaultvalue() {
 
         bg)           Output="enfuse" ;;
         cutmorph)     Output="Erode" ;;
+        finalcmd)     Output="-contrast-stretch 0x0" ;;
         format)       Output="tif" ;;
         masklevel)    Output="all" ;;
         maskformat)   Output="mpc" ;;
         maskmerge)    Output="Screen" ;;
-        maskmorph)    Output="Dilate" ;;
+        maskmorph)    Output="Smooth" ;;
         maskstat)     Output="Mean" ;;
         soft)         Output="Plus" ;;
       esac
@@ -4124,7 +4130,8 @@ maskarg_short() {
     Append=""
     case "$Argument" in
       weight)
-        [ -n "$Argweight" ]      && [ "$Argweight" != "100" ] && Append=",w$Argweight"
+        #[ -n "$Argweight" ]      && [ "$Argweight" != "100" ] && Append=",w$Argweight"
+        [ -n "$Argweight" ]      && [ -z "$Argautoweight" ] && Append=",w$Argweight"
       ;;
       radius1)
         [ -n "$Argradius1" ]     && Append=",r$Argradius1"
@@ -4174,7 +4181,7 @@ maskarg_short() {
       colorspace)
         [ -n "$Argcolorspace" ]  && Append=",C=$Argcolorspace"
         [ "$Argcolorspace" = "$(maskarg_defaultvalue "$Argmethod" colorspace)" ] && case "$Argmethod" in
-          chroma|darkness|lightness|saturation) Append="" ;;
+          chroma|colorspace|darkness|lightness|saturation) Append="" ;;
         esac
       ;;
       channel)
@@ -4212,15 +4219,15 @@ maskarg_short() {
         esac
       ;;
       word1)
-        [ -n "$Argword1" ]       && Append=",$Argword1"
+        [ -n "$Argword1" ]       && Append=",'$Argword1'"
         [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
           comet|compass|diffstat|statistic|masklevel|maskmerge|soft) Append="" ;;
         esac
         [ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
       ;;
       word2)
-        [ -n "$Argword2" ]       && Append=",$Argword2"
-        [ "$Argword2" = "$(maskarg_defaultvalue "$Argmethod" word2)" ] && case "$Argmethod" in
+        [ -n "$Argword2" ]       && Append=",'$Argword2'"
+        [ "$Argword2" = "'$(maskarg_defaultvalue "$Argmethod" word2)'" ] && case "$Argmethod" in
           diffstat|maskmorph|morphology|cutmorph) Append="" ;;
         esac
       ;;
@@ -4458,12 +4465,13 @@ declare_variables() {
   Arglevel=""
   Argword1=""
   Argword2=""
-  Argbasename=""
   Argcount=""
   Argdiff=""
   Argmethod=""
   Argoptions=""
   Argtype=""
+  Argautoweight=""
+  Argbasename=""
   '
   eval $Arglist
 
@@ -4559,7 +4567,7 @@ parse_options() {
   Longoptions="$Longoptions,maskblur::,maskcmd::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
   Longoptions="$Longoptions,substacks::,soft::"
-  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finallevel::,finalthreshold::"
+  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finallevel::,finalthreshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error while parsing options."
@@ -4595,7 +4603,7 @@ parse_options() {
 --colorspace|\
 --maskblur|--maskcmd|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
---finalalpha|--finalblur|--finalblur2|--finallevel|--finalthreshold|\
+--finalalpha|--finalblur|--finalblur2|--finalcmd|--finallevel|--finalthreshold|\
 --bg|--background|\
 --substacks)
                            maskarg_add "${1:-}" "${2:-}"       ; shift
@@ -4638,6 +4646,7 @@ check_options() {
           LC_ALL=C awk 'BEGIN {exit !('${Weightrest:-0}' <= 0)}' && error "Sum of weight arguments exceed 100%, nothing left for --$Argmethod."
           Argweight="$(calc "$Weightrest / $Masknoweightcount ")"
           Argweight="${Argweight%.*}"
+          Argautoweight="yes"
         }
         maskarg_store "$Count"
       ;;
