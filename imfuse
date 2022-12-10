@@ -3094,8 +3094,6 @@ focus_hard() {
   mpr:depthmap
   mpr:depthmappart
     -compose Over -composite
-  mpr:rainbow
-    -clut
     -write mpr:depthmap
     -delete 0"
 
@@ -3119,6 +3117,8 @@ focus_hard() {
   mpr:depthmap
     $Tifstore
     -write '$Focusimagedepthfile'
+  mpr:rainbow
+    -clut
     -write '$Depthmap'
     -delete 0"
 
@@ -5038,7 +5038,7 @@ $Parsedoptions"
     -delete 0
 
   # clut for depth map
-    -size 1x$((256/7 +1))
+    -size 1x256
   gradient:white-red
   gradient:red-orange
   gradient:orange-yellow
