@@ -272,6 +272,7 @@ Step 3: Mask merging
                       percent1 defines how strong the blur will be applied.
                       percent2 defines how strong the original we remain.
                       gaussian enables slower but more accurate gaussian blur.
+                      Compare ImageMagick option -blur.
  --maskcmd [=ARG]     Custom ImageMagick option to apply on merged masks.
                       ARG takes argument:
                         (word)   string
@@ -285,6 +286,10 @@ Step 3: Mask merging
                       ARG takes argument:
                         n        iterations        Default: $(maskarg_defaultvalue maskdespeckle number1)
                       Compare ImageMagick option -despeckle.
+ --maskkuwahara [=ARG]  Noise removal with kuwahara method.
+                      ARG takes argument:
+                        r        radius            Default: $(maskarg_defaultvalue maskkuwahara radius1)
+                      Compare ImageMagick option -kuwahara.
  --maskmorph [=ARG]   Change shape of mask. 
                       ARG takes arguments:
                         r        radius            Default: $(maskarg_defaultvalue maskmorph radius1)
@@ -312,6 +317,7 @@ Step 3: Mask merging
                       Mode gradient sharpens the result, closes gaps
                       and adds noise in weak areas.
                       Mode StandardDeviation can be shortened to StDev.
+                      Compare ImageMagick option -statistic.
  --maskthreshold [=ARG]  Remove low (or high) contrast area.
                       ARG takes arguments:
                         t        threshold1        Default: $(maskarg_defaultvalue maskthreshold threshold1)%
@@ -322,7 +328,7 @@ Step 3: Mask merging
                       create artefacts in very low contrast areas.
                       ARG takes arguments:
                         p        percent           Default: $(maskarg_defaultvalue maskwave percent1)%
-                      For percent value compare option -wavelet-denoise.
+                      Compare ImageMagick option -wavelet-denoise.
 
   These options can be specified only once, order does not matter:
 
@@ -636,7 +642,7 @@ traperror() {
 ### Misc
 
 calc() {
-  LC_ALL=C awk "BEGIN {print $* }"
+  LC_ALL=C awk "BEGIN { OFMT=\"%f\"; print $* }"
 }
 checkmagicklist() {
   local Check
@@ -1805,6 +1811,7 @@ level_masks() {
   esac
   Maskmax="mpr:maskmax"
   Maskmin="mpr:maskmin"
+  Maskmaxmin="mpr:maskmaxmin"
   Clutimage="mpr:clut"
 
   [ -z "$Levelmax" ] && Checkmax="yes"
@@ -1812,6 +1819,15 @@ level_masks() {
 
   sendmagickmessage "NOTE:Leveling $Maskbasename"
 
+  case "0" in
+    0)
+      evaluate max "$Maskmax" "${Masklist[@]}"
+      evaluate min "$Maskmin" "${Masklist[@]}"
+      Levelmax="$(getmagickinfo "$Maskmax" "%[fx:maxima*100]")"
+      Levelmin="$(getmagickinfo "$Maskmin" "%[fx:minima*100]")"
+      Levelmin=0
+    ;;
+    1)
   sendmagickmessage "STOPWATCH"
   [ -z "$Levelmin$Levelmax" ] && {
     [ "$Checkmin" ] && Levelmin=100
@@ -1821,6 +1837,8 @@ level_masks() {
 Imageminlevel=%[fx:minima*100]
 Imagemaxlevel=%[fx:maxima*100]
 ")"
+      Imageminlevel="$(calc "$Imageminlevel")"
+      Imagemaxlevel="$(calc "$Imagemaxlevel")"
       [ "$Checkmin" ] && compare "$Imageminlevel" -lt "$Levelmin" && Levelmin="$Imageminlevel"
       [ "$Checkmax" ] && compare "$Imagemaxlevel" -gt "$Levelmax" && Levelmax="$Imagemaxlevel"
       sendmagickmessage "PROGRESS:Calculating min:$Levelmin%, max:$Levelmax%, ETA:$Count"
@@ -1831,6 +1849,8 @@ Imagemaxlevel=%[fx:maxima*100]
     done
     sendmagickmessage "/PROGRESS"
   }
+    ;;
+  esac
 
   [ -n "$Round" ] && {
     Count="100"
@@ -1856,12 +1876,14 @@ Imagemaxlevel=%[fx:maxima*100]
     evaluate max "$Maskmax" "${Masklist[@]}"
     Command="
   '$Maskmax'
+  '$Maskmin'
+    -append
     -level ${Levelmin}%,${Levelmax}%
-    -write '$Maskmax'
+    -write '$Maskmaxmin'
     -delete 0"
     cmd "$Command"
     cmd_waitforready
-    mkclut_uniform "$Maskmax" "$Clutimage"
+    mkclut_uniform "$Maskmaxmin" "$Clutimage"
   }
 
   sendmagickmessage "STOPWATCH"
@@ -2079,14 +2101,26 @@ focus_maskmethod() {
           case "$Argword1" in
             ""|"blur") 
               Maskgenerator="$Maskgenerator
-  ( $Sourceimage -blur ${Argradius1},${Argsigma1} )
-  ( $Sourceimage -blur ${Argradius1},${Argsigma2} )
+  (
+  $Sourceimage
+    -blur ${Argradius1},${Argsigma1}
+  )
+  (
+  $Sourceimage
+    -blur ${Argradius1},${Argsigma2}
+  )
     -compose Difference -composite"
             ;;
             "gaussian") 
               Maskgenerator="$Maskgenerator
-  ( $Sourceimage -gaussian-blur ${Argradius1},${Argsigma1} )
-  ( $Sourceimage -gaussian-blur ${Argradius1},${Argsigma2} )
+  (
+  $Sourceimage
+    -gaussian-blur ${Argradius1},${Argsigma1}
+  )
+  (
+  $Sourceimage
+    -gaussian-blur ${Argradius1},${Argsigma2}
+  )
     -compose Difference -composite"
             ;;
           esac
@@ -2124,16 +2158,22 @@ focus_maskmethod() {
 
     diffstat)
         Maskgenerator="$Maskgenerator
-  ( $Sourceimage -statistic ${Argword1} ${Argradius1} )
-  ( $Sourceimage -statistic ${Argword2} ${Argradius2} )
+  (
+  $Sourceimage
+    -statistic ${Argword1} ${Argradius1}
+  )
+  (
+  $Sourceimage
+    -statistic ${Argword2} ${Argradius2}
+  )
     -compose Difference -composite"
     ;;
 
     dog)
       Maskgenerator="$Maskgenerator
   $Sourceimage
-    -bias 50%
-    -define convolve:scale=100%
+    #-define convolve:bias=50%
+    -define convolve:scale=100,100%!
     -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}"
     ;;
 
@@ -2223,9 +2263,11 @@ focus_maskmethod() {
     -define convolve:scale=100%
     -morphology Convolve LoG:${Argradius1}x${Argsigma1}"
     [ -n "$Argsigma2" ] && Maskgenerator="$Maskgenerator
-  ( $Sourceimage
-      -define convolve:scale=100%
-      -morphology Convolve LoG:${Argradius1}x${Argsigma2} )
+  (
+  $Sourceimage
+    -define convolve:scale=100%
+    -morphology Convolve LoG:${Argradius1}x${Argsigma2}
+  )
     -compose Difference -composite"
     ;;
 
@@ -2271,8 +2313,14 @@ focus_maskmethod() {
         ;;
         *)
           Maskgenerator="$Maskgenerator
-  ( $Sourceimage -statistic ${Argword1} ${Argradius1} )
-  ( $Sourceimage -statistic ${Argword1} ${Argradius2} )
+  (
+  $Sourceimage
+    -statistic ${Argword1} ${Argradius1}
+  )
+  (
+  $Sourceimage
+    -statistic ${Argword1} ${Argradius2}
+  )
     -compose Difference -composite"
         ;;
       esac
@@ -2283,8 +2331,10 @@ focus_maskmethod() {
   $Sourceimage 
     -wavelet-denoise ${Argpercent1}%"
       [ -n "$Argpercent2" ] && Maskgenerator="$Maskgenerator
-  ( $Sourceimage 
-      -wavelet-denoise ${Argpercent2}% )
+  (
+  $Sourceimage 
+    -wavelet-denoise ${Argpercent2}%
+  )
     -compose Difference -composite"
     ;;
 
@@ -2506,14 +2556,24 @@ focus_merge_masks() {
       mask)
         Mergecode="$Mergecode
   (
-  $(maskname "$Argbasename" NUMBER)
-    # =t (threshold)
-    -black-threshold ${Argthreshold1:-0}%
+  $(maskname "$Argbasename" NUMBER)"
+
+    [ -n "$Argthreshold1" ] && Mergecode="$Mergecode
+    # =t
+    -black-threshold ${Argthreshold1:-0}%"
+
+    [ -n "$Argthreshold2" ] && Mergecode="$Mergecode
+    # =T
     -negate
     -black-threshold $((100-${Argthreshold2:-100}))%
-    -negate
-    # =w (weight)
-    +level 0%,$(calc "(100 * ${Argweight:-100}) / ( $Weightmax * $Methodnumber )" )%
+    -negate"
+
+#    +level 0%,$(calc "(100 * ${Argweight:-100}) / ( $Weightmax * $Methodnumber )" )%"
+    [ "$Argweight" != "100" ] && Mergecode="$Mergecode
+    # =w
+    +level 0%,${Argweight}%"
+
+    Mergecode="$Mergecode
   )
     -compose $Mergemethod -composite"
       ;;
@@ -2571,6 +2631,11 @@ focus_merge_masks() {
               Mergecode="$Mergecode
     -despeckle"
             done
+          ;;
+
+          maskkuwahara)
+    Mergecode="$Mergecode
+    -kuwahara $Argradius1"
           ;;
 
           maskmorph)
@@ -2647,7 +2712,7 @@ ${Mergecode//"NUMBER"/"$(printnum "$Count")"}
     $(showimagecode "$Mergemask")
     -delete 0"
 
-      maskexist "$Mergemaskbasename" "$Count" || cmd "$Command"
+      [ -f "$(maskname "$Mergemaskbasename" "$Count")" ] || cmd "$Command"
     done
     sendmagickmessage "/PROGRESS"
     cmd_waitforready
@@ -3001,21 +3066,6 @@ focus_hard() {
     Command="$Command
   $Focuscode"
 
-    [ -n "$Depthmap" ] && Command="$Command
-  # depth map
-  mpr:black
-    +level $(calc "100*($Sourceimagenumber-$Count)/$Sourceimagenumber")%
-  mpr:cutmask
-    -alpha off
-    -compose CopyOpacity -composite
-    -write mpr:depthmappart
-    -delete 0
-  mpr:depthmap
-  mpr:depthmappart
-    -compose Over -composite
-    -write mpr:depthmap
-    -delete 0"
-
     Command="$Command
   # get part of source image
   mpr:sourceimage
@@ -3033,6 +3083,23 @@ focus_hard() {
     -write mpr:focusimage
     -delete 0"
 #    $(showimagecode "mpr:focusimage")
+
+    [ -n "$Depthmap" ] && Command="$Command
+  # depth map
+  mpr:black
+    +level $(calc "100*($Sourceimagenumber-$Count)/$Sourceimagenumber")%
+  mpr:cutmask
+    -alpha off
+    -compose CopyOpacity -composite
+    -write mpr:depthmappart
+    -delete 0
+  mpr:depthmap
+  mpr:depthmappart
+    -compose Over -composite
+  mpr:rainbow
+    -clut
+    -write mpr:depthmap
+    -delete 0"
 
     cmd "$Command"
   done
@@ -3052,8 +3119,6 @@ focus_hard() {
 
   [ -n "$Depthmap" ] && Command="$Command
   mpr:depthmap
-  ( -size 1x37 gradient:white-red gradient:red-orange gradient:orange-yellow gradient:yellow-green gradient:green-blue gradient:blue-indigo gradient:indigo-black -append -rotate 90 -flip )
-    -clut
     $Tifstore
     -write '$Focusimagedepthfile'
     -write '$Depthmap'
@@ -3487,6 +3552,38 @@ focus_main() {
   # Save mask
   [ "$Substacknumber" -gt "0" ] && evaluate max "$Resultmask" "${Substackmaskpost[@]}"
 
+
+  [ "$Testsetup" ] && {
+    Command="
+  $Resultdepthmap
+  ( $Resultdepthmap -blur 0x0.5 \)
+    -compose Difference -composite
+  ( $Resultmask -negate )
+    -compose Multiply -composite
+    -negate
+    -statistic mean 10x10
+    -write show:
+    -threshold ${Testarg:-90}%
+    -write mpr:filter
+    -delete 0
+  $Resultimage
+  mpr:filter
+    -compose CopyOpacity -composite
+    -write $Resultimage
+    -delete 0"
+    cmd "$Command"
+    cmd_waitforready
+  }
+  
+  Command="
+  $Resultdepthmap
+  mpr:rainbow
+    -clut
+    -write $Resultdepthmap
+    -delete 0"
+  #cmd "$Command"
+  #cmd_waitforready
+  
   return 0
 }
 
@@ -3590,18 +3687,20 @@ maskarg_parse() {
       Key="${Line%"=${Value}"}"
     } || {
       Key="${Line//[0-9-+.]/}" # remove digits including +-.
+      [ "$Key" = "%" ] && Key="p"
+      Key="${Key%"%"}"
       Value="${Line#${Key:-NOKEY}}"
     }
     Value="${Value//%/}"
     Value="${Value//+/}"
     case $Key in
-      "w"|"w%")           Argweight="$Value" ;;
-      "r"|"r%")           [ -z "$Argradius1" ]  && Argradius1="$Value"  || Argradius2="$Value" ;;
+      "w")                Argweight="$Value" ;;
+      "r")                [ -z "$Argradius1" ]  && Argradius1="$Value"  || Argradius2="$Value" ;;
       "R")                Argradius2="${Value}" ;;
       "s")                [ -z "$Argsigma1" ]   && Argsigma1="$Value"   || Argsigma2="$Value" ;;
       "S")                Argsigma2="${Value}" ;;
-      "p"|"%"|"p%")       [ -z "$Argpercent1" ] && Argpercent1="$Value" || Argpercent2="$Value" ;;
-      "P"|"P%")           Argpercent2="$Value" ;;
+      "p")                [ -z "$Argpercent1" ] && Argpercent1="$Value" || Argpercent2="$Value" ;;
+      "P")                Argpercent2="$Value" ;;
       "t")                Argthreshold1="$Value" ;;
       "T")                Argthreshold2="$Value" ;;
       "n")                [ -z "$Argnumber1" ]  && Argnumber1="$Value"  || Argnumber2="$Value" ;;
@@ -3753,7 +3852,7 @@ maskarg_checkallowed() {
     ;;
     radius1)
       case "$Argmethod" in
-        blur|comet|cutblur|dog|finalblur2|log|maskblur) ;;
+        blur|comet|cutblur|dog|finalblur2|log|maskblur|maskkuwahara) ;;
         morphology|cutmorph|maskmorph) ;;
         diffstat|statistic|maskstat) ;;
         substacks) ;;
@@ -3904,42 +4003,39 @@ maskarg_defaultvalue() {
   case "$Argument" in
     channel)
       case "$Argmethod" in
-        colorspace) ;;
-        channel) ;;
-        chroma)       Output="1" ;;
-        darkness)     Output="2" ;;
-        lightness)    Output="2" ;;
-        saturation)   Output="1" ;;
+        channel)        Output="" ;;
+        chroma)         Output="1" ;;
+        colorspace)     Output="" ;;
+        darkness)       Output="2" ;;
+        lightness)      Output="2" ;;
+        saturation)     Output="1" ;;
       esac
     ;;
     colorspace)
       case "$Argmethod" in
-        colorspace)   Output="CMYK" ;;
-        channel) ;;
-        chroma)       Output="HCL" ;;
-        darkness)     Output="HSL" ;;
-        lightness)    Output="HSL" ;;
-        saturation)   Output="HSL" ;;
+        channel)        Output="" ;;
+        chroma)         Output="HCL" ;;
+        colorspace)     Output="CMYK" ;;
+        darkness)       Output="HSL" ;;
+        lightness)      Output="HSL" ;;
+        saturation)     Output="HSL" ;;
       esac
     ;;
     diff)
       case "$Argmethod" in
-        blur)
-          [ -z "$Argsigma2" ] && 
-                      Output="yes" ;;
-        cmddiff|comet)
-                      Output="yes" ;;
+        blur) [ -z "$Argsigma2" ] && Output="yes" ;;
+        cmddiff)        Output="yes" ;;
+        comet)          Output="yes" ;;
         morphology)
           case ${Argword1,,} in
-            close) ;;
-            edge|edgein|edgeout|tophat|bottomhat) ;;
-            *)        Output="yes" ;; ### FIXME really?
+            close|edge|edgein|edgeout|bottomhat|tophat) ;;
+            *)          Output="yes" ;; ### FIXME really?
           esac
         ;;
         statistic)
           case ${Argword1,,} in
             gradient|standarddeviation) ;;
-            *)        Output="yes" ;;
+            *)          Output="yes" ;;
           esac
         ;;
         wavelet)
@@ -3948,206 +4044,190 @@ maskarg_defaultvalue() {
     ;;
     image)
       case "$Argmethod" in
-        enfuse)       Output="enfuse" ;;
-        max)          Output="Max" ;;
-        mean)         Output="Mean" ;;
-        median)       Output="Median" ;;
-        min)          Output="Min" ;;
+        enfuse)         Output="enfuse" ;;
+        max)            Output="Max" ;;
+        mean)           Output="Mean" ;;
+        median)         Output="Median" ;;
+        min)            Output="Min" ;;
       esac
     ;;
     level)
       case "$Argmethod" in
-        channel)      Output="no" ;;
-        chroma)       Output="no" ;;
-        compose)      Output="no" ;;
-        darkness)     Output="no" ;;
-        enfuse)       Output="no" ;;
-        evaluate)     Output="no" ;;
-        lighten)      Output="no" ;;
-        max)          Output="no" ;;
-        mean)         Output="no" ;;
-        median)       Output="no" ;;
-        min)          Output="no" ;;
-        saturation)   Output="no" ;;
+        channel)        Output="no" ;;
+        chroma)         Output="no" ;;
+        compose)        Output="no" ;;
+        darkness)       Output="no" ;;
+        enfuse)         Output="no" ;;
+        evaluate)       Output="no" ;;
+        lighten)        Output="no" ;;
+        max)            Output="no" ;;
+        mean)           Output="no" ;;
+        median)         Output="no" ;;
+        min)            Output="no" ;;
+        saturation)     Output="no" ;;
       esac
     ;;
     negate)
       case "$Argmethod" in
-        darkness)     Output="yes" ;;
+        darkness)       Output="yes" ;;
       esac
     ;;
     number1)
       case "$Argmethod" in
-        freichen)     Output="" ;;
-        laplacian)    Output="3" ;;
+        freichen)       Output="" ;;
+        laplacian)      Output="3" ;;
         maskdespeckle|maskenhance)
-                      Output="1" ;;
+                        Output="1" ;;
       esac
     ;;
     number2)
       case "$Argmethod" in
-        freichen)     Output="" ;;
+        freichen)       Output="" ;;
       esac
     ;;
     percent1)
       case "$Argmethod" in
-        maskblur|cutblur)
-                      Output="100" ;;
-        cutless)      Output="20" ;;
-        cutmax)       Output="0" ;;
-        cutwave)      Output="25" ;;
-        finalalpha)   Output="0" ;;
-        finalstretch) Output="0" ;;
-        masklevel)    Output="" ;;
-        maskwave)     Output="20" ;;
-        soft)         Output="2" ;;
-        wavelet)      Output="5" ;;
+        cutblur)        Output="100" ;;
+        cutless)        Output="20" ;;
+        cutmax)         Output="0" ;;
+        cutwave)        Output="25" ;;
+        finalalpha)     Output="0" ;;
+        finalstretch)   Output="0" ;;
+        maskblur)       Output="100" ;;
+        masklevel)      Output="" ;;
+        maskwave)       Output="20" ;;
+        soft)           Output="2" ;;
+        wavelet)        Output="5" ;;
       esac
     ;;
     percent2)
       case "$Argmethod" in
-        maskblur|cutblur)
-                      Output="$((100-Argpercent1))" ;;
-        finalalpha)   Output="100" ;;
-        finalstretch) Output="0" ;;
-        masklevel)    Output="" ;;
-        soft)         Output="100" ;;
-        wavelet)      Output="" ;;
+        cutblur)        Output="$((100-Argpercent1))" ;;
+        finalalpha)     Output="100" ;;
+        finalstretch)   Output="0" ;;
+        maskblur)       Output="$((100-Argpercent1))" ;;
+        masklevel)      Output="" ;;
+        soft)           Output="100" ;;
+        wavelet)        Output="" ;;
       esac
     ;;
     radius1)
       case "$Argmethod" in
-        blur)         Output="0" ;;
-        comet)        Output="0" ;;
-        diffstat)     Output="3" ;;
-        dog)          Output="0" ;;
-        log)          Output="0" ;;
-        morphology)   Output="1" ;;
-        statistic)    Output="2" ;;
-
-        cutblur)      Output="0" ;;
-        cutmorph)     Output="1" ;;
-        finalblur2)   Output="4" ;;
-        maskblur)     Output="0" ;;
-        maskmorph)    Output="1" ;;
-        maskstat)     Output="6" ;;
+        blur)           Output="0" ;;
+        comet)          Output="0" ;;
+        cutblur)        Output="0" ;;
+        cutmorph)       Output="1" ;;
+        diffstat)       Output="3" ;;
+        dog)            Output="0" ;;
+        finalblur2)     Output="4" ;;
+        log)            Output="0" ;;
+        maskblur)       Output="0" ;;
+        maskkuwahara)   Output="4" ;;
+        maskmorph)      Output="1" ;;
+        maskstat)       Output="6" ;;
+        morphology)     Output="1" ;;
+        statistic)      Output="2" ;;
       esac
     ;;
     radius2)
       case "$Argmethod" in
-        cutmorph)     Output="1" ;;
-        diffstat)     Output="$Argradius1" ;;
-        maskmorph)    Output="1" ;;
-        morphology)   Output="1" ;;
+        cutmorph)       Output="1" ;;
+        diffstat)       Output="$Argradius1" ;;
+        maskmorph)      Output="1" ;;
+        morphology)     Output="1" ;;
         statistic) ;;
       esac
     ;;
     sigma1)
       case "$Argmethod" in
-        blur)         Output="0.3" ;;
-        comet)        Output="5" ;;
-        dog)          Output="0.3" ;;
-        log)          Output="0.2" ;;
-
-        cutblur)      Output="2" ;;
-        cutsoft)      Output="2" ;;
-        finalblur)    Output="3" ;;
-        finalthreshold)
-                      Output="0" ;;
-        maskblur)     Output="2" ;;
+        blur)           Output="0.3" ;;
+        comet)          Output="5" ;;
+        cutblur)        Output="1" ;;
+        cutsoft)        Output="1" ;;
+        dog)            Output="0.3" ;;
+        finalblur)      Output="5" ;;
+        finalthreshold) Output="0" ;;
+        log)            Output="0.2" ;;
+        maskblur)       Output="2" ;;
       esac
     ;;
     sigma2)
       case "$Argmethod" in
-        blur) ;;
-        finalblur)    Output="2" ;;
-        dog)          Output="$(calc "$Argsigma1 * 1.6")"  ;;
-        log) ;;
+        blur)           Output="" ;;
+        finalblur)      Output="2" ;;
+        dog)            Output="$(calc "$Argsigma1 * 1.6")"  ;;
+        log)            Output="" ;;
       esac
     ;;
     threshold1)
       case "$Argmethod" in
-        cutthreshold) Output="30" ;;
-        masklevel)    Output="5" ;;
-        finalblur)    Output="50" ;;
-        finalblur2)   Output="50" ;;
-        finalthreshold|maskthreshold) 
-                      Output="50" ;;
+        cutthreshold)   Output="30" ;;
+        finalblur)      Output="50" ;;
+        finalblur2)     Output="50" ;;
+        finalthreshold) Output="50" ;;
+        masklevel)      Output="5" ;;
+        maskthreshold)  Output="50" ;;
       esac
     ;;
     threshold2)
       case "$Argmethod" in
-        finalthreshold|maskthreshold)
-                      Output="100" ;;
+        finalthreshold) Output="100" ;;
+        maskthreshold)  Output="100" ;;
       esac
     ;;
     type)
       case "$Argmethod" in
         blur|cmd|cmddiff|comet|compass|diffstat|dog|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|wavelet)
-                      Output="mask"
-        ;;
+                        Output="mask" ;;
         channel|chroma|darkness|lightness|saturation)
-                      Output="mask"
-        ;;
+                        Output="mask" ;;
         image|enfuse|compose|evaluate|min|max|mean|median)
-                      Output="mask"
-        ;;
-        experimental)
-                      Output="mask"
-        ;;
-        maskblur|maskcmd|maskdespeckle|maskenhance|maskmorph|maskstat|maskthreshold|maskwave)
-                      Output="merge"
-        ;;
+                        Output="mask" ;;
+        experimental)   Output="mask" ;;
+        maskblur|maskcmd|maskdespeckle|maskenhance|maskkuwahara|maskmorph|maskstat|maskthreshold|maskwave)
+                        Output="merge" ;;
         cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
-                      Output="focus"
-        ;;
+                        Output="focus" ;;
         finalalpha|finalblur|finalblur2|finalcmd|finalstretch|finalthreshold)
-                      Output="postfocus"
-        ;;
-        bg)
-                      Output="background"
-        ;;
+                        Output="postfocus" ;;
+        bg)             Output="background" ;;
         colorspace|finallevel|masklevel|maskmerge|soft)
-                      Output="single"
-        ;;
-        substacks)
-                      Output="substack"
-        ;;
-        *)
-          error "maskarg_defaultvalue(): Unknown type for method $Argmethod"
-        ;;
+                        Output="single" ;;
+        substacks)      Output="substack" ;;
+        *) error "maskarg_defaultvalue(): Unknown type for method $Argmethod" ;;
       esac
     ;;
     word1)
       case "$Argmethod" in
-        blur|maskblur|cutblur)
-                      Output="" ;;
-        comet)        Output="Lighten" ;;
-        compass)      Output="Lighten" ;;
-        compose)      Output="Overlay" ;;
-        diffstat)     Output="Median" ;;
-        evaluate)     Output="Max" ;;
-        morphology)   Output="EdgeOut" ;;
-        statistic)    Output="StandardDeviation" ;;
-
-        bg)           Output="enfuse" ;;
-        cutmorph)     Output="Erode" ;;
+        bg)             Output="enfuse" ;;
+        blur)           Output="" ;;
         cmd|maskcmd|cutcmd|finalcmd)
-                      Output="" ;;
-        format)       Output="tif" ;;
-        masklevel)    Output="all" ;;
-        maskformat)   Output="mpc" ;;
-        maskmerge)    Output="Screen" ;;
-        maskmorph)    Output="Smooth" ;;
-        maskstat)     Output="Mean" ;;
-        soft)         Output="Plus" ;;
+                        Output="" ;;
+        comet)          Output="Lighten" ;;
+        compass)        Output="Lighten" ;;
+        compose)        Output="Overlay" ;;
+        cutblur)        Output="" ;;
+        cutmorph)       Output="Erode" ;;
+        diffstat)       Output="Median" ;;
+        evaluate)       Output="Max" ;;
+        maskblur)       Output="" ;;
+        masklevel)      Output="all" ;;
+        maskmerge)      Output="Screen" ;;
+        maskmorph)      Output="Smooth" ;;
+        maskstat)       Output="Mean" ;;
+        morphology)     Output="EdgeOut" ;;
+        soft)           Output="Plus" ;;
+        statistic)      Output="StandardDeviation" ;;
+
+        format)         Output="tif" ;;
+        maskformat)     Output="mpc" ;;
       esac
     ;;
     word2)
       case "$Argmethod" in
-        diffstat)     Output="Mean" ;;
-        maskmorph|morphology|cutmorph)
-                      Output="Octagon" ;;
+        diffstat)       Output="Mean" ;;
+        morphology|cutmorph|maskmorph)
+                        Output="Octagon" ;;
       esac
     ;;
   esac
@@ -4611,7 +4691,7 @@ parse_options() {
   Longoptions="$Longoptions,compose::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
-  Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
+  Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,maskkuwahara::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
   Longoptions="$Longoptions,substacks::,soft::"
   Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finallevel::,finalstretch::,finalthreshold::"
@@ -4648,7 +4728,7 @@ parse_options() {
 --compose|--enfuse|--evaluate|--max|--mean|--median|--min|\
 \
 --colorspace|\
---maskblur|--maskcmd|--maskdespeckle|--maskenhance|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
+--maskblur|--maskcmd|--maskdespeckle|--maskenhance|--maskkuwahara|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
 --finalalpha|--finalblur|--finalblur2|--finalcmd|--finallevel|--finalstretch|--finalthreshold|\
 --bg|--background|\
@@ -4954,7 +5034,23 @@ $Parsedoptions"
     -evaluate-sequence Add
     -auto-level
     -write '$Showimage'
-    -delete 0"
+    -delete 0
+
+  # clut for depth map
+    -size 1x$((256/7 +1))
+  gradient:white-red
+  gradient:red-orange
+  gradient:orange-yellow
+  gradient:yellow-green
+  gradient:green-blue
+  gradient:blue-indigo
+  gradient:indigo-black
+    -append
+    -rotate 90
+    -flip
+    -write mpr:rainbow
+    -delete 0
+    "
   cmd "$Command"
   cmd_waitforready
 
