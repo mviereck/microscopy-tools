@@ -93,10 +93,10 @@ Step 1: Color conversion
  --colorspace [=ARG]  Define the colorspace from where to generate the
                       masks. Normally you don't need to adjust this option.
                       ARG takes arguments:
-                        C=       colorspace        Default: $(maskarg_defaultvalue colorspace colorspace)
                         c        channel
+                        (word)   colorspace        Default: $(maskarg_defaultvalue colorspace colorspace)
                       Some of interest:
-                      C=RGB C=Jzazbz,c0  C=LAB,c0 C=HSL,c1  C=HCL,c1
+                      CMYK  RGB  Jzazbz,c0
                       colorspace can be one of 'magick -list colorspace'.
                       https://legacy.imagemagick.org/Usage/color_basics
 
@@ -1876,8 +1876,8 @@ Imagemaxlevel=%[fx:maxima*100]
     evaluate max "$Maskmax" "${Masklist[@]}"
     Command="
   '$Maskmax'
-  '$Maskmin'
-    -append
+#  '$Maskmin'
+#    -append
     -level ${Levelmin}%,${Levelmax}%
     -write '$Maskmaxmin'
     -delete 0"
@@ -2173,7 +2173,7 @@ focus_maskmethod() {
       Maskgenerator="$Maskgenerator
   $Sourceimage
     #-define convolve:bias=50%
-    -define convolve:scale=100,100%!
+    -define convolve:scale=100,100%
     -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}"
     ;;
 
@@ -2620,14 +2620,14 @@ focus_merge_masks() {
           ;;
 
           maskenhance)
-            for Count in "$(seq "$Argnumber1")"; do
+            for Count in $(seq "$Argnumber1"); do
               Mergecode="$Mergecode
     -enhance"
             done
           ;;
 
           maskdespeckle)
-            for Count in "$(seq "$Argnumber1")"; do
+            for Count in $(seq "$Argnumber1"); do
               Mergecode="$Mergecode
     -despeckle"
             done
@@ -4015,7 +4015,7 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         channel)        Output="" ;;
         chroma)         Output="HCL" ;;
-        colorspace)     Output="CMYK" ;;
+        colorspace)     Output="sRGB" ;;
         darkness)       Output="HSL" ;;
         lightness)      Output="HSL" ;;
         saturation)     Output="HSL" ;;
@@ -4306,6 +4306,9 @@ maskarg_short() {
         [ "$Argcolorspace" = "$(maskarg_defaultvalue "$Argmethod" colorspace)" ] && case "$Argmethod" in
           chroma|colorspace|darkness|lightness|saturation) Append="" ;;
         esac
+        case "$Argmethod" in
+          colorspace) Append=",${Append#,C=}" ;;
+        esac
       ;;
       channel)
         [ -n "$Argchannel" ]     && Append=",c$Argchannel"
@@ -4354,7 +4357,7 @@ maskarg_short() {
       ;;
       word2)
         [ -n "$Argword2" ]       && Append=",$Argword2"
-        [ "$Argword2" = "'$(maskarg_defaultvalue "$Argmethod" word2)" ] && case "$Argmethod" in
+        [ "$Argword2" = "$(maskarg_defaultvalue "$Argmethod" word2)" ] && case "$Argmethod" in
           diffstat|maskmorph|morphology|cutmorph) Append="" ;;
         esac
       ;;
