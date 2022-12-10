@@ -22,6 +22,10 @@ Especially they need a new GUI backend because the currently used `kaptain` GUI 
 Combines focus stackshot images to an overall sharp image.
 Aims to be similar to enfuse, but based on ImageMagick.
 
+ - For all of (many) options see `imfuse --help`.
+ - For an overview of imfuse workflow see [wiki: How imfuse works](https://github.com/mviereck/microscopy-tools/wiki/How-imfuse-works)
+ - For some examples see [wiki: Examples](https://github.com/mviereck/microscopy-tools/wiki/Examples)
+
 Dependencies:
  - `imagemagick` version 7.
  - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack) (optional for option `--align`)
