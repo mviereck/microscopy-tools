@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse - Combines focus stackshot images to one overall sharp image.
-Version="0.9.4-beta"
+Version="0.9.5-beta"
 
 ### Information
 
@@ -151,7 +151,6 @@ Step 2: Mask generation
                         (word)   mode1             Default: $(maskarg_defaultvalue diffstat word1)
                         (word)   mode2             Default: $(maskarg_defaultvalue diffstat word2)
                       mode1 and mode2 can be two of 'magick -list evaluate'.
-                      Mode StandardDeviation can be shortened to StDev.
  --dog [=ARG]         Difference of Gaussian.
                       ARG takes argument:
                         r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
@@ -196,7 +195,6 @@ Step 2: Mask generation
                         R        radius2
                         (word)   mode              Default: $(maskarg_defaultvalue statistic word1)
                       mode can be one of 'magick -list statistic'.
-                      Mode StandardDeviation can be shortened to StDev.
                       If radius2 is set, --statistic gives the difference of
                       two statistic results with radius1 and radius2.
  --wavelet [=ARG]     Based on ImageMagick option -wavelet-denoise.
@@ -316,7 +314,6 @@ Step 3: Mask merging
                       Mode median sharpens the result and opens gaps.
                       Mode gradient sharpens the result, closes gaps
                       and adds noise in weak areas.
-                      Mode StandardDeviation can be shortened to StDev.
                       Compare ImageMagick option -statistic.
  --maskthreshold [=ARG]  Remove low (or high) contrast area.
                       ARG takes arguments:
@@ -2413,6 +2410,7 @@ $(focus_maskmethod "$Sourceimagecode" "$Firstimage" "$Lastimage")"
 
       [ -z "$Argchannel" ] && Maskgenerator="$Maskgenerator
     # combine colorspace channels
+    -colorspace $Colorspace
     -evaluate Divide 4
     -separate
     -evaluate-sequence add"
@@ -3968,7 +3966,7 @@ maskarg_checkallowed() {
           esac
         ;;
         statistic|diffstat|maskstat)
-          [ "${Arg,,}" = "stdev" ] && Arg="StandardDeviation"
+          #[ "${Arg,,}" = "stdev" ] && Arg="StandardDeviation"
           checkmagicklist statistic "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
           Argword1="$(checkmagicklist statistic "$Arg" print)"
@@ -4304,7 +4302,7 @@ maskarg_short() {
       colorspace)
         [ -n "$Argcolorspace" ]  && Append=",C=$Argcolorspace"
         [ "$Argcolorspace" = "$(maskarg_defaultvalue "$Argmethod" colorspace)" ] && case "$Argmethod" in
-          chroma|colorspace|darkness|lightness|saturation) Append="" ;;
+          chroma|darkness|lightness|saturation) Append="" ;;
         esac
         case "$Argmethod" in
           colorspace) Append=",${Append#,C=}" ;;
@@ -4350,7 +4348,7 @@ maskarg_short() {
                                     Append=",'$Argword1'" ;;
           *)                        Append=",$Argword1" ;;
         esac
-        [ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
+        #[ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
         [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
           comet|compass|diffstat|statistic|masklevel|maskmerge|soft) Append="" ;;
         esac
