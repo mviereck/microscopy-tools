@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse - Combines focus stackshot images to one overall sharp image.
-Version="0.9.5-beta"
+Version="0.9.6-beta"
 
 ### Information
 
@@ -46,8 +46,8 @@ General options:
      --rmcache            Remove all cache.imfuse* folders below pwd and exit.
      --version            Show imfuse version and exit.
      --video              Generate a video of shown intermediate images.
- -V                       Show intermediate results with image viewer geeqie.
- -W                       Show result with image viewer viewnior.
+ -V                       Show intermediate images with image viewer geeqie.
+ -W                       Show result with image viewer feh.
  -X                       Store [and show] mask and depth map, too.
 
 The options below can take additionally arguments [=ARG].
@@ -973,23 +973,31 @@ check_outputname() {
   Fusemd5sum="$(md5cut "$Sourcemd5 ${Imoptions[*]} ${Imarguments[*]} $Testsetup$Testarg" )"
 
   Resultbasename=""
-  Resulttimestamp="$(date +%y-%m-%d_%H:%M)"
+  Resulttimestamp="$(date +%y-%m-%d_%H.%M)"
   Resultbasename="${Resultbasename}${Resulttimestamp}"
   Resultbasename="${Resultbasename}_${Fusemd5sum}"
   [ "$Storelayered" = "yes" ] && Resultbasename="_layered"
 
   [ -z "${Outputdir:-}" ] && Outputdir="./"
   case $Resultimage in
-    "") Resultimage="$Outputdir/${Outputbasename:-"imfuse"}.${Resultbasename}" ;;
-    *) [ "$(basename "$Resultimage")" = "$Resultimage" ] && Resultimage="${Outputdir}/{$Resultimage}" ;;
+    "") Resultimage="${Outputbasename:-"imfuse"}.${Resultbasename}" ;;
+    *) [ "$(basename "$Resultimage")" = "$Resultimage" ] && Resultimage="{$Resultimage}" ;;
   esac
-  [ "$Video" ] && Video="$Resultimage.webm"
+  [ "$Video" ] && Video="${Outputdir}/${Resultimage}.webm"
   [ "$(rev <<< "$Resultimage" | cut -d. -f1)" = "$(rev <<< "$Imageformat")" ] && {
     Resultimage="$(rev <<< "$Resultimage" | cut -d. -f2- | rev)"
   }
-  Resultdepthmap="${Resultimage}.depth.${Imageformat}"
-  Resultmask="${Resultimage}.mask.${Imageformat}"
-  Resultimage="${Resultimage}.${Imageformat}"
+  case "$Extendedsave" in
+    yes)
+      Resultdepthmap="${Outputdir}/${Resultimage}.depth.${Imageformat}"
+      Resultmask="${Outputdir}/${Resultimage}.mask.${Imageformat}"
+    ;;
+    no) ### FIXME
+      Resultdepthmap="${Cachedir}/${Resultimage}.depth.${Imageformat}"
+      Resultmask="${Cachedir}/${Resultimage}.mask.${Imageformat}"
+    ;;
+  esac
+  Resultimage="${Outputdir}/${Resultimage}.${Imageformat}"
 
   Parsedoptions="${Parsedoptions#" "}"
 
@@ -1537,27 +1545,27 @@ exiftransfer() {
   eval exiftool -ignoreMinorErrors -overwrite_original_in_place $Exifargs -Orientation=Horizontal "$Destinationimage" 2>&1 | grep -v -E 'Warning|files updated'
 }
 finalblur() {
-  local Image Mask Percent Sigma1 Sigma2 Command
+  local Image Mask Threshold Sigma1 Sigma2 Command
   local Longoptions Parsedoptions
 
-  Longoptions="image:,mask:,percent:,sigma1:,sigma2:"
+  Longoptions="image:,mask:,threshold:,sigma1:,sigma2:"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
 
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --image)   Image="${2:-}"   ; shift ;;
-      --mask)    Mask="${2:-}"    ; shift ;;
-      --percent) Percent="${2:-}" ; shift ;;
-      --sigma1)  Sigma1="${2:-}"  ; shift;;
-      --sigma2)  Sigma2="${2:-}"  ; shift ;;
+      --image)     Image="${2:-}"   ; shift ;;
+      --mask)      Mask="${2:-}"    ; shift ;;
+      --threshold) Threshold="${2:-}" ; shift ;;
+      --sigma1)    Sigma1="${2:-}"  ; shift;;
+      --sigma2)    Sigma2="${2:-}"  ; shift ;;
       --) ;;
     esac
     shift
   done
   Sigma1="${Sigma1:-1}"
   Sigma2="${Sigma2:-0}"
-  Percent="${Percent:-50}"
+  Threshold="${Threshold:-50}"
 
   Command="
   # --finalblur
@@ -1568,7 +1576,7 @@ finalblur() {
     -write mpr:maxmask
     -delete 0
   mpr:maxmask
-    -threshold ${Percent:-10}%
+    -threshold ${Threshold}%
     -negate
     -write mpr:cutmask
     -delete 0"
@@ -1974,18 +1982,18 @@ threshold() {
   local Command
   local Longoptions Parsedoptions
 
-  Longoptions="image:,mask:,percent1:,percent2:,blur:,cutmask::,cutimage::"
+  Longoptions="image:,mask:,threshold1:,threshold2:,sigma1:,cutmask::,cutimage::"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --blur)     Thresholdblur="${2:-}"  ; shift ;;
-      --mask)     Mask="${2:-}"           ; shift ;;
-      --image)    Image="${2:-}"          ; shift ;;
-      --percent1) Blackthreshold="${2:-}" ; shift ;;
-      --percent2) Whitethreshold="${2:-}" ; shift ;;
-      --cutmask)  Cutmask="${2:-"soft"}"  ; shift ;;
-      --cutimage) Cutimage="${2:-"soft"}" ; shift ;;
+      --mask)       Mask="${2:-}"           ; shift ;;
+      --image)      Image="${2:-}"          ; shift ;;
+      --sigma1)     Thresholdblur="${2:-}"  ; shift ;;
+      --threshold1) Blackthreshold="${2:-}" ; shift ;;
+      --threshold2) Whitethreshold="${2:-}" ; shift ;;
+      --cutmask)    Cutmask="${2:-"soft"}"  ; shift ;;
+      --cutimage)   Cutimage="${2:-"soft"}" ; shift ;;
     esac
     shift
   done
@@ -2023,7 +2031,7 @@ threshold() {
       Command="$Command
   mpr:mask
   mpr:threshold
-    -compose Lighten -composite
+    -compose Darken -composite
     -write mpr:mask
     -delete 0
   mpr:mask
@@ -2043,6 +2051,12 @@ threshold() {
   mpr:mask
   mpr:threshold
     -compose Lighten -composite
+    -write mpr:mask
+    -delete 0
+  '$Image'
+    -alpha extract
+  mpr:mask
+    -compose Darken -composite
     -write mpr:mask
     -delete 0
   '$Image'
@@ -3021,8 +3035,7 @@ focus_hard() {
     -alpha off
     -write mpr:focusmask
     -delete 0
-  mpr:black
-    -alpha off
+  mpr:transparent
     -write mpr:depthmap
     -delete 0
   mpr:transparent
@@ -3126,9 +3139,7 @@ focus_hard() {
 
   [ -n "$Depthmap" ] && Command="$Command
   mpr:depthmap
-  mpr:rainbow
-    -clut
-    $Tifstore
+    $Tifstorealpha
     -write '$Focusimagedepthfile'
     -write '$Depthmap'
     -delete 0"
@@ -3370,6 +3381,7 @@ focus_main() {
     for Substackstep in $(seq "$Substacknumber" -1 1); do
       Substackresult[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep.mpc"
       Substackmask[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-mask.mpc"
+      Substackdepthmap[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-depth.mpc"
       sendmagickmessage "NEWLINE"
       sendmagickmessage "NOTE:Generating substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
 
@@ -3381,7 +3393,7 @@ focus_main() {
             yes)
               focus_hard --maskmax "${Substackmask[$Substackstep]}" --output "${Substackresult[$Substackstep]}" \
                          --firstimage="${Substackfirstimage[$Substackstep]}" --lastimage="${Substacklastimage[$Substackstep]}" \
-                         --depthmap "$Resultdepthmap" ### FIXME
+                         --depthmap "${Substackdepthmap[$Substackstep]}"
             ;;
             no)
               focus_hard --maskmax "${Substackmask[$Substackstep]}" --output "${Substackresult[$Substackstep]}" \
@@ -3404,6 +3416,7 @@ focus_main() {
       sendmagickmessage "NOTE:Postprocessing substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
       Substackresultpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post.mpc"
       Substackmaskpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-mask.mpc"
+      Substackdepthmappost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-depthmap.mpc"
 
       [ -e "${Substackresultpost[$Substackstep]}" ] && {
         sendmagickmessage "NOTE:Skipping --final* options, already done."
@@ -3416,6 +3429,14 @@ focus_main() {
 '${Substackmask[$Substackstep]}'
   -write '${Substackmaskpost[$Substackstep]}'
   -delete 0"
+        case "$Extendedsave" in
+          "yes")
+            Command="$Command
+'${Substackdepthmap[$Substackstep]}'
+  -write '${Substackdepthmappost[$Substackstep]}'
+  -delete 0"
+          ;;
+        esac
         cmd "$Command"
 
         maskarg_single finallevel && [ "$Substackstep" = "1" ] && level_masks "${Substackmaskpost[@]}"
@@ -3431,7 +3452,13 @@ focus_main() {
                   case "$Argword1" in
                     "")
                       alphalevel --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
-                             --percent1 "${Argpercent1}" --percent2 "${Argpercent2}%"
+                                 --percent1 "${Argpercent1}" --percent2 "${Argpercent2}"
+                      case "$Extendedsave" in
+                        yes)
+                          alphalevel --image "${Substackdepthmappost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
+                                     --percent1 "${Argpercent1}" --percent2 "${Argpercent2}"
+                        ;;
+                      esac
                     ;;
                     off)
                       Command="
@@ -3439,13 +3466,18 @@ focus_main() {
     -alpha off
     -write '${Substackresultpost[$Substackstep]}'
     -delete 0"
+                      [ "$Extendedsave" = "yes" ] && Command="$Command
+  ${Substackdepthmappost[$Substackstep]}
+    -alpha off
+    -write '${Substackdepthmappost[$Substackstep]}'
+    -delete 0"
                       cmd "$Command"
                     ;;
                   esac
                 ;;
                 finalblur)
                   finalblur  --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
-                             --percent "$Argthreshold1" --sigma1 "$Argsigma1" --sigma2 "$Argsigma2"
+                             --threshold "$Argthreshold1" --sigma1 "$Argsigma1" --sigma2 "$Argsigma2"
                 ;;
                 finalblur2)
                   finalblur2 --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
@@ -3469,13 +3501,13 @@ focus_main() {
                 ;;
                 finalthreshold)
                   threshold  --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
-                             --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" --blur "$Argsigma1" \
-                             --cutimage="hard"
+                             --threshold1 "$Argthreshold1" --threshold2 "$Argthreshold2" --sigma1 "$Argsigma1" \
+                             --cutimage="soft" --cutmask="soft"
                   case "$Extendedsave" in
                     yes)
-                      threshold  --image "$Resultdepthmap" --mask "${Substackmaskpost[$Substackstep]}" \
-                             --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" \
-                             --cutimage="hard"
+                      threshold  --image "${Substackdepthmappost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
+                                 --threshold1 "$Argthreshold1" --threshold2 "$Argthreshold2" \
+                                 --cutimage="soft"
                     ;;
                   esac
                 ;;
@@ -3570,10 +3602,36 @@ focus_main() {
     return 0
   }
 
-  # Save mask
+  # -X: Save mask and colorize depth map
   case "$Extendedsave" in
     yes)
-      [ "$Substacknumber" -gt "0" ] && evaluate max "$Resultmask" "${Substackmaskpost[@]}"
+      [ "$Substacknumber" -gt "0" ] && {
+        evaluate max "$Resultmask" "${Substackmaskpost[@]}"
+        Command="
+  # composing substack depth maps
+  mpr:transparent"
+        for Substackstep in $(seq "$Substacknumber" -1 1); do
+          Command="$Command
+  '${Substackdepthmappost[$Substackstep]}'
+    -compose Over -composite"
+        done
+        Command="$Command
+    -write mpr:depthmap
+    -alpha extract
+    -write mpr:alpha
+    -delete 0
+  mpr:depthmap
+  mpr:rainbow
+    -clut
+  mpr:alpha
+    -compose CopyOpacity -composite
+    $Tifstorealpha
+    -write '$Resultdepthmap'
+    $(showimagecode "$Resultdepthmap")
+    -delete 0"
+        cmd "$Command"
+        cmd_waitforready
+      }
     ;;
   esac
 
