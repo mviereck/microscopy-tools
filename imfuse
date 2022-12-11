@@ -499,8 +499,13 @@ Step 5: Post processing
                       Other than --finalblur it blurs according to the contrast
                       mask strengh. Low contrast is blurred more than high.
                       ARG takes arguments:
-                        r        radius            Default: $(maskarg_defaultvalue finalblur2 radius1)
+                        r        radius1           Default: $(maskarg_defaultvalue finalblur2 radius1)
+                        R        radius2           Default: $(maskarg_defaultvalue finalblur2 radius2)
                         t        threshold         Default: $(maskarg_defaultvalue finalblur2 threshold1)%
+                      A greater radius1 blures more.
+                      threshold restricts blur to contrast mask strength.
+                      In some cases an undesired line can appear at the border
+                      of the blurred area. This can be cut off with radius2.
  --finalcmd [=ARG]    Custom ImageMagick option to apply on result image.
                       ARG takes argument:
                         (word)   string            Default: $(maskarg_defaultvalue finalcmd word1)
@@ -1594,37 +1599,35 @@ finalblur2() {
   local Image Threshold Blur Mask
   local Command
 
-  Longoptions="image:,mask:,percent:,blur:"
+  Longoptions="image:,mask:,threshold:,radius1:,radius2:"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --blur)    Blur="${2:-}"      ; shift ;;
-      --image)   Image="${2:-}"     ; shift ;;
-      --mask)    Mask="${2:-}"      ; shift ;;
-      --percent) Threshold="${2:-}" ; shift ;;
+      --image)     Image="${2:-}"     ; shift ;;
+      --mask)      Mask="${2:-}"      ; shift ;;
+      --radius1)   Radius1="${2:-}"   ; shift ;;
+      --radius2)   Radius2="${2:-}"   ; shift ;;
+      --threshold) Threshold="${2:-}" ; shift ;;
       --) ;;
     esac
     shift
   done
 
   Command="
-  # --finalblur
-  '$Image'
-    -write mpr:image
-    -delete 0
+  # --finalblur2
   '$Mask'
-    -write mpr:mask
-    -delete 0
-  mpr:mask
     -white-threshold ${Threshold}%
-    -negate
+    -negate"
+  [ -n "$Radius2" ] && Command="$Command
+    -morphology Erode Octagon:${Radius2}"
+  Command="$Command
     -write mpr:mask
     -delete 0
-  mpr:image
+  '$Image'
   mpr:mask
+    -set option:compose:args ${Radius1}x${Radius1}
     -compose Blur
-    -set option:compose:args ${Blur}x${Blur}
     -composite
     -write '$Image'
     $(showimagecode "$Image")
@@ -2748,9 +2751,9 @@ focus_hard() {
 
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --output)       Resultcopy="${2:-}" ; shift ;;
+      --output)       Resultcopy="${2:-}"  ; shift ;;
       --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
-      --depthmap)     Depthmap="${2:-}" ; shift ;;
+      --depthmap)     Depthmap="${2:-}"    ; shift ;;
       --firstimage)   Firstimage="${2:-}"  ; shift ;;
       --lastimage)    Lastimage="${2:-}"   ; shift ;;
       --) ;;
@@ -3115,10 +3118,10 @@ focus_hard() {
 
   [ -n "$Depthmap" ] && Command="$Command
   mpr:depthmap
-    $Tifstore
-    -write '$Focusimagedepthfile'
   mpr:rainbow
     -clut
+    $Tifstore
+    -write '$Focusimagedepthfile'
     -write '$Depthmap'
     -delete 0"
 
@@ -3430,7 +3433,7 @@ focus_main() {
                 ;;
                 finalblur2)
                   finalblur2 --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
-                             --percent "$Argthreshold1" --blur "$Argradius1"
+                             --threshold "$Argthreshold1" --radius1 "$Argradius1" --radius2 "$Argradius2"
                 ;;
                 finalcmd)
                   Command="
@@ -3859,7 +3862,7 @@ maskarg_checkallowed() {
     ;;
     radius2)
       case "$Argmethod" in
-        diffstat|statistic) ;;
+        diffstat|finalblur2|statistic) ;;
         morphology|cutmorph|maskmorph) ;;
         *) error "$Argmethod does not take argument radius2: R$Arg" ;;
       esac
@@ -4131,6 +4134,7 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         cutmorph)       Output="1" ;;
         diffstat)       Output="$Argradius1" ;;
+        finalblur2)     Output="1" ;;
         maskmorph)      Output="1" ;;
         morphology)     Output="1" ;;
         statistic) ;;
