@@ -45,9 +45,10 @@ General options:
      --revert             Revert order of source images.
      --rmcache            Remove all cache.imfuse* folders below pwd and exit.
      --version            Show imfuse version and exit.
- -V, --showimage          Show intermediate results with image viewer geeqie.
      --video              Generate a video of shown intermediate images.
+ -V                       Show intermediate results with image viewer geeqie.
  -W                       Show result with image viewer viewnior.
+ -X                       Store [and show] mask and depth map, too.
 
 The options below can take additionally arguments [=ARG].
 Multiple arguments are comma-separated. Example: --morphology=r3,blur
@@ -632,7 +633,14 @@ showresult() {
   showimage "$Resultimage"
   command -v xclip >/dev/null && echo -n "$Resultimage" | xclip -i -selection clipboard
   notify-send "imfuse is ready" 2>/dev/null ||:
-  showviewnior "$Resultimage" "$Resultmask" "$Resultdepthmap"
+  case "$Extendedsave" in
+    yes)
+      showviewnior "$Resultimage" "$Resultmask" "$Resultdepthmap"
+    ;;
+    no)
+      showviewnior "$Resultimage"
+    ;;
+  esac
   echo "$Resultimage"
 }
 traperror() {
@@ -3369,9 +3377,17 @@ focus_main() {
       Startzeit="$(date +%s)"
       case $Softmode in
         "no")
-          focus_hard --maskmax "${Substackmask[$Substackstep]}" --output "${Substackresult[$Substackstep]}" \
-                     --firstimage="${Substackfirstimage[$Substackstep]}" --lastimage="${Substacklastimage[$Substackstep]}" \
-                     --depthmap "$Resultdepthmap" ### FIXME
+          case "$Extendedsave" in
+            yes)
+              focus_hard --maskmax "${Substackmask[$Substackstep]}" --output "${Substackresult[$Substackstep]}" \
+                         --firstimage="${Substackfirstimage[$Substackstep]}" --lastimage="${Substacklastimage[$Substackstep]}" \
+                         --depthmap "$Resultdepthmap" ### FIXME
+            ;;
+            no)
+              focus_hard --maskmax "${Substackmask[$Substackstep]}" --output "${Substackresult[$Substackstep]}" \
+                         --firstimage="${Substackfirstimage[$Substackstep]}" --lastimage="${Substacklastimage[$Substackstep]}"
+            ;;
+          esac
         ;;
         "yes")
           maskarg_single "soft" ||:
@@ -3455,9 +3471,13 @@ focus_main() {
                   threshold  --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
                              --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" --blur "$Argsigma1" \
                              --cutimage="hard"
-                  threshold  --image "$Resultdepthmap" --mask "${Substackmaskpost[$Substackstep]}" \
+                  case "$Extendedsave" in
+                    yes)
+                      threshold  --image "$Resultdepthmap" --mask "${Substackmaskpost[$Substackstep]}" \
                              --percent1 "$Argthreshold1" --percent2 "$Argthreshold2" \
                              --cutimage="hard"
+                    ;;
+                  esac
                 ;;
               esac
             ;;
@@ -3551,8 +3571,11 @@ focus_main() {
   }
 
   # Save mask
-  [ "$Substacknumber" -gt "0" ] && evaluate max "$Resultmask" "${Substackmaskpost[@]}"
-
+  case "$Extendedsave" in
+    yes)
+      [ "$Substacknumber" -gt "0" ] && evaluate max "$Resultmask" "${Substackmaskpost[@]}"
+    ;;
+  esac
 
   [ "$Testsetup" ] && {
     Command="
@@ -3575,16 +3598,7 @@ focus_main() {
     cmd "$Command"
     cmd_waitforready
   }
-  
-  Command="
-  $Resultdepthmap
-  mpr:rainbow
-    -clut
-    -write $Resultdepthmap
-    -delete 0"
-  #cmd "$Command"
-  #cmd_waitforready
-  
+
   return 0
 }
 
@@ -4612,6 +4626,7 @@ declare_variables() {
   Colorspace=""
   Colorspacechannel=""
   Exifsourceimage=""
+  Extendedsave="no"
   Firstimage=""
   Force=""
   Freemem=""
@@ -4688,8 +4703,8 @@ declare_variables() {
 parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
-  Shortoptions="ho:vVW"
-  Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,maskformat::,output:,rmcache,showimage,showname,sub::,test::,verbose,version,video"
+  Shortoptions="ho:vVWX"
+  Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,maskformat::,output:,rmcache,showname,sub::,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
@@ -4720,11 +4735,12 @@ parse_options() {
       -o|--output)         Resultimage="${2:-}"                ; shift ;;
       --revert)            Revertimagelist="-r"                ;;
       --sub)               Subprocess=" ${2:-sub}"             ; shift ;;
-      -V|--showimage)      Showimageprocessing="yes"           ;;
       --test)              Testsetup="test" ; Testarg="${2:-}" ; shift ;;
       -v|--verbose)        Verbose="yes"                       ;;
       --video)             Video="auto"                        ;;
+      -V)                  Showimageprocessing="yes"           ;;
       -W)                  Viewnior="yes"                      ;;
+      -X)                  Extendedsave="yes"                  ;;
       -h|--help|--license|--rmcache|--showname|--version) Oneaction="${1:-}" ;;
 
 --cmd|--cmddiff|--experimental|\
@@ -5121,7 +5137,14 @@ main() {
   # --exif: transfer EXIF metadata from first image to result, store imfuse version and parsed options
   [ "$Exifsourceimage" ] && exiftransfer "$Exifsourceimage" "$Resultimage"
   command -v exiftool && {
-    exiftool -overwrite_original -Software="imfuse v$Version" -ImageDescription="$Parsedoptions" "$Resultimage" "$Resultmask" "$Resultdepthmap"
+    case "$Extendedsave" in
+      yes)
+        exiftool -overwrite_original -Software="imfuse v$Version" -ImageDescription="$Parsedoptions" "$Resultimage" "$Resultmask" "$Resultdepthmap"
+      ;;
+      no)
+        exiftool -overwrite_original -Software="imfuse v$Version" -ImageDescription="$Parsedoptions" "$Resultimage"
+      ;;
+    esac
   } || {
     note "Failed to store metadata in output image. Is exiftool installed?"
   }
