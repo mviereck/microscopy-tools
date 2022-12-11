@@ -27,7 +27,7 @@ Dependencies:
 General options:
      --align              Align images.
      --basename [=NAME]   Base name [+path] for output image. 
-     --cache [=DIR]       Store generated masks and images in directory DIR.
+ -C, --cache [=DIR]       Store generated masks and images in directory DIR.
                           They can be reused in later runs of imfuse.
                           Default DIR: ./cache.imfuse
      --exif [=IMAGE]      Transfer exif meta data from IMAGE or first image.
@@ -4703,7 +4703,7 @@ declare_variables() {
 parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
-  Shortoptions="ho:vVWX"
+  Shortoptions="Cho:vVWX"
   Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,maskformat::,output:,rmcache,showname,sub::,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
@@ -4724,6 +4724,7 @@ parse_options() {
     case "${1:-}" in
       --align)             Align="yes"                         ;;
       --basename)          Outputbasename="${2:-auto}"         ; shift ;;
+      -C)                  Cachedir="auto"                     ; shift ;;
       --cache)             Cachedir="${2:-auto}"               ; shift ;;
       --exif)              Exifsourceimage="${2:-auto}"        ; shift ;;
       --force)             Force="${2:-yes}"                   ; shift ;;
