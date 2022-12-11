@@ -32,10 +32,10 @@ Dependencies:
  - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack) (optional for option `--align`)
  - `enfuse` (optional, needed for some options)
 
-The core image processing of imfuse is done by [`ImageMagick`](https://imagemagick.org).
 Much thanks to the developers and supporters of ImageMagick!
-imfuse contains code written by [Fred Weinhaus](http://www.fmwconcepts.com/imagemagick) with his friendly permission.
-imfuse was inspired by [Alan Gibson](https://im.snibgo.com/)'s [focStack.bat](https://im.snibgo.com/focstack.htm).
+ - Most image processing of imfuse is done by [`ImageMagick`](https://imagemagick.org).
+ - imfuse contains code written by [Fred Weinhaus](http://www.fmwconcepts.com/imagemagick) with his friendly permission.
+ - imfuse was inspired by [Alan Gibson](https://im.snibgo.com/)'s [focStack.bat](https://im.snibgo.com/focstack.htm).
 
 ## stackalign
 
