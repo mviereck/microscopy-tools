@@ -20,19 +20,20 @@ Especially they need a new GUI backend because the currently used `kaptain` GUI 
 ## imfuse
 
 Combines focus stackshot images to an overall sharp image.
-Aims to be similar to enfuse, but based on ImageMagick.
 
  - For all of (many) options see `imfuse --help`.
  - For an overview of imfuse workflow see [wiki: How imfuse works](https://github.com/mviereck/microscopy-tools/wiki/How-imfuse-works)
  - For some examples see [wiki: Examples](https://github.com/mviereck/microscopy-tools/wiki/Examples)
 
 Dependencies:
- - `imagemagick` version 7.
- - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack) (optional for option `--align`)
- - `enfuse` (optional, needed for some options)
+ - `imagemagick` version 7 (command `magick`)
  - `geeqie` and `feh` (optional image viewers)
  - `exiftool` (optional to preserve exif meta data)
+ - [`PetteriAimonen/focus-stack`](https://github.com/PetteriAimonen/focus-stack) (optional for option `--align`)
+ - `enfuse` (optional, needed for some options)
 
+The core image processing of imfuse is done by [`ImageMagick`](https://imagemagick.org).
+Much thanks to the developers and supporters of ImageMagick!
 imfuse contains code written by [Fred Weinhaus](http://www.fmwconcepts.com/imagemagick) with his friendly permission.
 imfuse was inspired by [Alan Gibson](https://im.snibgo.com/)'s [focStack.bat](https://im.snibgo.com/focstack.htm).
 
