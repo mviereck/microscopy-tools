@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse - Combines focus stackshot images to one overall sharp image.
-Version="0.9.6-beta"
+Version="0.9.7-beta"
 
 ### Information
 
@@ -74,7 +74,8 @@ Arguments taken by all mask generating options: (Mostly you only need w).
   t         Threshold (removal) of low contrast areas.
   T         Threshold (removal) of high contrast areas.
   level [=yes|no] Equalize histogram distribution to get compareable masks.
-            Default is yes except for channel and image comparision options.
+            Default is yes except for image comparision options
+            and for some colorspace channel options.
 Arguments additionally taken by some options:
   r         Radius. Must be an integer value.
   R         Second radius.
@@ -237,24 +238,32 @@ Step 2: Mask generation
 
   Colorspace channel masks: (most of interest: --darkness)
     All channel options are variations of --channel.
-    Adding --darkness with a rather low weight between w5..w25 can
-    help to close gaps, especially in large dark areas.
+    Adding some of them with a rather low weight between w5..w25
+    can help to close gaps where edges to detect focus are rare.
+    Changing argument level is worth a try.
 
  --channel [=ARG]     Use a colorspace channel as mask.
                       ARG takes the general mask arguments:
-                        C        colorspace
+                        w        weight
+                        C=       colorspace
                         c        colorspace channel
                         neg      negate
                         level    leveling          Default: $(maskarg_defaultvalue channel level)
                       Colorspace can be one of 'magick -list colorspace'
                       The color channel is a number from 0..31.
                       Compare 'magick -list colorspace'.
- --chroma [=ARG]      Chroma channel from HCL colorspace.
- --darkness [=ARG]    Negated lightness channel from HSL colorspace.
-                      Dark result, similar to --min.
- --lightness [=ARG]   Lightness channel from HSL colorspace. 
-                      Bright result, similar to --max.
- --saturation [=ARG]  Saturation channel from HSL colorspace.
+ --chroma [=ARG]      Chroma. Same as --channel=C=HCL,c1
+                      ARG takes the general mask argument:
+                        level    leveling          Default: $(maskarg_defaultvalue channel level)
+ --darkness [=ARG]    Darkness. Same as --channel=C=HSL,c2,neg
+                      ARG takes the general mask argument:
+                        level    leveling          Default: $(maskarg_defaultvalue channel level)
+ --lightness [=ARG]   Lightness. Same as --channel=C=HSL,c2
+                      ARG takes the general mask argument:
+                        level    leveling          Default: $(maskarg_defaultvalue channel level)
+ --saturation [=ARG]  Saturation. Same as --channel=C=HSL,c1
+                      ARG takes the general mask argument:
+                        level    leveling          Default: $(maskarg_defaultvalue channel level)
 
 Step 3: Mask merging
   The contrast masks generated in step 2 are merged into one per image.
@@ -2406,8 +2415,15 @@ focus_generate_masks() {
     maskarg_parse "$Count"
 
     [ "$Argtype" = "mask" ] && {
+      Sourceimagecode=""
+      
+      [ "$Testsetup" ] &&       Sourceimagecode="$Sourceimagecode
+  mpr:sourceimage
+    -contrast-stretch ${Testarg:-0}%x${Testarg:-0}%
+    -write mpr:sourceimage
+    -delete 0"
 
-      Sourceimagecode="
+      Sourceimagecode="$Sourceimagecode
   mpr:sourceimage
     # --colorspace
     -colorspace $Colorspace"
@@ -3670,7 +3686,7 @@ focus_main() {
     ;;
   esac
 
-  [ "$Testsetup" ] && {
+  false && [ "$Testsetup" ] && {
     Command="
   $Resultdepthmap
   ( $Resultdepthmap -blur 0x0.5 \)
@@ -3818,7 +3834,7 @@ maskarg_parse() {
       "c")                Argchannel="$Value" ;;
       "diff")             Argdiff="${Value:-yes}" ;;
       "neg")              Argnegate="yes" ;;
-      "level")            Arglevel="$Value" ;;
+      "level")            Arglevel="${Value:-yes}" ;;
       "TYPE")             Argtype="$Value" ;;
       "AUTOWEIGHT")       Argautoweight="$Value" ;;
       "BASENAME")         Argbasename="$Value" ;;
@@ -4165,7 +4181,7 @@ maskarg_defaultvalue() {
     level)
       case "$Argmethod" in
         channel)        Output="no" ;;
-        chroma)         Output="no" ;;
+        chroma)         Output="yes" ;;
         compose)        Output="no" ;;
         darkness)       Output="no" ;;
         enfuse)         Output="no" ;;
@@ -4175,7 +4191,7 @@ maskarg_defaultvalue() {
         mean)           Output="no" ;;
         median)         Output="no" ;;
         min)            Output="no" ;;
-        saturation)     Output="no" ;;
+        saturation)     Output="yes" ;;
       esac
     ;;
     negate)
@@ -4451,9 +4467,13 @@ maskarg_short() {
         esac
       ;;
       level)
-        [ -n "$Arglevel" ]       && Append=",lev=$Arglevel"
+        [ -n "$Arglevel" ] && case "$Arglevel" in
+          yes)                      Append=",level" ;;
+          no)                       Append=",level=no" ;;
+        esac
         [ "$Arglevel" = "$(maskarg_defaultvalue "$Argmethod" level)" ] && case "$Argmethod" in
-          enfuse|evaluate|max|mean|median|min|compose|channel|chroma|darkness|lightness|saturation) Append="" ;;
+          enfuse|evaluate|max|mean|median|min|compose) Append="" ;;
+          channel|chroma|darkness|lightness|saturation) ;;
         esac
       ;;
       word1)
