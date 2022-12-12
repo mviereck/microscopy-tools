@@ -18,7 +18,7 @@ Dependencies:
   ImageMagick 7       Mandatory (command 'magick').
   exiftool            Optional, needed to set and transfer image metadata.
   enfuse              Optional, needed for options --enfuse and --bg=enfuse.
-  geeqie              Optional, needed for option -V, --showimage.
+  geeqie              Optional, needed for option -V to show progress..
   feh                 Optional, needed for option -W to show result image.
   focus-stack         Optional, needed for option --align.
                         https://github.com/PetteriAimonen/focus-stack
@@ -30,6 +30,11 @@ General options:
  -C, --cache [=DIR]       Store generated masks and images in directory DIR.
                           They can be reused in later runs of imfuse.
                           Default DIR: ./cache.imfuse
+     --cacheformat=FORMAT  Store cache files in format FORMAT. Default: $(maskarg_defaultvalue cacheformat word1)
+                          Should be a lossless format like tif or png.
+                          mpc is optimized for fast access by ImageMagick,
+                          but needs lots of disk space. In case you run out
+                          of disk space, use 'tif'.
      --exif [=IMAGE]      Transfer exif meta data from IMAGE or first image.
      --force              Force imfuse to run even if output image exists.
      --format=FORMAT      Store result in image format FORMAT.   Default: $(maskarg_defaultvalue format word1)
@@ -38,16 +43,13 @@ General options:
      --license            Show license (GPLv2) and exit.
      --limit-memory=ARG   Limit amount of used memory. Default: 80%
                           ARG can be a % value or an absolute value for MB.
-     --maskformat=FORMAT  Store masks in cache in format FORMAT. Default: $(maskarg_defaultvalue maskformat word1)
-                          Should be a lossless format like tif or png.
-                          mpc is optimized for fast access by ImageMagick.
  -o, --output=FILE        Result image file name. See also --basename.
      --revert             Revert order of source images.
      --rmcache            Remove all cache.imfuse* folders below pwd and exit.
      --version            Show imfuse version and exit.
      --video              Generate a video of shown intermediate images.
  -V                       Show intermediate images with image viewer geeqie.
- -W                       Show result with image viewer feh.
+ -W                       Show result image with image viewer feh.
  -X                       Store [and show] mask and depth map, too.
 
 The options below can take additionally arguments [=ARG].
@@ -621,9 +623,9 @@ showviewnior() {
     H=900
     compare "$Imagewidth"  -lt "$W" && W="$Imagewidth" 
     compare "$Imageheight" -lt "$H" && H="$Imageheight" 
-    nohup feh --draw-filename --draw-tinted --auto-zoom --keep-zoom-vp \
+    nohup feh --draw-tinted --auto-zoom --keep-zoom-vp \
               --geometry "${W}x${H}+37+0" \
-              --info='exiftool -imagedescription %F | cut -d: -f2- | fold -s -w 110' \
+              --info="exiftool -imagedescription %F | cut -d: -f2- | fold -s -w $((Imagewidth/7))" \
               "$@" </dev/null >/dev/null 2>&1 &
     disown $!
   }
@@ -1079,7 +1081,7 @@ maskexist() {
   case "$Masktocache" in
     yes)
       for Count in $(seq "$Firstimage" "$Lastimage"); do
-        [ -e "$Cachedir/mask.${1:-}.$(printnum "$Count").${Maskformat}" ] || return 1
+        [ -e "$Cachedir/mask.${1:-}.$(printnum "$Count").${Cacheformat}" ] || return 1
       done
       return 0
     ;;
@@ -1093,7 +1095,7 @@ maskname() {
   [ -z "${2:-}" ] && error "maskname(): number not given: ${1:-} ${2:-}"
   case "$Masktocache" in
     yes)
-      echo "$Cachedir/mask.${1:-}.$(printnum "${2:-}").${Maskformat}"
+      echo "$Cachedir/mask.${1:-}.$(printnum "${2:-}").${Cacheformat}"
     ;;
     no)
       echo "mpr:${1:-}.$(printnum "${2:-}")"
@@ -1156,6 +1158,7 @@ align() {
     Command="
   '$Image'
     -crop ${W}x${H}+${X}+${Y}
+    $Tifstorealpha
     -write '$(sourceimagename "$Count")'
     $(showimagecode "$(sourceimagename "$Count")")
     -delete 0"
@@ -1223,6 +1226,7 @@ alphalevel() {
     *)
       Command="$Command
   mpr:mask
+    $Tifstore
     -write '$Mask'
     -delete 0"
     ;;
@@ -1321,6 +1325,7 @@ enfuse_split() {
   mpr:sourceimage
     -crop ${Splitgeometry[$Split]}
     +repage
+    $Tifstore
     -write '${Splitimagename}'
     -delete 0"
           Splitimagelist[$Split]="${Splitimagelist[$Split]:-} $Splitimagename"
@@ -1465,6 +1470,7 @@ evaluate_iterative() {
     ;;
   esac
   Command="$Command
+    $Tifstorealpha
     -write '$Resultimage'
     -delete 0"
   cmd "$Command"
@@ -1514,6 +1520,7 @@ evaluate_splitlist() {
     Command="$Magickbin
   $(printf "'%s' " "${Imagelist[@]:${Splitfirstimage[$Split]}:${Splitlastimage[$Split]}}")
     -evaluate-sequence $Mode
+    $Tifstore
     -write '${Splitresult[$Split]}'
     -delete 0
     -exit"
@@ -1524,6 +1531,7 @@ evaluate_splitlist() {
   Command="
   ${Splitresult[*]}
     -evaluate-sequence $Mode
+    $Tifstorealpha
     -write '$Resultimage'
     -delete 0"
   cmd "$Command"
@@ -1595,6 +1603,7 @@ finalblur() {
   mpr:image
   mpr:partsource_blurred
     -compose Over -composite
+    $Tifstorealpha
     -write '$Image'
     $(showimagecode)
     -delete 0
@@ -1645,6 +1654,7 @@ finalblur2() {
     -set option:compose:args ${Radius1}x${Radius1}
     -compose Blur
     -composite
+    $Tifstorealpha
     -write '$Image'
     $(showimagecode "$Image")
     -delete 0
@@ -1701,7 +1711,7 @@ generate_image() {
     esac
   }
   Subimfuse="imfuse --cache=$Cachedir --output=$Imagename --sub=bg-wave"
-  [ "$Showimageprocessing" = "yes" ] && Subimfuse="$Subimfuse --showimage"
+  [ "$Showimageprocessing" = "yes" ] && Subimfuse="$Subimfuse -V"
 
   [ -z "$Imagename" ] && {
     note "generate_image() ERROR: No image name given and none created
@@ -1750,6 +1760,7 @@ generate_image() {
     -alpha off
     $Swap
     -compose $Mode -composite
+    $Tifstorealpha
     -write '$Imagename'
     $(showimagecode "$Imagename")
     -delete 0"
@@ -1895,6 +1906,8 @@ Imagemaxlevel=%[fx:maxima*100]
 #  '$Maskmin'
 #    -append
     -level ${Levelmin}%,${Levelmax}%
+    -clamp
+    $Tifstore
     -write '$Maskmaxmin'
     -delete 0"
     cmd "$Command"
@@ -1917,6 +1930,7 @@ Imagemaxlevel=%[fx:maxima*100]
   '$Clutimage'
     -clut"
     Command="$Command
+    $Tifstore
     -write '$Destmask'
     $(showimagecode "$Destmask")
     -delete 0"
@@ -2035,12 +2049,14 @@ threshold() {
     -write mpr:mask
     -delete 0
   mpr:mask
+    $Tifstore
     -write '$Mask'
     -delete 0"
     ;;
     hard)
       Command="$Command
   mpr:threshold
+    $Tifstore
     -write '$Mask'
     -delete 0"
     ;;
@@ -2063,6 +2079,7 @@ threshold() {
   mpr:mask
     -alpha off
     -compose CopyOpacity -composite
+    $Tifstorealpha
     -write '$Image'
     -delete 0"
     ;;
@@ -2072,6 +2089,7 @@ threshold() {
   mpr:threshold
     -alpha off
     -compose CopyOpacity -composite
+    $Tifstorealpha
     -write '$Image'
     -delete 0"
     ;;
@@ -2463,6 +2481,7 @@ $Argbasename"
         esac
         Maskgenerator_all="$Maskgenerator_all
 $Maskgenerator
+    $Tifstore
     -write '$(maskname "$Argbasename" NUMBER)'
     $(showimagecode "$(maskname "$Argbasename" NUMBER)")
     -delete 0"
@@ -2559,14 +2578,19 @@ focus_merge_masks() {
   maskarg_single "maskmerge" ||:
   Mergemethod="${Argword1:-"Screen"}"
   case "${Mergemethod,,}" in ### FIXME check further modes
-    multiply)
+    multiply|darken)
       Mergecode="
   mpr:white
     -alpha off"
     ;;
-    *|screen)
+    blend|lighten|screen)
       Mergecode="
   mpr:black
+    -alpha off"
+    ;;
+    *)
+      Mergecode="
+  mpr:gray50
     -alpha off"
     ;;
   esac
@@ -2730,6 +2754,7 @@ focus_merge_masks() {
       Command="
 ${Mergecode//"NUMBER"/"$(printnum "$Count")"}
   mpr:mergemask
+    -clamp
     $Tifstore 
     -write '$Mergemask'
     $(showimagecode "$Mergemask")
@@ -3005,7 +3030,7 @@ focus_hard() {
     sendmagickmessage "NOTE:Skipping focus_hard(), image already exists."
     Command="
   '$Focusimagefile'
-    $Tifstore
+    $Tifstorealpha
     -write '$Resultcopy'
     -delete 0"
     [ -n "$Maskmaxcopy" ] && [ -f "$Focusimagemaskfile" ] && Command="$Command
@@ -3015,7 +3040,7 @@ focus_hard() {
     -delete 0"
     [ -n "$Depthmap" ] && [ -f "$Focusimagedepthfile" ] && Command="$Command
   '$Focusimagedepthfile'
-    $Tifstore
+    $Tifstorealpha
     -write '$Depthmap'
     -delete 0"
     cmd "$Command"
@@ -3147,6 +3172,7 @@ focus_hard() {
   [ -n "$Maskmaxcopy" ] && Command="$Command
   # copy max mask
   mpr:focusmask
+    $Tifstore
     -write '$Maskmaxcopy'
     -delete 0"
 
@@ -3212,7 +3238,7 @@ focus_soft() {
     sendmagickmessage "NOTE:Skipping focus_soft(), image already exists."
     Command="
   '$Focusimagefile'
-    $Tifstore
+    $Tifstorealpha
     -write mpr:focusimage
     -write '$Resultcopy'
     -delete 0"
@@ -3306,6 +3332,7 @@ focus_soft() {
   mpr:addmask
   mpr:clut
     -clut
+    $Tifstore
     -write '$Focusimagemaskfile'
     -delete 0"
   cmd "$Command"
@@ -3317,7 +3344,7 @@ focus_soft() {
 
   Command="
   mpr:focusimage
-    $Tifstore 
+    $Tifstorealpha
     -write '$Focusimagefile'
     -write '$Resultcopy'
     $(showimagecode "$Focusimagefile")
@@ -3348,6 +3375,7 @@ focus_main() {
   generate_image --mode "black"
   generate_image --mode "white"
   generate_image --mode "transparent"
+  generate_image --mode "gray50"
 
   # --background
   Backgroundnumber="0"
@@ -3424,15 +3452,18 @@ focus_main() {
 
         Command="
 '${Substackresult[$Substackstep]}'
+  $Tifstorealpha
   -write '${Substackresultpost[$Substackstep]}'
   -delete 0
 '${Substackmask[$Substackstep]}'
+  $Tifstore
   -write '${Substackmaskpost[$Substackstep]}'
   -delete 0"
         case "$Extendedsave" in
           "yes")
             Command="$Command
 '${Substackdepthmap[$Substackstep]}'
+  $Tifstorealpha
   -write '${Substackdepthmappost[$Substackstep]}'
   -delete 0"
           ;;
@@ -3464,11 +3495,13 @@ focus_main() {
                       Command="
   '${Substackresultpost[$Substackstep]}'
     -alpha off
+    $Tifstore
     -write '${Substackresultpost[$Substackstep]}'
     -delete 0"
                       [ "$Extendedsave" = "yes" ] && Command="$Command
   ${Substackdepthmappost[$Substackstep]}
     -alpha off
+    $Tifstore
     -write '${Substackdepthmappost[$Substackstep]}'
     -delete 0"
                       cmd "$Command"
@@ -3487,6 +3520,7 @@ focus_main() {
                   Command="
   ${Substackresultpost[$Substackstep]}
     $Argword1
+    $Tifstorealpha
     -write ${Substackresultpost[$Substackstep]}
     -delete 0"
                   cmd "$Command"
@@ -3495,6 +3529,7 @@ focus_main() {
                   Command="
   ${Substackresultpost[$Substackstep]}
     -contrast-stretch ${Argpercent1}%x${Argpercent2}%
+    $Tifstorealpha
     -write ${Substackresultpost[$Substackstep]}
     -delete 0"
                   cmd "$Command"
@@ -4000,7 +4035,7 @@ maskarg_checkallowed() {
             *) error "--$Argmethod does not know argument: $Argword1" ;;
           esac
         ;;
-        colorspace) 
+        channel|colorspace) 
           checkmagicklist colorspace "$Arg" || error "--$Argmethod: unknown colorspace: $Arg
   Please choose one out of 'magick -list colorspace'"
           Argcolorspace="$(checkmagicklist colorspace "$Arg" print)"
@@ -4051,7 +4086,10 @@ maskarg_checkallowed() {
     ;;
     word2)
       case "$Argmethod" in
-        colorspace) ;;
+        channel|colorspace)
+          Argchannel="$Arg"
+          Argword2=""
+        ;;
         diffstat)
           checkmagicklist statistic "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
@@ -4287,14 +4325,14 @@ maskarg_defaultvalue() {
         maskblur)       Output="" ;;
         masklevel)      Output="all" ;;
         maskmerge)      Output="Screen" ;;
-        maskmorph)      Output="Smooth" ;;
+        maskmorph)      Output="Close" ;;
         maskstat)       Output="Mean" ;;
-        morphology)     Output="EdgeOut" ;;
+        morphology)     Output="Edge" ;;
         soft)           Output="Plus" ;;
         statistic)      Output="StandardDeviation" ;;
 
         format)         Output="tif" ;;
-        maskformat)     Output="mpc" ;;
+        cacheformat)    Output="mpc" ;;
       esac
     ;;
     word2)
@@ -4712,10 +4750,9 @@ declare_variables() {
   Magickscriptpid=""
   Magickversion=""
   Maskmethodnumber="0"
-  Maskformat=""
+  Cacheformat=""
   Masktocache="no"
   Mergemaskbasename=""
-  Oneaction=""
   Outputbasename=""
   Outputdir=""
   Parsedoptions=""
@@ -4727,6 +4764,7 @@ declare_variables() {
   Resulttimestamp=""
   Showimage=""
   Showimageprocessing="no"
+  Singleaction=""
   Singleoptionlist=""
   Subprocess=""
   Substackautoall="no"
@@ -4749,8 +4787,8 @@ declare_variables() {
   Testarg=""
   Testimage=""
   Testsetup=""
-  Tifstore="+repage -quality 100% -compress lzw"
-  Tifstorealpha="$Tifstore -type TrueColorAlpha"
+  Tifstore="-alpha off +repage -quality 100% -compress lzw -type optimize"
+  Tifstorealpha="+repage -quality 100% -compress lzw -type optimize"
   Verbose=""
   Video=""
   Videoframecount=""
@@ -4762,7 +4800,7 @@ parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
   Shortoptions="Cho:vVWX"
-  Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,maskformat::,output:,rmcache,showname,sub::,test::,verbose,version,video"
+  Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,cacheformat::,output:,rmcache,showname,sub::,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
@@ -4782,15 +4820,15 @@ parse_options() {
     case "${1:-}" in
       --align)             Align="yes"                         ;;
       --basename)          Outputbasename="${2:-auto}"         ; shift ;;
-      -C)                  Cachedir="auto"                     ; shift ;;
+      -C)                  Cachedir="auto"                     ;;
       --cache)             Cachedir="${2:-auto}"               ; shift ;;
+      --cacheformat)       Cacheformat="${2:-mpc}"             ; shift ;;
       --exif)              Exifsourceimage="${2:-auto}"        ; shift ;;
       --force)             Force="${2:-yes}"                   ; shift ;;
       --format)            Imageformat="${2:-tif}"             ; shift ;;
       --layered)           Storelayered="yes"                  ;;
       --limit-memory)      Limitmemory="${2:-"80%"}"           ; shift ;;
       --mask2cache)        Masktocache="yes"                   ;;
-      --maskformat)        Maskformat="${2:-mpc}"              ; shift ;;
       -o|--output)         Resultimage="${2:-}"                ; shift ;;
       --revert)            Revertimagelist="-r"                ;;
       --sub)               Subprocess=" ${2:-sub}"             ; shift ;;
@@ -4800,7 +4838,7 @@ parse_options() {
       -V)                  Showimageprocessing="yes"           ;;
       -W)                  Viewnior="yes"                      ;;
       -X)                  Extendedsave="yes"                  ;;
-      -h|--help|--license|--rmcache|--showname|--version) Oneaction="${1:-}" ;;
+      -h|--help|--license|--rmcache|--showname|--version) Singleaction="${1:-}" ;;
 
 --cmd|--cmddiff|--experimental|\
 --blur|--comet|--compass|--diffstat|--dog|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--wavelet|\
@@ -4897,8 +4935,8 @@ check_options() {
   # --format
   Imageformat="${Imageformat:-"$(maskarg_defaultvalue format word1)"}"
 
-  # --maskformat
-  Maskformat="${Maskformat:-"$(maskarg_defaultvalue maskformat word1)"}"
+  # --cacheformat
+  Cacheformat="${Cacheformat:-"$(maskarg_defaultvalue cacheformat word1)"}"
 
   # --substacks
   maskarg_single "substacks" || {
@@ -4961,9 +4999,9 @@ check_options() {
     [ "$Softmode" = "error" ]     && error "Option --soft does not support options --cut*."
   }
 
-  # -V, --showimage
+  # -V
   [ "$Showimageprocessing" = "yes" ] && {
-    command -v geeqie >/dev/null || error "Option -V, --showimage: geeqie not found."
+    command -v geeqie >/dev/null || error "Option -V: geeqie not found."
   }
 
   # -W
@@ -5113,11 +5151,12 @@ $Parsedoptions"
     -separate
     -evaluate-sequence Add
     -auto-level
+    $Tifstorealpha
     -write '$Showimage'
     -delete 0
 
   # clut for depth map
-    -size 1x256
+    -size 1x512
   gradient:white-red
   gradient:red-orange
   gradient:orange-yellow
@@ -5151,7 +5190,7 @@ main() {
   parse_options "$@"
   check_options
 
-  case "$Oneaction" in
+  case "$Singleaction" in
     -h|--help)
       usage
       finish
@@ -5178,7 +5217,7 @@ main() {
   main_setup
   multicore_init
 
-  case "$Oneaction" in
+  case "$Singleaction" in
     --showname)
       echo "$Resultimage"
       finish
