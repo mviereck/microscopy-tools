@@ -109,16 +109,17 @@ Step 2: Mask generation
   The generated masks will be composed into one mask containing them all.
 
   Contrast masks:
+    The contrast mask options detect edges that indicate focused areas.
 
  --blur [=ARG]        Blur edge detection.
-                      ARG takes argument:
+                      ARG additionally takes arguments:
                         r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
                         s        sigma1            Default: $(maskarg_defaultvalue cutblur sigma1)
                         S        sigma2
                         (word)   gaussian
                       Adjust only sigma, radius 0 is adjusted automatically.
                       If sigma2 is set, --blur gives the difference of two
-                      blur results with sigma1 and sigma2.
+                        blur results with sigma1 and sigma2.
                       gaussian enables slower but more accurate gaussian blur.
  --cmd [=ARG]         Custom ImageMagick option to create a mask.
                       Compare --cmddiff.
@@ -133,7 +134,7 @@ Step 2: Mask generation
                       comparision from command result with source image.
                       There's also a use case without a command at all
                       but setting arguments C=,c or I= only.
-                      ARG takes argument:
+                      ARG additionally takes argument:
                         (word)   string
                       string can be e.g. '-blur 0x5'. Avoid comma , in string.
                       https://imagemagick.org/script/command-line-options.php
@@ -146,6 +147,7 @@ Step 2: Mask generation
                       Recommended: Lighten, Darken.
                       Adjust only sigma, radius 0 is adjusted automatically.
  --compass [=ARG]     Compass edge detection.
+                      ARG additionally takes argument:
                         (word)   mode              Default: $(maskarg_defaultvalue compass word1)
                       mode can be one of 'magick -list compose'
  --diffstat [=ARG]    Compares two local statistics of source images. 
@@ -173,7 +175,7 @@ Step 2: Mask generation
                       Possible mode numbers at:
                       http://www.imagemagick.org/Usage/convolve/#laplacian
  --log [=ARG]         Laplacian of Gaussian.
-                      ARG additionally takes argument: 
+                      ARG additionally takes arguments: 
                         r        radius            Default: $(maskarg_defaultvalue log radius1)
                         s        sigma1            Default: $(maskarg_defaultvalue log sigma1)
                         S        sigma2
@@ -202,14 +204,48 @@ Step 2: Mask generation
                       If radius2 is set, --statistic gives the difference of
                       two statistic results with radius1 and radius2.
  --wavelet [=ARG]     Based on ImageMagick option -wavelet-denoise.
-                      ARG additionally takes argument:
+                      ARG additionally takes arguments:
                         p        percent1          Default: $(maskarg_defaultvalue wavelet percent1)%
                         P        percent2
                       For percent value compare option -wavelet-denoise.
                       If percent2 is set, --wavelet gives the difference of
                       two wavelet results with percent1 and percent2.
 
-  Image comparision masks: (most of interest: --enfuse)
+  Colorspace channel masks:
+    All channel options are variations of --channel.
+    Adding some of them with a rather low weight between w5..w25
+    can help to close gaps where edges to detect focus are rare.
+    Most useful are --saturation and --darkness.
+    Changing argument level is worth a try.
+
+ --channel [=ARG]     Use a colorspace channel as mask.
+                      ARG takes the general mask arguments:
+                        w        weight
+                        C=       colorspace
+                        c        colorspace channel
+                        neg      negate
+                        level    leveling          Default: $(maskarg_defaultvalue channel level)
+                      Colorspace can be one of 'magick -list colorspace'
+                      The color channel is a number from 0..31.
+                      Compare 'magick -list colorspace'.
+ --chroma [=ARG]      Chroma, color strength. Same as --channel=C=HCL,c1
+                      ARG takes the general mask arguments:
+                        w        weight
+                        level    leveling          Default: $(maskarg_defaultvalue chroma level)
+ --darkness [=ARG]    Darkness. Same as --channel=C=HSL,c2,neg
+                      ARG takes the general mask arguments:
+                        w        weight
+                        level    leveling          Default: $(maskarg_defaultvalue darkness level)
+ --lightness [=ARG]   Lightness. Same as --channel=C=HSL,c2
+                      ARG takes the general mask arguments:
+                        w        weight
+                        level    leveling          Default: $(maskarg_defaultvalue lightness level)
+ --saturation [=ARG]  Color saturation. Same as --channel=C=HSL,c1
+                      ARG takes the general mask arguments:
+                        w        weight
+                        level    leveling          Default: $(maskarg_defaultvalue saturation level)
+
+  Image comparision masks:
     Adding --compose with e.g. =Overlay with a rather low weight
     between w5..w25 can help to close gaps, especially in large dark areas.
 
@@ -222,6 +258,14 @@ Step 2: Mask generation
                       Some modes of interest:
                         overlay interpolate colordodge hardlight reflect 
                         softburn softlight linearlight pegtoplight
+ --depthmap [=ARG]    Use a previously created depth map to get focus areas.
+                      ARG additionally takes argument:
+                        (word)   filename
+                      One can create a depth map, change it manually in an
+                      image editor, and use this option to create the image
+                      based on the new depth map.
+                      Yet works well only if no --cut* options except
+                      --cutless has been used.
  --enfuse [=ARG]      Image comparision with a basic enfuse result.
  --evaluate [=ARG]    Evaluates from all source images with mode MODE and
                       compares the result with each source image.
@@ -235,35 +279,6 @@ Step 2: Mask generation
  --median [=ARG]      Same as --evaluate=median. Median pixel of stack.
  --min [=ARG]         Same as --evaluate=min. Darkest pixels of stack.
                       Result is similar to --darkness.
-
-  Colorspace channel masks: (most of interest: --darkness)
-    All channel options are variations of --channel.
-    Adding some of them with a rather low weight between w5..w25
-    can help to close gaps where edges to detect focus are rare.
-    Changing argument level is worth a try.
-
- --channel [=ARG]     Use a colorspace channel as mask.
-                      ARG takes the general mask arguments:
-                        w        weight
-                        C=       colorspace
-                        c        colorspace channel
-                        neg      negate
-                        level    leveling          Default: $(maskarg_defaultvalue channel level)
-                      Colorspace can be one of 'magick -list colorspace'
-                      The color channel is a number from 0..31.
-                      Compare 'magick -list colorspace'.
- --chroma [=ARG]      Chroma. Same as --channel=C=HCL,c1
-                      ARG takes the general mask argument:
-                        level    leveling          Default: $(maskarg_defaultvalue channel level)
- --darkness [=ARG]    Darkness. Same as --channel=C=HSL,c2,neg
-                      ARG takes the general mask argument:
-                        level    leveling          Default: $(maskarg_defaultvalue channel level)
- --lightness [=ARG]   Lightness. Same as --channel=C=HSL,c2
-                      ARG takes the general mask argument:
-                        level    leveling          Default: $(maskarg_defaultvalue channel level)
- --saturation [=ARG]  Saturation. Same as --channel=C=HSL,c1
-                      ARG takes the general mask argument:
-                        level    leveling          Default: $(maskarg_defaultvalue channel level)
 
 Step 3: Mask merging
   The contrast masks generated in step 2 are merged into one per image.
@@ -2205,6 +2220,17 @@ focus_maskmethod() {
     -morphology Convolve Compass:>"
     ;;
 
+    depthmap)
+      Maskgenerator="$Maskgenerator
+  mpr:black
+    +level CLUTLEVEL%
+  mpr:rainbow
+    -clut
+  '${Argword1}'
+    -compose Difference -composite
+    -negate"
+    ;;
+
     diffstat)
         Maskgenerator="$Maskgenerator
   (
@@ -2415,15 +2441,8 @@ focus_generate_masks() {
     maskarg_parse "$Count"
 
     [ "$Argtype" = "mask" ] && {
-      Sourceimagecode=""
-      
-      [ "$Testsetup" ] &&       Sourceimagecode="$Sourceimagecode
-  mpr:sourceimage
-    -contrast-stretch ${Testarg:-0}%x${Testarg:-0}%
-    -write mpr:sourceimage
-    -delete 0"
 
-      Sourceimagecode="$Sourceimagecode
+      Sourceimagecode="
   mpr:sourceimage
     # --colorspace
     -colorspace $Colorspace"
@@ -2434,8 +2453,8 @@ focus_generate_masks() {
 
       [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] && {
         Sourceimagecode="
-  # =C
   mpr:sourceimage
+    # =C
     -colorspace ${Argcolorspace:-"$Colorspace"}"
         [ -n "$Argchannel" ] && Sourceimagecode="$Sourceimagecode
     # =c
@@ -2519,7 +2538,9 @@ $Maskgenerator
   '$(sourceimagename "$Count")'
     -write mpr:sourceimage
     -delete 0
-${Maskgenerator_all//NUMBER/$(printnum "$Count")}"
+${Maskgenerator_all}"
+      Command="${Command//NUMBER/$(printnum "$Count")}"
+      Command="${Command//CLUTLEVEL/$(calc "100*($Sourceimagenumber-$Count)/$Sourceimagenumber")}"
 
       cmd "$Command"
     done
@@ -2536,12 +2557,12 @@ ${Maskgenerator_all//NUMBER/$(printnum "$Count")}"
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     [ "$Argtype" = "mask" ] && {
-      [ "$Arglevel" != "no" ] && {
-        [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/level.$Argbasename" ] && {
+      [ "$Arglevel" = "yes" ] && {
+        [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/levelclut$Argclut.$Argbasename" ] && {
           sendmagickmessage "NOTE:Skipping mask leveling, already done: $Argbasename"
         } || {
-          level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage" --clut
-          [ "$Masktocache" = "yes" ] && :> "$Cachedir/level.$Argbasename"
+          level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage" --clut="${Argclut:-yes}"
+          [ "$Masktocache" = "yes" ] && :> "$Cachedir/levelclut$Argclut.$Argbasename"
         }
       }
     }
@@ -3079,6 +3100,9 @@ focus_hard() {
   mpr:transparent
     -write mpr:depthmap
     -delete 0
+  mpr:black
+    -write mpr:depthmapalpha
+    -delete 0
   mpr:transparent
     -write mpr:lessthanmax
     -delete 0"
@@ -3152,7 +3176,7 @@ focus_hard() {
   mpr:black
     +level $(calc "100*($Sourceimagenumber-$Count)/$Sourceimagenumber")%
   mpr:cutmask
-    -alpha off
+    #-alpha off
     -compose CopyOpacity -composite
     -write mpr:depthmappart
     -delete 0
@@ -3161,6 +3185,11 @@ focus_hard() {
     -compose Over -composite
     -write mpr:depthmap
     -delete 0"
+#  mpr:depthmapalpha
+#  mpr:cutmask
+#    -compose Lighten -composite
+#    -write mpr:depthmapalpha
+#    -delete 0"
 
     cmd "$Command"
   done
@@ -3180,6 +3209,8 @@ focus_hard() {
 
   [ -n "$Depthmap" ] && Command="$Command
   mpr:depthmap
+#  mpr:depthmapalpha
+#    -compose CopyOpacity -composite
     $Tifstorealpha
     -write '$Focusimagedepthfile'
     -write '$Depthmap'
@@ -3746,6 +3777,7 @@ maskarg_check() {
   [ -z "$Argcolorspace"  ] && Argcolorspace="$(maskarg_defaultvalue "$Argmethod" colorspace)"
   [ -z "$Argimage"  ]      && Argimage="$(maskarg_defaultvalue      "$Argmethod" image)"
   [ -z "$Arglevel"  ]      && Arglevel="$(maskarg_defaultvalue      "$Argmethod" level)"
+  [ -z "$Argclut"  ]       && Argclut="$(maskarg_defaultvalue       "$Argmethod" clut)"
   [ -z "$Argnegate"  ]     && Argnegate="$(maskarg_defaultvalue     "$Argmethod" negate)"
   [ -z "$Argnumber1"  ]    && Argnumber1="$(maskarg_defaultvalue    "$Argmethod" number1)"
   [ -z "$Argnumber2"  ]    && Argnumber2="$(maskarg_defaultvalue    "$Argmethod" number2)"
@@ -3764,6 +3796,7 @@ maskarg_check() {
   [ -n "$Argcolorspace" ]  && maskarg_checkallowed "$Argmethod" colorspace "$Argcolorspace"
   [ -n "$Argimage" ]       && maskarg_checkallowed "$Argmethod" image      "$Argimage"
   [ -n "$Arglevel" ]       && maskarg_checkallowed "$Argmethod" level      "$Arglevel"
+  [ -n "$Argclut" ]        && maskarg_checkallowed "$Argmethod" clut       "$Argclut"
   [ -n "$Argnegate" ]      && maskarg_checkallowed "$Argmethod" negate     "$Argnegate"
   [ -n "$Argnumber1" ]     && maskarg_checkallowed "$Argmethod" number1    "$Argnumber1"
   [ -n "$Argnumber2" ]     && maskarg_checkallowed "$Argmethod" number2    "$Argnumber2"
@@ -3833,8 +3866,9 @@ maskarg_parse() {
       "C")                Argcolorspace="$Value" ;;
       "c")                Argchannel="$Value" ;;
       "diff")             Argdiff="${Value:-yes}" ;;
-      "neg")              Argnegate="yes" ;;
+      "neg")              Argnegate="${Value:-yes}" ;;
       "level")            Arglevel="${Value:-yes}" ;;
+      "clut")             Argclut="${Value:-yes}" ;;
       "TYPE")             Argtype="$Value" ;;
       "AUTOWEIGHT")       Argautoweight="$Value" ;;
       "BASENAME")         Argbasename="$Value" ;;
@@ -3864,8 +3898,9 @@ maskarg_store() {
   [ "$Argcolorspace" ]         && Argoptions="$Argoptions,C=$Argcolorspace"
   [ "$Argchannel" ]            && Argoptions="$Argoptions,c$Argchannel"
   [ "$Argdiff" ]               && Argoptions="$Argoptions,diff=$Argdiff"
-  [ "$Argnegate" ]             && Argoptions="$Argoptions,neg"
+  [ "$Argnegate" ]             && Argoptions="$Argoptions,neg=$Argnegate"
   [ "$Arglevel" ]              && Argoptions="$Argoptions,level=$Arglevel"
+  [ "$Argclut" ]               && Argoptions="$Argoptions,clut=$Argclut"
   [ "$Argthreshold1" ]         && Argoptions="$Argoptions,t$Argthreshold1"
   [ "$Argthreshold2" ]         && Argoptions="$Argoptions,T$Argthreshold2"
   [ "$Argword1" ]              && Argoptions="$Argoptions,$Argword1"
@@ -3889,9 +3924,20 @@ maskarg_checkallowed() {
         *) 
           case "${1:-}" in
             colorspace) ;;
-            *) error "$Argmethod does not take argument colorspace channel: c$Arg" ;;
+            *) error "--$Argmethod does not take argument colorspace channel: c$Arg" ;;
           esac
         ;;
+      esac
+    ;;
+    clut|diff|level|negate)
+      case "$Argtype" in
+        mask)
+          case "$Arg" in
+            yes|no) ;;
+            *) error "--$Argmethod: $Option does not take value '$Arg'. Allowed values are yes|no" ;;
+          esac
+        ;;
+        *) error "--$Argmethod does not take argument '$Option'." ;;
       esac
     ;;
     colorspace)
@@ -3908,15 +3954,9 @@ maskarg_checkallowed() {
   Please choose one out of 'magick -list colorspace'"
               Argcolorspace="$(checkmagicklist colorspace "$Arg" print)"
             ;;
-            *) error "$Argmethod does not take argument colorspace: C=$Arg" ;;
+            *) error "--$Argmethod does not take argument colorspace: C=$Arg" ;;
           esac
         ;;
-      esac
-    ;;
-    diff)
-      case "$Argtype" in
-        mask) ;;
-        *) error "--$Argmethod does not take argument diff" ;;
       esac
     ;;
     image)
@@ -3930,48 +3970,31 @@ maskarg_checkallowed() {
   'magick -list color"
           Argimage="$(generate_image --mode "$Argimage" --showmode)"
         ;;
-        *) error "$Argmethod does not take argument image comparision: I=$Arg" ;;
-      esac
-    ;;
-    level)
-      case "$Argtype" in
-        mask)
-          case "$Arg" in
-            yes|no) ;;
-            *) error "level does not take value '$Arg'. Allowed values are yes|no" ;;
-          esac
-        ;;
-        *) error "$Argmethod does not take argument level: level=$Arg" ;;
-      esac
-    ;;
-    negate)
-      case "$Argtype" in
-        mask) ;;
-        *) error "$Argmethod does not take argument neg." ;;
+        *) error "--$Argmethod does not take argument image comparision: I=$Arg" ;;
       esac
     ;;
     number1)
       case "$Argmethod" in
         freichen|laplacian|maskdespeckle|maskenhance|substacks) ;;
-        *) error "$Argmethod does not take argument number1: n$Arg" ;;
+        *) error "--$Argmethod does not take argument number1: n$Arg" ;;
       esac
     ;;
     number2)
       case "$Argmethod" in
         substacks) ;;
-        *) error "$Argmethod does not take argument number2: n$Arg" ;;
+        *) error "--$Argmethod does not take argument number2: n$Arg" ;;
       esac
     ;;
     percent1)
       case "$Argmethod" in
         cutblur|cutless|cutmax|cutwave|finalalpha|finalstretch|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
-        *) error "$Argmethod does not take argument percent1: p$Arg" ;;
+        *) error "--$Argmethod does not take argument percent1: p$Arg" ;;
       esac
     ;;
     percent2)
       case "$Argmethod" in
         cutblur|finalalpha|finalstretch|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
-        *) error "$Argmethod does not take argument percent2: P$Arg" ;;
+        *) error "--$Argmethod does not take argument percent2: P$Arg" ;;
       esac
     ;;
     radius1)
@@ -3980,14 +4003,14 @@ maskarg_checkallowed() {
         morphology|cutmorph|maskmorph) ;;
         diffstat|statistic|maskstat) ;;
         substacks) ;;
-        *) error "$Argmethod does not take argument radius1: r$Arg" ;;
+        *) error "--$Argmethod does not take argument radius1: r$Arg" ;;
       esac
     ;;
     radius2)
       case "$Argmethod" in
         diffstat|finalblur2|statistic) ;;
         morphology|cutmorph|maskmorph) ;;
-        *) error "$Argmethod does not take argument radius2: R$Arg" ;;
+        *) error "--$Argmethod does not take argument radius2: R$Arg" ;;
       esac
     ;;
     short)
@@ -3996,13 +4019,13 @@ maskarg_checkallowed() {
       case "$Argmethod" in
         blur|comet|dog|log) ;;
         cutblur|cutsoft|finalblur|finalthreshold|maskblur) ;;
-        *) error "$Argmethod does not take argument sigma1: s$Arg" ;;
+        *) error "--$Argmethod does not take argument sigma1: s$Arg" ;;
       esac
     ;;
     sigma2)
       case "$Argmethod" in
         blur|finalblur|dog|log) ;;
-        *) error "$Argmethod does not take argument sigma2: S$Arg" ;;
+        *) error "--$Argmethod does not take argument sigma2: S$Arg" ;;
       esac
     ;;
     threshold1)
@@ -4011,7 +4034,7 @@ maskarg_checkallowed() {
         *)
           case "$Argmethod" in
             cutless|cutthreshold|finalblur|finalblur2|finalthreshold|masklevel|maskthreshold) ;;
-            *) error "$Argmethod does not take argument threshold1: t$Arg" ;;
+            *) error "--$Argmethod does not take argument threshold1: t$Arg" ;;
           esac
         ;;
       esac
@@ -4022,7 +4045,7 @@ maskarg_checkallowed() {
         *)
           case "$Argmethod" in
             finalthreshold|maskthreshold) ;;
-            *) error "$Argmethod does not take argument threshold2: T$Arg" ;;
+            *) error "--$Argmethod does not take argument threshold2: T$Arg" ;;
           esac
         ;;
       esac
@@ -4030,7 +4053,7 @@ maskarg_checkallowed() {
     weight)
       case "$Argtype" in
         mask) ;;
-        *) error "$Argmethod does not take argument weight: w$Arg" ;;
+        *) error "--$Argmethod does not take argument weight: w$Arg" ;;
       esac
     ;;
     word1)
@@ -4057,10 +4080,13 @@ maskarg_checkallowed() {
           Argcolorspace="$(checkmagicklist colorspace "$Arg" print)"
           Argword1=""
         ;;
+        depthmap)
+          [ -f "$Arg" ] || error "--$Argmethod: File not found: $Arg"
+        ;;
         masklevel)
           case "$Arg" in
             all|substack) ;;
-            *) error "$Argmethod does not take argument: $Arg" ;;
+            *) error "--$Argmethod does not take argument: $Arg" ;;
           esac
         ;;
         compose|comet|compass|maskmerge|soft)
@@ -4097,7 +4123,7 @@ maskarg_checkallowed() {
   Please choose out of 'magick -list statistic'"
           Argword1="$(checkmagicklist statistic "$Arg" print)"
         ;;
-        *) error "$Argmethod does not take argument word1: $Arg" ;;
+        *) error "--$Argmethod does not take argument word1: $Arg" ;;
       esac
     ;;
     word2)
@@ -4116,7 +4142,7 @@ maskarg_checkallowed() {
   Please choose out of 'magick -list kernel'"
           Argword2="$(checkmagicklist kernel "$Arg" print)"
         ;;
-        *) error "$Argmethod does not take argument word2: $Arg" ;;
+        *) error "--$Argmethod does not take argument word2: $Arg" ;;
       esac
     ;;
   esac
@@ -4148,6 +4174,11 @@ maskarg_defaultvalue() {
         saturation)     Output="HSL" ;;
       esac
     ;;
+    clut)
+      #case "$Argmethod" in
+      #  depthmap)       Output="no" ;;
+      #esac
+    ;;
     diff)
       case "$Argmethod" in
         blur) [ -z "$Argsigma2" ] && Output="yes" ;;
@@ -4167,6 +4198,11 @@ maskarg_defaultvalue() {
         ;;
         wavelet)
           [ -z "$Argpercent2" ] && Output="yes" ;;
+        *)
+          case "$Argtype" in
+            mask)       Output="no" ;;
+          esac
+        ;;
       esac
     ;;
     image)
@@ -4184,14 +4220,20 @@ maskarg_defaultvalue() {
         chroma)         Output="yes" ;;
         compose)        Output="no" ;;
         darkness)       Output="no" ;;
+        depthmap)       Output="no" ;;
         enfuse)         Output="no" ;;
         evaluate)       Output="no" ;;
-        lighten)        Output="no" ;;
+        lightness)      Output="no" ;;
         max)            Output="no" ;;
         mean)           Output="no" ;;
         median)         Output="no" ;;
         min)            Output="no" ;;
         saturation)     Output="yes" ;;
+        *)
+          case "$Argtype" in
+            mask)       Output="yes" ;;
+          esac
+        ;;
       esac
     ;;
     negate)
@@ -4309,7 +4351,7 @@ maskarg_defaultvalue() {
                         Output="mask" ;;
         channel|chroma|darkness|lightness|saturation)
                         Output="mask" ;;
-        image|enfuse|compose|evaluate|min|max|mean|median)
+        compose|depthmap|enfuse|evaluate|max|mean|median|min)
                         Output="mask" ;;
         experimental)   Output="mask" ;;
         maskblur|maskcmd|maskdespeckle|maskenhance|maskkuwahara|maskmorph|maskstat|maskthreshold|maskwave)
@@ -4336,6 +4378,7 @@ maskarg_defaultvalue() {
         compose)        Output="Overlay" ;;
         cutblur)        Output="" ;;
         cutmorph)       Output="Erode" ;;
+        depthmap)       Output="NO_FILE_SPECIFIED" ;;
         diffstat)       Output="Median" ;;
         evaluate)       Output="Max" ;;
         maskblur)       Output="" ;;
@@ -4452,9 +4495,28 @@ maskarg_short() {
         esac
       ;;
       negate)
-        [ -n "$Argnegate" ]      && Append=",neg"
+        [ "$Argnegate" = "yes" ]   && Append=",neg"
+        [ "$Argnegate" = "no"  ]   && Append=",neg=no"
         [ "$Argnegate" = "$(maskarg_defaultvalue "$Argmethod" negate)" ] && case "$Argmethod" in
           darkness) Append="" ;;
+        esac
+      ;;
+      level)
+        [ -n "$Arglevel" ] && case "$Arglevel" in
+          yes)                      Append=",level" ;;
+          no)                       Append=",level=no" ;;
+        esac
+        [ "$Arglevel" = "$(maskarg_defaultvalue "$Argmethod" level)" ] && case "$Argmethod" in
+          enfuse|evaluate|max|mean|median|min|compose) Append="" ;;
+          channel|chroma|darkness|lightness|saturation) ;;
+          depthmap) ;;
+          *) Append="" ;;
+        esac
+      ;;
+      clut)
+        [ -n "$Argclut" ] && [ -n "$Arglevel" ] && case "$Argclut" in
+          yes)                      Append=",clut" ;;
+          no)                       Append=",clut=no" ;;
         esac
       ;;
       threshold1)
@@ -4466,19 +4528,9 @@ maskarg_short() {
           finalthreshold|maskthreshold) Append="" ;;
         esac
       ;;
-      level)
-        [ -n "$Arglevel" ] && case "$Arglevel" in
-          yes)                      Append=",level" ;;
-          no)                       Append=",level=no" ;;
-        esac
-        [ "$Arglevel" = "$(maskarg_defaultvalue "$Argmethod" level)" ] && case "$Argmethod" in
-          enfuse|evaluate|max|mean|median|min|compose) Append="" ;;
-          channel|chroma|darkness|lightness|saturation) ;;
-        esac
-      ;;
       word1)
         [ -n "$Argword1" ]       && case "$Argmethod" in
-          cmd|maskcmd|cutcmd|finalcmd) 
+          cmd|maskcmd|cutcmd|depthmap|finalcmd) 
                                     Append=",'$Argword1'" ;;
           *)                        Append=",$Argword1" ;;
         esac
@@ -4725,6 +4777,7 @@ declare_variables() {
   Argthreshold1=""
   Argthreshold2=""
   Arglevel=""
+  Argclut=""
   Argword1=""
   Argword2=""
   Argcount=""
@@ -4808,7 +4861,7 @@ declare_variables() {
   Testimage=""
   Testsetup=""
   Tifstore="-alpha off +repage -quality 100% -compress lzw -type optimize"
-  Tifstorealpha="+repage -quality 100% -compress lzw -type optimize"
+  Tifstorealpha="+repage -quality 100% -compress lzw -type TrueColorAlpha"
   Verbose=""
   Video=""
   Videoframecount=""
@@ -4824,7 +4877,7 @@ parse_options() {
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
-  Longoptions="$Longoptions,compose::,enfuse::,evaluate::,max::,mean::,median::,min::"
+  Longoptions="$Longoptions,compose::,depthmap::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
   Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,maskkuwahara::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
@@ -4863,7 +4916,7 @@ parse_options() {
 --cmd|--cmddiff|--experimental|\
 --blur|--comet|--compass|--diffstat|--dog|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--wavelet|\
 --channel|--chroma|--darkness|--lightness|--saturation|\
---compose|--enfuse|--evaluate|--max|--mean|--median|--min|\
+--compose|--depthmap|--enfuse|--evaluate|--max|--mean|--median|--min|\
 \
 --colorspace|\
 --maskblur|--maskcmd|--maskdespeckle|--maskenhance|--maskkuwahara|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
@@ -5133,11 +5186,11 @@ $Parsedoptions"
 
   # --force
   [ -z "$Force" ] && {
-    Resultimage_check="$(find . -wholename "${Resultimage//$Resulttimestamp/"??-??-??_??:??"}" | tail -n1)"
+    Resultimage_check="$(find . -wholename "${Resultimage//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
     [ -n "$Resultimage_check" ] && {
       Resultimage="$Resultimage_check"
-      Resultdepthmap="$(find . -wholename "${Resultdepthmap//$Resulttimestamp/"??-??-??_??:??"}" | tail -n1)"
-      Resultmask="$(find . -wholename "${Resultmask//$Resulttimestamp/"??-??-??_??:??"}" | tail -n1)"
+      Resultdepthmap="$(find . -wholename "${Resultdepthmap//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
+      Resultmask="$(find . -wholename "${Resultmask//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
       note "Output image already exists with matching md5sum.
   You can force imfuse to run nonetheless with option --force."
       showresult
