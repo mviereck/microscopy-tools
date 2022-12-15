@@ -2337,9 +2337,9 @@ focus_maskmethod() {
     laplacian)
       Maskgenerator="$Maskgenerator
   $Sourceimage
-    -define convolve:bias=5%
-    -define convolve:scale=100%!
-    -morphology Convolve Laplacian:${Argnumber1}>"
+    -define convolve:bias=50%
+    -define convolve:scale=!
+    -morphology Convolve Laplacian:${Argnumber1}"
     ;;
 
     log)  # LoG: Laplacian of Gaussian
