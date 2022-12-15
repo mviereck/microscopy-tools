@@ -61,6 +61,8 @@ Arguments taken by all mask generating options: (Mostly you only need w).
             Example: --morphology --darkness=w15
             This will generate two masks. The saturation mask will only have
             noteable effect where the morphology mask strength is below 25%.
+  mask [=yes|no] Apply --mask* options. Default is yes except for channel and
+            image comparision options.
   C=        Colorspace to use instead of default $(maskarg_defaultvalue colorspace colorspace). Compare --colorspace.
   c         Colorspace channel to use. Counting up from 0 for first channel.
             Example: C=HSL,c2 will use the saturation channel from HSL.
@@ -261,11 +263,11 @@ Step 2: Mask generation
  --depthmap [=ARG]    Use a previously created depth map to get focus areas.
                       ARG additionally takes argument:
                         (word)   filename
-                      One can create a depth map, change it manually in an
-                      image editor, and use this option to create the image
-                      based on the new depth map.
                       Yet works well only if no --cut* options except
                       --cutless has been used.
+                      Sample use: imfuse creates a depth map with -X, you can
+                      change it in an image editor, and use this option to
+                      create the focus image based on the adjusted depth map.
  --enfuse [=ARG]      Image comparision with a basic enfuse result.
  --evaluate [=ARG]    Evaluates from all source images with mode MODE and
                       compares the result with each source image.
@@ -767,7 +769,7 @@ forcemask() {
 }
 forcelevel() {
   note "Forcing leveling"
-  rm -f "$Cachedir"/level.*
+  rm -f "$Cachedir"/level*
   forcemerge
 }
 forcemerge() {
@@ -1864,6 +1866,7 @@ level_masks() {
   Maskmin="mpr:maskmin"
   Maskmaxmin="mpr:maskmaxmin"
   Clutimage="mpr:clut"
+  #Clutimage=clut.tif
 
   [ -z "$Levelmax" ] && Checkmax="yes"
   [ -z "$Levelmin" ] && Checkmin="yes"
@@ -1929,6 +1932,8 @@ Imagemaxlevel=%[fx:maxima*100]
   '$Maskmax'
 #  '$Maskmin'
 #    -append
+    -separate
+    -append
     -level ${Levelmin}%,${Levelmax}%
     -clamp
     $Tifstore
@@ -1969,6 +1974,7 @@ Imagemaxlevel=%[fx:maxima*100]
 mkclut_uniform() {
   # Generate a clut image to uniform distribution in level_masks()
   # Contains code from http://www.fmwconcepts.com/imagemagick/redist with friendly permission from Fred Weinhaus.
+
   local Referenceimage Clutimage Netpbm Netpbmdata
   local Histogramarray Colorcountarray Totalpixel Lutlist Quantumrange Factor
   local Command Key1 Key2 Count
@@ -1976,7 +1982,7 @@ mkclut_uniform() {
   Referenceimage="${1:-}"
   Clutimage="${2:-}"
 
-
+  # get cumulative histogram
   Key1="$(generate_key)"
   Key2="$(generate_key)"
   Command="
@@ -1990,17 +1996,25 @@ mkclut_uniform() {
   cmd_waitforready
   Histogramarray="$(sed -n "/$Key1/,/$Key2/p" "$Magickfifolog" | sed '1d ; $d')"
   Histogramarray=($(echo "$Histogramarray" | sed -n  's/[ ]*\([0-9]*\).*gray[(]\([0-9]*\).*$/\1 \2/p' \
-                                           | LC_ALL=C awk     '{ bin[int($2)] += $1; } 
-                                                      END { for (i=0;i<256;i++) {hist = bin[i]+0; print hist; } } ' ) )
-  Colorcountarray=($(echo ${Histogramarray[*]} | LC_ALL=C awk '{ split($0,count," ") }
-                                                       END { for (i=0;i<256;i++) { cum += count[i]; print cum } }' ))
-  Totalpixel=${Colorcountarray[255]}
+                                           | LC_ALL=C awk     '# AWK to generate a zero filled histogram
+                                                               { bin[int($2)] += $1; } 
+                                                               END { for (i=0;i<256;i++) {hist = bin[i]+0; print hist; } } ' ) )
+  Colorcountarray=($(echo ${Histogramarray[*]} | LC_ALL=C awk '# AWK to generate a cumulative histogram
+                                                               { split($0,count," ") }
+                                                               END { for (i=0;i<256;i++) { cum += count[i]; print cum } }' ))
+  Totalpixel="${Colorcountarray[255]}"
+
+  # generate lut for Uniform Distribution which is just the cumulative histogram normalized to max value
+  # the uniform distribution has an integral which is f(x)=x
+  # this means that the cumulative distribution of the image is its own lut and only needs to be scaled
+  # get raw cumulative histogram
   Quantumrange="$(getmagickinfo "$Referenceimage" "%[fx:quantumrange]")"
   Factor="$(getmagickinfo rose: "%[fx:$Quantumrange/$Totalpixel]")"
   Lutlist="$(for ((Count=0; Count<256; Count++)); do
     echo "${Colorcountarray[$Count]}"
   done | LC_ALL=C awk -v Factor="$Factor" '{ print int(Factor*$1); }')"
 
+  # convert lutArr into lut image
   Netpbm="P2 256 1 $Quantumrange $Lutlist"
   Netpbmdata="$(base64 <<< "$Netpbm")"
   sendmagickmessage "Content of encoded NetPBM clut image: $(echo "$Netpbm" | tr "\n" " ")"
@@ -2221,14 +2235,31 @@ focus_maskmethod() {
     ;;
 
     depthmap)
+      Md5="md$(md5cut $(ls -f -l --full-time "$Argword1")).tif"
+      cmd "
+  # --depthmap='$Argword1'
+  $Argword1
+    -write mpr:$Md5
+    -alpha extract
+    -write mpr:${Md5}mask
+    -delete 0
+  mpr:$Md5
+    -alpha off
+  mpr:${Md5}mask
+    -compose Darken -composite
+    -write mpr:$Md5
+    -delete 0"
+
       Maskgenerator="$Maskgenerator
   mpr:black
     +level CLUTLEVEL%
   mpr:rainbow
     -clut
-  '${Argword1}'
+  mpr:$Md5
     -compose Difference -composite
-    -negate"
+    -negate
+  mpr:${Md5}mask
+    -compose Darken -composite"
     ;;
 
     diffstat)
@@ -2574,7 +2605,6 @@ focus_merge_masks() {
   # Merge different masks.
 
   local Mergemask Mergecode Methodnumber= Mergemethod
-  local Weightmax
   local Command Count
   local Firstimage Lastimage
 
@@ -2601,17 +2631,6 @@ focus_merge_masks() {
   sendmagickmessage "NOTE:Merging masks"
   Mergemaskbasename="mergemask"
 
-  for Count in $(seq "$Imoptionsnumber"); do
-    maskarg_parse "$Count"
-    case "$Argtype" in
-      mask)
-        LC_ALL=C awk 'BEGIN {exit !('${Argweight:-100}' >= '${Weightmax:-0}')}' && Weightmax="${Argweight:-100}"
-        Methodnumber="$((Methodnumber+1))"
-      ;;
-    esac
-  done
-  Weightmax=100
-
   maskarg_single "maskmerge" ||:
   Mergemethod="${Argword1:-"Screen"}"
   case "${Mergemethod,,}" in ### FIXME check further modes
@@ -2632,34 +2651,34 @@ focus_merge_masks() {
     ;;
   esac
 
-  ### code for mask merging
-
+  ### code for mask merging except those not to be postprocessed
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argtype" in
       mask)
-        Mergecode="$Mergecode
+        [ "${Argmask:-}" != "no" ] && {
+          Mergecode="$Mergecode
   (
   $(maskname "$Argbasename" NUMBER)"
 
-    [ -n "$Argthreshold1" ] && Mergecode="$Mergecode
+          [ -n "$Argthreshold1" ] && Mergecode="$Mergecode
     # =t
     -black-threshold ${Argthreshold1:-0}%"
 
-    [ -n "$Argthreshold2" ] && Mergecode="$Mergecode
+          [ -n "$Argthreshold2" ] && Mergecode="$Mergecode
     # =T
     -negate
     -black-threshold $((100-${Argthreshold2:-100}))%
     -negate"
 
-#    +level 0%,$(calc "(100 * ${Argweight:-100}) / ( $Weightmax * $Methodnumber )" )%"
-    [ "$Argweight" != "100" ] && Mergecode="$Mergecode
+          [ "$Argweight" != "100" ] && Mergecode="$Mergecode
     # =w
     +level 0%,${Argweight}%"
 
-    Mergecode="$Mergecode
+          Mergecode="$Mergecode
   )
     -compose $Mergemethod -composite"
+        }
       ;;
     esac
   done
@@ -2668,7 +2687,6 @@ focus_merge_masks() {
     -delete 0"
 
   ### code for mask postprocessing
-
   Mergecode="$Mergecode
   mpr:mergemask"
   for Count in $(seq "$Imoptionsnumber"); do
@@ -2765,6 +2783,38 @@ focus_merge_masks() {
           ;;
 
         esac
+      ;;
+    esac
+  done
+
+  ### code for mask merging for those not to be postprocessed
+  for Count in $(seq "$Imoptionsnumber"); do
+    maskarg_parse "$Count"
+    case "$Argtype" in
+      mask)
+        [ "${Argmask:-}" = "no" ] && {
+          Mergecode="$Mergecode
+  (
+  $(maskname "$Argbasename" NUMBER)"
+
+          [ -n "$Argthreshold1" ] && Mergecode="$Mergecode
+    # =t
+    -black-threshold ${Argthreshold1:-0}%"
+
+          [ -n "$Argthreshold2" ] && Mergecode="$Mergecode
+    # =T
+    -negate
+    -black-threshold $((100-${Argthreshold2:-100}))%
+    -negate"
+
+          [ "$Argweight" != "100" ] && Mergecode="$Mergecode
+    # =w
+    +level 0%,${Argweight}%"
+
+          Mergecode="$Mergecode
+  )
+    -compose $Mergemethod -composite"
+        }
       ;;
     esac
   done
@@ -3865,6 +3915,7 @@ maskarg_parse() {
       "I")                Argimage="$Value" ;;
       "C")                Argcolorspace="$Value" ;;
       "c")                Argchannel="$Value" ;;
+      "mask")             Argmask="${Value:-yes}" ;;
       "diff")             Argdiff="${Value:-yes}" ;;
       "neg")              Argnegate="${Value:-yes}" ;;
       "level")            Arglevel="${Value:-yes}" ;;
@@ -3886,6 +3937,7 @@ maskarg_store() {
   Argoptions=""
   Argcount="${1:-}"
   [ "$Argweight" ]             && Argoptions="$Argoptions,w$Argweight"
+  [ "$Argmask" ]               && Argoptions="$Argoptions,mask=$Argmask"
   [ "$Argradius1" ]            && Argoptions="$Argoptions,r$Argradius1"
   [ "$Argradius2" ]            && Argoptions="$Argoptions,R$Argradius2"
   [ "$Argsigma1" ]             && Argoptions="$Argoptions,s$Argsigma1"
@@ -3929,12 +3981,12 @@ maskarg_checkallowed() {
         ;;
       esac
     ;;
-    clut|diff|level|negate)
+    clut|diff|level|mask|negate)
       case "$Argtype" in
         mask)
           case "$Arg" in
             yes|no) ;;
-            *) error "--$Argmethod: $Option does not take value '$Arg'. Allowed values are yes|no" ;;
+            *) error "--$Argmethod: Argument $Option does not take value '$Arg'. Allowed values are yes|no" ;;
           esac
         ;;
         *) error "--$Argmethod does not take argument '$Option'." ;;
@@ -4175,9 +4227,6 @@ maskarg_defaultvalue() {
       esac
     ;;
     clut)
-      #case "$Argmethod" in
-      #  depthmap)       Output="no" ;;
-      #esac
     ;;
     diff)
       case "$Argmethod" in
@@ -4217,7 +4266,7 @@ maskarg_defaultvalue() {
     level)
       case "$Argmethod" in
         channel)        Output="no" ;;
-        chroma)         Output="yes" ;;
+        chroma)         Output="no" ;;
         compose)        Output="no" ;;
         darkness)       Output="no" ;;
         depthmap)       Output="no" ;;
@@ -4228,7 +4277,29 @@ maskarg_defaultvalue() {
         mean)           Output="no" ;;
         median)         Output="no" ;;
         min)            Output="no" ;;
-        saturation)     Output="yes" ;;
+        saturation)     Output="no" ;;
+        *)
+          case "$Argtype" in
+            mask)       Output="yes" ;;
+          esac
+        ;;
+      esac
+    ;;
+    mask)
+      case "$Argmethod" in
+        channel)        Output="no" ;;
+        chroma)         Output="no" ;;
+        compose)        Output="no" ;;
+        darkness)       Output="no" ;;
+        depthmap)       Output="no" ;;
+        enfuse)         Output="no" ;;
+        evaluate)       Output="no" ;;
+        lightness)      Output="no" ;;
+        max)            Output="no" ;;
+        mean)           Output="no" ;;
+        median)         Output="no" ;;
+        min)            Output="no" ;;
+        saturation)     Output="no" ;;
         *)
           case "$Argtype" in
             mask)       Output="yes" ;;
@@ -4318,7 +4389,7 @@ maskarg_defaultvalue() {
         finalblur)      Output="5" ;;
         finalthreshold) Output="0" ;;
         log)            Output="0.2" ;;
-        maskblur)       Output="2" ;;
+        maskblur)       Output="1" ;;
       esac
     ;;
     sigma2)
@@ -4426,6 +4497,13 @@ maskarg_short() {
       weight)
         #[ -n "$Argweight" ]      && [ "$Argweight" != "100" ] && Append=",w$Argweight"
         [ -n "$Argweight" ]      && [ -z "$Argautoweight" ] && Append=",w$Argweight"
+      ;;
+      mask)
+        [ "$Argmask" = "yes" ]   && Append=",mask"
+        [ "$Argmask" = "no"  ]   && Append=",mask=no"
+        #[ "$Argmask" = "$(maskarg_defaultvalue "$Argmethod" mask)" ] && case "$Argmethod" in
+        #  *) Append="" ;;
+        #esac
       ;;
       radius1)
         [ -n "$Argradius1" ]     && Append=",r$Argradius1"
@@ -4762,6 +4840,7 @@ finish() {
 declare_variables() {
   Arglist='
   Argweight=""
+  Argmask=""
   Argradius1=""
   Argradius2=""
   Argsigma1=""
@@ -5236,7 +5315,7 @@ $Parsedoptions"
   gradient:yellow-green
   gradient:green-blue
   gradient:blue-indigo
-  gradient:indigo-black
+  #gradient:indigo-black
     -append
     -rotate 90
     -flip
