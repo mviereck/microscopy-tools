@@ -26,7 +26,8 @@ Dependencies:
 
 General options:
      --align              Align images.
-     --basename [=NAME]   Base name [+path] for output image. 
+ -B, --basename [=NAME]   Base name [+path] for output image. 
+                          If empty, the name of current directory is used.
  -C, --cache [=DIR]       Store generated masks and images in directory DIR.
                           They can be re-used in later runs of imfuse. See also
                           option --rmcache. Default DIR: ~/.cache/imfuse
@@ -543,13 +544,7 @@ Step 5: Post processing
                         (word)   string            Default: $(maskarg_defaultvalue finalcmd word1)
                       string can be e.g. '-auto-gamma'. Avoid comma , in string.
                       https://imagemagick.org/script/command-line-options.php
- --finalstretch [=ARG]  Enhance result image contrast by stretching intensity.
-                      ARG takes arguments:
-                        p        percent1          Default: $(maskarg_defaultvalue finalstretch percent1)%
-                        P        percent2          Default: $(maskarg_defaultvalue finalstretch percent2)%
-                      Percent values >0% will black out (percent1)
-                      or white-out (percent2) parts of the image.
-                      Compare ImageMagick option -contrast-stretch.
+ --finalcontrast      Enhance result image contrast.
  --finalthreshold [=ARG]  Make low (or high) contrast area transparent.
                       ARG takes arguments:
                         t        threshold1        Default: $(maskarg_defaultvalue finalthreshold threshold1)%
@@ -1878,11 +1873,11 @@ level_masks() {
 
   case "0" in
     0)
-      [ -z "$Levelmax" ] && {
+      [ "$Checkmax" ] && {
         evaluate max "$Maskmax" "${Masklist[@]}"
         Levelmax="$(getmagickinfo "$Maskmax" "%[fx:maxima*100]")"
       }
-      [ -z "$Levelmin" ] && {
+      [ "$Checkmin" ] && {
         evaluate min "$Maskmin" "${Masklist[@]}"
         Levelmin="$(getmagickinfo "$Maskmin" "%[fx:minima*100]")"
       }
@@ -3619,10 +3614,12 @@ focus_main() {
     -delete 0"
                   cmd "$Command"
                 ;;
-                finalstretch)
+                finalcontrast)
                   Command="
   ${Substackresultpost[$Substackstep]}
-    -contrast-stretch ${Argpercent1}%x${Argpercent2}%
+    -auto-gamma
+    -auto-level
+    -contrast
     $Tifstorealpha
     -write ${Substackresultpost[$Substackstep]}
     -delete 0"
@@ -4036,13 +4033,13 @@ maskarg_checkallowed() {
     ;;
     percent1)
       case "$Argmethod" in
-        cutblur|cutless|cutmax|cutwave|finalalpha|finalstretch|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
+        cutblur|cutless|cutmax|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "--$Argmethod does not take argument percent1: p$Arg" ;;
       esac
     ;;
     percent2)
       case "$Argmethod" in
-        cutblur|finalalpha|finalstretch|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
+        cutblur|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "--$Argmethod does not take argument percent2: P$Arg" ;;
       esac
     ;;
@@ -4329,7 +4326,6 @@ maskarg_defaultvalue() {
         cutmax)         Output="0" ;;
         cutwave)        Output="25" ;;
         finalalpha)     Output="0" ;;
-        finalstretch)   Output="0" ;;
         maskblur)       Output="100" ;;
         masklevel)      Output="" ;;
         maskwave)       Output="20" ;;
@@ -4341,7 +4337,6 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         cutblur)        Output="$((100-Argpercent1))" ;;
         finalalpha)     Output="100" ;;
-        finalstretch)   Output="0" ;;
         maskblur)       Output="$((100-Argpercent1))" ;;
         masklevel)      Output="" ;;
         soft)           Output="100" ;;
@@ -4426,7 +4421,7 @@ maskarg_defaultvalue() {
                         Output="merge" ;;
         cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
                         Output="focus" ;;
-        finalalpha|finalblur|finalblur2|finalcmd|finalstretch|finalthreshold)
+        finalalpha|finalblur|finalblur2|finalcmd|finalcontrast|finalthreshold)
                         Output="postfocus" ;;
         bg)             Output="background" ;;
         colorspace|finallevel|masklevel|maskmerge|soft)
@@ -4527,13 +4522,13 @@ maskarg_short() {
       percent1)
         [ -n "$Argpercent1" ]    && Append=",p$Argpercent1"
         [ "$Argpercent1" = "$(maskarg_defaultvalue "$Argmethod" percent1)" ] && case "$Argmethod" in
-          maskblur|cutblur|finalalpha|finalstretch) Append="" ;;
+          maskblur|cutblur|finalalpha) Append="" ;;
         esac
       ;;
       percent2)
         [ -n "$Argpercent2" ]    && Append=",P$Argpercent2"
         [ "$Argpercent2" = "$(maskarg_defaultvalue "$Argmethod" percent2)" ] && case "$Argmethod" in
-          maskblur|cutblur|finalalpha|finalstretch) Append="" ;;
+          maskblur|cutblur|finalalpha) Append="" ;;
         esac
       ;;
       number1)
@@ -4966,8 +4961,8 @@ declare_variables() {
 parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
-  Shortoptions="Cho:vVWX"
-  Longoptions="basename:,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,cacheformat::,output:,rmcache,showname,sub::,test::,verbose,version,video"
+  Shortoptions="BCho:vVWX"
+  Longoptions="basename::,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,cacheformat::,output:,rmcache,showname,sub::,test::,verbose,version,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
@@ -4977,7 +4972,7 @@ parse_options() {
   Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,maskkuwahara::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
   Longoptions="$Longoptions,substacks::,soft::"
-  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finallevel::,finalstretch::,finalthreshold::"
+  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finallevel::,finalcontrast::,finalthreshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error while parsing options."
@@ -4986,6 +4981,7 @@ parse_options() {
   while [ $# -gt 0 ]; do
     case "${1:-}" in
       --align)             Align="yes"                         ;;
+      -B)                  Outputbasename="auto"               ;;
       --basename)          Outputbasename="${2:-auto}"         ; shift ;;
       -C)                  Cachedir="auto"                     ;;
       --cache)             Cachedir="${2:-auto}"               ; shift ;;
@@ -5015,7 +5011,7 @@ parse_options() {
 --colorspace|\
 --maskblur|--maskcmd|--maskdespeckle|--maskenhance|--maskkuwahara|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
---finalalpha|--finalblur|--finalblur2|--finalcmd|--finallevel|--finalstretch|--finalthreshold|\
+--finalalpha|--finalblur|--finalblur2|--finalcmd|--finallevel|--finalcontrast|--finalthreshold|\
 --bg|--background|\
 --substacks)
                            maskarg_add "${1:-}" "${2:-}"       ; shift
