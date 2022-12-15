@@ -1878,11 +1878,14 @@ level_masks() {
 
   case "0" in
     0)
-      evaluate max "$Maskmax" "${Masklist[@]}"
-      evaluate min "$Maskmin" "${Masklist[@]}"
-      Levelmax="$(getmagickinfo "$Maskmax" "%[fx:maxima*100]")"
-      Levelmin="$(getmagickinfo "$Maskmin" "%[fx:minima*100]")"
-      Levelmin=0
+      [ -z "$Levelmax" ] && {
+        evaluate max "$Maskmax" "${Masklist[@]}"
+        Levelmax="$(getmagickinfo "$Maskmax" "%[fx:maxima*100]")"
+      }
+      [ -z "$Levelmin" ] && {
+        evaluate min "$Maskmin" "${Masklist[@]}"
+        Levelmin="$(getmagickinfo "$Maskmin" "%[fx:minima*100]")"
+      }
     ;;
     1)
   sendmagickmessage "STOPWATCH"
@@ -1933,18 +1936,16 @@ Imagemaxlevel=%[fx:maxima*100]
     evaluate max "$Maskmax" "${Masklist[@]}"
     Command="
   '$Maskmax'
-#  '$Maskmin'
-#    -append
     -separate
     -append
     -level ${Levelmin}%,${Levelmax}%
     -clamp
     $Tifstore
-    -write '$Maskmaxmin'
+    -write '$Maskmax'
     -delete 0"
     cmd "$Command"
     cmd_waitforready
-    mkclut_uniform "$Maskmaxmin" "$Clutimage"
+    mkclut_uniform "$Maskmax" "$Clutimage"
   }
 
   sendmagickmessage "STOPWATCH"
@@ -2328,9 +2329,9 @@ focus_maskmethod() {
     kirsch)
       Maskgenerator="$Maskgenerator
   $Sourceimage
-    -define convolve:scale=100%!
+    -define convolve:scale=50%!
     -define morphology:compose=Screen
-    -define convolve:bias=15%
+    -define convolve:bias=50%
     -morphology Convolve Kirsch:>"
     ;;
 
@@ -2432,6 +2433,7 @@ focus_generate_masks() {
   local Maskgenerator Maskgenerator_all= Basenamelist= Maskready= Maskmax Mode Line Imagename Command= Maskmd5 Count Sourceimagecode
   local Longoptions Parsedoptions
   local Firstimage Lastimage
+  local Levelmin Levelmax
 
   Longoptions="first:,last:"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
@@ -2508,6 +2510,12 @@ $(focus_maskmethod "$Sourceimagecode" "$Firstimage" "$Lastimage")"
       Argbasename="$Argmethod.$Maskmd5"
       #Argbasename="${Argmethod}${Argoptions}.$Sourcemd5"
       maskarg_store "$Count"
+  Maskgenerator="$Maskgenerator
+    # level range
+    -format '$Argbasename:MAX=%[fx:maxima*100]\n'
+    -write info:
+    -format '$Argbasename:MIN=%[fx:minima*100]\n'
+    -write info:"
 
       ## Check if mask already exists
       Maskready="no"
@@ -2572,7 +2580,9 @@ ${Maskgenerator_all}"
         [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/levelclut$Argclut.$Argbasename" ] && {
           sendmagickmessage "NOTE:Skipping mask leveling, already done: $Argbasename"
         } || {
-          level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage" --clut="${Argclut:-yes}"
+          Levelmax="$(grep "$Argbasename:MAX" "$Magickfifolog" | sort -n | tail -n1 | cut -d= -f2)"
+          Levelmin="$(grep "$Argbasename:MIN" "$Magickfifolog" | sort -n | head -n1 | cut -d= -f2)"
+          level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage" --clut="${Argclut:-yes}" --min="$Levelmin" --max="$Levelmax"
           [ "$Masktocache" = "yes" ] && :> "$Cachedir/levelclut$Argclut.$Argbasename"
         }
       }
@@ -2586,6 +2596,7 @@ focus_merge_masks() {
 
   local Mergemask Mergecode Methodnumber= Mergemethod
   local Command Count
+  local Levelmin Levelmax
   local Firstimage Lastimage
 
   [ "$Maskmethodnumber" = "0" ] && {
@@ -2822,6 +2833,10 @@ focus_merge_masks() {
 ${Mergecode//"NUMBER"/"$(printnum "$Count")"}
   mpr:mergemask
     -clamp
+    -format '$Mergemaskbasename:MAX=%[fx:maxima*100]\n'
+    -write info:
+    -format '$Mergemaskbasename:MIN=%[fx:minima*100]\n'
+    -write info:
     $Tifstore 
     -write '$Mergemask'
     $(showimagecode "$Mergemask")
@@ -2834,12 +2849,14 @@ ${Mergecode//"NUMBER"/"$(printnum "$Count")"}
   }
 
   # --masklevel
+  Levelmax="$(grep "$Mergemaskbasename:MAX" "$Magickfifolog" | sort -n | tail -n1 | cut -d= -f2)"
+  Levelmin="$(grep "$Mergemaskbasename:MIN" "$Magickfifolog" | sort -n | head -n1 | cut -d= -f2)"
   maskarg_single "masklevel" && {
     Newbasename="${Mergemaskbasename}_${Firstimage}..${Lastimage},level=$Argoptions"
     [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/$Newbasename" ] && {
       sendmagickmessage "NOTE:--masklevel: Skipping, mask is already leveled."
     } || {
-      level_masks --name="$Mergemaskbasename" --round="$Argthreshold1" --min="${Argpercent1}" --max="${Argpercent2}" --output="$Newbasename" --first="$Firstimage" --last="$Lastimage"
+      level_masks --name="$Mergemaskbasename" --round="$Argthreshold1" --min="${Argpercent1:-$Levelmin}" --max="${Argpercent2:-$Levelmax}" --output="$Newbasename" --first="$Firstimage" --last="$Lastimage"
       [ "$Masktocache" = "yes" ] && :> "$Cachedir/$Newbasename"
     }
     Mergemaskbasename="$Newbasename"
@@ -4510,13 +4527,13 @@ maskarg_short() {
       percent1)
         [ -n "$Argpercent1" ]    && Append=",p$Argpercent1"
         [ "$Argpercent1" = "$(maskarg_defaultvalue "$Argmethod" percent1)" ] && case "$Argmethod" in
-          maskblur|cutblur|finalstretch) Append="" ;;
+          maskblur|cutblur|finalalpha|finalstretch) Append="" ;;
         esac
       ;;
       percent2)
         [ -n "$Argpercent2" ]    && Append=",P$Argpercent2"
         [ "$Argpercent2" = "$(maskarg_defaultvalue "$Argmethod" percent2)" ] && case "$Argmethod" in
-          maskblur|cutblur|finalstretch) Append="" ;;
+          maskblur|cutblur|finalalpha|finalstretch) Append="" ;;
         esac
       ;;
       number1)
