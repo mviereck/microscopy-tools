@@ -28,8 +28,8 @@ General options:
      --align              Align images.
      --basename [=NAME]   Base name [+path] for output image. 
  -C, --cache [=DIR]       Store generated masks and images in directory DIR.
-                          They can be reused in later runs of imfuse.
-                          Default DIR: ./cache.imfuse
+                          They can be re-used in later runs of imfuse. See also
+                          option --rmcache. Default DIR: ~/.cache/imfuse
      --cacheformat=FORMAT  Store cache files in format FORMAT. Default: $(maskarg_defaultvalue cacheformat word1)
                           Should be a lossless format like tif or png.
                           mpc is optimized for fast access by ImageMagick,
@@ -45,7 +45,7 @@ General options:
                           ARG can be a % value or an absolute value for MB.
  -o, --output=FILE        Result image file name. See also --basename.
      --revert             Revert order of source images.
-     --rmcache            Remove all cache.imfuse* folders below pwd and exit.
+     --rmcache            Clean cache and exit.
      --version            Show imfuse version and exit.
      --video              Generate a video of shown intermediate images.
  -V                       Show intermediate images with image viewer geeqie.
@@ -4797,7 +4797,7 @@ trap_sigint() {
     note "Received SIGINT"
     [ -n "$Magickscriptpid" ] && kill "$Magickscriptpid"
     multicore_break
-    finish 130
+    finish 1
     :
   } || {
     note "Received SIGINT in subshell $SHLVL: $$"
@@ -4821,20 +4821,33 @@ finish() {
   done
   echo "" >&2
 
+  # magick -script
   [ -n "$Magickmessagepid" ] && kill "$Magickmessagepid"
   exec 3>&-
   rm -f "$Magickfifo" "$Magickfifolog" >/dev/null 2>&1
 
   #[ -f "$Magickscriptlog" ] && cp "$Magickscriptlog" .
 
+  # cache
   [ -f "${Showimage:-}" ] && rm "$Showimage"
   [ "$Keepcache" = "no" ] && [ -d "$Cachedir" ] && rm -R "$Cachedir"
+  [ -n "$Cachebasedir" ] && case "$Singleaction" in
+    --rmcache)
+      note "Option --rmcache: Cleaning cache: $Cachebasedir"
+      [ -d "$Cachebasedir" ] && rm -R "$Cachebasedir"
+    ;;
+    *)
+      note "Current cache size: $(du -hs "$Cachebasedir" 2>/dev/null | tr "\t" " " || echo "0")
+  You can clean the cache folder with option --rmcache."
+    ;;
+  esac
 
-  #jobs
+  # jobs
   trap - SIGINT
   trap - EXIT
   jobs -l -r
   wait
+
   exit "${1:-0}"
 }
 declare_variables() {
@@ -4870,6 +4883,7 @@ declare_variables() {
   eval $Arglist
 
   Align=""
+  Cachebasedir=""
   Cachedir=""
   Colorspace=""
   Colorspacechannel=""
@@ -5191,15 +5205,17 @@ main_setup() {
   local Resultimage_check
 
   # --cache
+  Cachebasedir="$HOME/.cache/imfuse"
   [ -n "$Cachedir" ] && {
     Masktocache="yes"
     Keepcache="yes"
     [ "$Cachedir" = "auto" ] && Cachedir=""
   }
   Cachedir="${Cachedir//"~"/"$HOME"}"
+  [ -n "$Cachedir" ] && Cachebasedir="$Cachedir"
   case "$Masktocache" in
-    yes) [ -z "$Cachedir" ] && Cachedir="./cache.imfuse" ;;
-    no)  [ -z "$Cachedir" ] && Cachedir="./cache.imfuse.$Imfusepid" ;;
+    yes) [ -z "$Cachedir" ] && Cachedir="$Cachebasedir" ;;
+    no)  [ -z "$Cachedir" ] && Cachedir="$Cachebasedir.$Imfusepid" ;;
   esac
   mkdir -p "$Cachedir"   || error "Error creating cache folder $Cachedir"
   Testimage="$Cachedir/test.png"
@@ -5351,25 +5367,20 @@ main() {
       license
       finish
     ;;
-    --rmcache)
-      note "Remowing imfuse cache folders below current directory."
-      env IFS=$'\n' find . -name 'cache.imfuse*' -type d | while read Line; do
-        echo "$Line"
-        rm -r "$Line"
-      done
-      finish
-    ;;
     --version)
       note "$Version"
       finish
     ;;
   esac
 
-  [ "$Sourceimagenumber" = "0" ] && error "No source images provided."
+  [ "$Sourceimagenumber" = "0" ] && [ -z "$Singleaction" ] && error "No source images provided."
   main_setup
   multicore_init
 
   case "$Singleaction" in
+    --rmcache)
+      finish
+    ;;
     --showname)
       echo "$Resultimage"
       finish
