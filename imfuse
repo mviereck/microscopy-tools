@@ -167,9 +167,12 @@ Step 2: Mask generation
                       Adjust only sigma, radius 0 is adjusted automatically.
  --freichen [=ARG]    Frei-Chen edge detection.
                       ARG additionally takes arguments: 
-                        n        mode number   Default: Combination of 1 and 2.
+                        n        mode number       Default: $(maskarg_defaultvalue freichen number1)
+                        (word1)  compose mode      Default: $(maskarg_defaultvalue freichen word1)
                       Possible mode numbers at:
                       http://www.imagemagick.org/Usage/convolve/#freichen
+                      Composen mode can be one of 'magick -list compose'.
+                      No useful settings known other than default.
  --kirsch [=ARG]      Kirsch edge detection. 
  --laplacian [=ARG]   Laplacian edge detection.
                       ARG additionally takes argument: 
@@ -2314,35 +2317,12 @@ focus_maskmethod() {
     ;;
 
     freichen)
-      case $Argnumber1 in
-        "")
-          Maskgenerator="$Maskgenerator
-  (
+      Maskgenerator="$Maskgenerator
   $Sourceimage
     -define convolve:scale=100%!
-    -define morphology:compose=Screen
-    -define convolve:bias=5%
-    -morphology Convolve FreiChen:1>
-  )
-  (
-  $Sourceimage
-    -define convolve:scale=100%!
-    -define morphology:compose=Screen
-    -define convolve:bias=5%
-    -morphology Convolve FreiChen:2>
-  )
-    -compose Screen
-    -composite"
-        ;;
-        *)
-          Maskgenerator="$Maskgenerator
-  $Sourceimage
-    -define convolve:scale=100%!
-    -define morphology:compose=Screen
+    -define morphology:compose=${Argword1}
     -define convolve:bias=10%
     -morphology Convolve FreiChen:${Argnumber1}>"
-        ;;
-      esac
     ;;
 
     kirsch)
@@ -4141,7 +4121,7 @@ maskarg_checkallowed() {
             *) error "--$Argmethod does not take argument: $Arg" ;;
           esac
         ;;
-        compose|comet|compass|maskmerge|soft)
+        compose|comet|compass|freichen|maskmerge|soft)
           checkmagicklist compose "${Arg%2}" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose one out of 'magick -list compose'"
           Argword1="$(checkmagicklist compose "${Arg%2}" print)$(tr -d -c "2" <<< "$Arg")"
@@ -4314,7 +4294,7 @@ maskarg_defaultvalue() {
     ;;
     number1)
       case "$Argmethod" in
-        freichen)       Output="" ;;
+        freichen)       Output="0" ;;
         laplacian)      Output="3" ;;
         maskdespeckle|maskenhance)
                         Output="1" ;;
@@ -4452,6 +4432,7 @@ maskarg_defaultvalue() {
         depthmap)       Output="NO_FILE_SPECIFIED" ;;
         diffstat)       Output="Median" ;;
         evaluate)       Output="Max" ;;
+        freichen)       Output="Screen" ;;
         maskblur)       Output="" ;;
         masklevel)      Output="all" ;;
         maskmerge)      Output="Screen" ;;
@@ -4540,6 +4521,9 @@ maskarg_short() {
       ;;
       number1)
         [ -n "$Argnumber1" ]     && Append=",n$Argnumber1"
+        [ "$Argnumber1" = "$(maskarg_defaultvalue "$Argmethod" number1)" ] && case "$Argmethod" in
+          freichen) Append="" ;;
+        esac
       ;;
       number2)
         [ -n "$Argnumber2" ]     && Append=",N$Argnumber2"
@@ -4614,7 +4598,7 @@ maskarg_short() {
         esac
         #[ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
         [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
-          comet|compass|diffstat|statistic|masklevel|maskmerge|soft) Append="" ;;
+          comet|compass|diffstat|freichen|statistic|masklevel|maskmerge|soft) Append="" ;;
         esac
       ;;
       word2)
