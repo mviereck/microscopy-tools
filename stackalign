@@ -189,7 +189,7 @@ align_focusstack() {
     [ "$X" -gt "$Lmax" ] && Lmax="$X"
     [ "$Y" -gt "$Tmax" ] && Tmax="$Y"
     [ "$((X+W))" -lt "$Rmin" ] && Rmin="$((X+W))"
-    [ "$((Y+H))" -lt "$Bmin" ] && Bmin="$((X+W))"
+    [ "$((Y+H))" -lt "$Bmin" ] && Bmin="$((Y+H))"
   done < <(grep "valid area" <<< "$Log")
   X="$Lmax"
   Y="$Tmax"
