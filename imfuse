@@ -542,9 +542,19 @@ Step 5: Post processing
  --finalcmd [=ARG]    Custom ImageMagick option to apply on result image.
                       ARG takes argument:
                         (word)   string            Default: $(maskarg_defaultvalue finalcmd word1)
-                      string can be e.g. '-auto-gamma'. Avoid comma , in string.
+                      string can be e.g. '-auto-level'. Avoid comma , in string.
                       https://imagemagick.org/script/command-line-options.php
- --finalcontrast      Enhance result image contrast.
+ --finalgamma         Set gamma of image. Can improve contrast.
+                        (word)   value/auto        Default: $(maskarg_defaultvalue finalgamma word1)
+                      Gamma less than 1.0 darkens and gamma greater than 1.0
+                      lightens the image. Try 'auto' or values from 0.8 to 2.3.
+                      Compare ImageMagick options -gamma and -auto-gamma.
+ --finalsharpen [=ARG] Sharpen result image.
+                      ARG takes arguments:
+                        r        radius            Default: $(maskarg_defaultvalue finalsharpen radius1)
+                        s        sigma             Default: $(maskarg_defaultvalue finalsharpen sigma1)
+                      Adjust only sigma, radius 0 is adjusted automatically.
+                      Compare ImageMagick option -adaptive-sharpen.
  --finalthreshold [=ARG]  Make low (or high) contrast area transparent.
                       ARG takes arguments:
                         t        threshold1        Default: $(maskarg_defaultvalue finalthreshold threshold1)%
@@ -1000,16 +1010,17 @@ check_outputname() {
 
   Resultbasename=""
   Resulttimestamp="$(date +%y-%m-%d_%H.%M)"
-  Resultbasename="${Resultbasename}${Resulttimestamp}"
-  Resultbasename="${Resultbasename}_${Fusemd5sum}"
+  #Resultbasename="${Resultbasename}${Resulttimestamp}"
+  Resultbasename="${Resultbasename}_md${Fusemd5sum}"
   [ "$Storelayered" = "yes" ] && Resultbasename="_layered"
+  Resultsearchmask="*$Resultbasename"
 
   [ -z "${Outputdir:-}" ] && Outputdir="./"
   case $Resultimage in
-    "") Resultimage="${Outputbasename:-"imfuse"}.${Resultbasename}" ;;
-    *) [ "$(basename "$Resultimage")" = "$Resultimage" ] && Resultimage="{$Resultimage}" ;;
+    "") Resultimage="${Outputbasename:-"imfuse.$Resulttimestamp"}${Resultbasename}" ;;
   esac
   [ "$Video" ] && Video="${Outputdir}/${Resultimage}.webm"
+  # cut off file extension
   [ "$(rev <<< "$Resultimage" | cut -d. -f1)" = "$(rev <<< "$Imageformat")" ] && {
     Resultimage="$(rev <<< "$Resultimage" | cut -d. -f2- | rev)"
   }
@@ -1024,6 +1035,7 @@ check_outputname() {
     ;;
   esac
   Resultimage="${Outputdir}/${Resultimage}.${Imageformat}"
+  Resultsearchmask="$Resultsearchmask.${Imageformat}"
 
   Parsedoptions="${Parsedoptions#" "}"
 
@@ -3614,12 +3626,29 @@ focus_main() {
     -delete 0"
                   cmd "$Command"
                 ;;
-                finalcontrast)
+                finalgamma)
+                  case "$Argword1" in
+                    auto)
+                      Command="
+  ${Substackresultpost[$Substackstep]}
+    -auto-gamma" 
+                    ;;
+                    *)
+                      Command="
+  ${Substackresultpost[$Substackstep]}
+    -gamma $Argword1"
+                    ;;
+                  esac
+                  Command="$Command
+    $Tifstorealpha
+    -write ${Substackresultpost[$Substackstep]}
+    -delete 0"
+                  cmd "$Command"
+                ;;
+                finalsharpen)
                   Command="
   ${Substackresultpost[$Substackstep]}
-    -auto-gamma
-    -auto-level
-    -contrast
+    -adaptive-sharpen ${Argradius1}x${Argsigma1}
     $Tifstorealpha
     -write ${Substackresultpost[$Substackstep]}
     -delete 0"
@@ -4045,7 +4074,7 @@ maskarg_checkallowed() {
     ;;
     radius1)
       case "$Argmethod" in
-        blur|comet|cutblur|dog|finalblur2|log|maskblur|maskkuwahara) ;;
+        blur|comet|cutblur|dog|finalblur2|finalsharpen|log|maskblur|maskkuwahara) ;;
         morphology|cutmorph|maskmorph) ;;
         diffstat|statistic|maskstat) ;;
         substacks) ;;
@@ -4064,7 +4093,7 @@ maskarg_checkallowed() {
     sigma1)
       case "$Argmethod" in
         blur|comet|dog|log) ;;
-        cutblur|cutsoft|finalblur|finalthreshold|maskblur) ;;
+        cutblur|cutsoft|finalblur|finalsharpen|finalthreshold|maskblur) ;;
         *) error "--$Argmethod does not take argument sigma1: s$Arg" ;;
       esac
     ;;
@@ -4126,14 +4155,9 @@ maskarg_checkallowed() {
           Argcolorspace="$(checkmagicklist colorspace "$Arg" print)"
           Argword1=""
         ;;
+        cmd|cmddiff|cutcmd|finalcmd|maskcmd) ;;
         depthmap)
           [ -f "$Arg" ] || error "--$Argmethod: File not found: $Arg"
-        ;;
-        masklevel)
-          case "$Arg" in
-            all|substack) ;;
-            *) error "--$Argmethod does not take argument: $Arg" ;;
-          esac
         ;;
         compose|comet|compass|freichen|maskmerge|soft)
           checkmagicklist compose "${Arg%2}" || error "--$Argmethod: unknown argument for word1: $Arg
@@ -4151,7 +4175,14 @@ maskarg_checkallowed() {
             *) error "--$Argmethod: unknown argument for word1: $Arg" ;;
           esac
         ;;
-        cmd|cmddiff|cutcmd|finalcmd|maskcmd) ;;
+        finalgamma)
+        ;;
+        masklevel)
+          case "$Arg" in
+            all|substack) ;;
+            *) error "--$Argmethod does not take argument: $Arg" ;;
+          esac
+        ;;
         morphology|cutmorph|maskmorph)
           checkmagicklist "morphology" "$(tr -d '2' <<< "$Arg")" || error "--$Argmethod:  unknown argument for word1: $Arg
   Please choose one out of 'magick -list morphology'"
@@ -4352,6 +4383,7 @@ maskarg_defaultvalue() {
         diffstat)       Output="3" ;;
         dog)            Output="0" ;;
         finalblur2)     Output="4" ;;
+        finalsharpen)   Output="0" ;;
         log)            Output="0" ;;
         maskblur)       Output="0" ;;
         maskkuwahara)   Output="4" ;;
@@ -4379,6 +4411,7 @@ maskarg_defaultvalue() {
         cutsoft)        Output="1" ;;
         dog)            Output="0.3" ;;
         finalblur)      Output="5" ;;
+        finalsharpen)   Output="1" ;;
         finalthreshold) Output="0" ;;
         log)            Output="0.2" ;;
         maskblur)       Output="1" ;;
@@ -4421,7 +4454,7 @@ maskarg_defaultvalue() {
                         Output="merge" ;;
         cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
                         Output="focus" ;;
-        finalalpha|finalblur|finalblur2|finalcmd|finalcontrast|finalthreshold)
+        finalalpha|finalblur|finalblur2|finalcmd|finalgamma|finalsharpen|finalthreshold)
                         Output="postfocus" ;;
         bg)             Output="background" ;;
         colorspace|finallevel|masklevel|maskmerge|soft)
@@ -4444,6 +4477,7 @@ maskarg_defaultvalue() {
         depthmap)       Output="NO_FILE_SPECIFIED" ;;
         diffstat)       Output="Median" ;;
         evaluate)       Output="Max" ;;
+        finalgamma)     Output="auto" ;;
         freichen)       Output="Screen" ;;
         maskblur)       Output="" ;;
         masklevel)      Output="all" ;;
@@ -4501,7 +4535,7 @@ maskarg_short() {
       radius1)
         [ -n "$Argradius1" ]     && Append=",r$Argradius1"
         [ "$Argradius1" = "$(maskarg_defaultvalue "$Argmethod" radius1)" ] && case "$Argmethod" in
-          blur|comet|cutblur|dog|log|maskblur) Append="" ;;
+          blur|comet|cutblur|dog|finalsharpen|log|maskblur) Append="" ;;
         esac
       ;;
       radius2)
@@ -4610,7 +4644,7 @@ maskarg_short() {
         esac
         #[ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
         [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
-          comet|compass|diffstat|freichen|statistic|masklevel|maskmerge|soft) Append="" ;;
+          comet|compass|diffstat|finalgamma|freichen|statistic|masklevel|maskmerge|soft) Append="" ;;
         esac
       ;;
       word2)
@@ -4923,6 +4957,7 @@ declare_variables() {
   Resultdepthmap=""
   Resultimage=""
   Resultmask=""
+  Resultsearchmask=""
   Resulttimestamp=""
   Showimage=""
   Showimageprocessing="no"
@@ -4972,7 +5007,7 @@ parse_options() {
   Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,maskkuwahara::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
   Longoptions="$Longoptions,substacks::,soft::"
-  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finallevel::,finalcontrast::,finalthreshold::"
+  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finallevel::,finalgamma::,finalsharpen::,finalthreshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error while parsing options."
@@ -5011,7 +5046,7 @@ parse_options() {
 --colorspace|\
 --maskblur|--maskcmd|--maskdespeckle|--maskenhance|--maskkuwahara|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
---finalalpha|--finalblur|--finalblur2|--finalcmd|--finallevel|--finalcontrast|--finalthreshold|\
+--finalalpha|--finalblur|--finalblur2|--finalcmd|--finallevel|--finalgamma|--finalsharpen|--finalthreshold|\
 --bg|--background|\
 --substacks)
                            maskarg_add "${1:-}" "${2:-}"       ; shift
@@ -5278,11 +5313,14 @@ $Parsedoptions"
 
   # --force
   [ -z "$Force" ] && {
-    Resultimage_check="$(find . -wholename "${Resultimage//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
+    #Resultimage_check="$(find . -wholename "${Resultimage//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
+    Resultimage_check="$(find . -wholename "${Resultsearchmask}" | tail -n1)"
     [ -n "$Resultimage_check" ] && {
       Resultimage="$Resultimage_check"
-      Resultdepthmap="$(find . -wholename "${Resultdepthmap//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
-      Resultmask="$(find . -wholename "${Resultmask//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
+      #Resultdepthmap="$(find . -wholename "${Resultdepthmap//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
+      Resultdepthmap="$(find . -wholename "${Resultsearchmask}.depthmap.${Imageformat}" | tail -n1)"
+      #Resultmask="$(find . -wholename "${Resultmask//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
+      Resultmask="$(find . -wholename "${Resultsearchmask}.mask.${Imageformat}" | tail -n1)"
       note "Output image already exists with matching md5sum.
   You can force imfuse to run nonetheless with option --force."
       showresult
