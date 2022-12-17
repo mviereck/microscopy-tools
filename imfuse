@@ -498,11 +498,11 @@ Step 4: Stack fusion
 Step 5: Post processing
   The order of the options on cli matters. Noteably --alpha with percent values
   different from =0%,100% affects the following percent arguments.
-  Using --finallevel first helps to unify useful percent values and to have
+  Using --finalmasklevel first helps to unify useful percent values and to have
   a good start for --finalalpha.
-  All options except --finallevel can be specified multiple times.
+  All options except --finalmasklevel can be specified multiple times.
 
- --finallevel         Levels result mask into visible spectrum from 0%..100%.
+ --finalmasklevel         Levels result mask into visible spectrum from 0%..100%.
                       This option is applied before all following options.
  --finalalpha [=ARG]  Generate transparent image using the contrast mask as 
                       alpha channel (=transparency channel).
@@ -546,8 +546,9 @@ Step 5: Post processing
                       https://imagemagick.org/script/command-line-options.php
  --finalgamma         Set gamma of image. Can improve contrast.
                         (word)   value/auto        Default: $(maskarg_defaultvalue finalgamma word1)
-                      Gamma less than 1.0 darkens and gamma greater than 1.0
-                      lightens the image. Try 'auto' or values from 0.8 to 2.3.
+                      Gamma less than 1.0 darkens the image,
+                      and gamma greater than 1.0 lightens the image.
+                      'auto' sets gamma automatically.
                       Compare ImageMagick options -gamma and -auto-gamma.
  --finalsharpen [=ARG] Sharpen result image.
                       ARG takes arguments:
@@ -927,8 +928,9 @@ printfreememory() {
 
 ### Files
 
-check_outputname() {
-  # Generate a unique output name and parsed option string for EXIF meta data
+check_exifstring() {
+  # Generate parsed option string for EXIF meta data
+  local Count
 
   Parsedoptions=""
   [ "$Align" = "yes" ] && Parsedoptions="$Parsedoptions --align"
@@ -981,7 +983,7 @@ check_outputname() {
   done
 
   # step postprocessing
-  maskarg_single "finallevel" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
+  maskarg_single "finalmasklevel" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argtype" in
@@ -1006,24 +1008,24 @@ check_outputname() {
   [ "$Storelayered" = "yes" ] && Parsedoptions="$Parsedoptions --layered"
   [ -n "$Testsetup" ]         && Parsedoptions="$Parsedoptions --test=$Testarg"
 
+  Parsedoptions="${Parsedoptions#" "}"
+}
+check_outputname() {
   Fusemd5sum="$(md5cut "$Sourcemd5 ${Imoptions[*]} ${Imarguments[*]} $Testsetup$Testarg" )"
 
   Resultbasename=""
-  Resulttimestamp="$(date +%y-%m-%d_%H.%M)"
-  #Resultbasename="${Resultbasename}${Resulttimestamp}"
   Resultbasename="${Resultbasename}_md${Fusemd5sum}"
   [ "$Storelayered" = "yes" ] && Resultbasename="_layered"
   Resultsearchmask="*$Resultbasename"
 
   [ -z "${Outputdir:-}" ] && Outputdir="./"
-  case $Resultimage in
-    "") Resultimage="${Outputbasename:-"imfuse.$Resulttimestamp"}${Resultbasename}" ;;
-  esac
-  [ "$Video" ] && Video="${Outputdir}/${Resultimage}.webm"
+  [ -z "$Resultimage" ] && Resultimage="${Outputbasename:-"imfuse"}${Resultbasename}"
+
   # cut off file extension
   [ "$(rev <<< "$Resultimage" | cut -d. -f1)" = "$(rev <<< "$Imageformat")" ] && {
     Resultimage="$(rev <<< "$Resultimage" | cut -d. -f2- | rev)"
   }
+
   case "$Extendedsave" in
     yes)
       Resultdepthmap="${Outputdir}/${Resultimage}.depth.${Imageformat}"
@@ -1034,10 +1036,9 @@ check_outputname() {
       Resultmask="${Cachedir}/${Resultimage}.mask.${Imageformat}"
     ;;
   esac
+  [ "$Video" ] && Video="${Outputdir}/${Resultimage}.webm"
   Resultimage="${Outputdir}/${Resultimage}.${Imageformat}"
   Resultsearchmask="$Resultsearchmask.${Imageformat}"
-
-  Parsedoptions="${Parsedoptions#" "}"
 
   return 0
 }
@@ -3571,7 +3572,7 @@ focus_main() {
         esac
         cmd "$Command"
 
-        maskarg_single finallevel && [ "$Substackstep" = "1" ] && level_masks "${Substackmaskpost[@]}"
+        maskarg_single finalmasklevel && [ "$Substackstep" = "1" ] && level_masks "${Substackmaskpost[@]}"
 
         for Count in $(seq "$Imoptionsnumber"); do
           maskarg_parse "$Count"
@@ -4457,7 +4458,7 @@ maskarg_defaultvalue() {
         finalalpha|finalblur|finalblur2|finalcmd|finalgamma|finalsharpen|finalthreshold)
                         Output="postfocus" ;;
         bg)             Output="background" ;;
-        colorspace|finallevel|masklevel|maskmerge|soft)
+        colorspace|finalmasklevel|masklevel|maskmerge|soft)
                         Output="single" ;;
         substacks)      Output="substack" ;;
         *) error "maskarg_defaultvalue(): Unknown type for method $Argmethod" ;;
@@ -4477,7 +4478,7 @@ maskarg_defaultvalue() {
         depthmap)       Output="NO_FILE_SPECIFIED" ;;
         diffstat)       Output="Median" ;;
         evaluate)       Output="Max" ;;
-        finalgamma)     Output="auto" ;;
+        finalgamma)     Output="0.4545" ;;
         freichen)       Output="Screen" ;;
         maskblur)       Output="" ;;
         masklevel)      Output="all" ;;
@@ -5007,7 +5008,7 @@ parse_options() {
   Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,maskkuwahara::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
   Longoptions="$Longoptions,substacks::,soft::"
-  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finallevel::,finalgamma::,finalsharpen::,finalthreshold::"
+  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finalmasklevel::,finalgamma::,finalsharpen::,finalthreshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error while parsing options."
@@ -5046,7 +5047,7 @@ parse_options() {
 --colorspace|\
 --maskblur|--maskcmd|--maskdespeckle|--maskenhance|--maskkuwahara|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
---finalalpha|--finalblur|--finalblur2|--finalcmd|--finallevel|--finalgamma|--finalsharpen|--finalthreshold|\
+--finalalpha|--finalblur|--finalblur2|--finalcmd|--finalmasklevel|--finalgamma|--finalsharpen|--finalthreshold|\
 --bg|--background|\
 --substacks)
                            maskarg_add "${1:-}" "${2:-}"       ; shift
@@ -5284,6 +5285,7 @@ main_setup() {
 
   # --output, --basename
   check_outputname
+  check_exifstring
 
   verbose "
   imfuse Version:                     $Version
