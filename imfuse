@@ -502,7 +502,7 @@ Step 5: Post processing
   a good start for --finalalpha.
   All options except --finalmasklevel can be specified multiple times.
 
- --finalmasklevel         Levels result mask into visible spectrum from 0%..100%.
+ --finalmasklevel     Levels result mask into visible spectrum from 0%..100%.
                       This option is applied before all following options.
  --finalalpha [=ARG]  Generate transparent image using the contrast mask as 
                       alpha channel (=transparency channel).
@@ -689,7 +689,7 @@ traperror() {
 ### Misc
 
 calc() {
-  LC_ALL=C awk "BEGIN { OFMT=\"%f\"; print $* }"
+  LC_ALL=C awk "BEGIN { OFMT=\"%f\"; print $**1 }"
 }
 checkmagicklist() {
   local Check
@@ -2465,6 +2465,7 @@ focus_generate_masks() {
 
       Sourceimagecode="
   mpr:sourceimage
+    -alpha off
     # --colorspace
     -colorspace $Colorspace"
       [ -n "$Colorspacechannel" ] && Sourceimagecode="$Sourceimagecode
@@ -2475,6 +2476,7 @@ focus_generate_masks() {
       [ -n "$Argcolorspace" ] || [ -n "$Argchannel" ] && {
         Sourceimagecode="
   mpr:sourceimage
+    -alpha off
     # =C
     -colorspace ${Argcolorspace:-"$Colorspace"}"
         [ -n "$Argchannel" ] && Sourceimagecode="$Sourceimagecode
@@ -2588,8 +2590,8 @@ ${Maskgenerator_all}"
         [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/levelclut$Argclut.$Argbasename" ] && {
           sendmagickmessage "NOTE:Skipping mask leveling, already done: $Argbasename"
         } || {
-          Levelmax="$(grep "$Argbasename:MAX" "$Magickfifolog" | sort -n | tail -n1 | cut -d= -f2)"
-          Levelmin="$(grep "$Argbasename:MIN" "$Magickfifolog" | sort -n | head -n1 | cut -d= -f2)"
+          Levelmax="$(grep "$Argbasename:MAX" "$Magickfifolog" | cut -d= -f2 | LC_ALL=C awk '{ OFMT="%f"; print $1*1 }' | sort -n | tail -n1)"
+          Levelmin="$(grep "$Argbasename:MIN" "$Magickfifolog" | cut -d= -f2 | LC_ALL=C awk '{ OFMT="%f"; print $1*1 }' | sort -n | head -n1)"
           level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage" --clut="${Argclut:-yes}" --min="$Levelmin" --max="$Levelmax"
           [ "$Masktocache" = "yes" ] && :> "$Cachedir/levelclut$Argclut.$Argbasename"
         }
@@ -2857,8 +2859,8 @@ ${Mergecode//"NUMBER"/"$(printnum "$Count")"}
   }
 
   # --masklevel
-  Levelmax="$(grep "$Mergemaskbasename:MAX" "$Magickfifolog" | sort -n | tail -n1 | cut -d= -f2)"
-  Levelmin="$(grep "$Mergemaskbasename:MIN" "$Magickfifolog" | sort -n | head -n1 | cut -d= -f2)"
+  Levelmax="$(grep "$Mergemaskbasename:MAX" "$Magickfifolog" | cut -d= -f2 | LC_ALL=C awk '{ OFMT="%f"; print $1*1 }' | sort -n | tail -n1)"
+  Levelmin="$(grep "$Mergemaskbasename:MIN" "$Magickfifolog" | cut -d= -f2 | LC_ALL=C awk '{ OFMT="%f"; print $1*1 }' | sort -n | head -n1)"
   maskarg_single "masklevel" && {
     Newbasename="${Mergemaskbasename}_${Firstimage}..${Lastimage},level=$Argoptions"
     [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/$Newbasename" ] && {
@@ -5008,7 +5010,7 @@ parse_options() {
   Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,maskkuwahara::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
   Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
   Longoptions="$Longoptions,substacks::,soft::"
-  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finalmasklevel::,finalgamma::,finalsharpen::,finalthreshold::"
+  Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finalgamma::,finalmasklevel::,finalsharpen::,finalthreshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
 
   Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error while parsing options."
@@ -5047,7 +5049,7 @@ parse_options() {
 --colorspace|\
 --maskblur|--maskcmd|--maskdespeckle|--maskenhance|--maskkuwahara|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
 --cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
---finalalpha|--finalblur|--finalblur2|--finalcmd|--finalmasklevel|--finalgamma|--finalsharpen|--finalthreshold|\
+--finalalpha|--finalblur|--finalblur2|--finalcmd|--finalgamma|--finalmasklevel|--finalsharpen|--finalthreshold|\
 --bg|--background|\
 --substacks)
                            maskarg_add "${1:-}" "${2:-}"       ; shift
@@ -5248,7 +5250,7 @@ main_setup() {
   [ -n "$Cachedir" ] && Cachebasedir="$Cachedir"
   case "$Masktocache" in
     yes) [ -z "$Cachedir" ] && Cachedir="$Cachebasedir" ;;
-    no)  [ -z "$Cachedir" ] && Cachedir="$Cachebasedir.$Imfusepid" ;;
+    no)  [ -z "$Cachedir" ] && Cachedir="$Cachebasedir/$Imfusepid" ;;
   esac
   mkdir -p "$Cachedir"   || error "Error creating cache folder $Cachedir"
   Testimage="$Cachedir/test.png"
