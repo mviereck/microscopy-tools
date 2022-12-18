@@ -231,6 +231,7 @@ Step 2: Mask generation
                         c        colorspace channel
                         neg      negate
                         level    leveling          Default: $(maskarg_defaultvalue channel level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue channel mask)
                       Colorspace can be one of 'magick -list colorspace'
                       The color channel is a number from 0..31.
                       Compare 'magick -list colorspace'.
@@ -238,24 +239,31 @@ Step 2: Mask generation
                       ARG takes the general mask arguments:
                         w        weight
                         level    leveling          Default: $(maskarg_defaultvalue chroma level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue channel mask)
  --darkness [=ARG]    Darkness. Same as --channel=C=HSL,c2,neg
                       ARG takes the general mask arguments:
                         w        weight
                         level    leveling          Default: $(maskarg_defaultvalue darkness level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue channel mask)
  --lightness [=ARG]   Lightness. Same as --channel=C=HSL,c2
                       ARG takes the general mask arguments:
                         w        weight
                         level    leveling          Default: $(maskarg_defaultvalue lightness level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue channel mask)
  --saturation [=ARG]  Color saturation. Same as --channel=C=HSL,c1
                       ARG takes the general mask arguments:
                         w        weight
                         level    leveling          Default: $(maskarg_defaultvalue saturation level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue channel mask)
 
   Image comparision masks:
     Adding --compose with e.g. =Overlay with a rather low weight
     between w5..w25 can help to close gaps, especially in large dark areas.
 
  --compose [=ARG]     Composes evaluated min,max of source images with MODE.
+                      ARG takes the general mask arguments:
+                        level    leveling          Default: $(maskarg_defaultvalue compose level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue compose mask)
                       ARG additionally takes argument:
                         (word)   mode              Default: $(maskarg_defaultvalue compose word1)
                       Adding a '2', e.g. '--compose=overlay2' swaps min,max
@@ -265,6 +273,9 @@ Step 2: Mask generation
                         overlay interpolate colordodge hardlight reflect 
                         softburn softlight linearlight pegtoplight
  --depthmap [=ARG]    Use a previously created depth map to get focus areas.
+                      ARG takes the general mask arguments:
+                        level    leveling          Default: $(maskarg_defaultvalue depthmap level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue depthmap mask)
                       ARG additionally takes argument:
                         (word)   filename
                       Yet works well only if no --cut* options except
@@ -273,18 +284,33 @@ Step 2: Mask generation
                       change it in an image editor, and use this option to
                       create the focus image based on the adjusted depth map.
  --enfuse [=ARG]      Image comparision with a basic enfuse result.
+                      ARG takes the general mask arguments:
+                        level    leveling          Default: $(maskarg_defaultvalue enfuse level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue enfuse mask)
  --evaluate [=ARG]    Evaluates from all source images with mode MODE and
                       compares the result with each source image.
+                      ARG takes the general mask arguments:
+                        level    leveling          Default: $(maskarg_defaultvalue evaluate level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue evaluate mask)
                       ARG additionally takes arguments:
                         (word)   mode              Default: max
                       mode can be one of 'magick -list evaluate'
                       Compare --max, --min, --mean, --median.
  --max [=ARG]         Same as --evaluate=max. Brightest pixels of stack.
                       Result is similar to --lightness.
+                      ARG takes the general mask arguments:
+                        level    leveling          Default: $(maskarg_defaultvalue max level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue max mask)
  --mean [=ARG]        Same as --evaluate=mean. Average of pixels in stack.
+                        level    leveling          Default: $(maskarg_defaultvalue mean level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue mean mask)
  --median [=ARG]      Same as --evaluate=median. Median pixel of stack.
+                        level    leveling          Default: $(maskarg_defaultvalue median level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue median mask)
  --min [=ARG]         Same as --evaluate=min. Darkest pixels of stack.
                       Result is similar to --darkness.
+                        level    leveling          Default: $(maskarg_defaultvalue min level)
+                        mask     --mask*           Default: $(maskarg_defaultvalue min mask)
 
 Step 3: Mask merging
   The contrast masks generated in step 2 are merged into one per image.
