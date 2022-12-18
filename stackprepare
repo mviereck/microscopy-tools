@@ -395,73 +395,73 @@ parse_options() {
             Prepareoptions="$Prepareoptions
     -gamma IMAGEAUTOGAMMA
     -sigmoidal-contrast 3x50%
-    -sharpen 2x1"
+    -sharpen 0x1"
           ;;
           gamma2)
             Prepareoptions="$Prepareoptions
     -gamma IMAGEAUTOGAMMA
     -sigmoidal-contrast 5x50%
-    -sharpen 4x2"
+    -sharpen 0x2"
           ;;
           gamma3)
             Prepareoptions="$Prepareoptions
     -gamma IMAGEAUTOGAMMA
     -sigmoidal-contrast 7x50%
-    -sharpen 8x4"
+    -sharpen 0x4"
           ;;
           level1)
             Prepareoptions="$Prepareoptions
     -level IMAGEMINLEVEL%xIMAGEMAXLEVEL%
     -sigmoidal-contrast 3x50%
-    -sharpen 2x1"
+    -sharpen 0x1"
           ;;
           level2)
             Prepareoptions="$Prepareoptions
     -level IMAGEMINLEVEL%xIMAGEMAXLEVEL%
     -sigmoidal-contrast 5x50%
-    -sharpen 4x2"
+    -sharpen 0x2"
           ;;
           level3)
             Prepareoptions="$Prepareoptions
     -level IMAGEMINLEVEL%xIMAGEMAXLEVEL%
     -sigmoidal-contrast 7x50%
-    -sharpen 8x4"
+    -sharpen 0x4"
           ;;
           stretch1)
             Prepareoptions="$Prepareoptions
     -sigmoidal-contrast 3x50%
-    -sharpen 2x1
+    -sharpen 0x1
     -contrast-stretch IMAGEMINLEVELxIMAGEMAXLEVEL"
           ;;
           stretch2)
             Prepareoptions="$Prepareoptions
     -sigmoidal-contrast 5x50%
-    -sharpen 4x2
+    -sharpen 0x2
     -contrast-stretch IMAGEMINLEVELxIMAGEMAXLEVEL"
           ;;
           stretch3)
             Prepareoptions="$Prepareoptions
     -sigmoidal-contrast 7x50%
-    -sharpen 8x4
+    -sharpen 0x4
     -contrast-stretch IMAGEMINLEVELxIMAGEMAXLEVEL"
           ;;
           sharp1)
             Prepareoptions="$Prepareoptions
     -contrast
     -sigmoidal-contrast 3x50%
-    -sharpen 2x1"
+    -sharpen 0x1"
           ;;
           sharp2)
             Prepareoptions="$Prepareoptions
     -contrast
     -sigmoidal-contrast 5x50%
-    -sharpen 4x2"
+    -sharpen 0x2"
           ;;
           sharp3)
             Prepareoptions="$Prepareoptions
     -contrast
     -sigmoidal-contrast 7x50%
-    -sharpen 8x4"
+    -sharpen 0x4"
           ;;
           *)
             echo "Option --set: Unknown set '$Arg'" >&2
