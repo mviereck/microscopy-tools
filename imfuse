@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse - Combines focus stackshot images to one overall sharp image.
-Version="0.9.7-beta"
+Version="0.9.8-beta"
 
 ### Information
 
@@ -31,6 +31,7 @@ General options:
  -C, --cache [=DIR]       Store generated masks and images in directory DIR.
                           They can be re-used in later runs of imfuse. See also
                           option --rmcache. Default DIR: ~/.cache/imfuse
+                          For best performance the cache should be on an SSD.
      --cacheformat=FORMAT  Store cache files in format FORMAT. Default: $(maskarg_defaultvalue cacheformat word1)
                           Should be a lossless format like tif or png.
                           mpc is optimized for fast access by ImageMagick,
@@ -95,16 +96,30 @@ looses details and increases undesired seams. There's always a tradeoff.
 The default values are set rather low and mostly profit from increasing.
 As a metapher, think of radius and sigma as of brush sizes.
 
-Step 1: Color conversion
+Step 1: Background and Colorspace
 
- --colorspace [=ARG]  Define the colorspace from where to generate the
-                      masks. Normally you don't need to adjust this option.
+ --bg, --background [=ARG]  Specify a background to paint on.
+                      Useful for (semi-)transparent results or as a result
+                      on its own.
+                      ARG takes argument:
+                        (word)   background        Default: $(maskarg_defaultvalue bg word1)
+                      background can be one out of:
+                        wave wavedark enfuse
+                        transparent
+                        magick -list color
+                        magick -list evaluate (compare --evaluate)
+                        magick -list compose  (compare --compose)
+                      Try:  enfuse mean max min
+                            colorize colorize2 pinlight pinlight2
+                            interpolate overlay pegtoplight reflect
+                      Can be specified multiple times for option --layered.
+ --colorspace [=ARG]  Colorspace in which to generate the masks.
+                      Normally you don't need to adjust this option.
                       ARG takes arguments:
                         c        channel
                         (word)   colorspace        Default: $(maskarg_defaultvalue colorspace colorspace)
-                      Some of interest:
-                      CMYK  RGB  Jzazbz,c0
                       colorspace can be one of 'magick -list colorspace'.
+                      Some of interest: sRGB, CMYK,  RGB
                       https://legacy.imagemagick.org/Usage/color_basics
 
 Step 2: Mask generation
@@ -160,6 +175,7 @@ Step 2: Mask generation
                         (word)   mode1             Default: $(maskarg_defaultvalue diffstat word1)
                         (word)   mode2             Default: $(maskarg_defaultvalue diffstat word2)
                       mode1 and mode2 can be two of 'magick -list evaluate'.
+                      Prefer odd radius values for median comparisions.
  --dog [=ARG]         Difference of Gaussian.
                       ARG takes argument:
                         r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
@@ -279,7 +295,7 @@ Step 2: Mask generation
                       ARG additionally takes argument:
                         (word)   filename
                       Yet works well only if no --cut* options except
-                      --cutless has been used.
+                      --cutless has been used for the depth map.
                       Sample use: imfuse creates a depth map with -X, you can
                       change it in an image editor, and use this option to
                       create the focus image based on the adjusted depth map.
@@ -591,23 +607,6 @@ Step 5: Post processing
                       threshold2 removes high contrast areas above a percent.
                       sigma blurs the cut border.
 
-Step 6: Background
-  Background for transparent images.
-  Can be specified multiple times for option --layered.
-
- --bg, --background [=ARG]  Specify a background to paint on.
-                      ARG takes argument:
-                        (word)   background        Default: $(maskarg_defaultvalue bg word1)
-                      background can be one out of:
-                        wave wavedark enfuse
-                        transparent
-                        magick -list color
-                        magick -list evaluate (compare --evaluate)
-                        magick -list compose  (compare --compose)
-                      Try:  enfuse mean max min
-                            colorize colorize2 pinlight pinlight2
-                            interpolate overlay pegtoplight reflect
-
 Much thanks to the developers and supporters of ImageMagick!
 Without them this project would not have been possible.
 A first start to get an idea of the stackshot image fusing workflow was
@@ -686,8 +685,10 @@ showviewnior() {
     compare "$Imageheight" -lt "$H" && H="$Imageheight" 
     nohup feh --draw-tinted --auto-zoom --keep-zoom-vp \
               --geometry "${W}x${H}+37+0" \
+              --title="$Resultbasename:  $Parsedoptions" \
               --info="exiftool -imagedescription %F | cut -d: -f2- | fold -s -w $((Imagewidth/7))" \
               "$@" </dev/null >/dev/null 2>&1 &
+#              --draw-filename \
     disown $!
   }
   return 0
@@ -1042,7 +1043,7 @@ check_outputname() {
   Resultbasename=""
   Resultbasename="${Resultbasename}_md${Fusemd5sum}"
   [ "$Storelayered" = "yes" ] && Resultbasename="_layered"
-  Resultsearchmask="*$Resultbasename"
+  Resultsearchmask="*$Resultbasename.${Imageformat}"
 
   [ -z "${Outputdir:-}" ] && Outputdir="./"
   [ -z "$Resultimage" ] && Resultimage="${Outputbasename:-"imfuse"}${Resultbasename}"
@@ -1051,20 +1052,20 @@ check_outputname() {
   [ "$(rev <<< "$Resultimage" | cut -d. -f1)" = "$(rev <<< "$Imageformat")" ] && {
     Resultimage="$(rev <<< "$Resultimage" | cut -d. -f2- | rev)"
   }
+  Resultbasename="$Resultimage"
 
   case "$Extendedsave" in
     yes)
-      Resultdepthmap="${Outputdir}/${Resultimage}.depth.${Imageformat}"
-      Resultmask="${Outputdir}/${Resultimage}.mask.${Imageformat}"
+      Resultdepthmap="${Outputdir}/${Resultbasename}.depth.${Imageformat}"
+      Resultmask="${Outputdir}/${Resultbasename}.mask.${Imageformat}"
     ;;
     no) ### FIXME
-      Resultdepthmap="${Cachedir}/${Resultimage}.depth.${Imageformat}"
-      Resultmask="${Cachedir}/${Resultimage}.mask.${Imageformat}"
+      Resultdepthmap="${Cachedir}/${Resultbasename}.depth.${Imageformat}"
+      Resultmask="${Cachedir}/${Resultbasename}.mask.${Imageformat}"
     ;;
   esac
-  [ "$Video" ] && Video="${Outputdir}/${Resultimage}.webm"
-  Resultimage="${Outputdir}/${Resultimage}.${Imageformat}"
-  Resultsearchmask="$Resultsearchmask.${Imageformat}"
+  [ "$Video" ] && Video="${Outputdir}/${Resultbasename}.webm"
+  Resultimage="${Outputdir}/${Resultbasename}.${Imageformat}"
 
   return 0
 }
@@ -2581,7 +2582,7 @@ $Maskgenerator
 
   # Generate masks
   [ -n "$Maskgenerator_all" ] && {
-    sendmagickmessage "NOTE:Generating masks"
+    sendmagickmessage "NOTE:Step 2: Generating masks"
     grep -q "NUMBER" <<< "$Maskgenerator_all" && load_sourceimages "$Firstimage" "$Lastimage"
     sendmagickmessage "STOPWATCH"
 
@@ -2655,7 +2656,7 @@ focus_merge_masks() {
     esac
   }
 
-  sendmagickmessage "NOTE:Merging masks"
+  sendmagickmessage "NOTE:Step 3: Merging masks"
   Mergemaskbasename="mergemask"
 
   maskarg_single "maskmerge" ||:
@@ -3168,7 +3169,7 @@ focus_hard() {
     return 0
   }
 
-  sendmagickmessage "NOTE:Focus montage hard"
+  sendmagickmessage "NOTE:Step 4: Focus montage hard"
 
   load_sourceimages "$Firstimage" "$Lastimage"
 
@@ -3508,6 +3509,7 @@ focus_main() {
   generate_image --mode "gray50"
 
   # --background
+  maskarg_single "bg" && sendmagickmessage "NOTE:Step 1: Generating background"
   Backgroundnumber="0"
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
@@ -3525,7 +3527,7 @@ focus_main() {
   Startzeit="$(date +%s)"
   focus_generate_masks
   focus_merge_masks
-  sendmagickmessage "NOTE:Generating masks ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+  sendmagickmessage "VERBOSE:Generating masks ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
   Command="
   # provide transparent mpr:resultimage to paint on
@@ -3571,7 +3573,7 @@ focus_main() {
 
     Startzeit="$(date +%s)"
     for Substackstep in $(seq "$Substacknumber" -1 1); do
-      sendmagickmessage "NOTE:Postprocessing substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
+      sendmagickmessage "NOTE:Step 5: Postprocessing substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
       Substackresultpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post.mpc"
       Substackmaskpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-mask.mpc"
       Substackdepthmappost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-depthmap.mpc"
@@ -3881,6 +3883,7 @@ maskarg_check() {
   [ -z "$Arglevel"  ]      && Arglevel="$(maskarg_defaultvalue      "$Argmethod" level)"
   [ -z "$Argclut"  ]       && Argclut="$(maskarg_defaultvalue       "$Argmethod" clut)"
   [ -z "$Argnegate"  ]     && Argnegate="$(maskarg_defaultvalue     "$Argmethod" negate)"
+  [ -z "$Argmask"  ]       && Argmask="$(maskarg_defaultvalue       "$Argmethod" mask)"
   [ -z "$Argnumber1"  ]    && Argnumber1="$(maskarg_defaultvalue    "$Argmethod" number1)"
   [ -z "$Argnumber2"  ]    && Argnumber2="$(maskarg_defaultvalue    "$Argmethod" number2)"
   [ -z "$Argpercent1" ]    && Argpercent1="$(maskarg_defaultvalue   "$Argmethod" percent1)"
@@ -3899,6 +3902,7 @@ maskarg_check() {
   [ -n "$Argimage" ]       && maskarg_checkallowed "$Argmethod" image      "$Argimage"
   [ -n "$Arglevel" ]       && maskarg_checkallowed "$Argmethod" level      "$Arglevel"
   [ -n "$Argclut" ]        && maskarg_checkallowed "$Argmethod" clut       "$Argclut"
+  [ -n "$Argmask" ]        && maskarg_checkallowed "$Argmethod" mask       "$Argmask"
   [ -n "$Argnegate" ]      && maskarg_checkallowed "$Argmethod" negate     "$Argnegate"
   [ -n "$Argnumber1" ]     && maskarg_checkallowed "$Argmethod" number1    "$Argnumber1"
   [ -n "$Argnumber2" ]     && maskarg_checkallowed "$Argmethod" number2    "$Argnumber2"
@@ -4417,7 +4421,7 @@ maskarg_defaultvalue() {
         maskblur)       Output="0" ;;
         maskkuwahara)   Output="4" ;;
         maskmorph)      Output="1" ;;
-        maskstat)       Output="6" ;;
+        maskstat)       Output="5" ;;
         morphology)     Output="1" ;;
         statistic)      Output="2" ;;
       esac
@@ -4554,13 +4558,6 @@ maskarg_short() {
         #[ -n "$Argweight" ]      && [ "$Argweight" != "100" ] && Append=",w$Argweight"
         [ -n "$Argweight" ]      && [ -z "$Argautoweight" ] && Append=",w$Argweight"
       ;;
-      mask)
-        [ "$Argmask" = "yes" ]   && Append=",mask"
-        [ "$Argmask" = "no"  ]   && Append=",mask=no"
-        #[ "$Argmask" = "$(maskarg_defaultvalue "$Argmethod" mask)" ] && case "$Argmethod" in
-        #  *) Append="" ;;
-        #esac
-      ;;
       radius1)
         [ -n "$Argradius1" ]     && Append=",r$Argradius1"
         [ "$Argradius1" = "$(maskarg_defaultvalue "$Argmethod" radius1)" ] && case "$Argmethod" in
@@ -4638,6 +4635,23 @@ maskarg_short() {
           darkness) Append="" ;;
         esac
       ;;
+      word1)
+        [ -n "$Argword1" ]       && case "$Argmethod" in
+          cmd|maskcmd|cutcmd|depthmap|finalcmd) 
+                                    Append=",'$Argword1'" ;;
+          *)                        Append=",$Argword1" ;;
+        esac
+        #[ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
+        [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
+          comet|compass|diffstat|finalgamma|freichen|statistic|masklevel|maskmerge|soft) Append="" ;;
+        esac
+      ;;
+      word2)
+        [ -n "$Argword2" ]       && Append=",$Argword2"
+        [ "$Argword2" = "$(maskarg_defaultvalue "$Argmethod" word2)" ] && case "$Argmethod" in
+          diffstat|maskmorph|morphology|cutmorph) Append="" ;;
+        esac
+      ;;
       level)
         [ -n "$Arglevel" ] && case "$Arglevel" in
           yes)                      Append=",level" ;;
@@ -4645,7 +4659,7 @@ maskarg_short() {
         esac
         [ "$Arglevel" = "$(maskarg_defaultvalue "$Argmethod" level)" ] && case "$Argmethod" in
           enfuse|evaluate|max|mean|median|min|compose) Append="" ;;
-          channel|chroma|darkness|lightness|saturation) ;;
+          channel|chroma|darkness|lightness|saturation) Append="" ;;
           depthmap) ;;
           *) Append="" ;;
         esac
@@ -4665,21 +4679,11 @@ maskarg_short() {
           finalthreshold|maskthreshold) Append="" ;;
         esac
       ;;
-      word1)
-        [ -n "$Argword1" ]       && case "$Argmethod" in
-          cmd|maskcmd|cutcmd|depthmap|finalcmd) 
-                                    Append=",'$Argword1'" ;;
-          *)                        Append=",$Argword1" ;;
-        esac
-        #[ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
-        [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
-          comet|compass|diffstat|finalgamma|freichen|statistic|masklevel|maskmerge|soft) Append="" ;;
-        esac
-      ;;
-      word2)
-        [ -n "$Argword2" ]       && Append=",$Argword2"
-        [ "$Argword2" = "$(maskarg_defaultvalue "$Argmethod" word2)" ] && case "$Argmethod" in
-          diffstat|maskmorph|morphology|cutmorph) Append="" ;;
+      mask)
+        [ "$Argmask" = "yes" ]   && Append=",mask"
+        [ "$Argmask" = "no"  ]   && Append=",mask=no"
+        [ "$Argmask" = "$(maskarg_defaultvalue "$Argmethod" mask)" ] && case "$Argmethod" in
+          *) Append="" ;;
         esac
       ;;
     esac
@@ -4912,7 +4916,6 @@ finish() {
 declare_variables() {
   Arglist='
   Argweight=""
-  Argmask=""
   Argradius1=""
   Argradius2=""
   Argsigma1=""
@@ -4927,12 +4930,13 @@ declare_variables() {
   Argnegate=""
   Argthreshold1=""
   Argthreshold2=""
-  Arglevel=""
-  Argclut=""
   Argword1=""
   Argword2=""
   Argcount=""
   Argdiff=""
+  Arglevel=""
+  Argclut=""
+  Argmask=""
   Argmethod=""
   Argoptions=""
   Argtype=""
