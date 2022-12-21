@@ -9,10 +9,14 @@ usage() {
   echo "imfuse: Combines focus stackshot images to one overall sharp image.
 
 Usage:
-  imfuse [OPTIONS] -- image1 image2 image3 ...
+  imfuse [OPTIONS] -- IMAGES...
 
 imfuse assumes that the alphanumerical order of the input images goes
 from front to back; for the other way around use option --revert.
+
+imfuse results suffer a lot from JPG compression. If you have JPG images
+as a source only, first convert them to TIF or PNG before doing anything else.
+Tool stackprepare can do that.
 
 Dependencies:
   ImageMagick 7       Mandatory (command 'magick').
@@ -22,7 +26,6 @@ Dependencies:
   feh                 Optional, needed for option -W to show result image.
   focus-stack         Optional, needed for option --align.
                         https://github.com/PetteriAimonen/focus-stack
-  xclip               Optional, to send result file name to clipboard.
 
 General options:
      --align              Align images.
@@ -39,12 +42,13 @@ General options:
                           of disk space, use 'tif'.
      --exif [=IMAGE]      Transfer exif meta data from IMAGE or first image.
      --force              Force imfuse to run even if output image exists.
-     --format=FORMAT      Store result in image format FORMAT.   Default: $(maskarg_defaultvalue format word1)
+     --format=FORMAT      Store result in image format FORMAT. Default: $(maskarg_defaultvalue format word1)
  -h, --help               Show this help and exit.
      --layered            Store backgrounds and substacks in layered TIF.
      --license            Show license (GPLv2) and exit.
      --limit-memory=ARG   Limit amount of used memory. Default: 80%
                           ARG can be a % value or an absolute value for MB.
+ -L, --longname           Create long filename containing all options.
  -o, --output=FILE        Result image file name. See also --basename.
      --revert             Revert order of source images.
      --rmcache            Clean cache and exit.
@@ -52,6 +56,13 @@ General options:
      --video              Generate a video of shown intermediate images.
  -V                       Show intermediate images with image viewer geeqie.
  -W                       Show result image with image viewer feh.
+                          For keyboard shortcuts see 'man feh'. Examples:
+                            arrow left/right: switch images
+                            arrow up/down:    zoom in/out
+                            /:                zoom to window size
+                            *:                zoom 100%
+                            i:                show/hide imfuse options
+                            d:                show/hide file name
  -X                       Store [and show] mask and depth map, too.
 
 The options below can take additionally arguments [=ARG].
@@ -175,8 +186,7 @@ Step 2: Mask generation
                         (word)   mode1             Default: $(maskarg_defaultvalue diffstat word1)
                         (word)   mode2             Default: $(maskarg_defaultvalue diffstat word2)
                       mode1 and mode2 can be two of 'magick -list evaluate'.
-                      Prefer odd radius values for median comparisions.
- --dog [=ARG]         Difference of Gaussian.
+ --dog [=ARG]         Difference of Gaussian. Needs rework, not useful yet.
                       ARG takes argument:
                         r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
                         s        sigma1            Default: $(maskarg_defaultvalue cutblur sigma1)
@@ -196,7 +206,7 @@ Step 2: Mask generation
                         n        mode number       Default: $(maskarg_defaultvalue laplacian number1)
                       Possible mode numbers at:
                       http://www.imagemagick.org/Usage/convolve/#laplacian
- --log [=ARG]         Laplacian of Gaussian.
+ --log [=ARG]         Laplacian of Gaussian. Needs rework, not useful yet.
                       ARG additionally takes arguments: 
                         r        radius            Default: $(maskarg_defaultvalue log radius1)
                         s        sigma1            Default: $(maskarg_defaultvalue log sigma1)
@@ -384,11 +394,11 @@ Step 3: Mask merging
                         r        radius            Default: $(maskarg_defaultvalue maskstat radius1)
                         (word)   statistic mode    Default: $(maskarg_defaultvalue maskstat word1)
                       word1 can be one of 'magick -list statistic'.
-                      Modes of interest: mean, median, gradient.
-                      Mode mean softens the result and closes gaps.
-                      Mode median sharpens the result and opens gaps.
-                      Mode gradient sharpens the result, closes gaps
-                      and adds noise in weak areas.
+                        Modes of interest: mean, median, gradient.
+                          Mode mean softens the result and closes gaps.
+                          Mode median sharpens the result and opens gaps.
+                          Mode gradient sharpens the result, closes gaps
+                            and adds noise in weak areas.
                       Compare ImageMagick option -statistic.
  --maskthreshold [=ARG]  Remove low (or high) contrast area.
                       ARG takes arguments:
@@ -521,7 +531,7 @@ Step 4: Stack fusion
                       Use --threshold or --alpha for transparent substacks.
                       The substacks will be composed over each other onto
                       a background (to specify with --background).
-                      See also --layered to store the single substacks as layers.
+                      See also --layered to store the substacks as layers.
                       That allows manual rework of the results in gimp.
  --soft [=ARG]        Enable soft fusion mode. Different concept than 
                       default maximum contrast montage. Images are multiplied 
@@ -683,19 +693,18 @@ showviewnior() {
     H=900
     compare "$Imagewidth"  -lt "$W" && W="$Imagewidth" 
     compare "$Imageheight" -lt "$H" && H="$Imageheight" 
-    nohup feh --draw-tinted --auto-zoom --keep-zoom-vp \
-              --geometry "${W}x${H}+37+0" \
+    nohup feh --draw-tinted --zoom="max" --keep-zoom-vp \
+              --geometry="${W}x${H}+37+0" \
               --title="$Resultbasename:  $Parsedoptions" \
               --info="exiftool -imagedescription %F | cut -d: -f2- | fold -s -w $((Imagewidth/7))" \
               "$@" </dev/null >/dev/null 2>&1 &
-#              --draw-filename \
     disown $!
   }
   return 0
 }
 showresult() {
   showimage "$Resultimage"
-  command -v xclip >/dev/null && echo -n "$Resultimage" | xclip -i -selection clipboard
+  #command -v xclip >/dev/null && echo -n "$Resultimage" | xclip -i -selection clipboard
   notify-send "imfuse is ready" 2>/dev/null ||:
   case "$Extendedsave" in
     yes)
@@ -1042,8 +1051,9 @@ check_outputname() {
 
   Resultbasename=""
   Resultbasename="${Resultbasename}_md${Fusemd5sum}"
-  [ "$Storelayered" = "yes" ] && Resultbasename="_layered"
-  Resultsearchmask="*$Resultbasename.${Imageformat}"
+  [ "$Storelayered" = "yes" ] && Resultbasename="${Resultbasename}_layered"
+  Resultsearchmask="*$Resultbasename"
+  [ "$Longname" = "yes" ] && Resultbasename="${Parsedoptions// /}$Resultbasename"
 
   [ -z "${Outputdir:-}" ] && Outputdir="./"
   [ -z "$Resultimage" ] && Resultimage="${Outputbasename:-"imfuse"}${Resultbasename}"
@@ -1496,8 +1506,8 @@ evaluate_iterative() {
     shift
   done
   case "${Mode,,}" in
-    max) Mode="lighten" ;;
-    min) Mode="darken" ;;
+    max) Mode="Lighten" ;;
+    min) Mode="Darken" ;;
   esac
 
   sendmagickmessage "STOPWATCH"
@@ -1508,8 +1518,7 @@ evaluate_iterative() {
       for Count in $(seq $((Imagenumber-1)) -1 1); do
         Command="$Command
   '${Imagelist[$Count]}'
-    #-format 'PROGRESS:Evaluating $Count / $Imagenumber: ${Imagelist[$Count]}\n'
-    -format 'PROGRESS:Evaluating $Mode ETA:$Count/$Imagenumber\n'
+    -format 'PROGRESS:Compose $Mode ETA:$Count/$Imagenumber\n'
     -write info:
     -compose $Mode -composite
     $(showimagecode)"
@@ -1520,8 +1529,7 @@ evaluate_iterative() {
         Command="$Command
   '${Imagelist[$Count]}'
     -alpha off
-    #-format 'PROGRESS:Evaluating $Count / $Imagenumber: ${Imagelist[$Count]}\n'
-    -format 'PROGRESS:Evaluating $Mode ETA:$Count/$Imagenumber\n'
+    -format 'PROGRESS:Compose Blend ETA:$Count/$Imagenumber\n'
     -write info:
     -compose blend
     -set option:compose:args $(calc 100/$((Imagenumber-Count+1)) )
@@ -2484,6 +2492,8 @@ focus_generate_masks() {
   Firstimage="${Firstimage:-1}"
   Lastimage="${Lastimage:-$Sourceimagenumber}"
 
+  sendmagickmessage "NOTE:Step 2: Generating masks"
+
   # Generate Code for mask generation
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
@@ -2582,7 +2592,6 @@ $Maskgenerator
 
   # Generate masks
   [ -n "$Maskgenerator_all" ] && {
-    sendmagickmessage "NOTE:Step 2: Generating masks"
     grep -q "NUMBER" <<< "$Maskgenerator_all" && load_sourceimages "$Firstimage" "$Lastimage"
     sendmagickmessage "STOPWATCH"
 
@@ -2640,6 +2649,7 @@ focus_merge_masks() {
     verbose "Skipping merge, no mask options are specified."
     return 0
   }
+  sendmagickmessage "NOTE:Step 3: Merging masks"
 
   Firstimage="${1:-1}"
   Lastimage="${2:-$Sourceimagenumber}"
@@ -2656,7 +2666,6 @@ focus_merge_masks() {
     esac
   }
 
-  sendmagickmessage "NOTE:Step 3: Merging masks"
   Mergemaskbasename="mergemask"
 
   maskarg_single "maskmerge" ||:
@@ -2874,7 +2883,7 @@ ${Mergecode//"NUMBER"/"$(printnum "$Count")"}
     -write info:
     -format '$Mergemaskbasename:MIN=%[fx:minima*100]\n'
     -write info:
-    $Tifstore 
+    $Tifstore
     -write '$Mergemask'
     $(showimagecode "$Mergemask")
     -delete 0"
@@ -3142,13 +3151,15 @@ focus_hard() {
     -delete 0"
 #    $(showimagecode mpr:cutmask)
 
+  sendmagickmessage "NOTE:Step 4: Focus cut montage hard"
+
   Focusimagebasename="focus-hard.$Firstimage..$Lastimage.$(md5cut "$(masklist "$Mergemaskbasename") $Focuscode")"
   Focusimagefile="$Cachedir/$Focusimagebasename.tif"
   Focusimagemaskfile="$Cachedir/$Focusimagebasename.mask.tif"
   Focusimagedepthfile="$Cachedir/$Focusimagebasename.depth.tif"
 
   [ -e "$Focusimagefile" ] && {
-    sendmagickmessage "NOTE:Skipping focus_hard(), image already exists."
+    sendmagickmessage "NOTE:Skipping focus cut montage, image already exists."
     Command="
   '$Focusimagefile'
     $Tifstorealpha
@@ -3168,8 +3179,6 @@ focus_hard() {
     cmd_waitforready
     return 0
   }
-
-  sendmagickmessage "NOTE:Step 4: Focus montage hard"
 
   load_sourceimages "$Firstimage" "$Lastimage"
 
@@ -3502,14 +3511,13 @@ focus_main() {
   local Backgroundimage
   local Transparentlayers=
 
-  # Generate helper images
+  sendmagickmessage "NOTE:Step 1: Generating background images"
+  # helper images
   generate_image --mode "black"
   generate_image --mode "white"
   generate_image --mode "transparent"
   generate_image --mode "gray50"
-
   # --background
-  maskarg_single "bg" && sendmagickmessage "NOTE:Step 1: Generating background"
   Backgroundnumber="0"
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
@@ -3568,12 +3576,12 @@ focus_main() {
                      --level "${Argpercent1}%x${Argpercent2}%" --compose="$Argword1"
         ;;
       esac
-      sendmagickmessage "NOTE:focus ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+      sendmagickmessage "VERBOSE:focus ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
     done
 
     Startzeit="$(date +%s)"
     for Substackstep in $(seq "$Substacknumber" -1 1); do
-      sendmagickmessage "NOTE:Step 5: Postprocessing substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
+      sendmagickmessage "NOTE:Step 5: Final postprocessing substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
       Substackresultpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post.mpc"
       Substackmaskpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-mask.mpc"
       Substackdepthmappost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-depthmap.mpc"
@@ -3705,7 +3713,7 @@ focus_main() {
     done
 
     cmd_waitforready
-    sendmagickmessage "NOTE:Postprocessing ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
+    sendmagickmessage "NOTE:Final postprocessing ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
 
     Command="
   # composing substack results
@@ -4970,6 +4978,7 @@ declare_variables() {
   Limitmemory=""
   Line=""
   Loadsourceimages=""
+  Longname=""
   Magickbin=""
   Magickfifo=""
   Magickfifolog=""
@@ -5029,8 +5038,9 @@ declare_variables() {
 parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
-  Shortoptions="BCho:vVWX"
-  Longoptions="basename::,cache::,exif::,force::,format::,help,license,limit-memory::,mask2cache,cacheformat::,output:,rmcache,showname,sub::,test::,verbose,version,video"
+  Shortoptions="BChLo:vVWX"
+  Longoptions="cache::,help,license,limit-memory::,mask2cache,cacheformat::,rmcache,sub::,test::,verbose,version"
+  Longoptions="basename::,exif::,force::,format::,longname,output:,showname,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
@@ -5059,6 +5069,7 @@ parse_options() {
       --format)            Imageformat="${2:-tif}"             ; shift ;;
       --layered)           Storelayered="yes"                  ;;
       --limit-memory)      Limitmemory="${2:-"80%"}"           ; shift ;;
+      -L|--longname)       Longname="yes"                      ;;
       --mask2cache)        Masktocache="yes"                   ;;
       -o|--output)         Resultimage="${2:-}"                ; shift ;;
       --revert)            Revertimagelist="-r"                ;;
@@ -5316,8 +5327,8 @@ main_setup() {
   [ "$((Imagelistmemsize))" -lt "$((Limitmemory/2))" ] && Loadsourceimages="yes" || Loadsourceimages="no"
 
   # --output, --basename
-  check_outputname
   check_exifstring
+  check_outputname
 
   verbose "
   imfuse Version:                     $Version
@@ -5348,7 +5359,7 @@ $Parsedoptions"
   # --force
   [ -z "$Force" ] && {
     #Resultimage_check="$(find . -wholename "${Resultimage//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
-    Resultimage_check="$(find . -wholename "${Resultsearchmask}" | tail -n1)"
+    Resultimage_check="$(find . -wholename "${Resultsearchmask}.${Imageformat}" | tail -n1)"
     [ -n "$Resultimage_check" ] && {
       Resultimage="$Resultimage_check"
       #Resultdepthmap="$(find . -wholename "${Resultdepthmap//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
