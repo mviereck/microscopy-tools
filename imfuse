@@ -420,8 +420,8 @@ Step 3: Mask merging
                       mode can be one of 'magick -list compose'.
                       Of interest: Plus Interpolate Multiply Exclusion Blend
  --masklevel [=ARG]   Levels merged masks into visible spectrum from 0%..100%
-                      to provide the following focus and postprocessing
-                      option arguments a full range from 0%..100%.
+                      to provide the following focus and postprocessing option
+                      arguments a full range from 0%..100%. Enabled by default.
                       ARG takes argument:
                         t        round threshold   Default: $(maskarg_defaultvalue masklevel threshold1)%
                         p        min
@@ -430,6 +430,7 @@ Step 3: Mask merging
                       mode can be one of:
                         all:      Level all masks.
                         substack: Level only merged masks in current substack.
+                        off:      Do not level masks.
                       The round treshold rounds up or down to the next matching
                        rounded percent value. This helps to get same results
                        for cropped image parts as well as for whole images.
@@ -442,12 +443,20 @@ Step 3: Mask merging
 Step 4: Stack fusion
   The source images are processed with the merged masks,
   the overall sharp image will be generated.
+  For each source image a cut mask is generated based on the merged masks
+  and the following --cut* options.
 
   The order of --cut* options matters, use --cutless always first.
   All --cut* options except --cutless can be specified multiple times.
 
+ --cutalpha [=ARG]    Make cut semitransparent according to mask.
+                      Nice result if used after --cutwave. Use --cutbg before.
+                      ARG takes arguments:
+                        p        percent1          Default: $(maskarg_defaultvalue cutalpha percent1)%
+                        P        percent2          Default: $(maskarg_defaultvalue cutalpha percent2)%
+                      For percent arguments compare --finalalpha.
  --cutbg              Create a background from current cuts.
-                      Can preserve the bokeh if used before --cutthreshold.
+                      To be used before --cutthreshold or --cutalpha.
  --cutblur [=ARG]     Blur cut masks in final focus montage.
                       ARG takes argument:
                         r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
@@ -1006,7 +1015,6 @@ check_exifstring() {
       ;;
     esac
   done
-  maskarg_single "soft"  && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
 
   # step substacks
   [ "$Substackautoall" = "no" ] && for Count in $(seq "$Imoptionsnumber"); do
@@ -1294,17 +1302,6 @@ alphalevel() {
     +level ${Percent1}%x${Percent2}%
     -write mpr:mask
     -delete 0"
-
-  case "$Mask" in
-    "") ;;
-    *)
-      Command="$Command
-  mpr:mask
-    $Tifstore
-    -write '$Mask'
-    -delete 0"
-    ;;
-  esac
 
   Command="$Command
   mpr:image
@@ -2784,7 +2781,8 @@ focus_merge_masks() {
 
           maskstat)
             Mergecode="$Mergecode
-    -statistic $Argword1 $Argradius1"
+    -write mpr:mergemask
+    -statistic $Argword1 ${Argradius1}x${Argradius1}"
             case "${Argword1,,}" in
               contrast|mode|standarddeviationX)
                 Mergecode="$Mergecode
@@ -2793,6 +2791,17 @@ focus_merge_masks() {
     -compose Difference -composite"
               ;;
             esac
+          ;;
+
+          masktest)
+            Mergecode="$Mergecode
+    -write mpr:mergemask
+    -statistic mean ${Argradius1:-3}x${Argradius1:-3}
+  (
+    mpr:mergemask
+      -statistic median ${Argradius1:-3}x${Argradius1:-3}
+  )
+    -compose Difference -composite"
           ;;
 
           maskthreshold)
@@ -2858,6 +2867,13 @@ focus_merge_masks() {
   Mergecode="$Mergecode
     -write mpr:mergemask
     -delete 0"
+  [ "$Testsetup" ] && Mergecode="$Mergecode
+  ./face--bg=Difference_md3a7ecc.tif
+    -grayscale RMS
+  mpr:mergemask
+    -compose Multiply -composite
+    -write mpr:mergemask
+    -delete 0"
 
   ### run
 
@@ -2897,7 +2913,7 @@ ${Mergecode//"NUMBER"/"$(printnum "$Count")"}
   # --masklevel
   Levelmax="$(grep "$Mergemaskbasename:MAX" "$Magickfifolog" | cut -d= -f2 | LC_ALL=C awk '{ OFMT="%f"; print $1*1 }' | sort -n | tail -n1)"
   Levelmin="$(grep "$Mergemaskbasename:MIN" "$Magickfifolog" | cut -d= -f2 | LC_ALL=C awk '{ OFMT="%f"; print $1*1 }' | sort -n | head -n1)"
-  maskarg_single "masklevel" && {
+  maskarg_single "masklevel" && [ "$Argword1" != "off" ] && {
     Newbasename="${Mergemaskbasename}_${Firstimage}..${Lastimage},level=$Argoptions"
     [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/$Newbasename" ] && {
       sendmagickmessage "NOTE:--masklevel: Skipping, mask is already leveled."
@@ -2951,12 +2967,23 @@ focus_hard() {
     case "$Argtype" in
       focus)
         Focuscode="$Focuscode
-    # --${Argmethod}=${Argoptions}"
+  # --${Argmethod}=${Argoptions}"
         case "$Argmethod" in
+
+          cutalpha)
+            Focuscode="$Focuscode
+  (
+  mpr:mergemask"
+            [ "${Argpercent1}%x${Argpercent2}%" != "0%x100%" ] && Focuscode="$Focuscode
+    +level ${Argpercent1}%x${Argpercent2}%"
+            Focuscode="$Focuscode
+  )
+    -compose Darken -composite"
+          ;;
 
           cutbg)
             Backgroundnumber="$((Backgroundnumber+1))"
-            Backgroundimage[$Backgroundnumber]="$Cachedir/cutbg.$(md5cut "$Focuscode $(masklist "$Mergemaskbasename")").mpc"
+            Backgroundimage[$Backgroundnumber]="$Cachedir/cutbg.$(md5cut "$Focuscode $(masklist "$Mergemaskbasename")").mpc" ### FIXME mpr?
             [ -e "${Backgroundimage[$Backgroundnumber]}" ] || {
               generate_image --mode "transparent" --name "${Backgroundimage[$Backgroundnumber]}"
             }
@@ -3128,6 +3155,23 @@ focus_hard() {
     -blur 0x$Argsigma1
   mpr:cutmask
     -compose Lighten -composite"
+          ;;
+
+          cuttest)
+            # --cutmore: don't paint already painted area below threshold
+            Focuscode="$Focuscode
+    -write mpr:cutmask
+    -delete 0
+  mpr:focusimage
+    -alpha extract
+    -write mpr:focusalpha
+    -delete 0
+  mpr:mergemask
+    -threshold ${Argthreshold1:-5}%
+  ( mpr:focusalpha -negate )
+    -compose Lighten -composite
+  mpr:cutmask
+    -compose Darken -composite"
           ;;
 
           cutthreshold)
@@ -3340,22 +3384,23 @@ focus_hard() {
   return 0
 }
 focus_soft() {
-  local Resultcopy Maskmaxcopy
+  local Resultcopy Maskmaxcopy Depthmap
   local Level Composemode
   local Firstimage Lastimage
   local Count Command
   local Focusimagebasename Focusimagefile Focusimagemaskfile
   local Longoptions Parsedoptions
 
-  Longoptions="composemode:,level:,maskmax:,output:,firstimage:,lastimage:"
+  Longoptions="composemode:,depthmap:,level:,maskmax:,output:,firstimage:,lastimage:"
   Parsedoptions="$(getopt --options="" --longoptions "$Longoptions" -- "$@")"
   eval set -- "$Parsedoptions"
 
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --output)       Resultcopy="${2:-}" ; shift ;;
+      --output)       Resultcopy="${2:-}"  ; shift ;;
       --level)        Level="${2:-}"       ; shift ;;
       --maskmax)      Maskmaxcopy="${2:-}" ; shift ;;
+      --depthmap)     Depthmap="${2:-}"    ; shift ;;
       --firstimage)   Firstimage="${2:-}"  ; shift ;;
       --lastimage)    Lastimage="${2:-}"   ; shift ;;
       --composemode)  Composemode="${2:-}" ; shift ;;
@@ -3393,7 +3438,7 @@ focus_soft() {
     return 0
   }
 
-  sendmagickmessage "NOTE:Focus montage soft"
+  sendmagickmessage "NOTE:Step 4: Focus montage (soft mode)"
 
   load_sourceimages "$Firstimage" "$Lastimage"
 
@@ -3407,6 +3452,11 @@ focus_soft() {
     -alpha off
     -depth 16
     -write mpr:addsource
+    -delete 0
+  mpr:black
+    -alpha off
+    -depth 16
+    -write mpr:depthmap
     -delete 0"
   cmd "$Command"
 
@@ -3444,6 +3494,17 @@ focus_soft() {
     -write mpr:addsource
     -delete 0"
 
+    [ -n "$Depthmap" ] && Command="$Command
+  # depth map
+  mpr:black
+    +level $(calc "100*($Sourceimagenumber-$Count)/$Sourceimagenumber")%
+  mpr:mergemask
+    -compose Multiply -composite
+  mpr:depthmap
+    -evaluate-sequence Add
+    -write mpr:depthmap
+    -delete 0"
+
     [ "$Showimageprocessing" = "yes" ] && {
       Command="$Command
   # create result only for --show
@@ -3463,6 +3524,11 @@ focus_soft() {
   mpr:addmask
     -compose DivideSrc -composite
     -write mpr:focusimage
+    -delete 0"
+  [ -n "$Depthmap" ] && Command="$Command
+  mpr:depthmap
+    $Tifstore
+    -write $Depthmap
     -delete 0"
   cmd "$Command"
   cmd_waitforready
@@ -3571,9 +3637,19 @@ focus_main() {
         ;;
         "yes")
           maskarg_single "soft" ||:
-          focus_soft --maskmax "${Substackmask[$Substackstep]}" --output "${Substackresult[$Substackstep]}" \
-                     --firstimage="${Substackfirstimage[$Substackstep]}" --lastimage="${Substacklastimage[$Substackstep]}" \
-                     --level "${Argpercent1}%x${Argpercent2}%" --compose="$Argword1"
+          case "$Extendedsave" in
+            yes)
+              focus_soft --maskmax "${Substackmask[$Substackstep]}" --output "${Substackresult[$Substackstep]}" \
+                         --firstimage="${Substackfirstimage[$Substackstep]}" --lastimage="${Substacklastimage[$Substackstep]}" \
+                         --level "${Argpercent1}%x${Argpercent2}%" --compose="$Argword1" \
+                         --depthmap "${Substackdepthmap[$Substackstep]}"
+            ;;
+            no)
+              focus_soft --maskmax "${Substackmask[$Substackstep]}" --output "${Substackresult[$Substackstep]}" \
+                         --firstimage="${Substackfirstimage[$Substackstep]}" --lastimage="${Substacklastimage[$Substackstep]}" \
+                         --level "${Argpercent1}%x${Argpercent2}%" --compose="$Argword1"
+            ;;
+          esac
         ;;
       esac
       sendmagickmessage "VERBOSE:focus ready after: $(date -u -d @$(($(date +%s)-Startzeit)) +"%T")"
@@ -4033,6 +4109,9 @@ maskarg_checkallowed() {
   Option="${2:-}"
   Arg="${3:-}"
 
+  case "$Argmethod" in
+    experimental|cuttest|masktest) return 0 ;;
+  esac
   case "$Option" in
     channel)
       case "$Argtype" in
@@ -4103,13 +4182,13 @@ maskarg_checkallowed() {
     ;;
     percent1)
       case "$Argmethod" in
-        cutblur|cutless|cutmax|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
+        cutalpha|cutblur|cutless|cutmax|cutwave|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "--$Argmethod does not take argument percent1: p$Arg" ;;
       esac
     ;;
     percent2)
       case "$Argmethod" in
-        cutblur|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
+        cutalpha|cutblur|finalalpha|maskblur|masklevel|maskwave|soft|substacks|wavelet) ;;
         *) error "--$Argmethod does not take argument percent2: P$Arg" ;;
       esac
     ;;
@@ -4220,7 +4299,7 @@ maskarg_checkallowed() {
         ;;
         masklevel)
           case "$Arg" in
-            all|substack) ;;
+            all|off|substack) ;;
             *) error "--$Argmethod does not take argument: $Arg" ;;
           esac
         ;;
@@ -4236,7 +4315,12 @@ maskarg_checkallowed() {
           esac
         ;;
         statistic|diffstat|maskstat)
-          #[ "${Arg,,}" = "stdev" ] && Arg="StandardDeviation"
+          case "${Arg,,}" in
+            stdev|dev) Arg="StandardDeviation" ;;
+            min)       Arg="Minimum" ;;
+            max)       Arg="Maximum" ;;
+            grad)      Arg="Gradient" ;;
+          esac
           checkmagicklist statistic "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose out of 'magick -list statistic'"
           Argword1="$(checkmagicklist statistic "$Arg" print)"
@@ -4393,6 +4477,7 @@ maskarg_defaultvalue() {
     ;;
     percent1)
       case "$Argmethod" in
+        cutalpha)       Output="0" ;;
         cutblur)        Output="100" ;;
         cutless)        Output="20" ;;
         cutmax)         Output="0" ;;
@@ -4407,6 +4492,7 @@ maskarg_defaultvalue() {
     ;;
     percent2)
       case "$Argmethod" in
+        cutalpha)       Output="100" ;;
         cutblur)        Output="$((100-Argpercent1))" ;;
         finalalpha)     Output="100" ;;
         maskblur)       Output="$((100-Argpercent1))" ;;
@@ -4491,9 +4577,9 @@ maskarg_defaultvalue() {
         compose|depthmap|enfuse|evaluate|max|mean|median|min)
                         Output="mask" ;;
         experimental)   Output="mask" ;;
-        maskblur|maskcmd|maskdespeckle|maskenhance|maskkuwahara|maskmorph|maskstat|maskthreshold|maskwave)
+        maskblur|maskcmd|maskdespeckle|maskenhance|maskkuwahara|maskmorph|maskstat|masktest|maskthreshold|maskwave)
                         Output="merge" ;;
-        cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cutthreshold|cutwave)
+        cutalpha|cutbg|cutblur|cutcmd|cutless|cutmax|cutmorph|cutsoft|cuttest|cutthreshold|cutwave)
                         Output="focus" ;;
         finalalpha|finalblur|finalblur2|finalcmd|finalgamma|finalsharpen|finalthreshold)
                         Output="postfocus" ;;
@@ -4590,13 +4676,13 @@ maskarg_short() {
       percent1)
         [ -n "$Argpercent1" ]    && Append=",p$Argpercent1"
         [ "$Argpercent1" = "$(maskarg_defaultvalue "$Argmethod" percent1)" ] && case "$Argmethod" in
-          maskblur|cutblur|finalalpha) Append="" ;;
+          maskblur|cutalpha|cutblur|finalalpha) Append="" ;;
         esac
       ;;
       percent2)
         [ -n "$Argpercent2" ]    && Append=",P$Argpercent2"
         [ "$Argpercent2" = "$(maskarg_defaultvalue "$Argmethod" percent2)" ] && case "$Argmethod" in
-          maskblur|cutblur|finalalpha) Append="" ;;
+          maskblur|cutalpha|cutblur|finalalpha) Append="" ;;
         esac
       ;;
       number1)
@@ -4645,8 +4731,8 @@ maskarg_short() {
       ;;
       word1)
         [ -n "$Argword1" ]       && case "$Argmethod" in
-          cmd|maskcmd|cutcmd|depthmap|finalcmd) 
-                                    Append=",'$Argword1'" ;;
+          #cmd|maskcmd|cutcmd|depthmap|finalcmd)
+          #                          Append=",'$Argword1'" ;;
           *)                        Append=",$Argword1" ;;
         esac
         #[ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
@@ -4668,7 +4754,7 @@ maskarg_short() {
         [ "$Arglevel" = "$(maskarg_defaultvalue "$Argmethod" level)" ] && case "$Argmethod" in
           enfuse|evaluate|max|mean|median|min|compose) Append="" ;;
           channel|chroma|darkness|lightness|saturation) Append="" ;;
-          depthmap) ;;
+          depthmap) Append="" ;;
           *) Append="" ;;
         esac
       ;;
@@ -5040,15 +5126,15 @@ parse_options() {
 
   Shortoptions="BChLo:vVWX"
   Longoptions="cache::,help,license,limit-memory::,mask2cache,cacheformat::,rmcache,sub::,test::,verbose,version"
-  Longoptions="basename::,exif::,force::,format::,longname,output:,showname,video"
+  Longoptions="$Longoptions,basename::,exif::,force::,format::,longname,output:,showname,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
   Longoptions="$Longoptions,compose::,depthmap::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
-  Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,maskkuwahara::,masklevel::,maskmerge::,maskmorph::,maskstat::,maskthreshold::,maskwave::"
-  Longoptions="$Longoptions,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cutthreshold::,cutwave::"
+  Longoptions="$Longoptions,maskblur::,maskcmd::,maskdespeckle::,maskenhance::,maskkuwahara::,masklevel::,maskmerge::,maskmorph::,maskstat::,masktest::,maskthreshold::,maskwave::"
+  Longoptions="$Longoptions,cutalpha::,cutbg::,cutblur::,cutcmd::,cutless::,cutmax::,cutmorph::,cutsoft::,cuttest::,cutthreshold::,cutwave::"
   Longoptions="$Longoptions,substacks::,soft::"
   Longoptions="$Longoptions,finalalpha::,finalblur::,finalblur2::,finalcmd::,finalgamma::,finalmasklevel::,finalsharpen::,finalthreshold::"
   Longoptions="$Longoptions,background::,bg::,layered"
@@ -5088,13 +5174,12 @@ parse_options() {
 --compose|--depthmap|--enfuse|--evaluate|--max|--mean|--median|--min|\
 \
 --colorspace|\
---maskblur|--maskcmd|--maskdespeckle|--maskenhance|--maskkuwahara|--masklevel|--maskmerge|--maskmorph|--maskstat|--maskthreshold|--maskwave|\
---cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cutthreshold|--cutwave|--soft|\
+--maskblur|--maskcmd|--maskdespeckle|--maskenhance|--maskkuwahara|--masklevel|--maskmerge|--maskmorph|--maskstat|--masktest|--maskthreshold|--maskwave|\
+--cutalpha|--cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cuttest|--cutthreshold|--cutwave|--soft|\
 --finalalpha|--finalblur|--finalblur2|--finalcmd|--finalgamma|--finalmasklevel|--finalsharpen|--finalthreshold|\
 --bg|--background|\
 --substacks)
-                           maskarg_add "${1:-}" "${2:-}"       ; shift
-      ;;
+                           maskarg_add "${1:-}" "${2:-}"       ; shift ;;
       --) ;;
       *)
         [ -f "${1:-}" ] || error "File not found: ${1:-}"
@@ -5158,6 +5243,9 @@ check_options() {
     Outputbasename="$(basename "$Outputbasename")"
   }
 
+  # --cacheformat
+  Cacheformat="${Cacheformat:-"$(maskarg_defaultvalue cacheformat word1)"}"
+
   # --colorspace
   maskarg_single "colorspace" && {
     Colorspace="${Argcolorspace:-}"
@@ -5177,8 +5265,8 @@ check_options() {
   # --format
   Imageformat="${Imageformat:-"$(maskarg_defaultvalue format word1)"}"
 
-  # --cacheformat
-  Cacheformat="${Cacheformat:-"$(maskarg_defaultvalue cacheformat word1)"}"
+  # --masklevel
+  maskarg_single "masklevel" || maskarg_add "masklevel"
 
   # --substacks
   maskarg_single "substacks" || {
