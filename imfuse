@@ -455,8 +455,13 @@ Step 4: Stack fusion
                         p        percent1          Default: $(maskarg_defaultvalue cutalpha percent1)%
                         P        percent2          Default: $(maskarg_defaultvalue cutalpha percent2)%
                       For percent arguments compare --finalalpha.
- --cutbg              Create a background from current cuts.
+ --cutbg [=ARG]       Create a background from current cuts.
                       To be used before --cutthreshold or --cutalpha.
+                      ARG takes argument:
+                        (word)   separate
+                      By default the result is composed on the generated
+                      background so --final* options take effect.
+                      With argument 'separate' the background is separated.
  --cutblur [=ARG]     Blur cut masks in final focus montage.
                       ARG takes argument:
                         r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
@@ -555,6 +560,7 @@ Step 5: Post processing
  --finalalpha [=ARG]  Generate transparent image using the contrast mask as 
                       alpha channel (=transparency channel).
                       The semitransparent result is composed over --background.
+                      Compare similar but often better option --cutalpa.
                       ARG takes arguments:
                         p        percent1          Default: $(maskarg_defaultvalue finalalpha percent1)%
                         P        percent2          Default: $(maskarg_defaultvalue finalalpha percent2)%
@@ -691,7 +697,7 @@ showviewnior() {
     compare "$Imageheight" -lt "$H" && H="$Imageheight" 
     nohup feh --draw-tinted --zoom="max" --keep-zoom-vp \
               --geometry="${W}x${H}+37+0" \
-              --title="$Fusemd5sum:  $Parsedoptions" \
+              --title="$Sourcemd5:  $Parsedoptions" \
               --info="exiftool -imagedescription %F | cut -d: -f2- | fold -s -w $((Imagewidth/7))" \
               "$@" </dev/null >/dev/null 2>&1 &
     disown $!
@@ -1039,7 +1045,15 @@ check_exifstring() {
 }
 check_outputname() {
   Optionmd5="$(md5cut "${Imoptions[*]} ${Imarguments[*]} $Testsetup$Testarg")"
-  Fusemd5sum="${Sourcemd5}_${Optionmd5}"
+  for Count in $(seq "$Imoptionsnumber"); do
+    maskarg_parse "$Count"
+    case "$Argtype" in
+      background|postfocus) ;;
+      *) Cutbgmd5="$Cutbgmd5 ${Imoptions[$Count]}=${Imarguments[$Count]}" ;;
+    esac
+  done
+  Cutbgmd5="$(md5cut "$Sourcemd5 $Cutbgmd5")"
+
   [ "$Longname" = "yes" ] && Longname="${Parsedoptions// /}" || Longname=""
 
   Resultbasename=""
@@ -2967,11 +2981,6 @@ focus_montage() {
           ;;
 
           cutbg)
-            Backgroundnumber="$((Backgroundnumber+1))"
-            Backgroundimage[$Backgroundnumber]="$Cachedir/cutbg.$(md5cut "$Focuscode $(masklist "$Mergemaskbasename")").mpc" ### FIXME mpr?
-            [ -e "${Backgroundimage[$Backgroundnumber]}" ] || {
-              generate_image --mode "transparent" --name "${Backgroundimage[$Backgroundnumber]}"
-            }
             Focuscode="$Focuscode
     -write mpr:cutmask
     -delete 0
@@ -2979,9 +2988,9 @@ focus_montage() {
   mpr:cutmask
     -alpha off
     -compose CopyOpacity -composite
-  ${Backgroundimage[$Backgroundnumber]}
+  mpr:$Argword2
     -compose DstOver -composite
-    -write ${Backgroundimage[$Backgroundnumber]}
+    -write mpr:$Argword2
     -delete 0
   mpr:cutmask"
           ;;
@@ -3316,8 +3325,36 @@ focus_montage() {
     cmd "$Command"
   done
   sendmagickmessage "/PROGRESS"
+  Command=""
 
-  Command="
+  # --cutbg: add background
+  for Count in $(seq "$Imoptionsnumber"); do
+    maskarg_parse "$Count"
+    case "$Argmethod" in
+      cutbg)
+        case "$Argword1" in
+          "") # add background to result
+            Command="$Command
+  # --cutbg
+  mpr:$Argword2
+  mpr:focusimage
+    -compose Over -composite
+    -write mpr:focusimage
+    -delete 0"
+          ;;
+          separate) # store as separate background on its own
+            Command="$Command
+  # --cutbg=separate
+  mpr:$Argword2
+    -write $Cachedir/$Argword2
+    -delete 0"
+          ;;
+        esac
+      ;;
+    esac
+  done
+
+  Command="$Command
   # store result image and mask
   mpr:focusimage
     $Tifstorealpha
@@ -3390,6 +3427,19 @@ focus_main() {
         Backgroundnumber="$((Backgroundnumber+1))"
         Backgroundimage[$Backgroundnumber]="$(generate_image --showname --mode "$Argword1")"
         generate_image --mode "$Argword1"
+      ;;
+    esac
+    case "$Argmethod" in
+      cutbg)
+        Argword2="cutbg.$Cutbgmd5.$Argcount.mpc"
+        maskarg_store "$Argcount"
+        generate_image --mode "transparent" --name "mpr:$Argword2"
+        case "$Argword1" in
+          separate)
+            Backgroundnumber="$((Backgroundnumber+1))"
+            Backgroundimage[$Backgroundnumber]="$Cachedir/$Argword2"
+          ;;
+        esac
       ;;
     esac
   done
@@ -3837,11 +3887,9 @@ maskarg_parse() {
       "TYPE")             Argtype="$Value" ;;
       "AUTOWEIGHT")       Argautoweight="$Value" ;;
       "BASENAME")         Argbasename="$Value" ;;
-      *|WORD1|WORD2)
-        [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" 
-        Argword1="${Argword1#WORD1=}"
-        Argword2="${Argword2#WORD2=}"
-      ;;
+      "WORD1")            Argword1="$Value" ;;
+      "WORD2")            Argword2="$Value" ;;
+      *)                  [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" ;;
     esac
   done <<< "$Argoptions,"
 
@@ -3869,8 +3917,8 @@ maskarg_store() {
   [ "$Argclut" ]               && Argoptions="$Argoptions,clut=$Argclut"
   [ "$Argthreshold1" ]         && Argoptions="$Argoptions,t$Argthreshold1"
   [ "$Argthreshold2" ]         && Argoptions="$Argoptions,T$Argthreshold2"
-  [ "$Argword1" ]              && Argoptions="$Argoptions,$Argword1"
-  [ "$Argword2" ]              && Argoptions="$Argoptions,$Argword2"
+  [ "$Argword1" ]              && Argoptions="$Argoptions,WORD1=$Argword1"
+  [ "$Argword2" ]              && Argoptions="$Argoptions,WORD2=$Argword2"
   [ "$Argtype" ]               && Argoptions="$Argoptions,TYPE=$Argtype"
   [ "$Argautoweight" ]         && Argoptions="$Argoptions,AUTOWEIGHT=yes"
   [ "$Argbasename" ]           && Argoptions="$Argoptions,BASENAME=$Argbasename"
@@ -4050,6 +4098,12 @@ maskarg_checkallowed() {
           Argword1=""
         ;;
         cmd|cmddiff|cutcmd|finalcmd|maskcmd) ;;
+        cutbg)
+          case "$Argword1" in
+            separate) ;;
+            *) error "--$Argmethod: unknown argument for word1: $Arg" ;;
+          esac
+        ;;
         depthmap)
           [ -f "$Arg" ] || error "--$Argmethod: File not found: $Arg"
         ;;
@@ -4326,10 +4380,10 @@ maskarg_defaultvalue() {
     ;;
     threshold1)
       case "$Argmethod" in
-        cutthreshold)   Output="30" ;;
-        finalblur)      Output="50" ;;
-        finalblur2)     Output="50" ;;
-        finalthreshold) Output="50" ;;
+        cutthreshold)   Output="20" ;;
+        finalblur)      Output="20" ;;
+        finalblur2)     Output="20" ;;
+        finalthreshold) Output="20" ;;
         masklevel)      Output="5" ;;
         maskthreshold)  Output="50" ;;
       esac
@@ -4371,6 +4425,7 @@ maskarg_defaultvalue() {
         comet)          Output="Lighten" ;;
         compass)        Output="Lighten" ;;
         compose)        Output="Overlay" ;;
+        cutbg)          Output="" ;;
         cutblur)        Output="" ;;
         cutmorph)       Output="Erode" ;;
         depthmap)       Output="NO_FILE_SPECIFIED" ;;
@@ -4815,6 +4870,7 @@ declare_variables() {
   Cachedir=""
   Colorspace=""
   Colorspacechannel=""
+  Cutbgmd5=""
   Exifsourceimage=""
   Extendedsave="no"
   Firstimage=""
