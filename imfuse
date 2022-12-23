@@ -564,7 +564,7 @@ Step 5: Post processing
                       percent2 affects the high contrast areas with
                        a useful range of +100%..+200%.
                       Higher values make less transparent.
-                       The percent values are applied as '+level p%xP%'
+                       The percent values are applied as '+level p%,P%'
                        on the transparency alpha channel.
                       If word 'off' is set, the alpha channel is disabled
                        without further action.
@@ -691,7 +691,7 @@ showviewnior() {
     compare "$Imageheight" -lt "$H" && H="$Imageheight" 
     nohup feh --draw-tinted --zoom="max" --keep-zoom-vp \
               --geometry="${W}x${H}+37+0" \
-              --title="$Resultbasename:  $Parsedoptions" \
+              --title="$Fusemd5sum:  $Parsedoptions" \
               --info="exiftool -imagedescription %F | cut -d: -f2- | fold -s -w $((Imagewidth/7))" \
               "$@" </dev/null >/dev/null 2>&1 &
     disown $!
@@ -806,17 +806,14 @@ unspecialstring() {
 forcemask() {
   note "Forcing mask generation"
   rm -f "$Cachedir"/mask.*
-  forcelevel
 }
 forcelevel() {
   note "Forcing leveling"
   rm -f "$Cachedir"/level*
-  forcemerge
 }
 forcemerge() {
   note "Forcing merge"
   rm -f "$Cachedir"/*merge*
-  forcefocus
 }
 forcefocus() {
   note "Forcing focus"
@@ -1041,35 +1038,37 @@ check_exifstring() {
   Parsedoptions="${Parsedoptions#" "}"
 }
 check_outputname() {
-  Fusemd5sum="$(md5cut "$Sourcemd5 ${Imoptions[*]} ${Imarguments[*]} $Testsetup$Testarg" )"
+  Optionmd5="$(md5cut "${Imoptions[*]} ${Imarguments[*]} $Testsetup$Testarg")"
+  Fusemd5sum="${Sourcemd5}_${Optionmd5}"
+  [ "$Longname" = "yes" ] && Longname="${Parsedoptions// /}" || Longname=""
 
   Resultbasename=""
-  Resultbasename="${Resultbasename}_md${Fusemd5sum}"
+  Resultbasename="${Sourcemd5}_${Optionmd5}"
   [ "$Storelayered" = "yes" ] && Resultbasename="${Resultbasename}_layered"
-  Resultsearchmask="*$Resultbasename"
-  [ "$Longname" = "yes" ] && Resultbasename="${Parsedoptions// /}$Resultbasename"
+  Resultsearchmask="$Resultbasename*"
 
   [ -z "${Outputdir:-}" ] && Outputdir="./"
-  [ -z "$Resultimage" ] && Resultimage="${Outputbasename:-"imfuse"}${Resultbasename}"
+  [ -z "$Resultimage" ] && Resultimage="${Outputbasename}${Resultbasename}"
 
   # cut off file extension
   [ "$(rev <<< "$Resultimage" | cut -d. -f1)" = "$(rev <<< "$Imageformat")" ] && {
     Resultimage="$(rev <<< "$Resultimage" | cut -d. -f2- | rev)"
   }
-  Resultbasename="$Resultimage"
+  Resultimage="${Resultimage}${Resultbasename}${Longname}"
+  #Resultbasename="$Resultimage"
 
   case "$Extendedsave" in
     yes)
-      Resultdepthmap="${Outputdir}/${Resultbasename}.depth.${Imageformat}"
-      Resultmask="${Outputdir}/${Resultbasename}.mask.${Imageformat}"
+      Resultdepthmap="${Outputdir}/${Resultbasename}${Longname}.depthmap.${Imageformat}"
+      Resultmask="${Outputdir}/${Resultbasename}${Longname}.mask.${Imageformat}"
     ;;
     no) ### FIXME
-      Resultdepthmap="${Cachedir}/${Resultbasename}.depth.${Imageformat}"
-      Resultmask="${Cachedir}/${Resultbasename}.mask.${Imageformat}"
+      Resultdepthmap="${Cachedir}/${Resultbasename}${Longname}.depthmap.${Imageformat}"
+      Resultmask="${Cachedir}/${Resultbasename}${Longname}.mask.${Imageformat}"
     ;;
   esac
-  [ "$Video" ] && Video="${Outputdir}/${Resultbasename}.webm"
-  Resultimage="${Outputdir}/${Resultbasename}.${Imageformat}"
+  [ "$Video" ] && Video="${Outputdir}/${Resultbasename}${Longname}.video.webm"
+  Resultimage="${Outputdir}/${Resultbasename}${Longname}.result.${Imageformat}"
 
   return 0
 }
@@ -4849,6 +4848,7 @@ declare_variables() {
   Cacheformat=""
   Masktocache="no"
   Mergemaskbasename=""
+  Optionmd5=""
   Outputbasename=""
   Outputdir=""
   Parsedoptions=""
@@ -5204,14 +5204,11 @@ $Parsedoptions"
 
   # --force
   [ -z "$Force" ] && {
-    #Resultimage_check="$(find . -wholename "${Resultimage//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
-    Resultimage_check="$(find . -wholename "${Resultsearchmask}.${Imageformat}" | tail -n1)"
+    Resultimage_check="$(find . -name "${Resultsearchmask}.result.${Imageformat}" | tail -n1)"
     [ -n "$Resultimage_check" ] && {
       Resultimage="$Resultimage_check"
-      #Resultdepthmap="$(find . -wholename "${Resultdepthmap//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
-      Resultdepthmap="$(find . -wholename "${Resultsearchmask}.depthmap.${Imageformat}" | tail -n1)"
-      #Resultmask="$(find . -wholename "${Resultmask//$Resulttimestamp/"??-??-??_??.??"}" | tail -n1)"
-      Resultmask="$(find . -wholename "${Resultsearchmask}.mask.${Imageformat}" | tail -n1)"
+      Resultdepthmap="$(find . -name "${Resultsearchmask}.depthmap.${Imageformat}" | tail -n1)"
+      Resultmask="$(find . -name "${Resultsearchmask}.mask.${Imageformat}" | tail -n1)"
       note "Output image already exists with matching md5sum.
   You can force imfuse to run nonetheless with option --force."
       showresult
@@ -5219,11 +5216,33 @@ $Parsedoptions"
     }
   }
 
-  [ "$Force" = "mask" ]  && forcemask
-  [ "$Force" = "merge" ] && forcemerge
-  [ "$Force" = "level" ] && forcelevel
-  [ "$Force" = "focus" ] && forcefocus
-  [ "$Force" = "post" ]  && forcepost
+  case "$Force" in
+    mask)
+      forcemask
+      forcelevel
+      forcemerge
+      forcefocus
+      forcepost
+    ;;
+    level)
+      forcelevel
+      forcemerge
+      forcefocus
+      forcepost
+    ;;
+    merge)
+      forcemerge
+      forcefocus
+      forcepost
+    ;;
+    focus)
+      forcefocus
+      forcepost
+    ;;
+    post|postfocus)
+      forcepost
+    ;;
+  esac
 
   # start magick script
   Command="
