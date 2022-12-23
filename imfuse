@@ -676,12 +676,12 @@ showimage() {
   disown $!
   [ "$Video" ] && {
 #    Videoframecount="$((Videoframecount+1))"
-    Videoframecount="$(ls "$Cachedir"/videoframe????.* | sort -V | tail -n1)"
+    Videoframecount="$(ls "${Cachedir}"/videoframe????.* | sort -V | tail -n1)"
     Videoframecount="$(basename "$Videoframecount")"
     Videoframecount="${Videoframecount//[^0-9]/}"
     Videoframecount="$(sed "s/^0*//" <<< "$Videoframecount")"
     Videoframecount="$(calc "$Videoframecount+1")"
-    Frame="$Cachedir/videoframe$(printnum "$Videoframecount").tif"
+    Frame="${Cachedir}/videoframe$(printnum "$Videoframecount").tif"
     #ln -s "${1:-}" "$Frame"
     cp "${1:-}" "$Frame" ### FIXME ln -s where possible
   }
@@ -811,24 +811,24 @@ unspecialstring() {
 
 forcemask() {
   note "Forcing mask generation"
-  rm -f "$Cachedir"/mask.*
+  rm -f "${Cachedir}"/${Sourcemd5}.mask.*
 }
 forcelevel() {
   note "Forcing leveling"
-  rm -f "$Cachedir"/level*
+  rm -f "${Cachedir}"/level*
 }
 forcemerge() {
   note "Forcing merge"
-  rm -f "$Cachedir"/*merge*
+  rm -f "${Cachedir}"/${Sourcemd5}.mask.merge*
 }
 forcefocus() {
   note "Forcing focus"
-  rm -f "$Cachedir"/focus*
-  rm -f "$Cachedir"/substackresult*
+  rm -f "${Cachedir}"/${Sourcemd5}.focus*
+  rm -f "${Cachedir}"/${Sourcemd5}.substack*
 }
 forcepost() {
   note "Forcing focus postprocessing"
-  rm -f "$Cachedir"/substackresult*-post*
+  rm -f "${Cachedir}"/${Sourcemd5}.substack*.final.*
 }
 
 #### run commands on all CPUs
@@ -946,7 +946,7 @@ multicore_init() {
   Multicore_maxprocesses=$Multicore_maxprocesses
 }
 ifcmdbreak() {
-  [ -e "$Cachedir/exit" ]
+  [ -e "${Cachedir}/exit" ]
   #return 1
 }
 printfreememory() {
@@ -1049,10 +1049,10 @@ check_outputname() {
     maskarg_parse "$Count"
     case "$Argtype" in
       background|postfocus) ;;
-      *) Cutbgmd5="$Cutbgmd5 ${Imoptions[$Count]}=${Imarguments[$Count]}" ;;
+      *) Substackmd5="$Substackmd5 ${Imoptions[$Count]}=${Imarguments[$Count]}" ;;
     esac
   done
-  Cutbgmd5="$(md5cut "$Sourcemd5 $Cutbgmd5")"
+  Substackmd5="$(md5cut "$Sourcemd5 $Substackmd5")"
 
   [ "$Longname" = "yes" ] && Longname="${Parsedoptions// /}" || Longname=""
 
@@ -1162,7 +1162,7 @@ maskexist() {
   case "$Masktocache" in
     yes)
       for Count in $(seq "$Firstimage" "$Lastimage"); do
-        [ -e "$Cachedir/mask.${1:-}.$(printnum "$Count").${Cacheformat}" ] || return 1
+        [ -e "${Cachedir}/mask.${1:-}.$(printnum "$Count").${Cacheformat}" ] || return 1
       done
       return 0
     ;;
@@ -1176,7 +1176,7 @@ maskname() {
   [ -z "${2:-}" ] && error "maskname(): number not given: ${1:-} ${2:-}"
   case "$Masktocache" in
     yes)
-      echo "$Cachedir/mask.${1:-}.$(printnum "${2:-}").${Cacheformat}"
+      echo "${Cachedir}/${Sourcemd5}.mask.${1:-}.$(printnum "${2:-}").${Cacheformat}"
     ;;
     no)
       echo "mpr:${1:-}.$(printnum "${2:-}")"
@@ -1194,8 +1194,8 @@ align() {
   local X Y W H Lmax=0 Tmax=0 Rmin=10000000 Bmin=10000000
   local Aligndir
 
-  Log="$Cachedir/align.log"
-  Aligndir="$Cachedir/aligned.$Sourcemd5"
+  Log="${Cachedir}/align.log"
+  Aligndir="${Cachedir}/aligned.$Sourcemd5"
   mkdir -p "$Aligndir"
 
   note "Aligning source images with external tool focus-stack."
@@ -1373,7 +1373,7 @@ enfuse_split() {
       load_sourceimages "$Firstimage" "$Lastimage"
 
       Splitheight=$((Imageheight/Splits))
-      Splitcache="$Cachedir/enfuse.split"
+      Splitcache="${Cachedir}/enfuse.split"
       mkdir -p "$Splitcache"
 
       for Split in $(seq $Splits); do
@@ -1577,14 +1577,14 @@ evaluate_splitlist() {
     Splitfirstimage[$Split]="$(( (Split-1)*Imagenumber/Splits +1))"
     Splitlastimage[$Split]="$(( (Split)*Imagenumber/Splits +1))"
     [ "${Splitlastimage[$Split]}" -gt "$Imagenumber" ] && Splitlastimage[$Split]="$Imagenumber"
-    Splitresult[$Split]="$Cachedir/evalsplit_$Mode.$Split.mpc"
+    Splitresult[$Split]="${Cachedir}/evalsplit_$Mode.$Split.${Cacheformat}"
   done
 
   sendmagickmessage "NOTE:evaluating in $Splits tasks outside of script"
 
   for Split in $(seq $Splits); do
 #  -limit memory ${Mem_free}KB
-#  -define registry:temporary-path='$Cachedir'
+#  -define registry:temporary-path='${Cachedir}'
     Command="$Magickbin
   $(printf "'%s' " "${Imagelist[@]:${Splitfirstimage[$Split]}:${Splitlastimage[$Split]}}")
     -evaluate-sequence $Mode
@@ -1770,15 +1770,15 @@ generate_image() {
   [ -z "$Imagename" ] && {
     Generalimage="yes"
     case "$Imagetype" in
-      enfuse)     Imagename="$Cachedir/enfuse.${Firstimage}..${Lastimage}.$Sourcemd5.$Imageformat" ;;
-      wave)       Imagename="$Cachedir/wave.${Firstimage}..${Lastimage}.$Sourcemd5.$Imageformat" ;;
-      wavedark)   Imagename="$Cachedir/wavedark.${Firstimage}..${Lastimage}.$Sourcemd5.$Imageformat" ;;
-      evaluate)   Imagename="$Cachedir/evaluate.${Firstimage}..${Lastimage}.$Mode.$Sourcemd5.mpc" ;;
-      compose)    Imagename="$Cachedir/compose.${Firstimage}..${Lastimage}.$Mode$([ "$Swap" ] && echo 2 ||:).$Sourcemd5.mpc" ;;
-      color)      Imagename="mpr:$Mode" ;;
+      enfuse)     Imagename="${Cachedir}/${Sourcemd5}.enfuse.${Firstimage}..${Lastimage}.${Imageformat}" ;;
+      wave)       Imagename="${Cachedir}/${Sourcemd5}.wave.${Firstimage}..${Lastimage}.${Cacheformat}" ;;
+      wavedark)   Imagename="${Cachedir}/${Sourcemd5}.wavedark.${Firstimage}..${Lastimage}.${Cacheformat}" ;;
+      evaluate)   Imagename="${Cachedir}/${Sourcemd5}.evaluate.${Firstimage}..${Lastimage}.${Mode}.${Cacheformat}" ;;
+      compose)    Imagename="${Cachedir}/${Sourcemd5}.compose.${Firstimage}..${Lastimage}.${Mode}$([ "$Swap" ] && echo 2 ||:).${Cacheformat}" ;;
+      color)      Imagename="mpr:${Mode}" ;;
     esac
   }
-  Subimfuse="imfuse --cache=$Cachedir --output=$Imagename --sub=bg-wave"
+  Subimfuse="imfuse --cache=${Cachedir} --output=$Imagename --sub=bg-wave"
   [ "$Showimageprocessing" = "yes" ] && Subimfuse="$Subimfuse -V"
 
   [ -z "$Imagename" ] && {
@@ -1858,8 +1858,8 @@ generate_video() {
   Videoframerate=5
   #nice ffmpeg -y -hide_banner -nostdin  -r $Videoframerate -f image2 -start_number 1 -i $Framedir/frame%04d.$Imageformat $Destinationfile || note "ERROR in video generation"
   [ -f "$Video" ] && rm "$Video"
-  nice ffmpeg -y -hide_banner -nostdin  -r $Videoframerate -f image2 -start_number 1 -i "$Cachedir/videoframe%04d.$Imageformat" "$Video" || note "ERROR in video generation"
-  rm "$Cachedir"/videoframe*
+  nice ffmpeg -y -hide_banner -nostdin  -r $Videoframerate -f image2 -start_number 1 -i "${Cachedir}/videoframe%04d.$Imageformat" "$Video" || note "ERROR in video generation"
+  rm "${Cachedir}"/videoframe*
   ffplay "$Video"
 }
 level_masks() {
@@ -2278,7 +2278,7 @@ focus_maskmethod() {
     ;;
 
     depthmap)
-      Md5="md$(md5cut $(ls -f -l --full-time "$Argword1")).tif"
+      Md5="md$(md5cut $(ls -f -l --full-time "$Argword1")).${Imageformat}"
       cmd "
   # --depthmap='$Argword1'
   $Argword1
@@ -2619,13 +2619,13 @@ ${Maskgenerator_all}"
     maskarg_parse "$Count"
     [ "$Argtype" = "mask" ] && {
       [ "$Arglevel" = "yes" ] && {
-        [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/levelclut$Argclut.$Argbasename" ] && {
+        [ "$Masktocache" = "yes" ] && [ -e "${Cachedir}/${Sourcemd5}.mask.${Argbasename}.levelclut${Argclut}" ] && {
           sendmagickmessage "NOTE:Skipping mask leveling, already done: $Argbasename"
         } || {
           Levelmax="$(grep "$Argbasename:MAX" "$Magickfifolog" | cut -d= -f2 | LC_ALL=C awk '{ OFMT="%f"; print $1*1 }' | sort -n | tail -n1)"
           Levelmin="$(grep "$Argbasename:MIN" "$Magickfifolog" | cut -d= -f2 | LC_ALL=C awk '{ OFMT="%f"; print $1*1 }' | sort -n | head -n1)"
           level_masks --name="$Argbasename" --first="$Firstimage" --last="$Lastimage" --clut="${Argclut:-yes}" --min="$Levelmin" --max="$Levelmax"
-          [ "$Masktocache" = "yes" ] && :> "$Cachedir/levelclut$Argclut.$Argbasename"
+          [ "$Masktocache" = "yes" ] && :> "${Cachedir}/${Sourcemd5}.mask.${Argbasename}.levelclut${Argclut}"
         }
       }
     }
@@ -2662,7 +2662,7 @@ focus_merge_masks() {
     esac
   }
 
-  Mergemaskbasename="mergemask"
+  Mergemaskbasename="merge"
 
   maskarg_single "maskmerge" ||:
   Mergemethod="${Argword1:-"Screen"}"
@@ -2866,6 +2866,7 @@ focus_merge_masks() {
   Mergecode="$Mergecode
     -write mpr:mergemask
     -delete 0"
+
   [ "$Testsetup" ] && Mergecode="$Mergecode
   ./face--bg=Difference_md3a7ecc.tif
     -grayscale RMS
@@ -2913,12 +2914,12 @@ ${Mergecode//"NUMBER"/"$(printnum "$Count")"}
   Levelmax="$(grep "$Mergemaskbasename:MAX" "$Magickfifolog" | cut -d= -f2 | LC_ALL=C awk '{ OFMT="%f"; print $1*1 }' | sort -n | tail -n1)"
   Levelmin="$(grep "$Mergemaskbasename:MIN" "$Magickfifolog" | cut -d= -f2 | LC_ALL=C awk '{ OFMT="%f"; print $1*1 }' | sort -n | head -n1)"
   maskarg_single "masklevel" && [ "$Argword1" != "off" ] && {
-    Newbasename="${Mergemaskbasename}_${Firstimage}..${Lastimage},level=$Argoptions"
-    [ "$Masktocache" = "yes" ] && [ -e "$Cachedir/$Newbasename" ] && {
+    Newbasename="${Sourcemd5}.mask.${Mergemaskbasename}.${Firstimage}..${Lastimage}.level-t${Argthreshold1}-${Argword1}"
+    [ "$Masktocache" = "yes" ] && [ -e "${Cachedir}/$Newbasename" ] && {  
       sendmagickmessage "NOTE:--masklevel: Skipping, mask is already leveled."
     } || {
       level_masks --name="$Mergemaskbasename" --round="$Argthreshold1" --min="${Argpercent1:-$Levelmin}" --max="${Argpercent2:-$Levelmax}" --output="$Newbasename" --first="$Firstimage" --last="$Lastimage"
-      [ "$Masktocache" = "yes" ] && :> "$Cachedir/$Newbasename"
+      [ "$Masktocache" = "yes" ] && :> "${Cachedir}/$Newbasename"
     }
     Mergemaskbasename="$Newbasename"
   }
@@ -3191,10 +3192,10 @@ focus_montage() {
 
   sendmagickmessage "NOTE:Step 4: Focus cut montage"
 
-  Focusimagebasename="focus.$Firstimage..$Lastimage.$(md5cut "$(masklist "$Mergemaskbasename") $Focuscode")"
-  Focusimagefile="$Cachedir/$Focusimagebasename.tif"
-  Focusimagemaskfile="$Cachedir/$Focusimagebasename.mask.tif"
-  Focusimagedepthfile="$Cachedir/$Focusimagebasename.depth.tif"
+  Focusimagebasename="$Sourcemd5.focus.$Firstimage..$Lastimage.$(md5cut "$(masklist "$Mergemaskbasename") $Focuscode")"
+  Focusimagefile="${Cachedir}/$Focusimagebasename.result.${Imageformat}"
+  Focusimagemaskfile="${Cachedir}/$Focusimagebasename.mask.${Imageformat}"
+  Focusimagedepthfile="${Cachedir}/$Focusimagebasename.depthmap.${Imageformat}"
 
   [ -e "$Focusimagefile" ] && {
     sendmagickmessage "NOTE:Skipping focus cut montage, image already exists."
@@ -3346,7 +3347,7 @@ focus_montage() {
             Command="$Command
   # --cutbg=separate
   mpr:$Argword2
-    -write $Cachedir/$Argword2
+    -write ${Cachedir}/$Argword2
     -delete 0"
           ;;
         esac
@@ -3406,7 +3407,7 @@ focus_montage() {
   return 0
 }
 focus_main() {
-  local Substackstep
+  local Substackstep Substackbasename
   local Command Count Startzeit
   local Backgroundimage
   local Transparentlayers=
@@ -3431,13 +3432,13 @@ focus_main() {
     esac
     case "$Argmethod" in
       cutbg)
-        Argword2="cutbg.$Cutbgmd5.$Argcount.mpc"
+        Argword2="cutbg.$Substackmd5.$Argcount.$Cacheformat"
         maskarg_store "$Argcount"
         generate_image --mode "transparent" --name "mpr:$Argword2"
         case "$Argword1" in
           separate)
             Backgroundnumber="$((Backgroundnumber+1))"
-            Backgroundimage[$Backgroundnumber]="$Cachedir/$Argword2"
+            Backgroundimage[$Backgroundnumber]="${Cachedir}/$Argword2"
           ;;
         esac
       ;;
@@ -3460,9 +3461,14 @@ focus_main() {
   # Focus stacking
   [ "$Maskmethodnumber" -gt "0" ] && { 
     for Substackstep in $(seq "$Substacknumber" -1 1); do
-      Substackresult[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep.mpc"
-      Substackmask[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-mask.mpc"
-      Substackdepthmap[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-depth.mpc"
+      Substackbasename="${Cachedir}/${Sourcemd5}.substack${Substackstep}.${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}.${Substackmd5}"
+      Substackresult[$Substackstep]="${Substackbasename}.result.${Cacheformat}"
+      Substackmask[$Substackstep]="${Substackbasename}.mask.${Cacheformat}"
+      Substackdepthmap[$Substackstep]="${Substackbasename}.depthmap.${Cacheformat}"
+      Substackresultpost[$Substackstep]="${Substackbasename}.result.final.${Cacheformat}"
+      Substackmaskpost[$Substackstep]="${Substackbasename}.mask.final.${Cacheformat}"
+      Substackdepthmappost[$Substackstep]="${Substackbasename}.depthmap.final.${Cacheformat}"
+
       sendmagickmessage "NEWLINE"
       sendmagickmessage "NOTE:Generating substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
 
@@ -3485,9 +3491,6 @@ focus_main() {
     Startzeit="$(date +%s)"
     for Substackstep in $(seq "$Substacknumber" -1 1); do
       sendmagickmessage "NOTE:Step 5: Final postprocessing substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
-      Substackresultpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post.mpc"
-      Substackmaskpost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-mask.mpc"
-      Substackdepthmappost[$Substackstep]="$Cachedir/substackresult.$Resultbasename.substack$Substackstep-post-depthmap.mpc"
 
       [ -e "${Substackresultpost[$Substackstep]}" ] && {
         sendmagickmessage "NOTE:Skipping --final* options, already done."
@@ -4813,7 +4816,7 @@ finish() {
 
   # cache
   [ -f "${Showimage:-}" ] && rm "$Showimage"
-  [ "$Keepcache" = "no" ] && [ -d "$Cachedir" ] && rm -R "$Cachedir"
+  [ "$Keepcache" = "no" ] && [ -d "${Cachedir}" ] && rm -R "${Cachedir}"
   [ -n "$Cachebasedir" ] && case "$Singleaction" in
     --rmcache)
       note "Option --rmcache: Cleaning cache: $Cachebasedir"
@@ -4870,7 +4873,6 @@ declare_variables() {
   Cachedir=""
   Colorspace=""
   Colorspacechannel=""
-  Cutbgmd5=""
   Exifsourceimage=""
   Extendedsave="no"
   Firstimage=""
@@ -4925,6 +4927,7 @@ declare_variables() {
   Substacklastimage=""
   #Substackmask=""
   #Substackmaskpost=""
+  Substackmd5=""
   #Substackresult=""
   #Substackresultpost=""
   Substacknumber="0"
@@ -5184,20 +5187,20 @@ main_setup() {
 
   # --cache
   Cachebasedir="$HOME/.cache/imfuse"
-  [ -n "$Cachedir" ] && {
+  [ -n "${Cachedir}" ] && {
     Masktocache="yes"
     Keepcache="yes"
-    [ "$Cachedir" = "auto" ] && Cachedir=""
+    [ "${Cachedir}" = "auto" ] && Cachedir=""
   }
   Cachedir="${Cachedir//"~"/"$HOME"}"
-  [ -n "$Cachedir" ] && Cachebasedir="$Cachedir"
+  [ -n "${Cachedir}" ] && Cachebasedir="${Cachedir}"
   case "$Masktocache" in
-    yes) [ -z "$Cachedir" ] && Cachedir="$Cachebasedir" ;;
-    no)  [ -z "$Cachedir" ] && Cachedir="$Cachebasedir/$Imfusepid" ;;
+    yes) [ -z "${Cachedir}" ] && Cachedir="$Cachebasedir" ;;
+    no)  [ -z "${Cachedir}" ] && Cachedir="$Cachebasedir/$Imfusepid" ;;
   esac
-  mkdir -p "$Cachedir"   || error "Error creating cache folder $Cachedir"
-  Testimage="$Cachedir/test.png"
-  Showimage="${XDG_RUNTIME_DIR:-$Cachedir}/imfuse.showimage.tif"
+  mkdir -p "${Cachedir}"   || error "Error creating cache folder ${Cachedir}"
+  Testimage="${Cachedir}/test.png"
+  Showimage="${XDG_RUNTIME_DIR:-${Cachedir}}/imfuse.showimage.tif"
 
   # check RAM
   Freemem="$(printfreememory)"
@@ -5248,14 +5251,14 @@ main_setup() {
 $Parsedoptions"
 
   # start magick -script in background
-  Magickfifo="$Cachedir/magickfifo.$Imfusepid"
-  Magickfifolog="$Cachedir/magickmessage.$Imfusepid.log"
-  Magickscriptlog="$Cachedir/magickscript.log"
+  Magickfifo="${Cachedir}/magickfifo.$Imfusepid"
+  Magickfifolog="${Cachedir}/magickmessage.$Imfusepid.log"
+  Magickscriptlog="${Cachedir}/magickscript.log"
   :> "$Magickscriptlog"
   :> /tmp/imfuse.log
   mkfifo "$Magickfifo"
   exec 3<>"$Magickfifo"
-  nice magick -limit memory ${Limitmemory}KB -define registry:temporary-path="$Cachedir" -script - <&3 >"$Magickfifolog" 2>&1 & Magickscriptpid="$!"
+  nice magick -limit memory ${Limitmemory}KB -define registry:temporary-path="${Cachedir}" -script - <&3 >"$Magickfifolog" 2>&1 & Magickscriptpid="$!"
   readmagickmessage & Magickmessagepid="$!"
 
   # --force
