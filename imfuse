@@ -458,10 +458,11 @@ Step 4: Stack fusion
  --cutbg [=ARG]       Create a background from current cuts.
                       To be used before --cutthreshold or --cutalpha.
                       ARG takes argument:
-                        (word)   separate
-                      By default the result is composed on the generated
-                      background so --final* options take effect.
-                      With argument 'separate' the background is separated.
+                        (word)   mode              Default: $(maskarg_defaultvalue cutbg word1)%
+                      Possible modes:
+                        background   Use as background, applied after --final*.
+                        compose      Add to result before --final* options.
+                        off          Store background, but do not show it.
  --cutblur [=ARG]     Blur cut masks in final focus montage.
                       ARG takes argument:
                         r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
@@ -1162,7 +1163,7 @@ maskexist() {
   case "$Masktocache" in
     yes)
       for Count in $(seq "$Firstimage" "$Lastimage"); do
-        [ -e "${Cachedir}/mask.${1:-}.$(printnum "$Count").${Cacheformat}" ] || return 1
+        [ -e "$(maskname "${1:-}" "$Count")" ] || return 1
       done
       return 0
     ;;
@@ -2982,6 +2983,15 @@ focus_montage() {
           ;;
 
           cutbg)
+            Argword2="${Sourcemd5}.cutbg.${Argcount}.$(md5cut "$Focuscode $Mergemaskbasename").${Cacheformat}"
+            maskarg_store "$Argcount"
+            generate_image --mode "transparent" --name "mpr:$Argword2"
+            case "$Argword1" in
+              background)
+                Backgroundnumber="$((Backgroundnumber+1))"
+                Backgroundimage[$Backgroundnumber]="${Cachedir}/$Argword2"
+              ;;
+            esac
             Focuscode="$Focuscode
     -write mpr:cutmask
     -delete 0
@@ -3198,22 +3208,50 @@ focus_montage() {
   Focusimagedepthfile="${Cachedir}/$Focusimagebasename.depthmap.${Imageformat}"
 
   [ -e "$Focusimagefile" ] && {
+  note $Focusimagefile $Mergemaskbasename
     sendmagickmessage "NOTE:Skipping focus cut montage, image already exists."
-    Command="
-  '$Focusimagefile'
-    $Tifstorealpha
-    -write '$Resultcopy'
-    -delete 0"
+    Command=""
+
     [ -n "$Maskmaxcopy" ] && [ -f "$Focusimagemaskfile" ] && Command="$Command
   '$Focusimagemaskfile'
     $Tifstore
     -write '$Maskmaxcopy'
     -delete 0"
+
     [ -n "$Depthmap" ] && [ -f "$Focusimagedepthfile" ] && Command="$Command
   '$Focusimagedepthfile'
     $Tifstorealpha
     -write '$Depthmap'
     -delete 0"
+
+    Command="$Command
+  '$Focusimagefile'
+    -write mpr:focusimage
+    -delete 0"
+    for Count in $(seq "$Imoptionsnumber"); do
+      maskarg_parse "$Count"
+      case "$Argmethod" in
+        cutbg)
+          case "$Argword1" in
+            "compose")
+              Command="$Command
+  # --cutbg
+  ${Cachedir}/$Argword2
+  mpr:focusimage
+    -compose Over -composite
+    -write mpr:focusimage
+    -delete 0"
+            ;;
+          esac
+        ;;
+      esac
+    done
+    Command="$Command
+  mpr:focusimage
+    $Tifstorealpha
+    -write '$Resultcopy'
+    -delete 0"
+
     cmd "$Command"
     cmd_waitforready
     return 0
@@ -3328,26 +3366,33 @@ focus_montage() {
   sendmagickmessage "/PROGRESS"
   Command=""
 
-  # --cutbg: add background
+  Command="$Command
+  # store result image and mask
+  mpr:focusimage
+    $Tifstorealpha
+    -write '$Focusimagefile'
+    -delete 0
+  mpr:focusmask
+    $Tifstore
+    -write '$Focusimagemaskfile'
+    -delete 0"
+
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argmethod" in
       cutbg)
-        case "$Argword1" in
-          "") # add background to result
-            Command="$Command
+        Command="$Command
   # --cutbg
+  mpr:$Argword2
+    -write ${Cachedir}/$Argword2
+    -delete 0"
+        case "$Argword1" in
+          "compose") # add background to result
+            Command="$Command
   mpr:$Argword2
   mpr:focusimage
     -compose Over -composite
     -write mpr:focusimage
-    -delete 0"
-          ;;
-          separate) # store as separate background on its own
-            Command="$Command
-  # --cutbg=separate
-  mpr:$Argword2
-    -write ${Cachedir}/$Argword2
     -delete 0"
           ;;
         esac
@@ -3356,15 +3401,10 @@ focus_montage() {
   done
 
   Command="$Command
-  # store result image and mask
+  # write to output image
   mpr:focusimage
     $Tifstorealpha
     -write '$Resultcopy'
-    -write '$Focusimagefile'
-    -delete 0
-  mpr:focusmask
-    $Tifstore
-    -write '$Focusimagemaskfile'
     -delete 0"
 
   [ -n "$Depthmap" ] && Command="$Command
@@ -3428,19 +3468,6 @@ focus_main() {
         Backgroundnumber="$((Backgroundnumber+1))"
         Backgroundimage[$Backgroundnumber]="$(generate_image --showname --mode "$Argword1")"
         generate_image --mode "$Argword1"
-      ;;
-    esac
-    case "$Argmethod" in
-      cutbg)
-        Argword2="cutbg.$Substackmd5.$Argcount.$Cacheformat"
-        maskarg_store "$Argcount"
-        generate_image --mode "transparent" --name "mpr:$Argword2"
-        case "$Argword1" in
-          separate)
-            Backgroundnumber="$((Backgroundnumber+1))"
-            Backgroundimage[$Backgroundnumber]="${Cachedir}/$Argword2"
-          ;;
-        esac
       ;;
     esac
   done
@@ -4103,7 +4130,7 @@ maskarg_checkallowed() {
         cmd|cmddiff|cutcmd|finalcmd|maskcmd) ;;
         cutbg)
           case "$Argword1" in
-            separate) ;;
+            background|compose|off) ;;
             *) error "--$Argmethod: unknown argument for word1: $Arg" ;;
           esac
         ;;
@@ -4428,7 +4455,7 @@ maskarg_defaultvalue() {
         comet)          Output="Lighten" ;;
         compass)        Output="Lighten" ;;
         compose)        Output="Overlay" ;;
-        cutbg)          Output="" ;;
+        cutbg)          Output="compose" ;;
         cutblur)        Output="" ;;
         cutmorph)       Output="Erode" ;;
         depthmap)       Output="NO_FILE_SPECIFIED" ;;
@@ -4566,7 +4593,7 @@ maskarg_short() {
         esac
         #[ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
         [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
-          comet|compass|diffstat|finalgamma|freichen|statistic|masklevel|maskmerge) Append="" ;;
+          comet|compass|cutbg|diffstat|finalgamma|freichen|statistic|masklevel|maskmerge) Append="" ;;
         esac
       ;;
       word2)
