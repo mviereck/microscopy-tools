@@ -24,8 +24,10 @@ Depends on:
  - geeqie (optional)
 
 NOTE: You might need to remove the orientation tag of the source images first.
-Possible tool and command: 
+  Possible tool and command: 
   exiftool -n -Orientation=0 -overwrite_original IMAGES
+NOTE: If the images are given in a lossy format like JPG, you should convert
+  them first to a lossless format like TIF or PNG. stackprepare can do that.
 "
 }
 
