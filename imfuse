@@ -1045,7 +1045,6 @@ check_exifstring() {
   Parsedoptions="${Parsedoptions#" "}"
 }
 check_outputname() {
-  Optionmd5="$(md5cut "${Imoptions[*]} ${Imarguments[*]} $Testsetup$Testarg")"
   for Count in $(seq "$Imoptionsnumber"); do
     maskarg_parse "$Count"
     case "$Argtype" in
@@ -1058,25 +1057,17 @@ check_outputname() {
     esac
   done
   Substackmd5="$(md5cut "$Sourcemd5 $Substackmd5")"
-  Finalmd5="$(md5cut "$Sourcemd5 $Finalmd5")"
+  Finalmd5="$(md5cut    "$Sourcemd5 $Finalmd5")"
+  Optionmd5="$(md5cut "${Imoptions[*]} ${Imarguments[*]} $Testsetup$Testarg")"
+
+  Resultbasename="${Outputbasename}${Sourcemd5}_${Optionmd5}"
+  Resultsearchmask="*${Sourcemd5}_${Optionmd5}*"
+  [ "$Storelayered" = "yes" ] && Resultbasename="${Resultbasename}_layered"
+
+  [ -n "$Resultimage" ]   && Resultbasename="$(basename "$Resultimage")"
+  [ -z "${Outputdir:-}" ] && Outputdir="."
 
   [ "$Longname" = "yes" ] && Longname="${Parsedoptions// /}" || Longname=""
-
-  Resultbasename=""
-  Resultbasename="${Sourcemd5}_${Optionmd5}"
-  [ "$Storelayered" = "yes" ] && Resultbasename="${Resultbasename}_layered"
-  Resultsearchmask="$Resultbasename*"
-
-  [ -z "${Outputdir:-}" ] && Outputdir="./"
-  [ -z "$Resultimage" ] && Resultimage="${Outputbasename}${Resultbasename}"
-
-  # cut off file extension
-  [ "$(rev <<< "$Resultimage" | cut -d. -f1)" = "$(rev <<< "$Imageformat")" ] && {
-    Resultimage="$(rev <<< "$Resultimage" | cut -d. -f2- | rev)"
-  }
-  Resultimage="${Resultimage}${Resultbasename}${Longname}"
-  #Resultbasename="$Resultimage"
-
   case "$Extendedsave" in
     yes)
       Resultdepthmap="${Outputdir}/${Resultbasename}${Longname}.depthmap.${Imageformat}"
@@ -1088,7 +1079,7 @@ check_outputname() {
     ;;
   esac
   [ "$Video" ] && Video="${Outputdir}/${Resultbasename}${Longname}.video.webm"
-  Resultimage="${Outputdir}/${Resultbasename}${Longname}.result.${Imageformat}"
+  [ -z "$Resultimage" ] && Resultimage="${Outputdir}/${Resultbasename}${Longname}.result.${Imageformat}"
 
   return 0
 }
@@ -5112,8 +5103,10 @@ check_options() {
     Outputdir="$Outputbasename"
     Outputbasename=""
   } || {
-    Outputdir="$(dirname "$Outputbasename")"
-    Outputbasename="$(basename "$Outputbasename")"
+    [[ "$Outputbasename" = *"/"* ]] && {
+      Outputdir="$(dirname "$Outputbasename")"
+      Outputbasename="$(basename "$Outputbasename")"
+    }
   }
 
   # --cacheformat
@@ -5139,7 +5132,9 @@ check_options() {
   Imageformat="${Imageformat:-"$(maskarg_defaultvalue format word1)"}"
 
   # --masklevel
-  maskarg_single "masklevel" || maskarg_add "masklevel"
+  maskarg_single "masklevel" || {
+    grep -q "TYPE=mask" <<< "${Imarguments[*]}" && maskarg_add "masklevel"
+  }
 
   # --substacks
   maskarg_single "substacks" || {
