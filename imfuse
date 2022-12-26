@@ -149,6 +149,7 @@ Step 2: Mask generation
                       Adjust only sigma, radius 0 is adjusted automatically.
                       If sigma2 is set, --blur gives the difference of two
                         blur results with sigma1 and sigma2.
+                      If sigma2 is set but empty, it will be sigma1*1.6 .
                       gaussian enables slower but more accurate gaussian blur.
  --cmd [=ARG]         Custom ImageMagick option to create a mask.
                       Compare --cmddiff.
@@ -588,12 +589,9 @@ Step 5: Post processing
                       mask strengh. Low contrast is blurred more than high.
                       ARG takes arguments:
                         r        radius1           Default: $(maskarg_defaultvalue finalblur2 radius1)
-                        R        radius2           Default: $(maskarg_defaultvalue finalblur2 radius2)
                         t        threshold         Default: $(maskarg_defaultvalue finalblur2 threshold1)%
                       A greater radius1 blures more.
                       threshold restricts blur to contrast mask strength.
-                      In some cases an undesired line can appear at the border
-                      of the blurred area. This can be cut off with radius2.
  --finalcmd [=ARG]    Custom ImageMagick option to apply on result image.
                       ARG takes argument:
                         (word)   string            Default: $(maskarg_defaultvalue finalcmd word1)
@@ -728,7 +726,9 @@ traperror() {
 ### Misc
 
 calc() {
-  LC_ALL=C awk "BEGIN { OFMT=\"%f\"; print $**1 }"
+  # float calculation of $* with awk
+  # first awk calculates, second awk removes trailing zeros.
+  LC_ALL=C awk "BEGIN { OFMT=\"%f\"; print $**1 ; }" | awk '{ if ($0 ~ /\./){ sub("0*$","",$0); sub ("\\.$","",$0);} print }'
 }
 checkmagicklist() {
   local Check
@@ -1709,8 +1709,6 @@ finalblur2() {
   '$Mask'
     -white-threshold ${Threshold}%
     -negate"
-  [ -n "$Radius2" ] && Command="$Command
-    -morphology Erode Octagon:${Radius2}"
   Command="$Command
     -write mpr:mask
     -delete 0
@@ -3898,7 +3896,7 @@ maskarg_parse() {
       "r")                [ -z "$Argradius1" ]  && Argradius1="$Value"  || Argradius2="$Value" ;;
       "R")                Argradius2="${Value}" ;;
       "s")                [ -z "$Argsigma1" ]   && Argsigma1="$Value"   || Argsigma2="$Value" ;;
-      "S")                Argsigma2="${Value}" ;;
+      "S")                [ -z "$Value" ] && Value="$(calc "$Argsigma1 * 1.6")" ; Argsigma2="${Value}";;
       "p")                [ -z "$Argpercent1" ] && Argpercent1="$Value" || Argpercent2="$Value" ;;
       "P")                Argpercent2="$Value" ;;
       "t")                Argthreshold1="$Value" ;;
@@ -4054,7 +4052,7 @@ maskarg_checkallowed() {
     ;;
     radius2)
       case "$Argmethod" in
-        diffstat|finalblur2|statistic) ;;
+        diffstat|statistic) ;;
         morphology|cutmorph|maskmorph) ;;
         *) error "--$Argmethod does not take argument radius2: R$Arg" ;;
       esac
@@ -4385,7 +4383,6 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         cutmorph)       Output="1" ;;
         diffstat)       Output="$Argradius1" ;;
-        finalblur2)     Output="1" ;;
         maskmorph)      Output="1" ;;
         morphology)     Output="1" ;;
         statistic) ;;
@@ -4466,7 +4463,7 @@ maskarg_defaultvalue() {
         depthmap)       Output="NO_FILE_SPECIFIED" ;;
         diffstat)       Output="Median" ;;
         evaluate)       Output="Max" ;;
-        finalgamma)     Output="0.4545" ;;
+        finalgamma)     Output="auto" ;;
         freichen)       Output="Screen" ;;
         maskblur)       Output="" ;;
         masklevel)      Output="all" ;;
