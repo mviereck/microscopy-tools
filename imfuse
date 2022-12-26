@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse - Combines focus stackshot images to one overall sharp image.
-Version="0.9.8-beta"
+Version="0.9.9-beta"
 
 ### Information
 
@@ -1052,8 +1052,13 @@ check_outputname() {
       background|postfocus) ;;
       *) Substackmd5="$Substackmd5 ${Imoptions[$Count]}=${Imarguments[$Count]}" ;;
     esac
+    case "$Argtype" in
+      background) ;;
+      *) Finalmd5="$Finalmd5 ${Imoptions[$Count]}=${Imarguments[$Count]}" ;;
+    esac
   done
   Substackmd5="$(md5cut "$Sourcemd5 $Substackmd5")"
+  Finalmd5="$(md5cut "$Sourcemd5 $Finalmd5")"
 
   [ "$Longname" = "yes" ] && Longname="${Parsedoptions// /}" || Longname=""
 
@@ -2387,7 +2392,7 @@ focus_maskmethod() {
       Maskgenerator="$Maskgenerator
   $Sourceimage
     -define convolve:bias=50%
-    -define convolve:scale=100%
+    -define convolve:scale=100%!
     -morphology Convolve LoG:${Argradius1}x${Argsigma1}"
     [ -n "$Argsigma2" ] && Maskgenerator="$Maskgenerator
   (
@@ -3492,9 +3497,6 @@ focus_main() {
       Substackresult[$Substackstep]="${Substackbasename}.result.${Cacheformat}"
       Substackmask[$Substackstep]="${Substackbasename}.mask.${Cacheformat}"
       Substackdepthmap[$Substackstep]="${Substackbasename}.depthmap.${Cacheformat}"
-      Substackresultpost[$Substackstep]="${Substackbasename}.result.final.${Cacheformat}"
-      Substackmaskpost[$Substackstep]="${Substackbasename}.mask.final.${Cacheformat}"
-      Substackdepthmappost[$Substackstep]="${Substackbasename}.depthmap.final.${Cacheformat}"
 
       sendmagickmessage "NEWLINE"
       sendmagickmessage "NOTE:Generating substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
@@ -3518,6 +3520,11 @@ focus_main() {
     Startzeit="$(date +%s)"
     for Substackstep in $(seq "$Substacknumber" -1 1); do
       sendmagickmessage "NOTE:Step 5: Final postprocessing substack $Substackstep / $Substacknumber: ${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}"
+
+      Substackbasename="${Cachedir}/${Sourcemd5}.substack${Substackstep}.${Substackfirstimage[$Substackstep]}..${Substacklastimage[$Substackstep]}.${Finalmd5}"
+      Substackresultpost[$Substackstep]="${Substackbasename}.result.final.${Cacheformat}"
+      Substackmaskpost[$Substackstep]="${Substackbasename}.mask.final.${Cacheformat}"
+      Substackdepthmappost[$Substackstep]="${Substackbasename}.depthmap.final.${Cacheformat}"
 
       [ -e "${Substackresultpost[$Substackstep]}" ] && {
         sendmagickmessage "NOTE:Skipping --final* options, already done."
@@ -3890,7 +3897,8 @@ maskarg_parse() {
       Key="${Line//[0-9-+.]/}" # remove digits including +-.
       [ "$Key" = "%" ] && Key="p"
       Key="${Key%"%"}"
-      Value="${Line#${Key:-NOKEY}}"
+      #Value="${Line#${Key:-NOKEY}}"
+      Value="${Line/${Key:-NOKEY}/}"
     }
     Value="${Value//%/}"
     Value="${Value//+/}"
@@ -4193,7 +4201,13 @@ maskarg_checkallowed() {
           Argword2=""
         ;;
         diffstat)
-          checkmagicklist statistic "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
+          case "${Arg,,}" in
+            stdev|dev) Arg="StandardDeviation" ;;
+            min)       Arg="Minimum" ;;
+            max)       Arg="Maximum" ;;
+            grad)      Arg="Gradient" ;;
+          esac
+          checkmagicklist statistic "$Arg" || error "--$Argmethod: unknown argument for word2: $Arg
   Please choose out of 'magick -list statistic'"
           Argword2="$(checkmagicklist statistic "$Arg" print)"
         ;;
@@ -4902,6 +4916,7 @@ declare_variables() {
   Colorspacechannel=""
   Exifsourceimage=""
   Extendedsave="no"
+  Finalmd5=""
   Firstimage=""
   Force=""
   Freemem=""
