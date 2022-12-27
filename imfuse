@@ -41,7 +41,7 @@ General options:
                           but needs lots of disk space. In case you run out
                           of disk space, use 'tif'.
      --exif [=IMAGE]      Transfer exif meta data from IMAGE or first image.
-     --force              Force imfuse to run even if output image exists.
+ -f, --force              Force imfuse to run even if output image exists.
      --format=FORMAT      Store result in image format FORMAT. Default: $(maskarg_defaultvalue format word1)
  -h, --help               Show this help and exit.
      --layered            Store backgrounds and substacks in layered TIF.
@@ -1074,8 +1074,8 @@ check_outputname() {
       Resultmask="${Outputdir}/${Resultbasename}${Longname}.mask.${Imageformat}"
     ;;
     no) ### FIXME
-      Resultdepthmap="${Cachedir}/${Resultbasename}${Longname}.depthmap.${Imageformat}"
-      Resultmask="${Cachedir}/${Resultbasename}${Longname}.mask.${Imageformat}"
+      Resultdepthmap="${Cachedir}/${Resultbasename}${Longname}.depthmap.tif"
+      Resultmask="${Cachedir}/${Resultbasename}${Longname}.mask.tif"
     ;;
   esac
   [ "$Video" ] && Video="${Outputdir}/${Resultbasename}${Longname}.video.webm"
@@ -1765,7 +1765,7 @@ generate_image() {
   [ -z "$Imagename" ] && {
     Generalimage="yes"
     case "$Imagetype" in
-      enfuse)     Imagename="${Cachedir}/${Sourcemd5}.enfuse.${Firstimage}..${Lastimage}.${Imageformat}" ;;
+      enfuse)     Imagename="${Cachedir}/${Sourcemd5}.enfuse.${Firstimage}..${Lastimage}.tif" ;;
       wave)       Imagename="${Cachedir}/${Sourcemd5}.wave.${Firstimage}..${Lastimage}.${Cacheformat}" ;;
       wavedark)   Imagename="${Cachedir}/${Sourcemd5}.wavedark.${Firstimage}..${Lastimage}.${Cacheformat}" ;;
       evaluate)   Imagename="${Cachedir}/${Sourcemd5}.evaluate.${Firstimage}..${Lastimage}.${Mode}.${Cacheformat}" ;;
@@ -1839,10 +1839,10 @@ generate_image() {
       evaluate "$Mode" "$Imagename" "${Imsourceimagelist[@]:$Firstimage:$Lastimage}"
     ;;
     wave)
-      $Subimfuse --format="$Imageformat" --wavelet=p100 --cutwave=p100 --finalalpha=off "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
+      $Subimfuse --format="tif" --wavelet=p100 --cutwave=p100 --finalalpha=off "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
     ;;
     wavedark)
-      $Subimfuse --format="$Imageformat" --wavelet=p100 --cutwave=p100 --darkness=w25 --finalalpha=off "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
+      $Subimfuse --format="tif" --wavelet=p100 --cutwave=p100 --darkness=w25 --finalalpha=off "${Sourceimagelist[@]:$Firstimage:$Lastimage}"
     ;;
   esac
 
@@ -2273,7 +2273,7 @@ focus_maskmethod() {
     ;;
 
     depthmap)
-      Md5="md$(md5cut $(ls -f -l --full-time "$Argword1")).${Imageformat}"
+      Md5="md$(md5cut $(ls -f -l --full-time "$Argword1")).tif"
       cmd "
   # --depthmap='$Argword1'
   $Argword1
@@ -3197,9 +3197,9 @@ focus_montage() {
   sendmagickmessage "NOTE:Step 4: Focus cut montage"
 
   Focusimagebasename="$Sourcemd5.focus.$Firstimage..$Lastimage.$(md5cut "$(masklist "$Mergemaskbasename") $Focuscode")"
-  Focusimagefile="${Cachedir}/$Focusimagebasename.result.${Imageformat}"
-  Focusimagemaskfile="${Cachedir}/$Focusimagebasename.mask.${Imageformat}"
-  Focusimagedepthfile="${Cachedir}/$Focusimagebasename.depthmap.${Imageformat}"
+  Focusimagefile="${Cachedir}/$Focusimagebasename.result.tif"
+  Focusimagemaskfile="${Cachedir}/$Focusimagebasename.mask.tif"
+  Focusimagedepthfile="${Cachedir}/$Focusimagebasename.depthmap.tif"
 
   [ -e "$Focusimagefile" ] && {
   note $Focusimagefile $Mergemaskbasename
@@ -4985,7 +4985,7 @@ declare_variables() {
 parse_options() {
   local Shortoptions Longoptions Parsedoptions
 
-  Shortoptions="BChLo:vVWX"
+  Shortoptions="BCfhLo:vVWX"
   Longoptions="cache::,help,license,limit-memory::,mask2cache,cacheformat::,rmcache,sub::,test::,verbose,version"
   Longoptions="$Longoptions,basename::,exif::,force::,format::,longname,output:,showname,video"
   Longoptions="$Longoptions,align,revert"
@@ -5012,6 +5012,7 @@ parse_options() {
       --cache)             Cachedir="${2:-auto}"               ; shift ;;
       --cacheformat)       Cacheformat="${2:-mpc}"             ; shift ;;
       --exif)              Exifsourceimage="${2:-auto}"        ; shift ;;
+      -f)                  Force="yes"                         ;;
       --force)             Force="${2:-yes}"                   ; shift ;;
       --format)            Imageformat="${2:-tif}"             ; shift ;;
       --layered)           Storelayered="yes"                  ;;
@@ -5297,11 +5298,11 @@ $Parsedoptions"
 
   # --force
   [ -z "$Force" ] && {
-    Resultimage_check="$(find . -name "${Resultsearchmask}.result.${Imageformat}" | tail -n1)"
+    Resultimage_check="$(find . -name "${Resultsearchmask}.result.*" | tail -n1)"
     [ -n "$Resultimage_check" ] && {
       Resultimage="$Resultimage_check"
-      Resultdepthmap="$(find . -name "${Resultsearchmask}.depthmap.${Imageformat}" | tail -n1)"
-      Resultmask="$(find . -name "${Resultsearchmask}.mask.${Imageformat}" | tail -n1)"
+      Resultdepthmap="$(find . -name "${Resultsearchmask}.depthmap.*" | tail -n1)"
+      Resultmask="$(find . -name "${Resultsearchmask}.mask.*" | tail -n1)"
       note "Output image already exists with matching md5sum.
   You can force imfuse to run nonetheless with option --force."
       showresult
