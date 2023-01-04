@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse - Combines focus stackshot images to one overall sharp image.
-Version="0.9.10-beta"
+Version="0.9.11-beta"
 
 ### Information
 
@@ -191,13 +191,35 @@ Step 2: Mask generation
                         (word)   mode2             Default: $(maskarg_defaultvalue diffstat word2)
                       mode1 and mode2 can be two of 'magick -list evaluate'.
  --dog [=ARG]         Difference of Gaussian.
-                      ARG takes argument:
+                      ARG additionally takes arguments:
                         r        radius            Default: $(maskarg_defaultvalue cutblur radius1)
                         s        sigma1            Default: $(maskarg_defaultvalue cutblur sigma1)
                         S        sigma2            Default: 1.6 * sigma1
                       Adjust only sigma, radius 0 is adjusted automatically.
                       Compare https://www.imagemagick.org/Usage/convolve/#dog
                       Quite similar but faster is option --blur.
+ --fft [=ARG]         Discrete fourier transformation. The arguments configure
+                      a round mask that is multiplied with the frequency domain.
+                      ARG additionally takes arguments:
+                        s        sigma1
+                        p        percent1          Default: $(maskarg_defaultvalue fft percent1)
+                        P        percent2          Default: $(maskarg_defaultvalue fft percent2)
+                        (word1)  mask shape        Default: $(maskarg_defaultvalue fft word1)
+                        (word2)  virtualpixel mode Default: $(maskarg_defaultvalue fft word2)
+                      percent1 sets the size of the mask shape. Low values
+                        increase contrast, high values increase detail.
+                        Accepts values >100%.
+                      percent2 adds virtual pixels to the source image to
+                        avoid artefacts near image borders. You might
+                        need to increase percent1 if you increase percent2.
+                        Slows down processing, but enhances the result.
+                        Accepts values >100%.
+                      word1 is the mask shape multiplied with the frequency
+                        domain, either a solid 'circle' or a radial 'gradient'.
+                      word2 chooses the virtual pixel mode and can be one of
+                        'magick -list virtual-pixel'. Try: edge mirror
+                      sigma blurs the mask shape, can be useful to soften
+                        'circle' artefacts.
  --freichen [=ARG]    Frei-Chen edge detection.
                       ARG additionally takes arguments: 
                         n        mode number       Default: $(maskarg_defaultvalue freichen number1)
@@ -4578,7 +4600,7 @@ maskarg_defaultvalue() {
         morphology)     Output="Edge" ;;
         statistic)      Output="StandardDeviation" ;;
 
-        format)         Output="png" ;;
+        format)         Output="tif" ;;
         cacheformat)    Output="mpc" ;;
       esac
     ;;
