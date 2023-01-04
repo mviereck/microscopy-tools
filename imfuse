@@ -1371,7 +1371,8 @@ enfuse_split() {
   case "$Splits" in
     1)
       ### Single run attempt
-      nice enfuse $Enfuseoptions -o "$Resultimage" "${Sourceimagelist[@]:$Firstimage:$Lastimage}" 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
+      #nice enfuse $Enfuseoptions -o "$Resultimage" "${Sourceimagelist[@]:$Firstimage:$Lastimage}" 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
+      nice enfuse $Enfuseoptions -o "$Resultimage" "${Sourceimagelist[@]:$Firstimage:$Lastimage}" || error "Failed to generate enfuse image"
     ;;
     *)
       ### Splitting attempt
@@ -1416,7 +1417,8 @@ enfuse_split() {
       for Split in $(seq $Splits); do
         note "Running enfuse step $Split / $Splits"
         Splitresult[$Split]="$Splitcache/splitresult${Split}.png"
-        nice enfuse $Enfuseoptions -o "${Splitresult[$Split]}" "${Splitimagelist[$Split]}" 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
+        #nice enfuse $Enfuseoptions -o "${Splitresult[$Split]}" "${Splitimagelist[$Split]}" 2>&1 | grep -v -E "loading next image|assuming all pixels should contribute|does not have an alpha channel|TIFFDecoder" || error "Failed to generate enfuse image"
+        nice enfuse $Enfuseoptions -o "${Splitresult[$Split]}" "${Splitimagelist[$Split]}" || error "Failed to generate enfuse image"
         showimage "${Splitresult[$Split]}"
       done
 
