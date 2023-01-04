@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse - Combines focus stackshot images to one overall sharp image.
-Version="0.9.9-beta"
+Version="0.9.10-beta"
 
 ### Information
 
@@ -253,7 +253,7 @@ Step 2: Mask generation
     All channel options are variations of --channel.
     Adding some of them with a rather low weight between w5..w25
     can help to close gaps where edges to detect focus are rare.
-    Most useful are --saturation and --darkness.
+    Most useful are --darkness and --saturation.
     Changing argument level is worth a try.
 
  --channel [=ARG]     Use a colorspace channel as mask.
@@ -703,7 +703,7 @@ showviewnior() {
     nohup feh --draw-tinted --zoom="max" --keep-zoom-vp \
               --geometry="${W}x${H}+37+0" \
               --title="$Sourcemd5:  $Parsedoptions" \
-              --info="exiftool -imagedescription %F | cut -d: -f2- | fold -s -w $((Imagewidth/7))" \
+              --info="exiftool -imagedescription %F | cut -d: -f2- | fold -s -w $((W/7))" \
               "$@" </dev/null >/dev/null 2>&1 &
     disown $!
   }
@@ -2198,6 +2198,7 @@ focus_maskmethod() {
   local Sourceimage
   local Maskgenerator=
   local Firstimage Lastimage
+  local Fftmaskname Fftfactor Fftcanvasw
 
   Sourceimage="${1:-1}"
   Firstimage="${2:-1}"
@@ -2354,10 +2355,75 @@ focus_maskmethod() {
   ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:$((Argradius1/2))x$((Argradius1))+$((Argradius1/4))+$((Argradius1-1)) )
     -evaluate-sequence min"
     ;;
+
     experimental)
+    ;;
+
+    fft)
+      Fftmaskname="mpr:fftmask-$Argword1-$Argword2-s$Argsigma1-p$Argpercent1-p$Argpercent2"
+      Fftfactor="${Argpercent2:-0}"
+      Fftfactor="$((Fftfactor/100 +1))"
+      Fftcanvasw="$((Fftwidth*Fftfactor))"
+      [ "$Fftcanvasw" != "$(( 2* (Fftcanvasw/2) ))" ] && Fftcanvasw="$((Fftcanvasw+1))"
+
+      Command="
+    -size ${Fftcanvasw}x${Fftcanvasw}"
+      case "$Argword1" in
+        circle)
+          Command="$Command
+  xc:black
+    -fill white
+    -draw 'circle $(( (Fftcanvasw-Fftwidth)/2+Fftmiddle )),$(( (Fftcanvasw-Fftwidth)/2+Fftmiddle )),$(( (Fftcanvasw-Fftwidth)/2+Fftmiddle +Fftmiddle*${Argpercent1}/100 )),$(( (Fftcanvasw-Fftwidth)/2+Fftmiddle ))'"
+        ;;
+        gradient)
+          Command="$Command
+  xc:black
+    -size $((Fftwidth*$Argpercent1/100))x$((Fftwidth*Argpercent1/100))
+  radial-gradient:
+    -gravity center
+    -composite
+    +gravity
+    +repage"
+        ;;
+      esac
+      [ -n "$Argsigma1" ] && Command="$Command
+    -blur 0x$Argsigma1"
+      Command="$Command
+    -write '$Fftmaskname'
+    $(showimagecode "$Fftmaskname")
+    -delete 0"
+      cmd "$Command"
+
       Maskgenerator="$Maskgenerator
-  ( $Sourceimage -colorspace HSB -channel 1 -separate +channel )
-    -statistic standarddeviation ${Argradius1}x${Argradius1}"
+    -size ${Fftcanvasw}x${Fftcanvasw}
+  xc:
+  $Sourceimage
+    -virtual-pixel ${Argword2}
+    -fx 'v.p[-$(( (Fftcanvasw-Imagewidth)/2 )),-$(( (Fftcanvasw-Imageheight)/2 ))]'
+    -fft
+    ( -clone 0 -write mpr:fft-0 -delete 0 )
+    ( -clone 1 -write mpr:fft-1 -delete 0 )
+    -delete 0,1
+  mpr:fft-0"
+      case "$Argword1" in
+        circle|gradient)
+          Maskgenerator="$Maskgenerator
+  '$Fftmaskname'
+    -compose Multiply -composite"
+        ;;
+      esac
+      Maskgenerator="$Maskgenerator
+    -write mpr:fft-0
+    -delete 0
+  mpr:fft-0
+  mpr:fft-1
+    -ift
+    -gravity center
+    -crop ${Imagewidth}x${Imageheight}+0+0
+    +repage
+    +gravity"
+    note "$Command"
+    note "$Maskgenerator"
     ;;
 
     freichen)
@@ -2539,7 +2605,8 @@ $(focus_maskmethod "$Sourceimagecode" "$Firstimage" "$Lastimage")"
 
       [ "$Argdiff" = "yes" ] && Maskgenerator="$Maskgenerator
     # =diff
-  ( $Sourceimagecode )
+  ( $Sourceimagecode
+  )
     -compose Difference -composite"
 
       [ "$Argnegate" ] && Maskgenerator="$Maskgenerator
@@ -4051,13 +4118,13 @@ maskarg_checkallowed() {
     ;;
     percent1)
       case "$Argmethod" in
-        cutalpha|cutblur|cutless|cutmax|cutwave|finalalpha|maskblur|masklevel|maskwave|substacks|wavelet) ;;
+        cutalpha|cutblur|cutless|cutmax|cutwave|fft|finalalpha|maskblur|masklevel|maskwave|substacks|wavelet) ;;
         *) error "--$Argmethod does not take argument percent1: p$Arg" ;;
       esac
     ;;
     percent2)
       case "$Argmethod" in
-        cutalpha|cutblur|finalalpha|maskblur|masklevel|maskwave|substacks|wavelet) ;;
+        cutalpha|cutblur|fft|finalalpha|maskblur|masklevel|maskwave|substacks|wavelet) ;;
         *) error "--$Argmethod does not take argument percent2: P$Arg" ;;
       esac
     ;;
@@ -4081,8 +4148,7 @@ maskarg_checkallowed() {
     ;;
     sigma1)
       case "$Argmethod" in
-        blur|comet|dog|log) ;;
-        cutblur|cutsoft|finalblur|finalsharpen|finalthreshold|maskblur) ;;
+        blur|comet|cutblur|cutsoft|fft|finalblur|finalsharpen|finalthreshold|log|maskblur) ;;
         *) error "--$Argmethod does not take argument sigma1: s$Arg" ;;
       esac
     ;;
@@ -4165,6 +4231,12 @@ maskarg_checkallowed() {
   Please choose one out of 'magick -list evaluate'"
           Argword1="$(checkmagicklist evaluate "$Arg" print)"
         ;;
+        fft)
+          case "$Argword1" in
+            circle|gradient) ;;
+            *) error "--$Argmethod: unknown argument for word1: $Arg" ;;
+          esac
+        ;;
         finalalpha)
           case "$Argword1" in
             ""|"off") ;;
@@ -4221,6 +4293,11 @@ maskarg_checkallowed() {
   Please choose out of 'magick -list statistic'"
           Argword2="$(checkmagicklist statistic "$Arg" print)"
         ;;
+        fft)
+          checkmagicklist virtual-pixel "$Arg" || error "--$Argmethod: unknown argument for word2: $Arg
+  Please choose out of 'magick -list virtual-pixel'"
+          Argword2="$(checkmagicklist virtual-pixel "$Arg" print)"
+        ;;
         morphology|cutmorph|maskmorph)
           checkmagicklist kernel "$Arg" || error "--$Argmethod: unknown kernel: $Arg
   Please choose out of 'magick -list kernel'"
@@ -4265,6 +4342,7 @@ maskarg_defaultvalue() {
         blur) [ -z "$Argsigma2" ] && Output="yes" ;;
         cmddiff)        Output="yes" ;;
         comet)          Output="yes" ;;
+        fft)            Output="yes" ;;
         morphology)
           case ${Argword1,,} in
             close|edge|edgein|edgeout|bottomhat|tophat) ;;
@@ -4364,6 +4442,7 @@ maskarg_defaultvalue() {
         cutless)        Output="20" ;;
         cutmax)         Output="0" ;;
         cutwave)        Output="25" ;;
+        fft)            Output="50" ;;
         finalalpha)     Output="0" ;;
         maskblur)       Output="100" ;;
         masklevel)      Output="" ;;
@@ -4375,6 +4454,7 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         cutalpha)       Output="100" ;;
         cutblur)        Output="$((100-Argpercent1))" ;;
+        fft)            Output="0" ;;
         finalalpha)     Output="100" ;;
         maskblur)       Output="$((100-Argpercent1))" ;;
         masklevel)      Output="" ;;
@@ -4416,6 +4496,7 @@ maskarg_defaultvalue() {
         cutblur)        Output="1" ;;
         cutsoft)        Output="1" ;;
         dog)            Output="0.3" ;;
+        fft)            Output="" ;;
         finalblur)      Output="5" ;;
         finalsharpen)   Output="1" ;;
         finalthreshold) Output="0" ;;
@@ -4449,7 +4530,7 @@ maskarg_defaultvalue() {
     ;;
     type)
       case "$Argmethod" in
-        blur|cmd|cmddiff|comet|compass|diffstat|dog|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|wavelet)
+        blur|cmd|cmddiff|comet|compass|diffstat|dog|fft|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|wavelet)
                         Output="mask" ;;
         channel|chroma|darkness|lightness|saturation)
                         Output="mask" ;;
@@ -4484,6 +4565,7 @@ maskarg_defaultvalue() {
         depthmap)       Output="NO_FILE_SPECIFIED" ;;
         diffstat)       Output="Median" ;;
         evaluate)       Output="Max" ;;
+        fft)            Output="gradient" ;;
         finalgamma)     Output="auto" ;;
         freichen)       Output="Screen" ;;
         maskblur)       Output="" ;;
@@ -4501,6 +4583,7 @@ maskarg_defaultvalue() {
     word2)
       case "$Argmethod" in
         diffstat)       Output="Mean" ;;
+        fft)            Output="Mirror" ;;
         morphology|cutmorph|maskmorph)
                         Output="Octagon" ;;
       esac
@@ -4798,6 +4881,7 @@ showimagecode() {
       ""|"mpr"|"mpc"|"miff")
         echo "# show image
     -compress none
+    -depth 8
     -write '$Showimage'
     -format 'SHOW:$Showimage\n'
     -write info:"
@@ -4929,6 +5013,9 @@ declare_variables() {
   #Exiflist=""
   Exifsourceimage=""
   Extendedsave="no"
+  Fftmiddle=""
+  Fftradius=""
+  Fftwidth=""
   Finalmd5=""
   Firstimage=""
   Force=""
@@ -4999,8 +5086,8 @@ declare_variables() {
   Testarg=""
   Testimage=""
   Testsetup=""
-  Tifstore="-alpha off +repage -quality 100% -compress lzw -type optimize"
-  Tifstorealpha="+repage -quality 100% -compress lzw -type TrueColorAlpha"
+  Tifstore="-alpha off +repage -depth 16 -quality 100% -compress lzw -type optimize"
+  Tifstorealpha="+repage -depth 16 -quality 100% -compress lzw -type TrueColorAlpha"
   Verbose=""
   Video=""
   Videoframecount=""
@@ -5016,7 +5103,7 @@ parse_options() {
   Longoptions="$Longoptions,basename::,exif::,force::,format::,longname,output:,showname,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
-  Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
+  Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,fft::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
   Longoptions="$Longoptions,compose::,depthmap::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
@@ -5057,7 +5144,7 @@ parse_options() {
       -h|--help|--license|--rmcache|--showname|--version) Singleaction="${1:-}" ;;
 
 --cmd|--cmddiff|--experimental|\
---blur|--comet|--compass|--diffstat|--dog|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--wavelet|\
+--blur|--comet|--compass|--diffstat|--dog|--fft|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--wavelet|\
 --channel|--chroma|--darkness|--lightness|--saturation|\
 --compose|--depthmap|--enfuse|--evaluate|--max|--mean|--median|--min|\
 \
@@ -5287,6 +5374,10 @@ main_setup() {
     Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
     Imagelistmemsize="$((Sourceimagenumber*Imagememsize))"
     Sourcemd5="$(md5cut "$( ls -l --full-time "${Sourceimagelist[@]}" )" )"
+    [ "$Imagewidth" -gt "$Imageheight" ] && Fftwidth="$Imagewidth" || Fftwidth="$Imageheight"
+    [ "$(( 2* (Fftwidth/2) ))" != "$Fftwidth" ] && Fftwidth="$((Fftwidth+1))"
+    Fftmiddle="$((Fftwidth/2))"
+    Fftradius="$(calc "$Fftwidth * 1.414214 / 2" | cut -d. -f1)"
   }
 
   # check if source images should be loaded to RAM
