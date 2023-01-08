@@ -198,28 +198,44 @@ Step 2: Mask generation
                       Adjust only sigma, radius 0 is adjusted automatically.
                       Compare https://www.imagemagick.org/Usage/convolve/#dog
                       Quite similar but faster is option --blur.
- --fft [=ARG]         Discrete fourier transformation. The arguments configure
-                      a round mask that is multiplied with the frequency domain.
+ --fft [=ARG]         Discrete fourier transformation.
+                      The arguments configure a mask that is multiplied with
+                      the fourier magnitude part.
+                      In general you only need to adjust radius1 and radius2,
+                      otherwise rather keep the defaults.
+                      If you work with a cropped part of the desired stack, the
+                      crop should have about the same aspect ratio as the stack.
                       ARG additionally takes arguments:
+                        n        number1           Default: $(maskarg_defaultvalue fft number1)
+                        r        radius1           Default: $(maskarg_defaultvalue fft radius1)
+                        R        radius2
                         s        sigma1
-                        p        percent1          Default: $(maskarg_defaultvalue fft percent1)
-                        P        percent2          Default: $(maskarg_defaultvalue fft percent2)
+                        p        percent           Default: $(maskarg_defaultvalue fft percent1)
                         (word1)  mask shape        Default: $(maskarg_defaultvalue fft word1)
-                        (word2)  virtualpixel mode Default: $(maskarg_defaultvalue fft word2)
-                      percent1 sets the size of the mask shape. Low values
+                        (word2)  low|high          Default: $(maskarg_defaultvalue fft word2)
+                      radius1 sets the size of the mask shape. Low values
                         increase contrast, high values increase detail.
-                        Accepts values >100%.
-                      percent2 adds virtual pixels to the source image to
-                        avoid artefacts near image borders. You might
-                        need to increase percent1 if you increase percent2.
-                        Slows down processing, but enhances the result.
-                        Accepts values >100%.
-                      word1 is the mask shape multiplied with the frequency
-                        domain, either a solid 'circle' or a radial 'gradient'.
-                      word2 chooses the virtual pixel mode and can be one of
-                        'magick -list virtual-pixel'. Try: edge mirror
-                      sigma blurs the mask shape, can be useful to soften
-                        'circle' artefacts.
+                        The radius is used as a percent value relative to
+                        the virtual fft image size.
+                      percent adds virtual pixels to the source image to
+                        avoid artefacts near image borders.
+                        Slows down processing, but often enhances the result.
+                      word1 is the mask shape. Possible word1:
+                        gradient shapes:
+                          circle square rhombus cross crossx
+                        solid/filled shapes:
+                          circle-solid square-solid rhombus-solid cross-solid
+                          crossx-solid
+                        threshold is a special one that directly removes
+                          magnitude parts below percent1/10000.
+                      word2 defines filter pass mode. Possible: low high
+                      sigma blurs solid shapes, or applies sigmoidal-contrast
+                        to gradient shapes.
+                      number defines the fourier image to adjust.
+                        0: multiply shape with fourier magnitude.
+                        1: multiply shape with fourier phase.
+                        2: multiply shape with fourier magnitude and phase.
+                        3: multiply shape with fourier phase, disable magnitude.
  --freichen [=ARG]    Frei-Chen edge detection.
                       ARG additionally takes arguments: 
                         n        mode number       Default: $(maskarg_defaultvalue freichen number1)
@@ -460,7 +476,7 @@ Step 3: Mask merging
                         all:      Level all masks.
                         substack: Level only merged masks in current substack.
                         off:      Do not level masks.
-                      The round treshold rounds up or down to the next matching
+                      The round threshold rounds up or down to the next matching
                        rounded percent value. This helps to get same results
                        for cropped image parts as well as for whole images.
                       mode 'substack' should only be used to speed up test runs
@@ -1758,6 +1774,147 @@ finalblur2() {
   cmd "$Command"
   cmd_waitforready
 }
+generate_fftshape() {
+  local Fftshape Fftsize Fftradius Fftpass Fftsigma
+  local Fftcenter Outputname Command=
+
+  Fftshape="${1:-}"
+  Fftsize="${2:-}"
+  Fftradius="${3:-}"
+  Fftpass="${4:-low}"
+  Fftsigma="${5}"
+  Fftcenter="$((Fftsize/2))"
+
+  case "$Fftshape" in
+    circle)
+      Command="$Command
+  -size $((Fftradius*2))x$((Fftradius*2))
+  radial-gradient:"
+    ;;
+    circle-solid)
+      Command="$Command
+  -size ${Fftsize}x${Fftsize}
+  xc:black
+    -fill white
+    -draw 'circle ${Fftcenter},${Fftcenter},${Fftcenter},$((Fftcenter+Fftradius))'"
+    ;;
+    cross|xcross)
+      Command="$Command
+  -size $(calc "$Fftsize*2")x$Fftradius
+  gradient:
+    -rotate 180 
+  (
+  -clone 0
+    -flip
+  )
+    -append
+    -write mpr:grad1
+    -rotate 90
+    -write mpr:grad2
+    -delete 0
+  -size $(calc "$Fftsize*1.5")x$(calc "$Fftsize*1.5")
+  xc:black
+  mpr:grad1
+    -gravity center
+    -compose lighten -composite
+  mpr:grad2
+    -compose lighten -composite"
+      [ "$Argword1" = "crossx" ] && Command="$Command
+    -background black
+    -rotate 45
+    +repage"
+    ;;
+    cross-solid|xcross-solid)
+      Command="$Command
+  -size $(calc "$Fftsize*1.5")x$(calc "$Fftsize*1.5")
+  xc:black
+    -background white
+    -gravity center
+    -splice $((Fftradius*2))x$((Fftradius1*2))"
+      [ "$Argword1" = "crossx" ] && Command="$Command
+    -background black
+    -rotate 45
+    +repage"
+    ;;
+    square|rhombus)
+      Command="$Command
+  xc:black
+    -write mpr:fft-bg
+    -delete 0
+  -size ${Fftradius}x${Fftradius}
+  gradient: -rotate 180
+  (
+  gradient: -rotate 90
+  )
+    -compose Darken -composite
+  (
+  -clone 0
+    -flip
+  )
+    -append 
+  (
+  -clone 0
+    -flop
+  )
+    +append"
+      [ "$Argword1" = "rhombus" ] && Command="$Command
+    -background black
+    -rotate 45
+    +repage"
+    ;;
+    square-solid|rhombus-solid)
+      Command="$Command
+  -size $(calc "$Fftsize*1.5")x$(calc "$Fftsize*1.5")
+  xc:black
+    -fill white
+    -draw 'rectangle $((Fftcenter-Fftradius)),$((Fftcenter-Fftradius)) \
+                     $((Fftcenter+Fftradius)),$((Fftcenter+Fftradius))'"
+      [ "$Argword1" = "rhombus-solid" ] && Command="$Command
+    -background black
+    -rotate 45
+    +repage"
+    ;;
+    threshold)
+      Command="$Command
+  xc:black"
+    ;;
+    experimental)
+      Command="$Command
+  xc:black"
+    ;;
+  esac
+  Command="$Command
+  -size ${Fftsize}x${Fftsize}
+  xc:black
+    -swap 0,1
+    -gravity center
+    -compose blend -composite
+    +gravity
+    +repage"
+  [ -n "$Fftsigma" ] && case "$Fftshape" in
+    *solid)
+      Command="$Command
+    -blur 0x$Fftsigma"
+    ;;
+    *)
+      compare "$Fftsigma" -gt "0" && Command="$Command
+    -sigmoidal-contrast $Fftsigma" || Command="$Command
+    +sigmoidal-contrast $(calc "-1*$Fftsigma")"
+    ;;
+  esac
+  [ "$Fftpass" = "high" ] && Command="$Command
+    -negate"
+
+  Outputname="mpr:fftshape$(md5cut "$Command")-$Fftshape-r$Fftradius"
+  Command="$Command
+    -alpha off
+    -write '$Outputname'
+    $(showimagecode "$Outputname")
+    -delete 0"
+
+  cmd "$Command"
+  echo "$Outputname"
+}
 generate_image() {
   local Mode Imagename= Swap= Imagetype= Showname= Showmode= Command Size 
   local Generalimage= Skip= Subimfuse
@@ -2222,7 +2379,7 @@ focus_maskmethod() {
   local Sourceimage
   local Maskgenerator=
   local Firstimage Lastimage
-  local Fftmaskname Fftfactor Fftcanvasw
+  local Fftmaskname1 Fftmaskname2 Fftsize
 
   Sourceimage="${1:-1}"
   Firstimage="${2:-1}"
@@ -2355,7 +2512,7 @@ focus_maskmethod() {
     -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}"
     ;;
 
-    GAUSSexperimental) 
+    GAUSSexperimental)
       Maskgenerator="$Maskgenerator
   $Sourceimage
     -define convolve:scale=-100,200%
@@ -2384,70 +2541,144 @@ focus_maskmethod() {
     ;;
 
     fft)
-      Fftmaskname="mpr:fftmask-$Argword1-$Argword2-s$Argsigma1-p$Argpercent1-p$Argpercent2"
-      Fftfactor="${Argpercent2:-0}"
-      Fftfactor="$((Fftfactor/100 +1))"
-      Fftcanvasw="$((Fftwidth*Fftfactor))"
-      [ "$Fftcanvasw" != "$(( 2* (Fftcanvasw/2) ))" ] && Fftcanvasw="$((Fftcanvasw+1))"
+      [ "$Imagewidth" -gt "$Imageheight" ] && Fftsize="$Imagewidth" || Fftsize="$Imageheight"
+      [ "$(( 2* (Fftsize/2) ))" != "$Fftsize" ] && Fftsize="$((Fftsize+1))"
+      Fftsize="$(calc "$Fftsize*(1+$Argpercent1/100)" | cut -d. -f1)"
+      [ "$Fftsize" != "$(( 2* (Fftsize/2) ))" ] && Fftsize="$((Fftsize+1))"
+
+      Fftmaskname1="$(generate_fftshape "$Argword1" "$Fftsize" "$((Fftsize*Argradius1/100))" "$Argword2" "$Argsigma1")"
+      [ "${Argradius2:-0}" -gt "0" ] && Fftmaskname2="$(generate_fftshape "$Argword1" "$Fftsize" "$((Fftsize*Argradius2/100))" "$Argword2" "$Argsigma1")"
 
       Command="
-    -size ${Fftcanvasw}x${Fftcanvasw}"
-      case "$Argword1" in
-        circle)
-          Command="$Command
-  xc:black
-    -fill white
-    -draw 'circle $(( (Fftcanvasw-Fftwidth)/2+Fftmiddle )),$(( (Fftcanvasw-Fftwidth)/2+Fftmiddle )),$(( (Fftcanvasw-Fftwidth)/2+Fftmiddle +Fftmiddle*${Argpercent1}/100 )),$(( (Fftcanvasw-Fftwidth)/2+Fftmiddle ))'"
-        ;;
-        gradient)
-          Command="$Command
-  xc:black
-    -size $((Fftwidth*$Argpercent1/100))x$((Fftwidth*Argpercent1/100))
-  radial-gradient:
-    -gravity center
-    -composite
-    +gravity
-    +repage"
-        ;;
-      esac
-      [ -n "$Argsigma1" ] && Command="$Command
-    -blur 0x$Argsigma1"
-      Command="$Command
-    -write '$Fftmaskname'
-    $(showimagecode "$Fftmaskname")
+  -depth 16
+  -size ${Fftsize}x${Fftsize}
+  xc:gray(0.01)
+    -write mpr:fftgray
     -delete 0"
       cmd "$Command"
 
       Maskgenerator="$Maskgenerator
-    -size ${Fftcanvasw}x${Fftcanvasw}
-  xc:
+  -size ${Fftsize}x${Fftsize}
+  xc:black
   $Sourceimage
-    -virtual-pixel ${Argword2}
-    -fx 'v.p[-$(( (Fftcanvasw-Imagewidth)/2 )),-$(( (Fftcanvasw-Imageheight)/2 ))]'
+    #-virtual-pixel Mirror
+    -fx 'v.p[-$(( (Fftsize-Imagewidth)/2 )),-$(( (Fftsize-Imageheight)/2 ))]'
     -fft
-    ( -clone 0 -write mpr:fft-0 -delete 0 )
-    ( -clone 1 -write mpr:fft-1 -delete 0 )
-    -delete 0,1
-  mpr:fft-0"
+    ( -clone 0 -write mpr:fft0 -write mpr:fft0-radius1 -write mpr:fft0-radius2 -delete 0 )
+    ( -clone 1 -write mpr:fft1 -write mpr:fft1-radius1 -write mpr:fft1-radius2 -delete 0 )
+    -delete 0,1"
       case "$Argword1" in
-        circle|gradient)
-          Maskgenerator="$Maskgenerator
-  '$Fftmaskname'
-    -compose Multiply -composite"
+        threshold) ### FIXME
+          case "$Argnumber1" in
+            0)
+              case "$Argword2" in
+                low)
+                  Maskgenerator="$Maskgenerator
+  mpr:fft0
+    -black-threshold $(calc "${Argradius1}/10000")%
+    -write mpr:fft0-radius1
+    -delete 0"
+                  ;;
+                high)
+                  Maskgenerator="$Maskgenerator
+  mpr:fft0
+    -white-threshold $(calc "${Argradius1}/10000")%
+    -fill black
+    -opaque white
+    -write mpr:fft0-radius1
+    -delete 0"
+                ;;
+              esac
+              [ -n "$Argradius2" ] && case "$Argword2" in
+                low)
+                  Maskgenerator="$Maskgenerator
+  mpr:fft0
+    -black-threshold $(calc "${Argradius2}/10000")%
+    -write mpr:fft0-radius2
+    -delete 0"
+                  ;;
+                high)
+                  Maskgenerator="$Maskgenerator
+  mpr:fft0
+    -white-threshold $(calc "${Argradius2}/10000")%
+    -fill black
+    -opaque white
+    -write mpr:fft0-radius2
+    -delete 0"
+                ;;
+              esac
+            ;;
+            *)
+              error "--fft does not support 'threshold' with 'n$Argnumber1' yet."
+            ;;
+          esac
+        ;;
+        experimental)
+        ;;
+        *)
+          case "$Argnumber1" in
+            0|2)
+              Maskgenerator="$Maskgenerator
+  mpr:fft0
+  '$Fftmaskname1'
+    -compose Multiply -composite
+    -write mpr:fft0-radius1
+    -delete 0"
+              [ -n "$Argradius2" ] && Maskgenerator="$Maskgenerator
+  mpr:fft0
+  '$Fftmaskname2'
+    -compose Multiply -composite
+    -write mpr:fft0-radius2
+    -delete 0"
+            ;;
+          esac
+          case "$Argnumber1" in
+            1|2|3)
+              Maskgenerator="$Maskgenerator
+  mpr:fft1
+  '$Fftmaskname1'
+    -compose Multiply -composite
+    -write mpr:fft1-radius1
+    -delete 0"
+              [ -n "$Argradius2" ] && Maskgenerator="$Maskgenerator
+  mpr:fft1
+  '$Fftmaskname2'
+    -compose Multiply -composite
+    -write mpr:fft1-radius2
+    -delete 0"
+            ;;
+          esac
+          case "$Argnumber1" in
+            3)
+              Maskgenerator="$Maskgenerator
+  mpr:fftgray
+    -write mpr:fft0-radius1
+    -write mpr:fft0-radius2
+    -delete 0"
+            ;;
+          esac
         ;;
       esac
       Maskgenerator="$Maskgenerator
-    -write mpr:fft-0
-    -delete 0
-  mpr:fft-0
-  mpr:fft-1
+  mpr:fft0-radius1
+  mpr:fft1-radius1
     -ift
     -gravity center
     -crop ${Imagewidth}x${Imageheight}+0+0
     +repage
     +gravity"
-    note "$Command"
-    note "$Maskgenerator"
+      [ -n "$Argradius2" ] && Maskgenerator="$Maskgenerator
+  (
+  mpr:fft0-radius2
+  mpr:fft1-radius2
+    -ift
+    -gravity center
+    -crop ${Imagewidth}x${Imageheight}+0+0
+    +repage
+    +gravity
+  )
+    -alpha off
+    -compose Difference -composite"
     ;;
 
     freichen)
@@ -3615,9 +3846,10 @@ focus_main() {
       Substackmaskpost[$Substackstep]="${Substackbasename}.mask.final.${Cacheformat}"
       Substackdepthmappost[$Substackstep]="${Substackbasename}.depthmap.final.${Cacheformat}"
 
-      [ -e "${Substackresultpost[$Substackstep]}" ] && {
-        sendmagickmessage "NOTE:Skipping --final* options, already done."
-      } || {
+      #[ -e "${Substackresultpost[$Substackstep]}" ] && {
+      #  sendmagickmessage "NOTE:Skipping --final* options, already done."
+      #} || {
+      {
 
         Command="
 '${Substackresult[$Substackstep]}'
@@ -4130,6 +4362,7 @@ maskarg_checkallowed() {
     ;;
     number1)
       case "$Argmethod" in
+        fft) ;;
         freichen|laplacian|maskdespeckle|maskenhance|substacks) ;;
         *) error "--$Argmethod does not take argument number1: n$Arg" ;;
       esac
@@ -4148,13 +4381,13 @@ maskarg_checkallowed() {
     ;;
     percent2)
       case "$Argmethod" in
-        cutalpha|cutblur|fft|finalalpha|maskblur|masklevel|maskwave|substacks|wavelet) ;;
+        cutalpha|cutblur|finalalpha|maskblur|masklevel|maskwave|substacks|wavelet) ;;
         *) error "--$Argmethod does not take argument percent2: P$Arg" ;;
       esac
     ;;
     radius1)
       case "$Argmethod" in
-        blur|comet|cutblur|dog|finalblur2|finalsharpen|log|maskblur|maskkuwahara) ;;
+        blur|comet|cutblur|dog|fft|finalblur2|finalsharpen|log|maskblur|maskkuwahara) ;;
         morphology|cutmorph|maskmorph) ;;
         diffstat|statistic|maskstat) ;;
         substacks) ;;
@@ -4163,7 +4396,7 @@ maskarg_checkallowed() {
     ;;
     radius2)
       case "$Argmethod" in
-        diffstat|statistic) ;;
+        diffstat|fft|statistic) ;;
         morphology|cutmorph|maskmorph) ;;
         *) error "--$Argmethod does not take argument radius2: R$Arg" ;;
       esac
@@ -4257,7 +4490,9 @@ maskarg_checkallowed() {
         ;;
         fft)
           case "$Argword1" in
-            circle|gradient) ;;
+            circle|cross|xcross|rhombus|square) ;;
+            circle-solid|cross-solid|xcross-solid|rhombus-solid|square-solid) ;;
+            threshold|experimental) ;;
             *) error "--$Argmethod: unknown argument for word1: $Arg" ;;
           esac
         ;;
@@ -4318,9 +4553,6 @@ maskarg_checkallowed() {
           Argword2="$(checkmagicklist statistic "$Arg" print)"
         ;;
         fft)
-          checkmagicklist virtual-pixel "$Arg" || error "--$Argmethod: unknown argument for word2: $Arg
-  Please choose out of 'magick -list virtual-pixel'"
-          Argword2="$(checkmagicklist virtual-pixel "$Arg" print)"
         ;;
         morphology|cutmorph|maskmorph)
           checkmagicklist kernel "$Arg" || error "--$Argmethod: unknown kernel: $Arg
@@ -4366,7 +4598,13 @@ maskarg_defaultvalue() {
         blur) [ -z "$Argsigma2" ] && Output="yes" ;;
         cmddiff)        Output="yes" ;;
         comet)          Output="yes" ;;
-        fft)            Output="yes" ;;
+        fft)
+          case "${Argword2,,}" in
+            low)        Output="yes" ;;
+            high)       Output="no" ;;
+          esac
+          [ -n "$Argradius2" ] && Output="no"
+        ;;
         morphology)
           case ${Argword1,,} in
             close|edge|edgein|edgeout|bottomhat|tophat) ;;
@@ -4448,6 +4686,7 @@ maskarg_defaultvalue() {
     ;;
     number1)
       case "$Argmethod" in
+        fft)            Output="0" ;;
         freichen)       Output="0" ;;
         laplacian)      Output="3" ;;
         maskdespeckle|maskenhance)
@@ -4466,7 +4705,7 @@ maskarg_defaultvalue() {
         cutless)        Output="20" ;;
         cutmax)         Output="0" ;;
         cutwave)        Output="25" ;;
-        fft)            Output="50" ;;
+        fft)            Output="10" ;;
         finalalpha)     Output="0" ;;
         maskblur)       Output="100" ;;
         masklevel)      Output="" ;;
@@ -4478,7 +4717,6 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         cutalpha)       Output="100" ;;
         cutblur)        Output="$((100-Argpercent1))" ;;
-        fft)            Output="0" ;;
         finalalpha)     Output="100" ;;
         maskblur)       Output="$((100-Argpercent1))" ;;
         masklevel)      Output="" ;;
@@ -4493,6 +4731,7 @@ maskarg_defaultvalue() {
         cutmorph)       Output="1" ;;
         diffstat)       Output="3" ;;
         dog)            Output="0" ;;
+        fft)            Output="50" ;;
         finalblur2)     Output="4" ;;
         finalsharpen)   Output="0" ;;
         log)            Output="0" ;;
@@ -4508,6 +4747,8 @@ maskarg_defaultvalue() {
       case "$Argmethod" in
         cutmorph)       Output="1" ;;
         diffstat)       Output="$Argradius1" ;;
+        #fft)            Output="$(calc "$Argradius1 * 1.6")"  ;;
+        fft)            Output=""  ;;
         maskmorph)      Output="1" ;;
         morphology)     Output="1" ;;
         statistic) ;;
@@ -4589,7 +4830,7 @@ maskarg_defaultvalue() {
         depthmap)       Output="NO_FILE_SPECIFIED" ;;
         diffstat)       Output="Median" ;;
         evaluate)       Output="Max" ;;
-        fft)            Output="gradient" ;;
+        fft)            Output="circle" ;;
         finalgamma)     Output="auto" ;;
         freichen)       Output="Screen" ;;
         maskblur)       Output="" ;;
@@ -4607,7 +4848,7 @@ maskarg_defaultvalue() {
     word2)
       case "$Argmethod" in
         diffstat)       Output="Mean" ;;
-        fft)            Output="Mirror" ;;
+        fft)            Output="low" ;;
         morphology|cutmorph|maskmorph)
                         Output="Octagon" ;;
       esac
@@ -4652,6 +4893,9 @@ maskarg_short() {
       ;;
       sigma1)
         [ -n "$Argsigma1" ]      && Append=",s$Argsigma1"
+        [ "$Argsigma1" = "$(maskarg_defaultvalue "$Argmethod" sigma1)" ] && case "$Argmethod" in
+          #fft) Append="" ;;
+        esac
       ;;
       sigma2)
         [ -n "$Argsigma2" ]      && Append=",S$Argsigma2"
@@ -4665,13 +4909,13 @@ maskarg_short() {
       percent2)
         [ -n "$Argpercent2" ]    && Append=",P$Argpercent2"
         [ "$Argpercent2" = "$(maskarg_defaultvalue "$Argmethod" percent2)" ] && case "$Argmethod" in
-          maskblur|cutalpha|cutblur|finalalpha) Append="" ;;
+          cutalpha|cutblur|finalalpha|maskblur) Append="" ;;
         esac
       ;;
       number1)
         [ -n "$Argnumber1" ]     && Append=",n$Argnumber1"
         [ "$Argnumber1" = "$(maskarg_defaultvalue "$Argmethod" number1)" ] && case "$Argmethod" in
-          freichen) Append="" ;;
+          fft|freichen) Append="" ;;
         esac
       ;;
       number2)
@@ -4720,13 +4964,13 @@ maskarg_short() {
         esac
         #[ "${Argword1,,}" = "standarddeviation" ] && Append=",StDev"
         [ "$Argword1" = "$(maskarg_defaultvalue "$Argmethod" word1)" ] && case "$Argmethod" in
-          comet|compass|cutbg|diffstat|finalgamma|freichen|statistic|masklevel|maskmerge) Append="" ;;
+          comet|compass|cutbg|diffstat|fft|finalgamma|freichen|statistic|masklevel|maskmerge) Append="" ;;
         esac
       ;;
       word2)
         [ -n "$Argword2" ]       && Append=",$Argword2"
         [ "$Argword2" = "$(maskarg_defaultvalue "$Argmethod" word2)" ] && case "$Argmethod" in
-          diffstat|maskmorph|morphology|cutmorph) Append="" ;;
+          diffstat|fft|maskmorph|morphology|cutmorph) Append="" ;;
         esac
       ;;
       level)
@@ -5037,9 +5281,6 @@ declare_variables() {
   #Exiflist=""
   Exifsourceimage=""
   Extendedsave="no"
-  Fftmiddle=""
-  Fftradius=""
-  Fftwidth=""
   Finalmd5=""
   Firstimage=""
   Force=""
@@ -5398,10 +5639,6 @@ main_setup() {
     Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
     Imagelistmemsize="$((Sourceimagenumber*Imagememsize))"
     Sourcemd5="$(md5cut "$( ls -l --full-time "${Sourceimagelist[@]}" )" )"
-    [ "$Imagewidth" -gt "$Imageheight" ] && Fftwidth="$Imagewidth" || Fftwidth="$Imageheight"
-    [ "$(( 2* (Fftwidth/2) ))" != "$Fftwidth" ] && Fftwidth="$((Fftwidth+1))"
-    Fftmiddle="$((Fftwidth/2))"
-    Fftradius="$(calc "$Fftwidth * 1.414214 / 2" | cut -d. -f1)"
   }
 
   # check if source images should be loaded to RAM
@@ -5464,7 +5701,7 @@ $Parsedoptions"
     -delete 0
 
   # clut for depth map
-    -size 1x512
+  -size 1x512
   gradient:white-red
   gradient:red-orange
   gradient:orange-yellow
