@@ -1,7 +1,7 @@
 #! /bin/bash
 
 # imfuse - Combines focus stackshot images to one overall sharp image.
-Version="0.9.13-beta"
+Version="0.9.14-beta"
 
 ### Information
 
@@ -260,9 +260,13 @@ Step 2: Mask generation
                         try: edge, edgein, edgeout, dilate, smooth.
                       kernel can be one of 'magick -list kernel'.
                       Compare: https://imagemagick.org/Usage/morphology
- --prewitt [=ARG]     Prewitt edge detection. 
- --roberts [=ARG]     Roberts edge detection. 
- --sobel [=ARG]       Sobel edge detection. 
+ --prewitt [=ARG]     Prewitt edge detection.
+ --resize [=ARG]      Resize image to percent and back to normal size.
+                        p        percent           Default: $(maskarg_defaultvalue resize percent1)%
+                        (word)   interpolation     Default: $(maskarg_defaultvalue resize word1)
+                      interpolation can be one of 'magick -list interpolate'.
+ --roberts [=ARG]     Roberts edge detection.
+ --sobel [=ARG]       Sobel edge detection.
  --statistic [=ARG]   ImageMagick option -statistic.
                       ARG additionally takes arguments: 
                         r        radius1           Default: $(maskarg_defaultvalue statistic radius1)
@@ -1874,6 +1878,21 @@ generate_fftshape() {
     -draw 'rectangle $((Fftcenter-Radius)),$((Fftcenter-Radius)) \
                      $((Fftcenter+Radius)),$((Fftcenter+Radius))'"
         ;;
+        *)
+          Command="
+  -size ${Argradius1}x${Argradius1}
+  gradient:
+    -rotate 180
+  (
+  gradient:
+    -rotate 90
+  )
+    -compose Darken -composite
+  ( -clone 0 -flip )
+    -append
+  ( -clone 0 -flop )
+    +append"
+        ;;
       esac
     ;;
   esac
@@ -2545,32 +2564,22 @@ focus_maskmethod() {
     -morphology Convolve DoG:${Argradius1},${Argsigma1},${Argsigma2}"
     ;;
 
-    GAUSSexperimental)
-      Maskgenerator="$Maskgenerator
-  $Sourceimage
-    -define convolve:scale=-100,200%
-    -morphology Convolve Gaussian:${Argradius1}x${Argsigma1}
-  $Sourceimage
-    -compose Difference -composite"
-    ;;
-    CROSSMORPHexperimental)
-      Maskgenerator="$Maskgenerator
-  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1:-3}x1+1+0 )
-  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1:-3}x1+${Argradius1:-3}+0 )
-  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:1x${Argradius1:-3}+0+1 )
-  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:1x${Argradius1:-3}+0+${Argradius1:-3} )
-    -evaluate-sequence min"
-    ;;
-    CROSSMORPH2experimental)
-      Maskgenerator="$Maskgenerator
-  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1}x$((Argradius1/2))+0+$((Argradius1/4)) )
-  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:${Argradius1}x$((Argradius1/2))+$((Argradius1-1))+$((Argradius1/4)) )
-  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:$((Argradius1/2))x$((Argradius1))+$((Argradius1/4))+0 )
-  ( $Sourceimage -morphology ${Maskgeneratorargument:-edge}:${Argradius2:-1} Rectangle:$((Argradius1/2))x$((Argradius1))+$((Argradius1/4))+$((Argradius1-1)) )
-    -evaluate-sequence min"
-    ;;
-
     experimental)
+      Maskgenerator="$Maskgenerator
+  $Sourceimage
+    -grayscale RMS
+  ( $Sourceimage )
+    -compose Difference -composite
+  "
+    ;;
+    experimentalX)
+      Maskgenerator="$Maskgenerator
+  $Sourceimage
+  ( -clone 0 -colorspace HSL -channel 1 -separate +channel )
+  ( -clone 0 -colorspace HSB -channel 1 -separate +channel )
+    -delete 0
+    -compose Difference -composite
+  "
     ;;
 
     fft)
@@ -2680,6 +2689,15 @@ focus_maskmethod() {
     -define morphology:compose=Screen
     -define convolve:bias=10%
     -morphology Convolve Prewitt:>"
+    ;;
+
+    resize)
+      Maskgenerator="$Maskgenerator
+  $Sourceimage
+    -interpolate $Argword1
+    -interpolative-resize ${Argpercent1}%
+    -interpolative-resize ${Imagewidth}x${Imageheight}
+    +interpolate"
     ;;
 
     roberts)
@@ -3089,6 +3107,11 @@ focus_merge_masks() {
           ;;
 
           masktest)
+            Mergecode="$Mergecode
+    -interpolate Spline
+    -interpolative-resize ${Argpercent1:-50}%
+    -interpolative-resize ${Imagewidth}x${Imageheight}
+    +interpolate"
           ;;
 
           maskthreshold)
@@ -4219,8 +4242,8 @@ maskarg_parse() {
       "TYPE")             Argtype="$Value" ;;
       "AUTOWEIGHT")       Argautoweight="$Value" ;;
       "BASENAME")         Argbasename="$Value" ;;
-      "WORD1")            Argword1="$Value" ;;
-      "WORD2")            Argword2="$Value" ;;
+      "W1"|"WORD1")       Argword1="$Value" ;;
+      "W2"|"WORD2")       Argword2="$Value" ;;
       *)                  [ -z "$Argword1" ] && Argword1="$Line" || Argword2="$Line" ;;
     esac
   done <<< "$Argoptions,"
@@ -4249,8 +4272,8 @@ maskarg_store() {
   [ "$Argclut" ]               && Argoptions="$Argoptions,clut=$Argclut"
   [ "$Argthreshold1" ]         && Argoptions="$Argoptions,t$Argthreshold1"
   [ "$Argthreshold2" ]         && Argoptions="$Argoptions,T$Argthreshold2"
-  [ "$Argword1" ]              && Argoptions="$Argoptions,WORD1=$Argword1"
-  [ "$Argword2" ]              && Argoptions="$Argoptions,WORD2=$Argword2"
+  [ "$Argword1" ]              && Argoptions="$Argoptions,W1=$Argword1"
+  [ "$Argword2" ]              && Argoptions="$Argoptions,W2=$Argword2"
   [ "$Argtype" ]               && Argoptions="$Argoptions,TYPE=$Argtype"
   [ "$Argautoweight" ]         && Argoptions="$Argoptions,AUTOWEIGHT=yes"
   [ "$Argbasename" ]           && Argoptions="$Argoptions,BASENAME=$Argbasename"
@@ -4337,7 +4360,7 @@ maskarg_checkallowed() {
     ;;
     percent1)
       case "$Argmethod" in
-        cutalpha|cutblur|cutless|cutmax|cutwave|fft|finalalpha|maskblur|maskfft|masklevel|maskwave|substacks|wavelet) ;;
+        cutalpha|cutblur|cutless|cutmax|cutwave|fft|finalalpha|maskblur|maskfft|masklevel|maskwave|resize|substacks|wavelet) ;;
         *) error "--$Argmethod does not take argument percent1: p$Arg" ;;
       esac
     ;;
@@ -4475,6 +4498,11 @@ maskarg_checkallowed() {
   Please choose one out of 'magick -list morphology'"
           Argword1="$(checkmagicklist morphology "$Arg" print)"
         ;;
+        resize)
+          checkmagicklist interpolate "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
+  Please choose one out of 'magick -list interpolate'"
+          Argword1="$(checkmagicklist interpolate "$Arg" print)"
+        ;;
         substacks) 
           case "$Arg" in
             kurt) ;;
@@ -4575,6 +4603,7 @@ maskarg_defaultvalue() {
             *)          Output="yes" ;; ### FIXME really?
           esac
         ;;
+        resize)         Output="yes" ;;
         statistic)
           case ${Argword1,,} in
             gradient|standarddeviation) ;;
@@ -4674,6 +4703,7 @@ maskarg_defaultvalue() {
         maskfft)        Output="50" ;;
         masklevel)      Output="" ;;
         maskwave)       Output="20" ;;
+        resize)         Output="50" ;;
         wavelet)        Output="5" ;;
       esac
     ;;
@@ -4695,12 +4725,12 @@ maskarg_defaultvalue() {
         cutmorph)       Output="1" ;;
         diffstat)       Output="3" ;;
         dog)            Output="0" ;;
-        fft)            Output="100" ;;
+        fft)            Output="75" ;;
         finalblur2)     Output="4" ;;
         finalsharpen)   Output="0" ;;
         log)            Output="0" ;;
         maskblur)       Output="0" ;;
-        maskfft)        Output="100" ;;
+        maskfft)        Output="25" ;;
         maskkuwahara)   Output="4" ;;
         maskmorph)      Output="1" ;;
         maskstat)       Output="5" ;;
@@ -4760,7 +4790,7 @@ maskarg_defaultvalue() {
     ;;
     type)
       case "$Argmethod" in
-        blur|cmd|cmddiff|comet|compass|diffstat|dog|fft|freichen|kirsch|laplacian|log|morphology|prewitt|roberts|sobel|statistic|wavelet)
+        blur|cmd|cmddiff|comet|compass|diffstat|dog|fft|freichen|kirsch|laplacian|log|morphology|prewitt|resize|roberts|sobel|statistic|wavelet)
                         Output="mask" ;;
         channel|chroma|darkness|lightness|saturation)
                         Output="mask" ;;
@@ -4805,6 +4835,7 @@ maskarg_defaultvalue() {
         maskmorph)      Output="Close" ;;
         maskstat)       Output="Mean" ;;
         morphology)     Output="Edge" ;;
+        resize)         Output="spline" ;;
         statistic)      Output="StandardDeviation" ;;
 
         format)         Output="tif" ;;
@@ -4937,7 +4968,7 @@ maskarg_short() {
         esac
       ;;
       word2)
-        [ -n "$Argword2" ]       && Append=",$Argword2"
+        [ -n "$Argword2" ]       && Append=",W2=$Argword2"
         [ "$Argword2" = "$(maskarg_defaultvalue "$Argmethod" word2)" ] && case "$Argmethod" in
           cutmorph|diffstat|fft|maskfft|maskmorph|morphology) Append="" ;;
         esac
@@ -5338,7 +5369,7 @@ parse_options() {
   Longoptions="$Longoptions,basename::,exif::,force::,format::,longname,output:,showname,video"
   Longoptions="$Longoptions,align,revert"
   Longoptions="$Longoptions,colorspace::"
-  Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,fft::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,roberts::,sobel::,statistic::,wavelet::"  
+  Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,fft::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,resize::,roberts::,sobel::,statistic::,wavelet::"  
   Longoptions="$Longoptions,compose::,depthmap::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
   Longoptions="$Longoptions,cmd::,cmddiff::,experimental::"
@@ -5378,12 +5409,11 @@ parse_options() {
       -X)                  Extendedsave="yes"                  ;;
       -h|--help|--license|--rmcache|--showname|--version) Singleaction="${1:-}" ;;
 
+--colorspace|\
 --cmd|--cmddiff|--experimental|\
---blur|--comet|--compass|--diffstat|--dog|--fft|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--roberts|--sobel|--statistic|--wavelet|\
+--blur|--comet|--compass|--diffstat|--dog|--fft|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--resize|--roberts|--sobel|--statistic|--wavelet|\
 --channel|--chroma|--darkness|--lightness|--saturation|\
 --compose|--depthmap|--enfuse|--evaluate|--max|--mean|--median|--min|\
-\
---colorspace|\
 --maskblur|--maskcmd|--maskdespeckle|--maskenhance|--maskfft|--maskkuwahara|--masklevel|--maskmerge|--maskmorph|--maskstat|--masktest|--maskthreshold|--maskwave|\
 --cutalpha|--cutbg|--cutblur|--cutcmd|--cutless|--cutmax|--cutmorph|--cutsoft|--cuttest|--cutthreshold|--cutwave|\
 --finalalpha|--finalblur|--finalblur2|--finalcmd|--finalgamma|--finalsharpen|--finalthreshold|\
