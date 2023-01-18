@@ -13,8 +13,9 @@ Usage:
   preparestack [OPTIONS] IMAGES ...
 
 Options:
- --help                       Show this help.
- --output DIR                 Store prepared images in directory DIR.
+ -f, --force                  Force to write into already existing folder.
+ -h, --help                   Show this help.
+ -o, --output DIR             Store prepared images in directory DIR.
                               Default: ./prepared
  -V, --showimage              Show images in image viewer geeqie.
  -1, --one                    Show one middle image only, do not store.
@@ -250,7 +251,7 @@ $Magickbin
 
     Error="$?"
     [ "$Error" != "0" ] && break
-    showimage "$Outputimage"
+    #showimage "$Outputimage"
   done <<< "$Sourceimagelist"
   multicore_wait
   echo ""
@@ -283,7 +284,7 @@ declare_variables() {
     -orient undefined
     +repage
     -compress lzw
-    -type TrueColorAlpha
+    -type TrueColor
     -define png:compression-filter=2
     -define png:compression-level=4
     -define png:compression-strategy=1"
@@ -296,7 +297,7 @@ declare_variables() {
 parse_options() {
   local Shortoptions Longoptions Parsedoptions Terminate= Arg=
 
-  Shortoptions="1fV"
+  Shortoptions="1fho:V"
   Longoptions="force,help,one,output:,showimage"
   Longoptions="$Longoptions,im:,set::"
   Longoptions="$Longoptions,compose::,contrast,contrast-stretch::,crop::,gamma::,level::,resize::,rotate::,sharpen::,shave::,sigmoidal-contrast::"
@@ -306,7 +307,7 @@ parse_options() {
 
   while [ $# -gt 0 ]; do
     case "${1:-}" in
-      --help)
+      -h|--help)
         usage
         Terminate="yes"
         break
@@ -314,7 +315,7 @@ parse_options() {
       -1|--one)
         Oneimageonly="yes"
       ;;
-      --output)
+      -o|--output)
         Destinationdir="${2:-}"
         shift
       ;;
