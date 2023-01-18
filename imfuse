@@ -107,23 +107,10 @@ looses details and increases undesired seams. There's always a tradeoff.
 The default values are set rather low and mostly profit from increasing.
 As a metapher, think of radius and sigma as of brush sizes.
 
-Step 1: Background and Colorspace
+Step 1: Source image adjustment
+These option do not modify the original files, but only adjust them in RAM.
+In general you can skip this step.
 
- --bg, --background [=ARG]  Specify a background to paint on.
-                      Useful for (semi-)transparent results or as a result
-                      on its own.
-                      ARG takes argument:
-                        (word)   background        Default: $(maskarg_defaultvalue bg word1)
-                      background can be one out of:
-                        wave wavedark enfuse
-                        transparent
-                        magick -list color
-                        magick -list evaluate (compare --evaluate)
-                        magick -list compose  (compare --compose)
-                      Try:  enfuse mean max min
-                            colorize colorize2 pinlight pinlight2
-                            interpolate overlay pegtoplight reflect
-                      Can be specified multiple times for option --layered.
  --colorspace [=ARG]  Colorspace in which to generate the masks.
                       Normally you don't need to adjust this option.
                       ARG takes arguments:
@@ -132,12 +119,25 @@ Step 1: Background and Colorspace
                       colorspace can be one of 'magick -list colorspace'.
                       Some of interest: sRGB, CMYK,  RGB
                       https://legacy.imagemagick.org/Usage/color_basics
+ --prepresize [=ARG]  Resize images before mask generation. The result will
+                      have the original size nonetheless.
+                      ARG takes arguments:
+                        p        percent           Default: $(maskarg_defaultvalue prepresize percent1)
+                        (word)   interpolation     Default: $(maskarg_defaultvalue prepresize word1)
+                      percent values >100% can make sense to get more detail.
+                        Values <100% can speed up processing of large images
+                        at the cost of precision.
+                      word must be one of 'magick -list interpolate'
+                        and adjusts resize interpolation.
+                      Note that you would need to adjust radius and sigma in
+                      mask options proportinally for similar results.
+                      Percent values like in --fft are less affected.
 
 Step 2: Mask generation
   Options can be specified multiple times. The order does not matter.
   The generated masks will be composed into one mask containing them all.
   Most recommended: 
-    --blur. --wavelet and --diffstat for fine detail.
+    --blur, --fft, --wavelet and --diffstat for fine detail.
     --statistic and --morphology for strong edges.
 
   Contrast masks:
@@ -509,6 +509,7 @@ Step 4: Stack fusion
                         p        percent1          Default: $(maskarg_defaultvalue cutalpha percent1)%
                         P        percent2          Default: $(maskarg_defaultvalue cutalpha percent2)%
                       For percent arguments compare --finalalpha.
+                      If the result is too soft, try 'p-25,P150'.
  --cutbg [=ARG]       Create a background from current cuts.
                       To be used before --cutthreshold or --cutalpha.
                       ARG takes argument:
@@ -667,6 +668,24 @@ Step 5: Post processing
                       threshold1 removes low contrast areas below a percent.
                       threshold2 removes high contrast areas above a percent.
                       sigma blurs the cut border.
+
+Step 6: Background
+
+ --bg, --background [=ARG]  Specify a background to paint on.
+                      Useful for (semi-)transparent results or as a result
+                      on its own.
+                      ARG takes argument:
+                        (word)   background        Default: $(maskarg_defaultvalue bg word1)
+                      background can be one out of:
+                        wave wavedark enfuse
+                        transparent
+                        magick -list color
+                        magick -list evaluate (compare --evaluate)
+                        magick -list compose  (compare --compose)
+                      Try:  enfuse mean max min
+                            colorize colorize2 pinlight pinlight2
+                            interpolate overlay pegtoplight reflect
+                      Can be specified multiple times for option --layered.
 
 Much thanks to the developers and supporters of ImageMagick!
 Without them this project would not have been possible.
@@ -1021,8 +1040,9 @@ check_exifstring() {
   Parsedoptions=""
   [ "$Align" = "yes" ] && Parsedoptions="$Parsedoptions --align"
 
-  # step colorspace
+  # step source image preparation
   maskarg_single "colorspace" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
+  maskarg_single "prepresize" && Parsedoptions="$Parsedoptions $(maskarg_short "$Argcount")"
 
   # step mask generation
   for Count in $(seq "$Imoptionsnumber"); do
@@ -1782,7 +1802,7 @@ finalblur2() {
 }
 generate_fftshape() {
   local Shape Virtualsize Virtualborder Radius Negate Sigmoidalcontrast Sigmoidalmidpoint
-  local Fftcenter Fftlog Outputname Command=
+  local Fftcenter Shapemodearg Outputname Command=
   local Longoptions Parsedoptions
 
   Longoptions="shape:,size:,conversion:,radius:,negate:,sigmoidal:,sigmoidalmidpoint:"
@@ -1812,10 +1832,8 @@ generate_fftshape() {
 
   Fftcenter="$((Virtualsize/2))"
   Radius="$((Virtualsize*Radius/200))"
-  Fftlog="${Shapemode#inverse}"
-  Fftlog="${Fftlog#log}"
-  Fftlog="${Fftlog#pow}"
-  Fftlog="${Fftlog:-10}"
+  Shapemodearg="${Shapemode//[a-zA-Z]/}"
+
 
   case "$Shape" in
     circle)
@@ -1914,6 +1932,11 @@ generate_fftshape() {
     +repage"
 
   case "$Shapemode" in
+    cos*)
+      Command="$Command
+    -evaluate cos ${Shapemodearg:-0.5}
+    -negate"
+    ;;
     gauss|gaussian)
       Command="$Command
     -negate
@@ -1924,20 +1947,20 @@ generate_fftshape() {
     inverselog*)
       Command="$Command
     -negate
-    -evaluate inverselog $Fftlog
+    -evaluate inverselog ${Shapemodearg:-10}
     -negate
     -auto-level" 
     ;;
     log*)
       Command="$Command
     -negate
-    -evaluate log $Fftlog
+    -evaluate log ${Shapemodearg:-10}
     -negate
     -auto-level" 
     ;;
     pow*)
       Command="$Command
-    -evaluate pow $Fftlog
+    -evaluate pow ${Shapemodearg:-2}
     -auto-level" 
     ;;
     solid) ;;
@@ -2596,7 +2619,7 @@ focus_maskmethod() {
   xc:black
   $Sourceimage
     #-virtual-pixel Mirror
-    -fx 'v.p[-$(( (Fftsize-Imagewidth)/2 )),-$(( (Fftsize-Imageheight)/2 ))]'
+    -fx 'v.p[-$(( (Fftsize-Maskwidth)/2 )),-$(( (Fftsize-Maskheight)/2 ))]'
     -fft
     ( -clone 0 -write mpr:fft0 -delete 0 )
     ( -clone 1 -write mpr:fft1 -delete 0 )
@@ -2618,7 +2641,7 @@ focus_maskmethod() {
   mpr:fft1
     -ift
     -gravity center
-    -crop ${Imagewidth}x${Imageheight}+0+0
+    -crop ${Maskwidth}x${Maskheight}+0+0
     +repage
     +gravity"
       [ -n "$Argradius2" ] && Maskgenerator="$Maskgenerator
@@ -2627,7 +2650,7 @@ focus_maskmethod() {
   mpr:fft1
     -ift
     -gravity center
-    -crop ${Imagewidth}x${Imageheight}+0+0
+    -crop ${Maskwidth}x${Maskheight}+0+0
     +repage
     +gravity
   )
@@ -2696,7 +2719,7 @@ focus_maskmethod() {
   $Sourceimage
     -interpolate $Argword1
     -interpolative-resize ${Argpercent1}%
-    -interpolative-resize ${Imagewidth}x${Imageheight}
+    -interpolative-resize ${Maskwidth}x${Maskheight}
     +interpolate"
     ;;
 
@@ -2757,7 +2780,7 @@ focus_maskmethod() {
   echo "$Maskgenerator"
 }
 focus_generate_masks() {
-  local Maskgenerator Maskgenerator_all= Basenamelist= Maskready= Maskmax Mode Line Imagename Command= Maskmd5 Count Sourceimagecode
+  local Maskgenerator Maskgenerator_all= Basenamelist= Maskready= Maskmax Mode Line Imagename Command= Maskmd5 Count Sourceimagecode Sourceimagepreparation=
   local Longoptions Parsedoptions
   local Firstimage Lastimage
   local Levelmin Levelmax
@@ -2775,8 +2798,33 @@ focus_generate_masks() {
 
   Firstimage="${Firstimage:-1}"
   Lastimage="${Lastimage:-$Sourceimagenumber}"
-
   sendmagickmessage "NOTE:Step 2: Generating masks"
+
+  # Generate code to prepare source image
+  Sourceimagepreparation="
+  mpr:sourceimage"
+
+  # --prepresize
+  Maskwidth="$Imagewidth"
+  Maskheight="$Imageheight"
+  maskarg_single "prepresize" && {
+    Sourceimagepreparation="$Sourceimagepreparation
+    -interpolate $Argword1
+    -interpolative-resize ${Argpercent1}%
+    +interpolate"
+    Maskwidth="$(magick -size ${Imagewidth}x10 xc: -resize "$Argpercent1"% -format "%w" info:)"
+    Maskheight="$(magick -size 10x${Imageheight} xc: -resize "$Argpercent1"% -format "%h" info:)"
+  }
+  [ "$Maskwidth" -gt "$Maskheight" ] && Fftsize="$Maskwidth" || Fftsize="$Maskheight"
+  Fftsize="$(calc "$Fftsize*1.1" | cut -d. -f1)"
+  [ "$(( 2* (Fftsize/2) ))" != "$Fftsize" ] && Fftsize="$((Fftsize+1))"
+
+  [ "$Testsetup" ] && Sourceimagepreparation="$Sourceimagepreparation
+    -contrast-stretch 0
+    -sharpen 0x4"
+  Sourceimagepreparation="$Sourceimagepreparation
+    -write mpr:sourceimage
+    -delete 0"
 
   # Generate Code for mask generation
   for Count in $(seq "$Imoptionsnumber"); do
@@ -2838,7 +2886,7 @@ $(focus_maskmethod "$Sourceimagecode" "$Firstimage" "$Lastimage")"
     -separate
     -evaluate-sequence add"
 
-      Maskmd5="$(md5cut "$Arglevel $Maskgenerator $Sourcemd5")"
+      Maskmd5="$(md5cut "$Arglevel $Sourceimagepreparation $Maskgenerator $Sourcemd5")"
       Argbasename="$Argmethod.$Maskmd5"
       #Argbasename="${Argmethod}${Argoptions}.$Sourcemd5"
       maskarg_store "$Count"
@@ -2888,6 +2936,7 @@ $Maskgenerator
   '$(sourceimagename "$Count")'
     -write mpr:sourceimage
     -delete 0
+${Sourceimagepreparation}
 ${Maskgenerator_all}"
       Command="${Command//NUMBER/$(printnum "$Count")}"
       Command="${Command//CLUTLEVEL/$(calc "100*($Sourceimagenumber-$Count)/$Sourceimagenumber")}"
@@ -2972,6 +3021,8 @@ focus_merge_masks() {
     -alpha off"
     ;;
   esac
+  Mergecode="$Mergecode
+    -resize ${Maskwidth}x${Maskheight}"
 
   ### code for mask merging except those not to be postprocessed
   for Count in $(seq "$Imoptionsnumber"); do
@@ -3066,7 +3117,7 @@ focus_merge_masks() {
   -size ${Fftsize}x${Fftsize}
   xc:black
     -swap 0,1
-    -fx 'v.p[-$(( (Fftsize-Imagewidth)/2 )),-$(( (Fftsize-Imageheight)/2 ))]'
+    -fx 'v.p[-$(( (Fftsize-Maskwidth)/2 )),-$(( (Fftsize-Maskheight)/2 ))]'
     -fft
   ( -clone 0 -write mpr:fft0 -delete 0 )
   ( -clone 1 -write mpr:fft1 -delete 0 )
@@ -3077,7 +3128,7 @@ focus_merge_masks() {
   mpr:fft1
     -ift
     -gravity center
-    -crop ${Imagewidth}x${Imageheight}+0+0
+    -crop ${Maskwidth}x${Maskheight}+0+0
     +gravity
     +repage"
           ;;
@@ -3110,7 +3161,7 @@ focus_merge_masks() {
             Mergecode="$Mergecode
     -interpolate Spline
     -interpolative-resize ${Argpercent1:-50}%
-    -interpolative-resize ${Imagewidth}x${Imageheight}
+    -interpolative-resize ${Maskwidth}x${Maskheight}
     +interpolate"
           ;;
 
@@ -3178,7 +3229,7 @@ focus_merge_masks() {
     -write mpr:mergemask
     -delete 0"
 
-  [ "$Testsetup" ] && Mergecode="$Mergecode
+  false && [ "$Testsetup" ] && Mergecode="$Mergecode
   ./face--bg=Difference_md3a7ecc.tif
     -grayscale RMS
   mpr:mergemask
@@ -3246,7 +3297,7 @@ focus_montage() {
   #local Focusimagefile Focusimagemaskfile Focusimagedepthfile
   local Command Count
   local Longoptions Parsedoptions
-  local Focuscode=
+  local Focuscode= Interpolate
 
   Longoptions="maskmax:,depthmap:,output:,firstimage:,lastimage:"
 
@@ -3588,6 +3639,8 @@ focus_montage() {
     -delete 0"
   cmd "$Command"
 
+  maskarg_single "prepresize" && Interpolate="$Argword1" || Interpolate="Spline"
+
   sendmagickmessage "STOPWATCH"
   for Count in $(seq "$Lastimage" -1 "$Firstimage"); do
 
@@ -3601,6 +3654,9 @@ focus_montage() {
     -delete 0
   '$(maskname "$Mergemaskbasename" "$Count")'
     -alpha off
+    -interpolate $Interpolate
+    -interpolative-resize ${Imagewidth}x${Imageheight}
+    +interpolate
     -write mpr:mergemask
     -delete 0
 
@@ -4360,7 +4416,7 @@ maskarg_checkallowed() {
     ;;
     percent1)
       case "$Argmethod" in
-        cutalpha|cutblur|cutless|cutmax|cutwave|fft|finalalpha|maskblur|maskfft|masklevel|maskwave|resize|substacks|wavelet) ;;
+        cutalpha|cutblur|cutless|cutmax|cutwave|fft|finalalpha|maskblur|maskfft|masklevel|maskwave|prepresize|resize|substacks|wavelet) ;;
         *) error "--$Argmethod does not take argument percent1: p$Arg" ;;
       esac
     ;;
@@ -4475,7 +4531,7 @@ maskarg_checkallowed() {
         ;;
         fft|maskfft)
           case "$Argword1" in
-            gaussian|gradient|inverselog*|log*|pow*|solid) ;;
+            cos*|gaussian|gradient|inverselog*|log*|pow*|solid) ;;
             *) error "--$Argmethod: unknown argument for word1: $Arg" ;;
           esac
         ;;
@@ -4498,7 +4554,7 @@ maskarg_checkallowed() {
   Please choose one out of 'magick -list morphology'"
           Argword1="$(checkmagicklist morphology "$Arg" print)"
         ;;
-        resize)
+        prepresize|resize)
           checkmagicklist interpolate "$Arg" || error "--$Argmethod: unknown argument for word1: $Arg
   Please choose one out of 'magick -list interpolate'"
           Argword1="$(checkmagicklist interpolate "$Arg" print)"
@@ -4703,6 +4759,7 @@ maskarg_defaultvalue() {
         maskfft)        Output="50" ;;
         masklevel)      Output="" ;;
         maskwave)       Output="20" ;;
+        prepresize)     Output="50" ;;
         resize)         Output="50" ;;
         wavelet)        Output="5" ;;
       esac
@@ -4804,7 +4861,7 @@ maskarg_defaultvalue() {
         finalalpha|finalblur|finalblur2|finalcmd|finalgamma|finalsharpen|finalthreshold)
                         Output="postfocus" ;;
         bg)             Output="background" ;;
-        colorspace|masklevel|maskmerge)
+        colorspace|masklevel|maskmerge|prepresize)
                         Output="single" ;;
         substacks)      Output="substack" ;;
         *) error "maskarg_defaultvalue(): Unknown type for method $Argmethod" ;;
@@ -4835,7 +4892,8 @@ maskarg_defaultvalue() {
         maskmorph)      Output="Close" ;;
         maskstat)       Output="Mean" ;;
         morphology)     Output="Edge" ;;
-        resize)         Output="spline" ;;
+        prepresize)     Output="Spline" ;;
+        resize)         Output="Spline" ;;
         statistic)      Output="StandardDeviation" ;;
 
         format)         Output="tif" ;;
@@ -5368,7 +5426,7 @@ parse_options() {
   Longoptions="cache::,help,license,limit-memory::,mask2cache,cacheformat::,rmcache,sub::,test::,verbose,version"
   Longoptions="$Longoptions,basename::,exif::,force::,format::,longname,output:,showname,video"
   Longoptions="$Longoptions,align,revert"
-  Longoptions="$Longoptions,colorspace::"
+  Longoptions="$Longoptions,colorspace::,prepresize::"
   Longoptions="$Longoptions,blur::,comet::,compass::,diffstat::,dog::,fft::,freichen::,kirsch::,laplacian::,log::,morphology::,prewitt::,resize::,roberts::,sobel::,statistic::,wavelet::"  
   Longoptions="$Longoptions,compose::,depthmap::,enfuse::,evaluate::,max::,mean::,median::,min::"
   Longoptions="$Longoptions,channel::,chroma::,darkness::,lightness::,saturation::"
@@ -5409,7 +5467,7 @@ parse_options() {
       -X)                  Extendedsave="yes"                  ;;
       -h|--help|--license|--rmcache|--showname|--version) Singleaction="${1:-}" ;;
 
---colorspace|\
+--colorspace|--prepresize|\
 --cmd|--cmddiff|--experimental|\
 --blur|--comet|--compass|--diffstat|--dog|--fft|--freichen|--kirsch|--laplacian|--log|--morphology|--prewitt|--resize|--roberts|--sobel|--statistic|--wavelet|\
 --channel|--chroma|--darkness|--lightness|--saturation|\
@@ -5639,10 +5697,6 @@ main_setup() {
     Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
     Imagelistmemsize="$((Sourceimagenumber*Imagememsize))"
     Sourcemd5="$(md5cut "$( ls -l --full-time "${Sourceimagelist[@]}" )" )"
-
-    [ "$Imagewidth" -gt "$Imageheight" ] && Fftsize="$Imagewidth" || Fftsize="$Imageheight"
-    Fftsize="$(calc "$Fftsize*1.1" | cut -d. -f1)"
-    [ "$(( 2* (Fftsize/2) ))" != "$Fftsize" ] && Fftsize="$((Fftsize+1))"
   }
 
   # check if source images should be loaded to RAM
