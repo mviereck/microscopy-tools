@@ -30,6 +30,10 @@ NOTE: If the images are given in a lossy format like JPG, you should convert
   them first to a lossless format like TIF or PNG. stackprepare can do that.
 "
 }
+error() {
+  echo "stackalign ERROR: $*" >&2
+  finish 1
+}
 
 ### misc
 digitonly() {
@@ -255,16 +259,16 @@ declare_variables() {
 parse_options() {
   local Shortoptions Longoptions Parsedoptions Terminate=
 
-  Shortoptions="V"
+  Shortoptions="hV"
   Longoptions="contrast::,help,output:,rotate:,showimage,whitebalance::"
 
-  Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")"
+  Parsedoptions="$(getopt --options "$Shortoptions" --longoptions "$Longoptions" --name "$0" -- "$@")" || error "Error parsing options."
   eval set -- "$Parsedoptions"
 
   while [ $# -gt 0 ]; do
     case "${1:-}" in
       --contrast)     Contrast="${2:-yes}" ; shift ;;
-      --help)         usage ; Terminate="yes" ;;
+      -h|--help)      usage ; Terminate="yes" ;;
       --output)       Destinationdir="${2:-$Destinationdir}" ; shift ;;
       --rotate)       Rotation="${2:-0}" ; shift ;;
       -V|--showimage) Showimageprocessing="yes" ;;
@@ -273,10 +277,7 @@ parse_options() {
       *)
         Imagenumber="$((Imagenumber+1))"
         Sourceimagelist[$Imagenumber]="${1:-}"
-        [ -f "${1:-}" ] || {
-          echo "File not found: ${1:-}" >&2
-          Terminate="yes"
-        }
+        [ -f "${1:-}" ] || error "File not found: ${1:-}"
       ;;
     esac
     shift
@@ -290,7 +291,7 @@ finish() {
   trap - EXIT
   trap - ERR
   multicore_break
-  exit 0
+  exit ${1:-0}
 }
 main() {
   set -Eu
@@ -302,17 +303,13 @@ main() {
   parse_options "$@" || return 1
   multicore_init
 
+  [ "$Imagenumber" = "0" ] && error "No images specified."
+
   # check dependencies
-  command -v focus-stack >/dev/null || {
-    echo "Error: focus-stack not found." >&2
-    return 1
-  }
+  command -v focus-stack >/dev/null || error "focus-stack not found."
   command -v convert >/dev/null && Magickbin="convert"
   command -v magick  >/dev/null && Magickbin="magick"
-  [ -z "$Magickbin" ] && {
-    echo "Error: imagemagick not found." >&2
-    return 1
-  }
+  [ -z "$Magickbin" ] && error "imagemagick not found."
 
   # -V, --showimage
   [ "$Showimageprocessing" = "yes" ] && {
