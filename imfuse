@@ -28,7 +28,8 @@ Dependencies:
                         https://github.com/PetteriAimonen/focus-stack
 
 General options:
-     --align              Align images.
+     --align              Align images. Rather use tool stackalign, because 
+                          this option is not well integrated in cache reusage.
  -B, --basename [=NAME]   Base name [+path] for output image. 
                           If empty, the name of current directory is used.
  -C, --cache [=DIR]       Store generated masks and images in directory DIR.
@@ -3335,10 +3336,8 @@ focus_montage() {
           cutalpha)
             Focuscode="$Focuscode
   (
-  mpr:mergemask"
-            [ "${Argpercent1}%x${Argpercent2}%" != "0%x100%" ] && Focuscode="$Focuscode
-    +level ${Argpercent1}%x${Argpercent2}%"
-            Focuscode="$Focuscode
+  mpr:mergemask
+    +level ${Argpercent1}%x${Argpercent2}%
   )
     -compose Darken -composite"
           ;;
@@ -3993,6 +3992,15 @@ focus_main() {
     -delete 0"
                   cmd "$Command"
                 ;;
+                finaltest)
+                  Command="
+  ${Substackdepthmappost[$Substackstep]}
+    -threshold 5%
+  (
+  ${Substackmaskpost[$Substackstep]}
+    -threshold 10%
+  )"
+                ;;
                 finalthreshold)
                   threshold  --image "${Substackresultpost[$Substackstep]}" --mask "${Substackmaskpost[$Substackstep]}" \
                              --threshold1 "$Argthreshold1" --threshold2 "$Argthreshold2" --sigma1 "$Argsigma1" \
@@ -4446,7 +4454,7 @@ maskarg_checkallowed() {
     ;;
     sigma1)
       case "$Argmethod" in
-        blur|comet|cutblur|cutsoft|fft|finalblur|finalsharpen|finalthreshold|log|maskblur|maskfft) ;;
+        blur|comet|cutblur|cutsoft|dog|fft|finalblur|finalsharpen|finalthreshold|log|maskblur|maskfft) ;;
         *) error "--$Argmethod does not take argument sigma1: s$Arg" ;;
       esac
     ;;
@@ -5697,6 +5705,10 @@ main_setup() {
     Imagememsize="$((Imagememsize*125/100))" # by observation. Alpha channel?
     Imagelistmemsize="$((Sourceimagenumber*Imagememsize))"
     Sourcemd5="$(md5cut "$( ls -l --full-time "${Sourceimagelist[@]}" )" )"
+
+    # --output, --basename
+    check_exifstring
+    check_outputname
   }
 
   # check if source images should be loaded to RAM
@@ -5704,10 +5716,6 @@ main_setup() {
     yes) compare "$((Imagelistmemsize))" -lt "$(calc "$Limitmemory*0.9")" && Loadsourceimages="yes" || Loadsourceimages="no" ;;
     no)  compare "$((Imagelistmemsize))" -lt "$(calc "$Limitmemory*0.3")" && Loadsourceimages="yes" || Loadsourceimages="no" ;;
   esac
-
-  # --output, --basename
-  check_exifstring
-  check_outputname
 
   verbose "
   imfuse Version:                     $Version

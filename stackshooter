@@ -1189,10 +1189,10 @@ showpercent() {
   Percentimage="$Percentcachedir/$Percentimage"
 
   [ -e "$Percentimage" ] || case "$Part" in
-    idle)  magick -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"   "$Percentimage" ;;
-    error) magick -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"  "$Percentimage" ;;
-    busy)  magick -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'"   "$Percentimage" ;;
-    *)     magick -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
+    idle)  $Magickbin -size 100x20 xc:transparent -fill black  -pointsize 20 -gravity center -draw "text 0,0 'idle'"   "$Percentimage" ;;
+    error) $Magickbin -size 100x20 xc:transparent -fill red    -pointsize 20 -gravity center -draw "text 0,0 'ERROR'"  "$Percentimage" ;;
+    busy)  $Magickbin -size 100x20 xc:transparent -fill green1 -pointsize 20 -gravity center -draw "text 0,0 '* BUSY *'"   "$Percentimage" ;;
+    *)     $Magickbin -size 100x20 xc:transparent -fill green1 -draw "rectangle 0,0,$((Percent * 1)),20" -fill black -pointsize 20 -gravity center -draw "text 0,0 '${Percent}%'" "$Percentimage" ;;
   esac
   sendkaptain "cmdpercent('$Percentimage')=''"
 }
@@ -1200,7 +1200,7 @@ showpercent() {
 #### main
 
 declare_variables() {
-  Magickbin="magick"
+  Magickbin="convert"
 
   Cachebasedir="$HOME/.cache/stackshots"
   Maincachedir="$Cachebasedir/stackshooter"
@@ -1317,6 +1317,7 @@ main() {
   
   mkfifo "$Keyboardfifo"
   Keyboardid=$(xinput | grep "AT Translated" | cut -d= -f2 | awk '{print $1}')
+  [ -z "$Keyboardid" ] && Keyboardid=$(xinput | grep "XKeyboard" | cut -d= -f2 | awk '{print $1}')
   [ "$Keyboardid" ] && {
     xinput test $Keyboardid >>$Keyboardfifo & storepid $!
     keyboard_watch                          & setvar "pidkeyboardwatch=$!"

@@ -1,5 +1,5 @@
 #! /bin/bash
-# preparestack - prepare image stack with ImageMagick
+# stackprepare - prepare image stack with ImageMagick
 
 # Notes:
 # add --meanbalance?
@@ -7,10 +7,10 @@
 
 usage() {
   echo "
-preparestack - prepare image stack
+stackprepare - prepare image stack
 
 Usage:
-  preparestack [OPTIONS] IMAGES ...
+  stackprepare [OPTIONS] IMAGES ...
 
 Options:
  -f, --force                  Force to write into already existing folder.
